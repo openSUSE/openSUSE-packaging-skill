@@ -18,6 +18,18 @@ output is actually actionable instead of a wall of known-lag noise. Use
 --no-factory-check to skip that (raw Repology view). The cross-check needs a
 working `osc` against api.opensuse.org.
 
+REPOLOGY'S "newest" IS ITSELF ONLY "newest packaged in some tracked repo" — an
+upstream release that no distro has packaged yet is invisible to the sweep
+(real case: libdispatch 6.3.3 was released upstream, every repo had 6.3.2, so
+Repology reported "newest" and the package never appeared here). To cover that
+blind spot, this script probes BOTH sources at the same time: the Anitya
+lookups for the whole name set run concurrently with the Repology sweep, and
+every name Repology did NOT flag is checked against release-monitoring.org,
+which tracks upstreams directly; extra hits print tagged [anitya:...]. Anitya
+has no release DATES, so those are candidates to verify, never confirmed
+updates. Skip the pass with --no-anitya (it needs the reference-project
+cross-check, so --no-factory-check also disables it).
+
 Surviving candidates are still CANDIDATES, not confirmed updates — verify before
 acting (see references/triage.md): compare by tag/commit DATE not version string,
 watch for multi-track upstreams (LTS lines, parallel sonames) and deliberately
@@ -25,10 +37,16 @@ pinned packages. Known false positives stay flagged here.
 
 Usage: my-packages.sh --... | cut -f2 | outdated.py
        outdated.py --names /tmp/names.txt
+       outdated.py --names /tmp/names.txt --no-anitya          # Repology only
        outdated.py --names /tmp/names.txt --no-factory-check   # raw Repology
 """
 import sys, json, time, urllib.request, urllib.error, argparse, subprocess, re
 from concurrent.futures import ThreadPoolExecutor
+
+try:
+    import _anitya          # sibling module; see scripts/_anitya.py
+except ImportError:
+    _anitya = None
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--names", help="file of package names (default: stdin)")
@@ -38,10 +56,26 @@ ap.add_argument("--project", default="openSUSE:Factory",
                 help="reference project whose live Version: confirms a hit (default openSUSE:Factory)")
 ap.add_argument("--no-factory-check", action="store_true",
                 help="skip the live cross-check; print every raw Repology hit (incl. lag false positives)")
+ap.add_argument("--no-anitya", action="store_true",
+                help="skip the release-monitoring.org pass over the names Repology did not flag")
 args = ap.parse_args()
 
 src = open(args.names) if args.names else (sys.stdin if not sys.stdin.isatty() else None)
 mine = set(l.strip() for l in src if l.strip()) if src else None
+
+# Kick off the release-monitoring.org lookups for the WHOLE name set right
+# away, so they run while the (slow, paginated) Repology sweep downloads —
+# all sources are probed at the same time; results are filtered when printed.
+anitya_futs = {}
+if (_anitya is not None and mine
+        and not args.no_anitya and not args.no_factory_check):
+    def _anitya_lookup(pkg):
+        try:
+            return _anitya.latest_stable(pkg)
+        except _anitya.AnityaError as e:
+            return ("__failed__", str(e))
+    _anitya_pool = ThreadPoolExecutor(max_workers=6)
+    anitya_futs = {p: _anitya_pool.submit(_anitya_lookup, p) for p in sorted(mine)}
 
 def fetch(bound):
     url = f"https://repology.org/api/v1/projects/{bound}?inrepo={args.repo}&outdated=1"
@@ -156,3 +190,56 @@ for s, cur, new_disp, status, fv in sorted(candidates, key=lambda x: x[0].lower(
 if do_check and suppressed:
     print(f"# suppressed (already at newest in {args.project}): "
           + " ".join(f"{s}={fv}" for s, fv in sorted(suppressed)))
+
+# ---- release-monitoring.org (Anitya) pass over the REST of the set ----------
+# Repology's "newest" is only "newest packaged in some tracked repo"; a release
+# nobody has packaged yet never shows up above (real case: libdispatch 6.3.3).
+# Anitya tracks upstreams directly, so check every name Repology did NOT flag —
+# including the suppressed ones (Repology's "newest" itself may be stale).
+if do_check and not args.no_anitya:
+    if _anitya is None:
+        sys.stderr.write("WARNING: _anitya.py not found next to this script — "
+                         "release-monitoring.org pass SKIPPED\n")
+    else:
+        # exclude names Repology already flagged as candidates; keep the
+        # suppressed ones (Repology's own "newest" may be stale)
+        rest = sorted(set(anitya_futs) - {c[0] for c in candidates})
+        lookups, failed = {}, []
+        for pkg in rest:
+            res = anitya_futs[pkg].result()
+            if res[0] == "__failed__":
+                failed.append(pkg)
+            elif res[0]:
+                lookups[pkg] = res
+        if anitya_futs:
+            _anitya_pool.shutdown()
+
+        need_ref = [p for p in lookups if p not in refv]
+        if need_ref:
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                refv.update(zip(need_ref, ex.map(ref_version, need_ref)))
+
+        a_hits, a_odd = [], []
+        for pkg, (raw, how) in sorted(lookups.items()):
+            status, fv = refv.get(pkg, (None, None))
+            if status != "ok":
+                continue        # absent from / unreadable in the reference project
+            cmp = _anitya.vercmp(raw, fv)
+            if cmp == 1:
+                a_hits.append((pkg, fv, raw, how))
+            elif cmp is None and _anitya.norm(raw) != _anitya.norm(fv):
+                a_odd.append((pkg, fv, raw))
+
+        print(f"# anitya (release-monitoring.org) pass over {len(rest)} name(s) "
+              f"Repology did not flag: {len(a_hits)} additional candidate(s) — "
+              f"anitya has NO dates, so VERIFY each before acting")
+        for pkg, fv, raw, how in a_hits:
+            disp = _anitya.norm(raw)
+            rawnote = f" = {raw}" if disp != raw else ""
+            print(f"{pkg:32} {str(fv):24} -> {disp} [anitya:{how}{rawnote}]")
+        if a_odd:
+            print("# anitya: incomparable version schemes (check by hand): "
+                  + " ".join(f"{p}({fv} vs {raw})" for p, fv, raw in a_odd))
+        if failed:
+            print(f"# anitya: {len(failed)} lookup(s) FAILED (network/anti-bot) "
+                  f"— NOT checked: " + " ".join(failed))

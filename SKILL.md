@@ -40,8 +40,8 @@ Call these instead of hand-writing the osc-API / Repology / bugzilla / Gitea inc
 - `my-requests.sh` — your submit requests as a plain list (now a thin wrapper over `sr-status.py --brief --no-prs`, OBS side only).
 - `sr-status.py` — **the Block-3 watch view**: OBS SRs *and* src.opensuse.org PRs in one table (state, review chain, human comments), declines/closed-unmerged first.
 - `watch-submissions.sh` — the **cron/scheduled-prompt delta watcher**: diffs your active SRs + open PRs against a saved baseline and prints only what changed since the last run (`NOCHANGE` → stay silent; `NEW`/staging-move/`RESOLVE` lines → the caller fetches final states). `sr-status.py` answers "what's the status?", this answers "what changed?" without spamming on every firing.
-- `outdated.py` — Repology "outdated in openSUSE Tumbleweed" ∩ your package set, cross-checked against live Factory.
-- `upstream-probe.py` — per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / SUSPECT-renumbering); the Repology-false-positive deep check.
+- `outdated.py` — Repology "outdated in openSUSE Tumbleweed" ∩ your package set, cross-checked against live Factory, **plus a release-monitoring.org (Anitya) pass** over the names Repology did not flag — Repology's "newest" is only "newest packaged in some repo", so a release nobody has packaged yet is invisible to it; Anitya tracks upstreams directly and catches those (real case: libdispatch 6.3.3).
+- `upstream-probe.py` — per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / SUSPECT-renumbering); the Repology-false-positive deep check. Probes ALL resolvable sources at the same time — every forge found in `URL:`/`Source0:` plus release-monitoring.org by package name — merging by date; an Anitya-only newer stable elevates a would-be CURRENT to UPDATE-CANDIDATE (verify by hand, Anitya has no dates).
 - `preflight.sh` — Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward.
 - `devel-of.sh` — the devel project registered for a package (exit 3 = not in target/new package, exit 4 = present but no devel project).
 - `gpg-verify.sh` — verify a signed source tarball against a package keyring (handles the ASCII-armored-keyring trap).
@@ -58,8 +58,9 @@ Call these instead of hand-writing the osc-API / Repology / bugzilla / Gitea inc
 - `distro-survey.sh` — version (+ Fedora patch-count hint) across Fedora, Debian, Gentoo, Arch, Alpine, openEuler, Void, NixOS, FreeBSD ports, OpenMandriva and Mageia in one call (the cross-distro hard-rule set for items 8–9).
 - `rdeps.sh` — reverse build-deps via `_builddepinfo` (authoritative where `osc whatdependson` returns empty); the soname-bump rebuild-scope check.
 - `_bugfilter.py` — shared bugzilla noise-filter module imported at runtime by `bug-scan.sh` and `maintained-bugs.sh`; not directly runnable — do not prune it.
+- `_anitya.py` — shared release-monitoring.org (Anitya) lookup + version-normalize/compare module imported at runtime by `outdated.py` and `upstream-probe.py`; not directly runnable — do not prune it.
 
-Every runnable script prints usage with `-h`/`--help` (`_bugfilter.py` is a module, not a command); the user-scoped ones (my-packages, my-requests, maintained-bugs, sr-status, preflight) default the OBS account to `osc whois` unless `--user` is given.
+Every runnable script prints usage with `-h`/`--help` (`_bugfilter.py` and `_anitya.py` are modules, not commands); the user-scoped ones (my-packages, my-requests, maintained-bugs, sr-status, preflight) default the OBS account to `osc whois` unless `--user` is given.
 
 ### Delegation playbooks (`agents/`)
 

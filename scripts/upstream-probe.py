@@ -19,6 +19,13 @@ Traps encoded here (from triage.md):
     upstream HEAD commit date, not by tag.
   * Prereleases (rc/alpha/beta/dev/pre; PyPI prerelease/yanked flags) are
     filtered out of "latest stable".
+  * ALL resolvable sources are probed AT THE SAME TIME by default: every
+    forge found in URL:/Source0: (a spec often points URL: at github and
+    Source0: at pypi — both get probed) plus release-monitoring.org (Anitya)
+    by package name. One source failing degrades to a warning as long as
+    another answers; merged latest stable/tag are decided by DATE. Anitya
+    publishes versions WITHOUT dates, so when only it sees a newer stable the
+    verdict is UPDATE-CANDIDATE with an explicit verify-by-hand caveat.
 
 Usage:
   upstream-probe.py <pkg> [--project openSUSE:Factory]   # spec fetched via osc
@@ -34,7 +41,13 @@ Exit codes:
      CURRENT
 """
 import argparse, json, re, subprocess, sys, urllib.request, urllib.error, urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+
+try:
+    import _anitya          # sibling module; see scripts/_anitya.py
+except ImportError:
+    _anitya = None
 
 TIMEOUT = 20
 PRERELEASE = re.compile(r"(?:^|[.\-_~])(rc|alpha|beta|dev|pre|a\d+$|b\d+$)", re.I)
@@ -94,15 +107,17 @@ def norm(v):
 
 # ---------- spec resolution ----------------------------------------------------
 def spec_facts(text):
-    ver = url = src = None
+    name = ver = url = src = None
     for line in text.splitlines():
+        m = re.match(r"^Name:\s*(\S+)", line, re.I)
+        if m and not name: name = m.group(1)
         m = re.match(r"^Version:\s*(\S+)", line, re.I)
         if m and not ver: ver = m.group(1)
         m = re.match(r"^URL:\s*(\S+)", line, re.I)
         if m and not url: url = m.group(1)
         m = re.match(r"^Source0?:\s*(\S+)", line, re.I)
         if m and not src: src = m.group(1)
-    return ver, url, src
+    return name, ver, url, src
 
 def pick_forge(url, src):
     for cand in (src, url):
@@ -120,6 +135,16 @@ def pick_forge(url, src):
             if m: return ("pypi", None, m.group(1))
     return (None, None, None)
 
+def pick_forges(url, src):
+    """ALL distinct forges resolvable from Source0 and URL — a spec often
+    points URL: at github and Source0: at pypi; probe every one of them."""
+    out = []
+    for cand in (src, url):
+        f = pick_forge(cand, cand)
+        if f[0] and f not in out:
+            out.append(f)
+    return out
+
 # ---------- backends -----------------------------------------------------------
 def probe_pypi(name, packaged):
     d = http_json(f"https://pypi.org/pypi/{name}/json")
@@ -133,7 +158,7 @@ def probe_pypi(name, packaged):
     stable = [(v, rel_date(v)) for v in releases
               if not is_prerelease(v) and rel_date(v)]
     if not stable:
-        die(f"pypi {name}: no dated stable releases")
+        raise RuntimeError(f"pypi {name}: no dated stable releases")
     latest_v, latest_d = max(stable, key=lambda x: x[1])
     return {"packaged_date": rel_date(packaged) or rel_date(norm(packaged)),
             "latest_stable": (latest_v, latest_d),
@@ -190,14 +215,14 @@ def probe_github(owner, repo, packaged):
             out["asset_note"] = ("release object present" if rt else
                                  "tag has NO release object — auto-archive only")
     if "latest_stable" not in out:
-        die(f"github {owner}/{repo}: no releases and no datable tags")
+        raise RuntimeError(f"github {owner}/{repo}: no releases and no datable tags")
     return out
 
 def probe_gitlab(host, proj, packaged):
     enc = urllib.parse.quote(proj, safe="")
     tags = http_json(f"https://{host}/api/v4/projects/{enc}/repository/tags")
     if not tags:
-        die(f"gitlab {proj}: no tags")
+        raise RuntimeError(f"gitlab {proj}: no tags")
     def d(t): return parse_date((t.get("commit") or {}).get("committed_date"))
     dated = [(t.get("name"), d(t)) for t in tags if d(t)]
     stable = [x for x in dated if not is_prerelease(x[0])] or dated
@@ -218,32 +243,100 @@ def main():
     ap.add_argument("--project", default="openSUSE:Factory")
     a = ap.parse_args()
 
-    packaged, url, src = a.version, a.url, None
+    pkgname, packaged, url, src = a.pkg, a.version, a.url, None
     if a.spec:
-        packaged, url, src = spec_facts(open(a.spec).read())
+        pkgname, packaged, url, src = spec_facts(open(a.spec).read())
     elif a.pkg:
         r = subprocess.run(["osc", "cat", a.project, a.pkg, f"{a.pkg}.spec"],
                            capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             die(f"osc cat {a.project}/{a.pkg}/{a.pkg}.spec: {r.stderr.strip()}")
-        packaged, url, src = spec_facts(r.stdout)
+        _specname, packaged, url, src = spec_facts(r.stdout)
+        pkgname = a.pkg or _specname
     elif not a.url:
         ap.error("need <pkg>, --spec or --url")
 
-    forge, host, name = pick_forge(a.url or url, src)
-    if not forge:
-        die(f"could not resolve a supported forge from URL={url!r} Source={src!r} "
-            f"(supported: github, gitlab, pypi)")
+    # Probe ALL resolvable sources at the same time: every forge found in
+    # URL:/Source0: plus release-monitoring.org (Anitya). One source failing
+    # (rate limit, moved repo, anti-bot gate) degrades to a warning as long as
+    # any other source answers.
+    sources = pick_forges(a.url or url, src)
 
-    try:
+    def probe_one(s):
+        forge, host, name = s
         if forge == "pypi":
-            facts = probe_pypi(name, packaged)
-        elif forge == "github":
-            facts = probe_github(host or name.split("/")[0], name, packaged)
-        else:
-            facts = probe_gitlab(host, name, packaged)
-    except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
-        die(f"{forge} probe failed: {e}")
+            return probe_pypi(name, packaged)
+        if forge == "github":
+            return probe_github(host or name.split("/")[0], name, packaged)
+        return probe_gitlab(host, name, packaged)
+
+    anitya_v = anitya_how = None
+    results, errors = {}, []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(probe_one, s): s[0] for s in sources}
+        afut = (ex.submit(_anitya.latest_stable, pkgname)
+                if _anitya and pkgname and "%" not in pkgname else None)
+        for fut, forge in futs.items():
+            try:
+                results[forge] = fut.result()
+            except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
+                errors.append(f"{forge}: {e}")
+        if afut:
+            try:
+                anitya_v, anitya_how = afut.result()
+            except _anitya.AnityaError as e:
+                errors.append(f"anitya: {e}")
+
+    for err in errors:
+        sys.stderr.write(f"WARNING: probe failed — {err}\n")
+
+    if not results:
+        if anitya_v:
+            # Anitya-only outcome: it has versions but NO dates, so this can
+            # only say "a newer stable exists upstream" — never the by-date
+            # renumbering analysis the forge backends do.
+            print(f"packaged:       {packaged} (date unknown — no forge source answered)")
+            print(f"anitya latest:  {anitya_v} ({anitya_how}, release-monitoring.org)")
+            cmp = _anitya.vercmp(anitya_v, packaged)
+            if cmp == 1:
+                print("VERDICT: UPDATE-CANDIDATE — release-monitoring.org knows a "
+                      "newer stable; anitya has NO dates, verify the tag/upload "
+                      "date by hand before acting")
+                sys.exit(1)
+            if cmp == 0 or _anitya.norm(anitya_v) == _anitya.norm(packaged):
+                print("VERDICT: CURRENT (per release-monitoring.org; dates unverified)")
+                sys.exit(0)
+            die(f"anitya version {anitya_v!r} is not comparable to packaged "
+                f"{packaged!r} — verify by hand")
+        die(f"no source answered from URL={url!r} Source={src!r} "
+            f"(supported forges: github, gitlab, pypi; plus "
+            f"release-monitoring.org by package name)")
+
+    # Merge multi-source facts: latest stable/tag decided by DATE across
+    # sources; packaged date from whichever source could date it.
+    _floor = datetime.min.replace(tzinfo=timezone.utc)
+    facts = {}
+    for forge in ("github", "pypi", "gitlab"):
+        f = results.get(forge)
+        if not f:
+            continue
+        if f.get("packaged_date") and not facts.get("packaged_date"):
+            facts["packaged_date"] = f["packaged_date"]
+        if f.get("head_date"):
+            facts["head_date"] = f["head_date"]
+        for key in ("latest_stable", "latest_tag"):
+            v = f.get(key)
+            if v and v[1] and (key not in facts or (facts[key][1] or _floor) < v[1]):
+                facts[key] = v
+    if "latest_stable" not in facts:
+        facts["latest_stable"] = next(r["latest_stable"] for r in results.values()
+                                      if r.get("latest_stable"))
+    if len(results) == 1:
+        facts["asset_note"] = next(iter(results.values())).get("asset_note")
+    else:
+        facts["asset_note"] = "; ".join(f"[{fg}] {r['asset_note']}"
+                                        for fg, r in sorted(results.items())
+                                        if r.get("asset_note"))
 
     def fmt(pair):
         if not pair: return "?"
@@ -254,14 +347,35 @@ def main():
     lv, ld = facts.get("latest_stable", (None, None))
     print(f"packaged:       {packaged} ({pd.date() if pd else 'date unknown'})")
     print(f"latest stable:  {fmt(facts.get('latest_stable'))}")
+    if len(results) > 1:
+        for fg, r in sorted(results.items()):
+            print(f"  [{fg}] latest stable: {fmt(r.get('latest_stable'))}")
     if facts.get("latest_tag") and facts["latest_tag"] != facts.get("latest_stable"):
         print(f"latest tag:     {fmt(facts.get('latest_tag'))}")
     if facts.get("head_date"):
         print(f"upstream HEAD:  {facts['head_date'].date()} (snapshot package — compare by commit date)")
     if facts.get("asset_note"):
         print(f"release assets: {facts['asset_note']}")
+    if anitya_v:
+        print(f"anitya:         {anitya_v} ({anitya_how}, release-monitoring.org)")
+        if lv and _anitya.vercmp(anitya_v, lv) == 1:
+            print(f"WARNING: release-monitoring.org knows a NEWER stable "
+                  f"({anitya_v}) than this forge probe found ({lv}) — check the "
+                  f"project on release-monitoring.org before trusting CURRENT")
 
     # ---- verdict ----
+    # Anitya sees releases the forge scans can miss (and vice versa): a
+    # forge-side CURRENT only stands if release-monitoring.org doesn't know a
+    # strictly newer stable.
+    def anitya_newer(v):
+        return anitya_v and _anitya and _anitya.vercmp(anitya_v, v or "") == 1
+
+    def anitya_elevate():
+        print(f"VERDICT: UPDATE-CANDIDATE — forge source(s) look CURRENT but "
+              f"release-monitoring.org knows a newer stable ({anitya_v}); anitya "
+              f"has NO dates, verify the tag/upload date by hand before acting")
+        sys.exit(1)
+
     if facts.get("head_date") and pd:          # snapshot package
         if facts["head_date"].date() > pd.date():
             print(f"VERDICT: UPDATE-CANDIDATE — upstream HEAD ({facts['head_date'].date()}) "
@@ -270,10 +384,14 @@ def main():
         print("VERDICT: CURRENT (snapshot at upstream HEAD)")
         sys.exit(0)
     if norm(lv or "") == norm(packaged or ""):
+        if anitya_newer(packaged):
+            anitya_elevate()
         print("VERDICT: CURRENT")
         sys.exit(0)
     if pd and ld:
         if pd == ld:
+            if anitya_newer(packaged):
+                anitya_elevate()
             print("VERDICT: CURRENT (packaged tag and latest stable share the same date)")
             sys.exit(0)
         if ld > pd:
