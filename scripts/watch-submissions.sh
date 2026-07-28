@@ -1,11 +1,13 @@
 #!/bin/bash
 # watch-submissions.sh — cron-friendly DELTA watcher for your submissions:
-# snapshots your ACTIVE OBS submit requests (states new,review; roles=creator)
-# plus your OPEN src.opensuse.org (Gitea) PRs, diffs against the saved
-# baseline, prints only the delta, then refreshes the baseline. Complements
-# sr-status.py: that renders the full current status; this answers "what
-# CHANGED since the last firing?" cheaply enough to run from a cron/scheduled
-# prompt without spamming (NOCHANGE is the common case — stay silent on it).
+# snapshots your ACTIVE OBS submit requests (states new,review; roles=creator),
+# INCOMING requests others directed at packages/projects you maintain
+# (roles=maintainer,reviewer, creator != you), plus your OPEN src.opensuse.org
+# (Gitea) PRs; diffs each set against the saved baseline, prints only the
+# delta, then refreshes the baseline. Complements sr-status.py: that renders
+# the full current status; this answers "what CHANGED since the last firing?"
+# cheaply enough to run from a cron/scheduled prompt without spamming
+# (NOCHANGE is the common case — stay silent on it).
 #
 # Output protocol (stable — scheduled-prompt playbooks key on the first line):
 #   BASELINE-INIT      first run; snapshot saved, nothing to diff
@@ -14,17 +16,22 @@
 #                        NEW SR <id> <pkg> [state]       entered the active set
 #                        SR <id> <pkg>: staging A -> B   staging (re)assignment
 #                        RESOLVE SR <id> <pkg> (...)     left new/review
+#                        NEW INCOMING SR <id> <pkg> from <creator> [state]
+#                        RESOLVE INCOMING SR <id> <pkg> (...)
 #                        NEW PR <repo>#<n>
 #                        RESOLVE PR <repo>#<n> '<title>' (no longer open)
 #   WATCH-ERROR ...    query failure; baseline untouched (exit 2)
 #
 # "RESOLVE" means the item left the watched set; the CALLER fetches the final
 # state (osc request show <id> / tea api .../pulls/<n> — accepted/declined/
-# revoked vs merged/closed). The watcher itself stays one-API-call-per-leg
-# cheap and does not chase resolutions.
+# revoked vs merged/closed). For NEW INCOMING the caller reviews the request
+# (osc request show --diff <id>) and applies the accept/decline policy. The
+# watcher itself stays one-API-call-per-leg cheap and does not chase
+# resolutions.
 #
 # Usage: watch-submissions.sh [--user U] [--login GITEA_LOGIN]
 #                             [--state-dir DIR] [--allow-empty] [--no-prs]
+#                             [--no-incoming]
 #   --user        OBS account (default: osc whois)
 #   --login       tea login name for the Gitea leg (default: src.opensuse.org)
 #   --state-dir   where the baseline JSON lives
@@ -32,17 +39,23 @@
 #   --allow-empty accept an empty OBS active set as truth. Default is to treat
 #                 it as a failed query and keep the baseline — right for anyone
 #                 who usually has SRs in flight, wrong the day you have none.
+#                 (Applies to the OUTGOING set only: an empty incoming set is
+#                 perfectly normal and always trusted.)
 #   --no-prs      skip the Gitea leg entirely
+#   --no-incoming skip the incoming-requests leg entirely
 #
-# Failure semantics: an OBS query failure (or empty set without --allow-empty)
-# aborts with WATCH-ERROR, baseline untouched. A Gitea-leg failure does NOT
-# invent "RESOLVE PR" lines: the PR diff is skipped for this run, the baseline
-# keeps its previous PR set, and a "! gitea leg unavailable" note is appended.
+# Failure semantics: an OBS outgoing-query failure (or empty set without
+# --allow-empty) aborts with WATCH-ERROR, baseline untouched. The incoming and
+# Gitea legs fail SOFT: their diff is skipped for this run, the baseline keeps
+# that leg's previous set, and a "! <leg> unavailable" note is appended —
+# a leg failure never fabricates RESOLVE lines. A pre-existing baseline
+# without the incoming set (written by an older version) is upgraded silently:
+# the current incoming set is recorded without reporting it all as NEW.
 set -o pipefail
 
 OBSUSER="" LOGIN="src.opensuse.org"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/osc-submission-watch"
-ALLOW_EMPTY=0 NO_PRS=0
+ALLOW_EMPTY=0 NO_PRS=0 NO_INCOMING=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "$0"; exit 0;;
@@ -51,6 +64,7 @@ while [ $# -gt 0 ]; do
     --state-dir) STATE_DIR="$2"; shift 2;;
     --allow-empty) ALLOW_EMPTY=1; shift;;
     --no-prs) NO_PRS=1; shift;;
+    --no-incoming) NO_INCOMING=1; shift;;
     *) echo "unknown argument: $1 (see --help)" >&2; exit 2;;
   esac
 done
@@ -72,6 +86,13 @@ osc api "/request?view=collection&roles=creator&user=$OBSUSER&states=new,review&
     >"$TMP/obs.xml" 2>"$TMP/obs.err"
 OBS_RC=$?
 
+INCOMING_RC=1
+if [ "$NO_INCOMING" = 0 ]; then
+  osc api "/request?view=collection&roles=maintainer,reviewer&user=$OBSUSER&states=new,review&limit=250" \
+      >"$TMP/incoming.xml" 2>"$TMP/incoming.err"
+  INCOMING_RC=$?
+fi
+
 GITEA_RC=1
 if [ "$NO_PRS" = 0 ]; then
   tea api --login "$LOGIN" "/repos/issues/search?type=pulls&state=open&created=true&limit=50" \
@@ -79,13 +100,43 @@ if [ "$NO_PRS" = 0 ]; then
   GITEA_RC=$?
 fi
 
-OBS_RC=$OBS_RC GITEA_RC=$GITEA_RC ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS \
-BASE="$BASE" TMP="$TMP" python3 - <<'PYEOF'
+OBS_RC=$OBS_RC INCOMING_RC=$INCOMING_RC GITEA_RC=$GITEA_RC \
+ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING \
+OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" python3 - <<'PYEOF'
 import json, os, sys, xml.etree.ElementTree as ET
 
 tmp, base_path = os.environ["TMP"], os.environ["BASE"]
 allow_empty = os.environ["ALLOW_EMPTY"] == "1"
 no_prs = os.environ["NO_PRS"] == "1"
+no_incoming = os.environ["NO_INCOMING"] == "1"
+obsuser = os.environ["OBSUSER"]
+
+def parse_requests(path):
+    """id -> {pkg,state,staging,creator} for a request collection document."""
+    out = {}
+    root = ET.parse(path).getroot()
+    for r in root.findall("request"):
+        rid = r.get("id")
+        st = r.find("state")
+        acts = r.findall("action")
+        pkgs = []
+        for act in acts:
+            tgt, src = act.find("target"), act.find("source")
+            p = ((tgt.get("package") if tgt is not None else None)
+                 or (src.get("package") if src is not None else None))
+            if p and p not in pkgs:
+                pkgs.append(p)
+        pkg = (pkgs[0] + (f" +{len(pkgs)-1} more" if len(pkgs) > 1 else "")) if pkgs else "?"
+        stg = ""
+        for rv in r.findall("review"):
+            if rv.get("state") == "new":
+                by = rv.get("by_project") or ""
+                if "Staging" in by:
+                    parts = by.split(":")
+                    stg = parts[-1] if parts[-2] == "Staging" else ":".join(parts[-2:])
+        out[rid] = {"pkg": pkg, "state": st.get("name") if st is not None else "?",
+                    "staging": stg, "creator": r.get("creator") or "?"}
+    return out
 
 # ---- OBS leg (hard requirement: no diff without a trusted active set) ----
 if os.environ["OBS_RC"] != "0":
@@ -94,35 +145,27 @@ if os.environ["OBS_RC"] != "0":
           f"({err[-1] if err else 'osc api rc!=0'}); baseline untouched")
     sys.exit(2)
 try:
-    root = ET.parse(f"{tmp}/obs.xml").getroot()
+    obs = parse_requests(f"{tmp}/obs.xml")
 except ET.ParseError as e:
     print(f"WATCH-ERROR: OBS response not parseable ({e}); baseline untouched")
     sys.exit(2)
-
-obs = {}
-for r in root.findall("request"):
-    rid = r.get("id")
-    st = r.find("state")
-    act = r.find("action")
-    tgt = act.find("target") if act is not None else None
-    src = act.find("source") if act is not None else None
-    pkg = ((tgt.get("package") if tgt is not None else None)
-           or (src.get("package") if src is not None else "?"))
-    # pending staging review (by_project ...Staging:adi:NN) = current assignment
-    stg = ""
-    for rv in r.findall("review"):
-        if rv.get("state") == "new":
-            by = rv.get("by_project") or ""
-            if "Staging" in by:
-                parts = by.split(":")
-                # ...Staging:adi:40 -> adi:40, ...Staging:G -> G
-                stg = parts[-1] if parts[-2] == "Staging" else ":".join(parts[-2:])
-    obs[rid] = {"pkg": pkg, "state": st.get("name") if st is not None else "?",
-                "staging": stg}
 if not obs and not allow_empty:
     print("WATCH-ERROR: OBS active set came back empty (likely a query failure; "
           "pass --allow-empty if you really have no open SRs); baseline untouched")
     sys.exit(2)
+
+# ---- incoming leg (soft: a failure skips the diff, never fakes RESOLVEs) ----
+# roles=maintainer,reviewer returns requests whose TARGET the user maintains /
+# is asked to review; the user's own creations are removed so nothing shows up
+# in both sets. Empty is normal here — no --allow-empty guard.
+incoming, incoming_ok = {}, False
+if not no_incoming and os.environ["INCOMING_RC"] == "0":
+    try:
+        incoming = {rid: v for rid, v in parse_requests(f"{tmp}/incoming.xml").items()
+                    if v["creator"] != obsuser}
+        incoming_ok = True
+    except ET.ParseError:
+        incoming_ok = False
 
 # ---- Gitea leg (soft: a failure skips the PR diff, never fakes RESOLVEs) ----
 gitea, gitea_ok = {}, False
@@ -143,10 +186,12 @@ if os.path.exists(base_path):
         base = None  # corrupt baseline: reinitialize below
 
 if base is None:
-    json.dump({"obs": obs, "gitea": gitea if gitea_ok else {}},
+    json.dump({"obs": obs, "incoming": incoming if incoming_ok else {},
+               "gitea": gitea if gitea_ok else {}},
               open(base_path, "w"), indent=1)
     print("BASELINE-INIT: first snapshot saved"
-          + ("" if gitea_ok or no_prs else " (OBS only — gitea leg unavailable)"))
+          + ("" if gitea_ok or no_prs else " (gitea leg unavailable)")
+          + ("" if incoming_ok or no_incoming else " (incoming leg unavailable)"))
     sys.exit(0)
 
 changes = []
@@ -161,6 +206,22 @@ for rid, v in bo.items():
     if rid not in obs:
         changes.append(f"RESOLVE SR {rid} {v['pkg']} "
                        "(left review; fetch final state: accepted/declined/revoked)")
+
+# Incoming diff. A baseline written by an older script version has no
+# "incoming" key — upgrade silently (record, don't report a NEW flood).
+bi = base.get("incoming")
+incoming_upgraded = incoming_ok and bi is None
+if bi is None:
+    bi = {}
+if incoming_ok and not incoming_upgraded:
+    for rid, v in incoming.items():
+        if rid not in bi:
+            changes.append(f"NEW INCOMING SR {rid} {v['pkg']} "
+                           f"from {v['creator']} [{v['state']}]")
+    for rid, v in bi.items():
+        if rid not in incoming:
+            changes.append(f"RESOLVE INCOMING SR {rid} {v['pkg']} "
+                           "(left review; fetch final state: accepted/declined/revoked)")
 
 bg = base.get("gitea", {})
 if gitea_ok:
@@ -177,7 +238,13 @@ for c in changes:
     print("  * " + c)
 if not gitea_ok and not no_prs:
     print("  ! gitea leg unavailable this run (PR diff skipped; PR baseline kept)")
+if not incoming_ok and not no_incoming:
+    print("  ! incoming leg unavailable this run (diff skipped; baseline kept)")
+if incoming_upgraded:
+    print("  ! incoming leg initialized (baseline upgraded; deltas start next run)")
 
-json.dump({"obs": obs, "gitea": gitea if gitea_ok else bg},
+json.dump({"obs": obs,
+           "incoming": incoming if incoming_ok else bi,
+           "gitea": gitea if gitea_ok else bg},
           open(base_path, "w"), indent=1)
 PYEOF
