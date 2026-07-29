@@ -163,7 +163,11 @@ tbody tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .rank{font-family:var(--mono);font-size:12px;color:var(--dim);width:44px;
   font-variant-numeric:tabular-nums;text-align:right;padding-right:16px}
 tbody tr:nth-child(-n+3) .rank{color:var(--accent);font-weight:600}
-.who{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;min-width:190px}
+/* NEVER put display:flex on a <td> -- it takes the cell out of the table box
+   model and Firefox then draws a stray empty block with a rule under it, and
+   stacks inline chips vertically. Keep the cell a table-cell; flex a wrapper. */
+.fx{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.who{min-width:190px}
 .handle{font-family:var(--mono);font-size:14px;font-weight:500}
 .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
   padding:2px 6px;border:1px solid var(--line);color:var(--dim);border-radius:2px}
@@ -173,7 +177,7 @@ tbody tr:nth-child(-n+3) .rank{color:var(--accent);font-weight:600}
 .pk{color:var(--muted);font-size:13px}
 .volume{width:132px;min-width:104px}
 .bar{display:block;height:7px;width:var(--w);background:var(--accent);opacity:.82;border-radius:1px}
-.axis2{display:flex;align-items:baseline;gap:9px;white-space:nowrap}
+.axis2{white-space:nowrap}
 .chip{font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;
   padding:3px 7px;border-radius:2px;border:1px solid currentColor}
 .chip.broad,.chip.steady{color:var(--accent)}
@@ -231,14 +235,14 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
         unit = "d" if gran == "day" else "mo"
         trs.append(f'''<tr class="{cls}">
 <td class="rank">{i}</td>
-<td class="who"><span class="handle">{html.escape(r["user"])}</span>{tag}</td>
+<td class="who"><span class="fx"><span class="handle">{html.escape(r["user"])}</span>{tag}</span></td>
 <td class="num">{r["srs"]:,}</td>
 <td class="volume"><span class="bar" style="--w:{r["srs"]/mx*100:.1f}%"></span></td>
 <td class="num pk">{r["pkgs"]:,}</td>
-<td class="axis2"><span class="chip {r["shape"]}">{r["shape"]}</span>\
-<span class="ratio">{r["ratio"]:.1f}<span class="per">/pkg</span></span></td>
-<td class="axis2"><span class="chip {r["rhythm"]}">{r["rhythm"]}</span>\
-<span class="ratio">{r["active"]}<span class="per">/{nb}{unit}</span></span></td>
+<td class="axis2"><span class="fx"><span class="chip {r["shape"]}">{r["shape"]}</span>\
+<span class="ratio">{r["ratio"]:.1f}<span class="per">/pkg</span></span></span></td>
+<td class="axis2"><span class="fx"><span class="chip {r["rhythm"]}">{r["rhythm"]}</span>\
+<span class="ratio">{r["active"]}<span class="per">/{nb}{unit}</span></span></span></td>
 <td class="num pk">{r["peak"]}</td>
 <td class="cad">{sparkline(r["spark"], r["rhythm"], weekend_idx)}</td>
 </tr>''')
