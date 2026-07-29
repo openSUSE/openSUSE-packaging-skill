@@ -11,6 +11,11 @@
 #   4. for a git/scmsync devel project: open PRs on the devel Gitea repo
 #      (MANDATORY — an in-flight update there is a PR, not an SR; an osc-only
 #      check gives a false PROCEED)
+#   5. a `reviewer` role (package or project _meta) held by someone OTHER than
+#      you -> prints a REVIEWER ROLE notice. That person asked to see changes
+#      before they land, so the update must go as a BRANCH + SR to the devel
+#      project, never a direct commit, and you must not accept your own SR --
+#      maintainer rights are not permission to bypass their gate.
 #
 # Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U]
 #   target-version    the version you intend to package (optional; without it
@@ -86,6 +91,24 @@ if [ -n "$devel" ]; then
   fi
   oapi "/source/$devel/$pkg/$pkg.changes" || fail "could not read $devel/$pkg/$pkg.changes"
   [ "$O_404" = 0 ] && { echo "devel .changes top entry:"; printf '%s\n' "$O_OUT" | sed -n '1,4p' | sed 's/^/    /'; }
+  # A reviewer role held by someone else means SUBMIT, never commit directly:
+  # that person asked to see changes before they land, and a direct commit
+  # bypasses the gate even where maintainer rights would allow it.
+  reviewers=""
+  for meta in "/source/$devel/$pkg/_meta" "/source/$devel/_meta"; do
+    oapi "$meta" || continue
+    [ "$O_404" = 0 ] || continue
+    reviewers="$reviewers$(printf '%s\n' "$O_OUT" \
+      | grep -oE '<(person|group) [^>]*role="reviewer"[^>]*/?>' \
+      | grep -oE '(userid|groupid)="[^"]*"' | cut -d'"' -f2)
+"
+  done
+  reviewers="$(printf '%s\n' "$reviewers" | grep -vx "${user:-__none__}" | grep -v '^$' | sort -u | tr '\n' ' ')"
+  if [ -n "$reviewers" ]; then
+    echo "REVIEWER ROLE:  $reviewers— do NOT commit to $devel directly."
+    echo "                Branch, then: osc sr <branch-prj> $pkg $devel"
+    echo "                and leave the accept to them (see references/submit-watch.md)."
+  fi
 fi
 targetprjver=""
 if [ "$newpkg" = 0 ]; then
