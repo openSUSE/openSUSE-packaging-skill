@@ -28,7 +28,7 @@
 
 If the devel version already matches and you only have *cosmetic* spec-cleaner changes left, do **not** file a cleanup-only SR over an in-flight version SR — it races the version SR and earns a "conflict in file" decline. Hold the cleanup until the version SR lands, or drop it.
 
-**Real case (the rule's origin):** asked to "update python-ruff (0.15.20) and python-uv (0.11.25)", an agent branched both, re-bumped, re-vendored, and ran two heavy native Rust builds — only to discover *afterwards* that both versions were **already committed to devel by the maintainers** (ruff by mimi_vx, uv by mimi_vx + fvogt) **and already submitted to Factory** (SR 1362328 ruff, SR 1362488 uv, both in review). The entire update+build was wasted; the only net delta was a cosmetic cleanup that would have conflicted with the in-flight SRs. A 30-second pre-flight `osc api .../<pkg>.spec | grep Version` + SR check would have caught it before any branch or build.
+**Real case (the rule's origin):** asked to update two Rust-based Python packages, an agent branched both, re-bumped, re-vendored, and ran two heavy native Rust builds — only to discover *afterwards* that both versions were **already committed to devel by their co-maintainers** and **already submitted to Factory**, both SRs in review. The entire update+build was wasted; the only net delta was a cosmetic cleanup that would have conflicted with the in-flight SRs. A 30-second pre-flight `osc api .../<pkg>.spec | grep Version` + SR check would have caught it before any branch or build.
 
 `scripts/preflight.sh` mechanizes this whole check (exit 0 PROCEED / 3 STOP / 4 FORWARD).
 
@@ -97,14 +97,14 @@ When a new package drags in a chain of unpackaged deps (e.g. a Python app needin
 - **If you do iterate with local `osc build` on several cone packages at once, give each its own `--root=/var/tmp/build-root/<uniq>`** — concurrent local builds share the default buildroot and corrupt each other mid-init (`.init_b_cache` rpms vanishing). The server-side home:-project parallel build above sidesteps this entirely; the per-`--root` trick is only for the occasional local iteration.
 - When the whole cone is green, SR each package to `devel:languages:python` (leaves first so deps exist in the target). If the user wants to maintain them, add the user to each package `_meta` (`<person userid="…" role="maintainer"/>`) **and** say so in the SR message.
 
-### Deployment cone in `home:pluskalm` — links to devel, host-installable repo
+### Deployment cone in `home:<user>` — links to devel, host-installable repo
 
-`home:pluskalm` is NOT a scratch area: it is the **curated deployment project** for tools the user runs from RPM on the host (the MCP servers: `skillspector`/`-mcp` + `bugzilla-mcp` and their dependency cones). Rules:
+Your top-level `home:<user>` is NOT a scratch area. Treat it as the **curated deployment project** for the tools you actually install from RPM on your own machine, and keep it that way:
 
-- **Every package is an `osc linkpac` `_link` to the devel project where it is maintained** (devel:tools, devel:languages:python, science:machinelearning, science:machinelearning:mcp, …) — never a copypac/branched copy. Links auto-track devel updates, so the deploy repo stays current without manual bumps.
-- **Repos:** `16.0` (path `openSUSE:Leap:16.0/standard`, aarch64 — the host's install repo, added to zypper from `https://download.opensuse.org/repositories/home:/pluskalm/16.0/`) and `openSUSE_Tumbleweed` (x86_64+aarch64 canary).
-- **Filling the Leap dependency gap:** after linking the top packages, iterate the `16.0` repo's `unresolvable` states — for each `nothing provides <binary>`, map the binary to its Factory source package, find its devel project (`osc develproject`), and `linkpac` that too. Do NOT link anything Leap 16.0 already provides (an unresolvable on a package Leap *does* have = version-floor conflict → real blocker, report it). Repeat until zero unresolvable, watch to green with `cone-status.sh home:pluskalm 16.0 aarch64`.
-- **Transient/experimental work goes to `home:pluskalm:scratch`** (or another `home:pluskalm:<topic>` subproject) — never accumulate one-off packages in `home:pluskalm` itself. Scratch subprojects are throwaway; the deploy project is stable.
+- **Every package is an `osc linkpac` `_link` to the devel project where it is maintained** — never a copypac/branched copy. Links auto-track devel updates, so the deploy repo stays current without manual bumps.
+- **Repos:** one matching the distro/arch you deploy on (the repo you add to zypper, `https://download.opensuse.org/repositories/home:/<user>/<repo>/`), plus a rolling `openSUSE_Tumbleweed` canary so upstream breakage surfaces before it reaches your stable target.
+- **Filling the stable-distro dependency gap:** after linking the top packages, iterate the deploy repo's `unresolvable` states — for each `nothing provides <binary>`, map the binary to its Factory source package, find its devel project (`osc develproject`), and `linkpac` that too. Do NOT link anything the target distro already provides (an unresolvable on a package it *does* have = version-floor conflict → a real blocker, report it). Repeat until zero unresolvable, then watch to green with `cone-status.sh <project> <repo> <arch>`.
+- **Transient/experimental work goes to `home:<user>:scratch`** (or a `home:<user>:<topic>` subproject per effort) — never accumulate one-off packages in the top-level project. Scratch subprojects are throwaway; the deploy project is stable.
 
 ## Updating a package that uses a source service (`_service` / tar_scm)
 
