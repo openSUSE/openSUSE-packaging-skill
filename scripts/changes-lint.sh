@@ -3,7 +3,7 @@
 # the whole-file companion to changes-prepend.sh (which only verifies its
 # own insertion). Run as part of the Block-3 pre-SR gate: a human reviewer
 # decline for "format of the changes entries" (real case: python-langsmith
-# SR 1363554, darix, "missing newlines") costs a full review round-trip
+# a real decline over "missing newlines") costs a full review round-trip
 # that this catches locally in milliseconds.
 #
 # Usage: changes-lint.sh [--entries N | --all] <file>.changes [more.changes ...]
@@ -25,7 +25,7 @@
 #       with no summary of the actual changes (add substantive bullets, or
 #       state '* No user-visible changes' when a release truly has none) —
 #       the content decline reviewers reject over (real case: langsmith
-#       SR 1367528, darix, "modify the changelog entry to contain more
+#       a real decline: "modify the changelog entry to contain more
 #       details"); the format checks above pass on such an entry, so this
 #       is the gate that catches it
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage.
