@@ -91,7 +91,18 @@ git rm -rqf . >/dev/null 2>&1 || true
 git checkout "origin/factory" -- .
 git add -A
 git commit -q -m "Update to $fver (sync $leap with Factory)"
-git lfs fetch --all origin >/dev/null 2>&1 || { echo "git lfs fetch failed — push would lose LFS objects" >&2; exit 2; }
+# Fetch only what this push needs: the tree above is origin/factory verbatim, so
+# its objects are the complete set. NOT "--all" -- that walks every ref in the
+# repo, and pool packages routinely have pruned objects on old product branches
+# ("No such OID"), which failed the sync over objects the push never touches.
+# (Real case: pool/ollama, 4 of 148 objects gone from the 2024 leap branches.)
+git lfs fetch origin factory >/dev/null 2>&1 || { echo "git lfs fetch failed — push would lose LFS objects" >&2; exit 2; }
+# Prove every pointer in the new tree resolves before pushing.
+if missing=$(git lfs fsck --pointers 2>&1 | grep -i 'missing\|corrupt'); then
+  echo "LFS objects missing from the synced tree — refusing to push:" >&2
+  echo "$missing" >&2
+  exit 2
+fi
 
 # --- fork + push (token off argv AND off the remote URL) ---------------------
 # git-lfs does NOT honor http.extraHeader for its batch/upload API, so a
@@ -112,8 +123,24 @@ chmod 600 "$tokfile"; printf '%s' "$tok" > "$tokfile"
 printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "%s" ;;\n  Password*) cat "%s" ;;\nesac\n' \
   "$user" "$tokfile" > "$askpass"
 chmod 700 "$askpass"
-GIT_ASKPASS=$askpass git push -q fork "$br" \
+# Push refs and LFS objects SEPARATELY. Gitea forks do not share the parent's
+# LFS storage, so the pre-push hook wants to upload every object reachable from
+# the branch history — including any pruned on old product branches ("Unable to
+# find source for object ..."), which fails the whole push over objects this
+# sync never touches. --no-verify skips the hook; the explicit --object-id push
+# then uploads exactly the objects of the tree being submitted (fetched and
+# fsck-verified above). The PR is still complete: Gitea resolves LFS reads
+# through the fork network once these objects exist on the fork.
+# (Real case: pool/ollama — refs+5-object push worked where a plain push died
+# on 4 long-pruned OIDs from the 2024 leap branches.)
+GIT_ASKPASS=$askpass git push -q --no-verify fork "$br" \
   || { echo "push to $user/$pkg failed (does the fork exist? see the tea output above)" >&2; exit 2; }
+oids=$(git lfs ls-files -l | awk '{print $1}')
+if [ -n "$oids" ]; then
+  # shellcheck disable=SC2086 — word-splitting the oid list is intended
+  GIT_ASKPASS=$askpass git lfs push --object-id fork $oids \
+    || { echo "LFS object push to $user/$pkg failed — PR would have dangling pointers" >&2; exit 2; }
+fi
 
 body="Sync the $leap branch up to the Factory version $fver (was $lver). Sources are identical to openSUSE:Factory."
 payload=$(python3 -c "import json,sys;print(json.dumps({'head':'$user:$br','base':'$leap','title':'Update to $fver (sync $leap with Factory)','body':sys.argv[1]}))" "$body")
