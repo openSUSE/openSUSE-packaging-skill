@@ -18,15 +18,18 @@
 #   --base FILE  compare against FILE instead of the auto-detected baseline
 #                (useful outside a checkout, or to diff two arbitrary versions)
 #   --amend-top AUTHOR
-#                Also allow the TOPMOST committed entry to grow, provided its
-#                header line contains AUTHOR (e.g. 'Martin Pluskal'). Use this
-#                only for an update already committed to the devel project but
-#                NOT yet accepted into Factory: that entry describes an unreleased
-#                revision, so folding a follow-up fixup into it is correct and
-#                keeps one entry per submission. Everything BELOW that entry is
-#                still required to be byte-for-byte identical, the header line
-#                itself must not change, and a foreign top entry is still refused.
-#                Once the SR is accepted, stop using it — write a new entry.
+#                Also allow the TOPMOST committed entry to be amended — grown,
+#                reworded, or rewritten, date refreshed — provided BOTH the
+#                committed top entry and its replacement carry AUTHOR (e.g.
+#                'Martin Pluskal') in the header. Use this only for an update
+#                already committed to the devel project but NOT yet accepted
+#                into openSUSE:Factory: that entry describes an unreleased
+#                revision, so it is a draft, not history, and keeping ONE
+#                coherent entry per submission beats stacking fixup bullets.
+#                Everything BELOW the top entry is still required to be
+#                byte-for-byte identical, and a foreign top entry is still
+#                refused. Once the SR is accepted, stop using it — the entry
+#                became history; write a new one.
 #   Baseline auto-detection order: .osc/sources/<name> (classic osc checkout),
 #   .osc/<name> (older osc), then `git show HEAD:<name>` (scmsync/git package).
 #   A package with no prior committed .changes (new package) passes trivially.
@@ -82,25 +85,22 @@ first_entry_body() {               # $1 = file -> body lines of entry 1 (after h
 }
 
 # True iff: (a) everything from the baseline's SECOND entry onward is byte-identical
-# in the working file, (b) both top entries share the exact same header line,
-# (c) that header names $3 (the caller's own author), and (d) the top entry only
-# GREW — every baseline body line is still present, in order (no rewording or
-# deletion of what was already committed).
+# in the working file, (b) BOTH top-entry headers name $3 (the caller's own
+# author — the entry being replaced must be the caller's, and so must its
+# replacement), and (c) the working top entry is non-empty. The top entry's
+# body may be freely reworded, shrunk, or grown: it describes an update that
+# has not been accepted into openSUSE:Factory yet, so its text is not history —
+# it is a draft. The date on the header may also be refreshed. Everything that
+# IS history (the second entry down) stays byte-protected.
 amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
   local work=$1 base=$2 author=$3 wh bh
   wh=$(first_entry_header "$work"); bh=$(first_entry_header "$base")
-  [ -n "$bh" ] && [ "$wh" = "$bh" ] || return 1
-  case "$wh" in *"$author"*) ;; *) return 1 ;; esac
+  [ -n "$bh" ] && [ -n "$wh" ] || return 1
+  case "$bh" in *"$author"*) ;; *) return 1 ;; esac   # replaced entry is the caller's
+  case "$wh" in *"$author"*) ;; *) return 1 ;; esac   # and so is the replacement
+  [ -n "$(first_entry_body "$work" | grep -v '^[[:space:]]*$' || true)" ] || return 1
   diff -q <(rest_from_second_entry "$base") <(rest_from_second_entry "$work") \
-       >/dev/null 2>&1 || return 1
-  # Reject any '<' line — that is committed text removed or reworded. Capture
-  # the diff into a variable first: under `set -o pipefail` a `diff | grep -q`
-  # pipeline reports diff's own non-zero "files differ" status, which would
-  # invert this test and silently allow deletions.
-  local removed
-  removed=$(diff <(first_entry_body "$base") <(first_entry_body "$work") \
-            | grep '^<' || true)
-  [ -z "$removed" ]
+       >/dev/null 2>&1
 }
 
 rc=0
@@ -117,7 +117,7 @@ for work in "$@"; do
     echo "$work: OK — all pre-existing entries byte-for-byte intact (insertion-only)"
   elif [ -n "$amend_author" ] && amend_top_ok "$work" "$base" "$amend_author"; then
     echo "$work: OK — everything below the top entry is intact; the top entry is" \
-         "yours and only grew (--amend-top: allowed for a not-yet-accepted update)"
+         "yours (--amend-top: amendable while the update is not yet accepted)"
   else
     echo "$work: ERROR — the committed .changes is not an exact suffix of the new file;" >&2
     echo "  a previously-committed entry was modified, reordered, or deleted." >&2
