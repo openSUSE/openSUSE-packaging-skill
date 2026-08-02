@@ -38,3 +38,7 @@ inline in the main session or paste it as a standalone session prompt.
 Harnesses with native skill/sub-agent support: place (or symlink) the repo where the harness
 discovers skills, and register the `agents/*.md` playbooks wherever it discovers agents so the
 three blocks become first-class delegatable agents.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
