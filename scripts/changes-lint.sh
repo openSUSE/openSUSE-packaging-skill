@@ -11,7 +11,9 @@
 #                the entry your SR adds; use the number of entries new
 #                to the SR when superseding). Historical entries routinely
 #                violate today's rules and must never be retro-edited, so
-#                they are out of scope by default.
+#                they are out of scope by default — except for the blank
+#                line closing the newest entry, which sits on the boundary
+#                and IS checked (see the comment at `limit`).
 #   --all        lint every entry + file-global checks (EOF newline,
 #                trailing blank lines). For audits, not the gate.
 #   Checks per entry:
@@ -60,6 +62,16 @@ if not lines or not lines[0].startswith("---"):
 seps = [i for i, l in enumerate(lines, 1) if l.startswith("---")]
 if nent and len(seps) > nent:
     limit = seps[nent] - 1      # stop before the (nent+1)-th separator
+    # ...but that separator is the ANCHOR for the "blank line before the
+    # separator" check below, so stopping short of it blinds --entries to a
+    # missing blank line at the END of the newest entry — precisely what a
+    # reviewer sees. (Real case: python-cyclopts 4.22.4, SR 1369130: the gate
+    # said clean, mcalabkova added the newline by hand and superseded it.)
+    # So check that one boundary explicitly here. Only the blank line is in
+    # scope — the separator's own dash count / whitespace belong to the older
+    # entry and must not be retro-flagged.
+    if seps[nent] >= 2 and lines[seps[nent] - 2].strip() != "":
+        bad.append((seps[nent] - 1, "missing blank line before the separator"))
 else:
     limit = len(lines)
     if nent == 0:               # --all: file-global checks
