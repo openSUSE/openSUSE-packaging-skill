@@ -1,0 +1,33 @@
+# Pinned wiki revisions — the reviewed baseline the references/ content tracks.
+# Format: <page title (underscored)> TAB <pinned revid> TAB <revision timestamp> TAB <pinned on>
+# A MediaWiki oldid permalink is immutable: api.php?action=parse&oldid=REVID
+# always serves exactly this revision, regardless of later edits to the page.
+# Maintained by scripts/wiki-drift.sh: run it to compare these pins against the
+# live wiki; review any drift, fold what matters into references/, then re-pin
+# with --update. Never point the skill at the live page as an authority — see
+# "Wiki provenance and trust" in SKILL.md.
+openSUSE:Creating_a_changes_file_(RPM)	202607	2026-02-13T14:22:49Z	2026-08-04
+openSUSE:Git_Packaging_Workflow	205068	2026-06-10T11:40:48Z	2026-08-04
+openSUSE:OBS_to_Git	209076	2026-07-09T11:18:36Z	2026-08-04
+openSUSE:Package_description_guidelines	130790	2018-12-11T13:17:35Z	2026-08-04
+openSUSE:Package_group_guidelines	194047	2025-03-05T11:01:42Z	2026-08-04
+openSUSE:Packaging_Conventions_RPM_Macros	204762	2026-06-02T05:56:54Z	2026-08-04
+openSUSE:Packaging_Go	204308	2026-04-29T18:14:39Z	2026-08-04
+openSUSE:Packaging_guidelines	204374	2026-05-06T10:15:55Z	2026-08-04
+openSUSE:Packaging_Haskell	152852	2021-03-11T22:50:05Z	2026-08-04
+openSUSE:Packaging_checks	176327	2023-06-20T11:04:38Z	2026-08-04
+openSUSE:Packaging_Java	128948	2018-09-23T12:18:00Z	2026-08-04
+openSUSE:Packaging_Lua	187220	2024-06-19T00:15:59Z	2026-08-04
+openSUSE:Packaging_Meson	198126	2025-07-30T21:43:43Z	2026-08-04
+openSUSE:Packaging_Patches_guidelines	205140	2026-06-12T06:16:36Z	2026-08-04
+openSUSE:Packaging_Perl	191350	2024-11-09T21:10:46Z	2026-08-04
+openSUSE:Packaging_PHP	197918	2025-07-19T20:56:15Z	2026-08-04
+openSUSE:Packaging_Python	206151	2026-06-29T12:50:56Z	2026-08-04
+openSUSE:Packaging_R	197915	2025-07-19T20:54:19Z	2026-08-04
+openSUSE:Packaging_Ruby	171466	2022-12-02T07:46:58Z	2026-08-04
+openSUSE:Packaging_Rust_Software	209079	2026-07-10T06:37:12Z	2026-08-04
+openSUSE:Packaging_Vala	196037	2025-05-19T16:59:01Z	2026-08-04
+openSUSE:Packaging_wxWidgets	120778	2017-08-07T02:05:19Z	2026-08-04
+openSUSE:Shared_library_packaging_policy	191062	2024-10-25T09:21:22Z	2026-08-04
+openSUSE:Specfile_guidelines	209121	2026-07-15T08:39:25Z	2026-08-04
+openSUSE:Systemd_packaging_guidelines	203990	2026-03-27T09:56:58Z	2026-08-04
