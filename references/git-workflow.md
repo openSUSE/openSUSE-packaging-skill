@@ -100,6 +100,40 @@ Before submitting, confirm the merge actually synced into OBS — `osc cat <obs-
 
 **Skip `osc results` before the SR for git-tracked packages.** When the package lives in a git-based devel project (the Git packaging workflow), build verification is the PR/autogits bot's job — it already built the change and posted results on the Gitea PR before it merged. Polling `osc results <obs-devel-project> <pkg>` before `osc sr` is therefore the wrong check for git-tracked packages; skip it and go straight from "merge synced into OBS" to `osc sr`. (The pre-SR `osc results` poll still applies to **classic osc-checkout** devel projects, where OBS is the only thing that built your commit.)
 
+### A PR is NOT built by OBS unless that repo opted in — check before you promise results
+
+The bot-built-it assumption above holds for **autogits-managed** devel repos. It does **not** hold generally: a `src.opensuse.org` repo gets its PRs built only if someone wired up the SCM/CI integration, and plenty of scmsync-backed devel repos never did. Checked across `science/*`, `editors/*`, `pool/*` and several `devel:*`: none had an `.obs/` directory at all. So when a maintainer says *"I don't see any build results"*, the answer is usually **nothing builds PRs here** — say that instead of hunting for a broken bot.
+
+Two-call tell:
+
+```
+curl -s .../api/v1/repos/<org>/<pkg>/contents/.obs          # 404 → no integration
+curl -s .../api/v1/repos/<org>/<pkg>/commits/<sha>/statuses  # []  → nothing ever reported
+```
+
+Switching it on takes **three** pieces, and **only the first can live in the repo**:
+
+1. `.obs/workflows.yml` on the **target** branch (the path is overridable in the token config).
+2. An **OBS workflow token**, created by someone who may write to the target project: `osc token --create --operation workflow --scm-token <gitea-token>`.
+3. A **webhook** on the Gitea repo pointing at that token's payload URL, subscribed to the Pull Request event — needs repo-admin rights.
+
+So a drive-by contributor can only ever *propose* the YAML; a maintainer must finish it. **Say that plainly when offering one** rather than implying the PR will start building on merge.
+
+```yaml
+build_pull_request:
+  steps:
+    - branch_package:
+        source_project: <devel-project>
+        source_package: <pkg>
+        target_project: <devel-project>:CI
+  filters:
+    event: pull_request
+```
+
+`target_project` must already exist; each PR lands in `…:PR-<n>`. Other steps: `submit_request`, `link_package`, `configure_repositories`, `rebuild_package`, `set_flags`, `trigger_services`. **For an scmsync package `branch_package` does the right thing** — OBS writes the PR's commit SHA into the branched package's `scmsync` attribute, which triggers the source services and rebuilds every `_multibuild` flavor, then reports back as a commit status. Docs: openbuildservice.org → obs-user-guide → `cha.obs.scm_ci_workflow_integration` (the useful detail is in the code blocks, not the prose).
+
+**Meanwhile, a local build is the only evidence you have** — which is exactly when the "never state a build result you have not read" rule in `references/update-build.md` bites, because the reviewer is taking your word for it.
+
 ### Leap 16.x / SLFO / SLE-15 Backports
 
 Routing AND mechanics live in `references/leap-slfo.md` (single home). One orientation note: the Leap 16.x PR target is the `leap-16.x` branch of **`pool/<pkg>`** — the opposite of the Factory devel-repo rule above.
