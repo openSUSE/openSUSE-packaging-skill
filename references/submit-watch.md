@@ -266,6 +266,40 @@ Even with `-m`, `osc sr` prints a confirmation diff and asks `Create this reques
 
 **Delaying/scheduling an `osc` action (sr, commit, mr) — use a local scheduled wakeup, NOT the remote `/schedule` skill.** When a submit must wait (e.g. a Git-workflow PR needs to merge + sync into OBS before `osc sr` to Factory; see the git-workflow section), schedule a **local session wakeup** to resume and run the osc command. **Do not use the `/schedule` skill (remote cloud routines) for this** — those agents run in an isolated cloud sandbox without your local `~/.config/osc/oscrc` credentials, so they cannot authenticate to `api.opensuse.org`/`api.suse.de` and the `osc sr`/`osc commit`/`osc mr` will fail. Any credential-dependent osc/git-push action belongs in the *local* session. Have the scheduled step **verify the precondition before acting** — e.g. `osc cat <devel-project> <pkg> <pkg>.spec | grep ^Version:` shows the new version (PR merged + synced) — and skip/report rather than submit a stale revision if it hasn't. (Real case: hwdata — a 20-min local wakeup verified `devel:openSUSE:Factory/hwdata` had synced to 0.408, then filed the Factory SR.)
 
+### Consolidating several source packages into one — file the submit and the delete as a PAIR
+
+When one source package absorbs another (an upstream monorepo whose several
+distributions we had been packaging separately; see the monorepo bullet in
+`references/language-packaging.md`), the merge SR is only half the change. The
+absorbed source package must be deleted in the same target, or that target ends
+up with **two sources producing the same binary**.
+
+- **File both, and cross-reference both.** `osc sr <devel> <pkg> openSUSE:Factory`
+  then `osc deletereq openSUSE:Factory <oldpkg> -m "... goes together with
+  SR#<id>"`, and put "MUST BE ACCEPTED TOGETHER WITH the delete request for
+  <oldpkg>" in the SR message too. Only one of the two can carry the other's
+  number (whichever you file second), so add a comment on the first pointing at
+  the second — a reviewer who picks either one out of the staging queue then
+  sees the pairing instead of accepting the SR alone.
+- **Say what does NOT change.** The distinction reviewers care about is that the
+  *binary* package survives unchanged even though a *source* package is being
+  deleted. Prove it rather than asserting it: download the currently published
+  RPM and diff `rpm -qlp` and `rpm -qpR` against the new build, then quote the
+  numbers ("891 site-packages files identical, 39 requires identical"). Also
+  check `scripts/rdeps.sh <oldpkg>` for build-time consumers.
+- **Devel-side ordering: `osc rdelete` the old source FIRST, then commit the
+  merge.** The devel project builds against Factory, which still publishes the
+  old binary, so nothing goes unresolvable in the gap — whereas committing the
+  merge first creates a real duplicate-binary window in the devel project. (In
+  Factory the two requests are accepted together, so no ordering applies there.)
+- Contrast with a **rename**, where the old binary genuinely disappears and you
+  need `Provides`/`Obsoletes` on the new package — see the rename bullet in
+  `references/language-packaging.md`. A consolidation needs neither, because the
+  binary name is unchanged.
+
+(Real case: python-fastmcp 3.4.5 absorbed python-fastmcp-slim — SR 1369572 +
+delete request 1369573.)
+
 ### Gotchas observed in practice
 
 - **Declined because target was removed upstream.** If you SR a package and the destination has since been removed from Factory, the SR will be declined with a message like *"The package 'openSUSE:Factory/foo' has been removed"*. Before resubmitting, check with `osc develproject <target-project> <pkg>` (404 = removed; see "Verifying the target has the package" above), or `scripts/devel-of.sh` which wraps exactly this.
