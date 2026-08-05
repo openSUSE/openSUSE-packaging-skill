@@ -46,9 +46,22 @@ except Exception: sys.exit(2)
 for b in d: print(b.get("name",""))
 ')" || { echo "ERROR: unparseable branch list for pool/$pkg" >&2; exit 5; }
 
-bver() {  # spec Version: on a branch, via the raw-file endpoint
-  curl -fsS --max-time 20 "${auth[@]}" "$G/pool/$pkg/raw/branch/$1/$pkg.spec" 2>/dev/null \
-    | grep -m1 -iE '^Version:' | awk '{print $2}'
+bver() {  # spec Version: on a branch
+  # NB: the raw-file endpoint ($G/pool/$pkg/raw/branch/...) 403s for
+  # unauthenticated callers, which used to make every branch read as empty and
+  # the verdict below collapse to a bogus "IN-SYNC" (all versions equal ==
+  # all empty). Use the REST contents endpoint instead: it answers without a
+  # token, and an empty result now really does mean "could not determine".
+  gget "$G/api/v1/repos/pool/$pkg/contents/$pkg.spec?ref=$1" 2>/dev/null \
+    | python3 -c '
+import sys, json, base64, re
+try:
+    raw = base64.b64decode(json.load(sys.stdin).get("content") or "").decode("utf-8", "replace")
+except Exception:
+    sys.exit(0)
+m = re.search(r"^Version:\s*(\S+)", raw, re.M | re.I)
+print(m.group(1) if m else "")
+' 2>/dev/null
 }
 
 echo "== leap-status: $pkg =="
@@ -107,6 +120,21 @@ echo "presence: SUSE:SLFO:1.2=$p_slfo  openSUSE:Backports:SLE-16.0=$p_bp  Packag
 if [ "$have_leapish" = 0 ]; then
   echo "VERDICT: NOT-IN-LEAP (factory-only branches) — needs pool-maintainer onboarding, see references/leap-slfo.md §4 (leap-sync.sh refuses this case)"
   exit 3
+fi
+# A version we could not read must NEVER be treated as "matches factory": the
+# comparison below skips empty values, so an all-empty read used to collapse
+# into a bogus IN-SYNC verdict and would silently talk you out of a sync that
+# is actually needed (real case: cvise, factory 2.12.0 vs leap-16.1 2.10.0
+# reported as IN-SYNC — the very drift that caused boo#1273590).
+unknown=""
+[ -n "$fver" ] || unknown="factory"
+for b in leap-16.0 leap-16.1 slfo-1.2 slfo-main; do
+  printf '%s\n' "$branches" | grep -qx "$b" || continue
+  [ -n "${ver[$b]:-}" ] || unknown="$unknown $b"
+done
+if [ -n "$unknown" ]; then
+  echo "VERDICT: UNKNOWN — could not read the spec Version on:$unknown (network, auth, or a renamed spec). Refusing to guess; check manually before syncing." >&2
+  exit 2
 fi
 behind=""
 for b in leap-16.0 leap-16.1 slfo-1.2 slfo-main; do
