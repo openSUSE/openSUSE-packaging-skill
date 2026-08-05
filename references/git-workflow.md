@@ -30,14 +30,33 @@ Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-o
 
 - `osc api "/search/package?match=person[@userid='<u>' and @role='maintainer']"` — **returns nothing** for it.
 - `osc api "/search/owner?project=<prj>&filter=maintainer&user=<u>"` — returns only the *project-level* entry, no `package=` rows.
-- `osc api "/search/owner?binary=<pkg>"` — falls all the way back to the `openSUSE:Factory` project owners (`dimstar_suse`, `factory-maintainers`), which reads as "nobody maintains this" when in fact somebody does, in git.
+- `osc api "/search/owner?binary=<pkg>"` — falls all the way back to the `openSUSE:Factory` project owners (a Factory release-manager account plus `group:factory-maintainers`), which reads as "nobody maintains this" when in fact somebody does, in git.
 
-**The command that does see it is `osc maintainer -U <user>`** (osc ≥ 1.15; "Fix 'osc maintainer' not to error out before it prints maintainers in git"). It prints tagged lines and returns **only** git-defined entries:
+**The command that does see it is `osc maintainer`** (osc ≥ 1.15; "Fix 'osc maintainer' not to error out before it prints maintainers in git"), in two forms with two *different* output formats:
+
+**By user** — `osc maintainer -U <user>` prints tagged lines and returns **only** git-defined entries:
 
 ```
 Defined in git package: devel:languages:perl/perl-Test-Harness
 Defined in git project: editors:tree-sitter
 ```
+
+**By package** — `osc maintainer <pkg>` prints the classic OBS resolution *first* and the git answer *last*. **Reading only the first block is actively misleading:**
+
+```
+Defined in project:  openSUSE:Factory
+  maintainer of hwdata :
+   someuser, group:factory-maintainers        <- fallback owners, NOT the maintainer
+
+Maintainer of SUSE:ALP:Source:Standard:Core:1.0:Build/hwdata in git: youruser
+Maintainer of SUSE:SLFO:1.2/hwdata in git: youruser
+Maintainer of SUSE:SLFO:Main/hwdata in git: otheruser
+Maintainer of devel:openSUSE:Factory/hwdata in git: youruser    <- the real devel-project maintainer
+```
+
+Stop at the first block and you report "no dedicated maintainer, inherits Factory" about a package that has a named owner. Grep for `in git:` before drawing any conclusion. Note the lines are **per-product and the name can differ per line** (`SUSE:SLFO:Main` has a different owner here from every other line) — coordinate with the maintainer of the branch you are actually touching.
+
+Devel-project resolution is unaffected: `osc develproject openSUSE:Factory <pkg>` and `scripts/devel-of.sh` still return `devel:openSUSE:Factory/hwdata` correctly.
 
 So the OBS index and the git index are **disjoint sets you must union** — on a real account, 268 from OBS + 263 from git with **overlap zero**. `scripts/my-packages.sh` does the union by default. Scale of the blind spot: `osc api "/search/project/id?match=starts-with(scmsync,'https')"` reports **>1100 scmsync projects**, `devel:languages:perl` / `:nodejs` / `:erlang` / `:lua` / `Java:packages` / `GNOME:Factory` / `devel:openSUSE:Factory` / `server:dns` among them.
 
