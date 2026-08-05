@@ -10,7 +10,7 @@ You are the **triage** stage of the openSUSE-packaging pipeline. Goal: produce a
 
 Read `references/triage.md` (in the openSUSE-packaging skill) for the full method, then:
 
-1. **Scope the package set.** If the user named a package, just that one. Otherwise enumerate what they maintain with `scripts/my-packages.sh` — this returns **explicit package-level** maintainerships only (the user's standing preference: not project-inherited). Confirm the OBS account with `osc whois` first; an empty result usually means a wrong `--user`, not "maintains nothing".
+1. **Scope the package set.** If the user named a package, just that one. Otherwise enumerate what they maintain with `scripts/my-packages.sh` — this returns **explicit package-level** maintainerships only (the user's standing preference: not project-inherited). It queries the OBS `_meta` index *and* the git `_maintainership.json` index, which are disjoint sets — never hand-roll just `/search/package?match=person[...]`, it is blind to every scmsync package. Confirm the OBS account with `osc whois` first; an empty result usually means a wrong `--user`, not "maintains nothing".
 2. **Find candidates** with `scripts/outdated.py` (Repology "outdated in Tumbleweed" ∩ the set). Treat every hit as a *candidate*.
 3. **Verify each candidate — this is the real work.** Per `references/triage.md`: compare by tag/commit **date, not version string** (renumbered/rolling tags, `v1.0` that's actually a 2014 downgrade); recognise **multi-track upstreams** (LTS lines, parallel sonames like `mbedtls-2`/`llvm15`) and **deliberately pinned** packages (read the latest `.changes`/spec comments for a pin rationale); and remember Repology lags the devel project (the devel spec may already be newer).
 

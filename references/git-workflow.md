@@ -14,6 +14,35 @@ All three live in one Gitea fork network, so a PR can technically be opened betw
 
 **PR target = the devel-project repo, not `pool`.** A package change (version bump, spec fix, etc.) goes as a PR to `<devel-project>/<pkg>` (base branch `main`) — that is where the `autogits` bots run (they open the follow-on `_ObsPrj` PR and post OBS build results as a comment). `pool/<pkg>` is the canonical/aggregation repo and is **not** the contribution entry point; a PR opened against `pool` is the wrong target and will just be closed. (Confirmed in practice: a `pool/hwdata` PR was closed by the maintainer in favour of the `devel-factory/hwdata` one.) After the devel PR merges, propagation to `pool` and to `openSUSE:Factory` is handled by the bots / the classic `osc sr <devel-project>/<pkg> openSUSE:Factory` step — not by you PRing pool directly.
 
+### Maintainership lives in git, and the OBS metadata index cannot see it
+
+A scmsync package's OBS `_meta` is a **stub** — `<scmsync>` + `<url>`, with **no `<person>` elements at all**:
+
+```
+$ osc api /source/devel:languages:perl/perl-Mojolicious/_meta
+<package name="perl-Mojolicious" project="devel:languages:perl">
+  <scmsync>https://src.opensuse.org/perl/perl-Mojolicious#c4d329c5…</scmsync>
+  <url>https://src.opensuse.org/perl/_ObsPrj</url>
+</package>
+```
+
+Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs file maintainership migrate` converts the legacy format). Consequences, all of them silent:
+
+- `osc api "/search/package?match=person[@userid='<u>' and @role='maintainer']"` — **returns nothing** for it.
+- `osc api "/search/owner?project=<prj>&filter=maintainer&user=<u>"` — returns only the *project-level* entry, no `package=` rows.
+- `osc api "/search/owner?binary=<pkg>"` — falls all the way back to the `openSUSE:Factory` project owners (`dimstar_suse`, `factory-maintainers`), which reads as "nobody maintains this" when in fact somebody does, in git.
+
+**The command that does see it is `osc maintainer -U <user>`** (osc ≥ 1.15; "Fix 'osc maintainer' not to error out before it prints maintainers in git"). It prints tagged lines and returns **only** git-defined entries:
+
+```
+Defined in git package: devel:languages:perl/perl-Test-Harness
+Defined in git project: editors:tree-sitter
+```
+
+So the OBS index and the git index are **disjoint sets you must union** — on a real account, 268 from OBS + 263 from git with **overlap zero**. `scripts/my-packages.sh` does the union by default. Scale of the blind spot: `osc api "/search/project/id?match=starts-with(scmsync,'https')"` reports **>1100 scmsync projects**, `devel:languages:perl` / `:nodejs` / `:erlang` / `:lua` / `Java:packages` / `GNOME:Factory` / `devel:openSUSE:Factory` / `server:dns` among them.
+
+Related osc-side git support worth knowing: `osc maintained` also lists maintained branches in git, and `osc lbl` works on git-based packages.
+
 ### Tooling & one-time setup
 
 - **osc ≥ 1.15.0** is required for `osc fork` (earlier versions have fork bugs). `osc build` and `osc sr` still work as documented elsewhere in this skill.

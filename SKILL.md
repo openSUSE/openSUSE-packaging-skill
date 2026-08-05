@@ -50,7 +50,7 @@ The three blocks form a **loop**: Block 3 feedback (a decline, a staging FTBFS, 
 
 Call these instead of hand-writing the osc-API / Repology / bugzilla / Gitea incantations every time (they encode the exact queries that are easy to get subtly wrong). Flags: see each script's header (authoritative).
 
-- `my-packages.sh` — packages where you are an **explicit package-level** maintainer (not project-inherited).
+- `my-packages.sh` — packages where you are an **explicit package-level** maintainer (not project-inherited). Queries **both** maintainer indexes, which are disjoint: the OBS `_meta` person index *and* the git `_maintainership.json` side (`osc maintainer -U`) that scmsync packages use — an OBS-only query silently misses every git-hosted package (`--source obs|git|both`, `--show-source`).
 - `my-requests.sh` — your submit requests as a plain list (now a thin wrapper over `sr-status.py --brief --no-prs`, OBS side only).
 - `sr-status.py` — **the Block-3 watch view**: OBS SRs *and* src.opensuse.org PRs in one table (state, review chain, human comments), declines/closed-unmerged first.
 - `watch-submissions.sh` — the **cron/scheduled-prompt delta watcher**: diffs your active SRs, **incoming requests others filed against packages you maintain**, and open PRs against a saved baseline, printing only what changed since the last run (`NOCHANGE` → stay silent; `NEW`/`NEW INCOMING`/staging-move/`RESOLVE` lines → the caller fetches final states; `--no-incoming` opts out of that leg). `sr-status.py` answers "what's the status?", this answers "what changed?" without spamming on every firing. A `NEW INCOMING` line means *review and recommend*, never accept/decline — see core directive item 10.
