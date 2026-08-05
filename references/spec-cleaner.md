@@ -7,8 +7,10 @@ When the user asks "does this spec follow the guidelines?", "is this spec OK?", 
 **Canonical invocation — always pass `--remove-groups --pkgconfig --perl --tex`:**
 
 ```
-# Show what spec-cleaner would change (preferred — read-only):
-spec-cleaner --remove-groups --pkgconfig --perl --tex -o /tmp/cleaned.spec path/to/foo.spec && diff -u path/to/foo.spec /tmp/cleaned.spec
+# Show what spec-cleaner would change (preferred — read-only).
+# NOTE the mktemp: never reuse a fixed -o path (see the stale-output trap below).
+OUT=$(mktemp --suffix=.spec) && rm -f "$OUT" && \
+spec-cleaner --remove-groups --pkgconfig --perl --tex -o "$OUT" path/to/foo.spec && diff -u path/to/foo.spec "$OUT"
 
 # Or side-by-side via the user's diff tool:
 spec-cleaner --remove-groups --pkgconfig --perl --tex -d --diff-prog diff path/to/foo.spec
@@ -20,6 +22,8 @@ spec-cleaner --remove-groups --pkgconfig --perl --tex -i path/to/foo.spec
 **Always pass `--remove-groups --pkgconfig --perl --tex` on every run** (project policy in this skill):
 - `--remove-groups` strips obsolete `Group:` tags.
 - `--pkgconfig` / `--perl` / `--tex` convert `BuildRequires`/`Requires` to their `pkgconfig(foo)` / `perl(Foo::Bar)` / `tex(foo)` provider forms instead of `foo-devel` / `perl-Foo-Bar` / texlive package names — the preferred modern style (matches what the source comes from and lets the resolver pick the right provider).
+
+**TRAP — `-o` refuses to overwrite, and you then diff against a stale file.** If the `-o` target already exists, spec-cleaner writes *nothing*, prints `ERROR: <path> already exists.` and exits non-zero. Chained with `&&` that stops the line; but chained with `;` — or with the spec-cleaner call piped into `head`/`tail`, which swallows its exit status — the `diff` still runs and compares your spec against **whatever package was cleaned into that path last time**. The result is a huge, confident, entirely fictitious diff. (Real case: `typescript-go` diffed against a leftover `ngtcp2` `/tmp/cleaned.spec`, "renaming" the package and rewriting every section.) Always `mktemp`/`rm -f` the target first, and never pipe the spec-cleaner call itself.
 
 The only legitimate deviations from spec-cleaner's output are the documented semantic-correctness cases below — and even then prefer a form that is *also* no-diff stable where one exists (e.g. the `%if %{with foo}` block, the trimmed principal `pkgconfig()`).
 
@@ -34,6 +38,8 @@ Useful flags:
     - **`--pkgconfig` mis-converts a package-name `Provides:`/`Obsoletes:` that merely *looks* like a lib** — e.g. a legacy compat `Provides: libmopac7-1-devel` → `pkgconfig(libmopac7)`. That changes the semantics (a package-name provide is not a pkgconfig provider). Keep the original `Provides:` string. (Real case: openmopac.)
     - **`--pkgconfig` rewrites `uthash-devel` → `pkgconfig(uthash)`, which does not resolve** — openSUSE's `uthash-devel` ships no `uthash.pc`, so the converted dep is unresolvable (`nothing provides pkgconfig(uthash)`) and the build dies at dep-resolution. Keep `uthash-devel` and leave a one-line comment so the next person doesn't "fix" it back. (Real case: falco-libs.) General rule: a `pkgconfig(foo)` conversion is only safe if `foo.pc` actually exists — when in doubt, `rpm -ql <pkg>-devel | grep '\.pc$'` before trusting the rewrite.
     In all four the spec is **not** no-diff (spec-cleaner re-suggests the expansion every run) — that's an accepted deviation; verify the *rest* of the diff is empty and move on.
+  - **It also strips an explicit `-p0` from `%patch -P N -p0` — check the patch's own headers before accepting that.** The strip level is only redundant when the patch was generated with the usual `a/`…`b/` prefixes. A patch whose headers name a **real leading directory that must survive** (`--- package/lib/getExePath.js`, no `a/` prefix) needs `-p0`, and dropping it makes `%prep` look for a path that doesn't exist. Decide from the patch, not from rpm's default: `head -3 the.patch` — if the `---`/`+++` lines carry a genuine directory component rather than `a/`/`b/`, keep `-p0` and treat the diff line as an accepted semantic deviation. (Real case: typescript-go's `getExePath-use-system-tsgo.patch`.)
+  - **Beware macro-ification *inside a `sed`/`grep` pattern*.** spec-cleaner rewrites path-looking text anywhere it finds it, including a literal string you are *matching* in upstream content — e.g. `sed -e '1s|^#!/usr/bin/env node$|…|'` becomes `#!%{_bindir}/env node`. It expands to the same bytes today, but the line now reads as a path *we* emit rather than upstream text we're matching, and it silently breaks if `%{_bindir}` is ever not `/usr/bin`. Keep the literal; accepted deviation. (Real case: typescript-go's typescript7 shebang fixup.)
 - `--perl` — convert deps to `perl(...)` (**always pass**; long option only, no short form).
 - `-t` / `--tex` — convert deps to `tex(...)` (**always pass**).
 - `-c` / `--cmake` — convert deps to `cmake(...)` (pass when the package is CMake-based and uses `cmake()`-style deps).

@@ -3,13 +3,16 @@
 # prepend-is-insertion HARD RULE (SKILL.md "Adding a .changes entry"). The
 # truncate-then-read one-liner trap (open(f,"w").write(hdr+open(f).read()))
 # silently dropped ALL entries in three fastmcp-cone .changes files and earned
-# three real reviewer declines (mcalabkova); this makes that failure class
-# impossible in scripted/unattended runs.
+# three real reviewer declines; this makes that failure class impossible in
+# scripted/unattended runs.
 #
 # Usage: changes-prepend.sh <name>.changes [--author 'Full Name <email>']
 #   The bullet body comes on STDIN (already wrapped at 67 cols, '-'/'*' bullets).
-#   --author defaults to 'Martin Pluskal <mpluskal@suse.com>' (always the full
-#   'Name <email>' form — never a bare email).
+#   --author falls back to $CHANGES_AUTHOR, then to git config
+#   user.name/user.email — always the full 'Name <email>' form, never a bare
+#   email. Prefer CHANGES_AUTHOR: your packaging address is often NOT your git
+#   commit address. With none of the three available the script exits 2 rather
+#   than guessing.
 #
 # Behavior: backs the file up, builds the canonical header (67-dash separator +
 # `LC_ALL=C date -u` + ' - ' + author), inserts separator+header+blank+body+blank
@@ -22,11 +25,11 @@
 # and the exit is 1. Exit 0 only on verified success.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,23p' "$0"; exit 0;;
-  '') sed -n '2,23p' "$0"; exit 2;;
+  -h|--help) sed -n '2,25p' "$0"; exit 0;;
+  '') sed -n '2,25p' "$0"; exit 2;;
 esac
 
-file="" ; author="Martin Pluskal <mpluskal@suse.com>"
+file="" ; author=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --author) author="$2"; shift 2;;
@@ -34,7 +37,34 @@ while [ $# -gt 0 ]; do
     *) if [ -z "$file" ]; then file="$1"; else echo "unexpected arg: $1" >&2; exit 2; fi; shift;;
   esac
 done
-[ -n "$file" ] || { sed -n '2,23p' "$0"; exit 2; }
+
+# Resolve the author without baking a person into the script.
+#   1. --author
+#   2. $CHANGES_AUTHOR
+#   3. git config user.name/user.email
+# Prefer $CHANGES_AUTHOR over git: the packaging identity in a .changes entry is
+# frequently NOT the git commit identity (a distribution address vs a personal
+# one), and silently inheriting the git email puts the wrong address in the
+# changelog — which reviewers do bounce. Set it once in your shell profile:
+#   export CHANGES_AUTHOR='Full Name <you@distro.example>'
+if [ -z "$author" ]; then
+  if [ -n "${CHANGES_AUTHOR:-}" ]; then
+    author="$CHANGES_AUTHOR"
+  else
+    _n=$(git config user.name  2>/dev/null || true)
+    _e=$(git config user.email 2>/dev/null || true)
+    if [ -n "$_n" ] && [ -n "$_e" ]; then
+      author="$_n <$_e>"
+      echo "note: using git identity '$author'; set CHANGES_AUTHOR if your" >&2
+      echo "      packaging address differs from your git commit address" >&2
+    else
+      echo "no --author given, CHANGES_AUTHOR unset, and git config" >&2
+      echo "user.name/user.email is not set; pass --author 'Full Name <email>'" >&2
+      exit 2
+    fi
+  fi
+fi
+[ -n "$file" ] || { sed -n '2,25p' "$0"; exit 2; }
 case "$author" in
   *"<"*"@"*">"*) : ;;
   *) echo "--author must be the full 'Full Name <email>' form, got: $author" >&2; exit 2;;

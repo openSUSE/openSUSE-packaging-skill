@@ -148,6 +148,56 @@ Before submitting, confirm the merge actually synced into OBS — `osc cat <obs-
 
 **Skip `osc results` before the SR for git-tracked packages.** When the package lives in a git-based devel project (the Git packaging workflow), build verification is the PR/autogits bot's job — it already built the change and posted results on the Gitea PR before it merged. Polling `osc results <obs-devel-project> <pkg>` before `osc sr` is therefore the wrong check for git-tracked packages; skip it and go straight from "merge synced into OBS" to `osc sr`. (The pre-SR `osc results` poll still applies to **classic osc-checkout** devel projects, where OBS is the only thing that built your commit.)
 
+### Responding to a PR review — `tea` does what the REST API cannot
+
+A reviewer's **inline review comment** (as opposed to an issue comment) has to be
+replied to and **marked resolved**, or a `REQUEST_CHANGES` review sits there
+blocking the merge even after you've pushed the fix.
+
+**The Gitea REST API has no resolve-conversation endpoint.** Don't hunt for one:
+`swagger.v1.json` is `403` to anonymous *and* token requests on
+`src.opensuse.org`, and the web route the browser uses
+(`POST /{owner}/{repo}/pulls/{n}/files/reviews/resolve_conversation`) answers
+**404 to a token** — it is a session+CSRF route, not an API. **`tea` is the
+supported path**, and it wraps calls the plain REST surface doesn't expose:
+
+```
+tea pulls review-comments <n> -r <org>/<pkg> -l src.opensuse.org   # id, path, line, body, reviewer, RESOLVER
+tea pulls reply   <n> <comment-id> "<text>"  -r <org>/<pkg> -l src.opensuse.org
+tea pulls resolve     <comment-id>           -r <org>/<pkg> -l src.opensuse.org   # also: unresolve
+```
+
+- **Always pass `-r` and `-l` explicitly.** A package checkout that has both an
+  `origin` (base repo) and a `fork` remote gives `tea` two candidates and it can
+  pick the wrong one; naming the slug and the login removes the guess.
+- **Verify** by re-running `review-comments` and confirming the `RESOLVER`
+  column is populated — a resolve that silently no-ops looks identical to
+  success on the command line.
+- Reply *and* resolve. Resolving a change-request with no explanation reads as
+  dismissal, and the reviewer still has to diff the branch to see what changed.
+
+(Real case: a `typescript-go` PR whose reviewer objected to installing into the
+shared `/usr/lib/node_modules`; the fix was pushed, then replied to and resolved
+with `tea pulls reply` / `tea pulls resolve`.)
+
+**A reviewer reporting `smudge filter lfs failed` is not automatically your
+bug.** Gitea's LFS content store is shared across a repo and its forks, so a
+fork-PR's objects usually *are* fetchable from the base repo. Check before
+"fixing" anything — POST to the base repo's batch API and see whether the object
+resolves anonymously:
+
+```
+POST https://src.opensuse.org/<org>/<pkg>.git/info/lfs/objects/batch
+Accept/Content-Type: application/vnd.git-lfs+json
+{"operation":"download","transfers":["basic"],"objects":[{"oid":"<oid>","size":<bytes>}]}
+```
+An object with a `download` action and no `error` key is present and public — the
+failure is then the reviewer's client, and the fix is theirs, not a repush.
+Note `git lfs push --dry-run <remote>` over **HTTPS** can't authenticate
+(`could not read Username`) and then lists *every* local object as "to push",
+which looks exactly like "the server has none" — run it against the **SSH**
+remote or the answer is meaningless.
+
 ### A PR is NOT built by OBS unless that repo opted in — check before you promise results
 
 The bot-built-it assumption above holds for **autogits-managed** devel repos. It does **not** hold generally: a `src.opensuse.org` repo gets its PRs built only if someone wired up the SCM/CI integration, and plenty of scmsync-backed devel repos never did. Checked across `science/*`, `editors/*`, `pool/*` and several `devel:*`: none had an `.obs/` directory at all. So when a maintainer says *"I don't see any build results"*, the answer is usually **nothing builds PRs here** — say that instead of hunting for a broken bot.
