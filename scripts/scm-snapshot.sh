@@ -17,7 +17,8 @@
 #
 # Behavior: resolves the rev to a FULL sha (git ls-remote), writes/updates the
 # _service XML (obs_scm, revision=<full sha>, versionformat <base>~git%cd.%h,
-# exclude .git*), runs `osc service runall` inside an .osc checkout or falls
+# exclude .git*), runs `osc service mr` (the scaffolded service is mode="manual";
+# never `runall`, which is mode-blind) inside an .osc checkout or falls
 # back to the direct `/usr/lib/obs/service/obs_scm --outdir` invocation in a
 # plain git-pool checkout (see references/leap-slfo.md), then parses the
 # produced .obsinfo and prints:
@@ -26,8 +27,8 @@
 # Exits non-zero on any mismatch/verification failure.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,30p' "$0"; exit 0;;
-  '') sed -n '2,30p' "$0"; exit 2;;
+  -h|--help) sed -n '2,27p' "$0"; exit 0;;
+  '') sed -n '2,27p' "$0"; exit 2;;
 esac
 
 url="" ; rev="" ; base="0" ; pkg="" ; update=0
@@ -101,7 +102,8 @@ echo "_service written (obs_scm, pinned revision, versionformat $vf)"
 
 # ---- 3. run the service -------------------------------------------------------
 if [ -d .osc ]; then
-  osc service runall || { echo "osc service runall failed" >&2; exit 2; }
+  # the _service written above is mode="manual" -> manualrun, NOT runall
+  osc service manualrun || { echo "osc service manualrun failed" >&2; exit 2; }
 else
   # plain (git-pool / scratch) checkout: run the service binary directly
   svc=/usr/lib/obs/service/obs_scm
