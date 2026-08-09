@@ -30,11 +30,12 @@ case "${1:-}" in
 esac
 
 # --- where do build roots live? Read the oscrc template, don't assume. --------
+TMPL=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
+       | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
+: "${TMPL:=/var/tmp/build-root/%(repo)s-%(arch)s}"
+
 root_base() {
-  local tmpl
-  tmpl=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
-         | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
-  [ -n "$tmpl" ] || { echo /var/tmp/build-root; return; }
+  local tmpl="$TMPL"
   # strip trailing path components that are templated (%(package)s etc.)
   while [ -n "$tmpl" ] && case "$tmpl" in */*) [[ "${tmpl##*/}" == *'%('* ]];; *) false;; esac; do
     tmpl="${tmpl%/*}"
@@ -42,6 +43,34 @@ root_base() {
   echo "${tmpl:-/var/tmp/build-root}"
 }
 BASE=$(root_base)
+
+# The template usually embeds %(package)s, so the root is "<pkg>-<repo>-<arch>"
+# and a bare "<repo>-<arch>" arg matches NOTHING under BASE. Expanding the
+# template with the checkout's own package name is exact; globbing is the
+# fallback. Getting this wrong silently reports ANOTHER package's stale log as
+# this package's verdict (seen twice: fastmcp -> zoo's log, rtk -> repose's).
+CKPKG=""; [ -r .osc/_package ] && CKPKG=$(tr -d '\n' < .osc/_package 2>/dev/null)
+# git/scmsync checkout: no .osc, but a single spec names the package.
+# NB: use an array — 'set -- *.spec' would clobber the script's own arguments
+# and silently drop the repo-arch the caller asked about.
+if [ -z "$CKPKG" ] && [ ! -d .osc ]; then
+  specs=(*.spec)
+  [ "${#specs[@]}" -eq 1 ] && [ -f "${specs[0]}" ] && CKPKG="$(basename "${specs[0]}" .spec)"
+fi
+
+expand_root() {                     # expand_root <pkg> <repo> <arch>
+  local out="$TMPL"
+  out="${out//%(package)s/$1}"; out="${out//%(repo)s/$2}"; out="${out//%(arch)s/$3}"
+  out="${out//%(project)s/${OSC_PROJECT:-}}"; out="${out//%(user)s/${USER:-}}"
+  echo "$out"
+}
+
+# osc records the repo/arch of the last build in the checkout — use it so a bare
+# invocation right after `osc build` answers about THAT build.
+last_repo=""; last_arch=""
+if [ -r .osc/_last_buildroot ]; then
+  last_repo=$(sed -n 1p .osc/_last_buildroot); last_arch=$(sed -n 2p .osc/_last_buildroot)
+fi
 
 list_roots() {
   local d
@@ -58,18 +87,42 @@ if [ "${1:-}" = "--list" ]; then
   echo "## Build roots under $BASE (newest first)"; list_roots; exit 0
 fi
 
-arg="${1:-standard-aarch64}"
+if [ -n "${1:-}" ]; then
+  arg="$1"
+elif [ -n "$last_repo" ] && [ -n "$last_arch" ]; then
+  arg="$last_repo-$last_arch"           # what `osc build` last used here
+else
+  arg="standard-aarch64"
+fi
 log=""
 if [ -f "$arg" ]; then                      # a captured/teed log file
   log="$arg"; rpms=""
 else
-  for cand in "$BASE/$arg" "/var/tmp/build-root/$arg" \
-              "$BASE/_repository:$arg-"* "$BASE"/*":$arg-"* "$BASE/$arg-"*; do
-    [ -r "$cand/.build.log" ] && { log="$cand/.build.log"; rpms="$cand/home/abuild/rpmbuild/RPMS"; break; }
+  # Exact expansion of the oscrc template comes FIRST — it is the only candidate
+  # that cannot resolve to a different package.
+  cands=()
+  if [ -n "$CKPKG" ]; then
+    cands+=("$(expand_root "$CKPKG" "${arg%-*}" "${arg##*-}")")
+    cands+=("$BASE/$CKPKG-$arg")
+  fi
+  cands+=("$BASE/$arg" "$BASE/_repository:$arg-"* "$BASE"/*":$arg-"* "$BASE/$arg-"*)
+  # package-prefixed roots for this repo-arch, newest log first
+  while IFS= read -r d; do [ -n "$d" ] && cands+=("$d"); done < <(
+    for d in "$BASE"/*"-$arg"/; do
+      [ -r "$d/.build.log" ] && printf '%s\t%s\n' "$(date -r "$d/.build.log" +%s)" "${d%/}"
+    done 2>/dev/null | sort -rn | cut -f2-)
+  cands+=("/var/tmp/build-root/$arg")        # last resort: the un-templated root
+  for cand in "${cands[@]}"; do
+    [ -r "$cand/.build.log" ] || continue
+    # Never answer with another package's log when this checkout has its own.
+    if [ -n "$CKPKG" ] && [ "${cand##*/}" != "$CKPKG-$arg" ] \
+       && compgen -G "$BASE/$CKPKG-*" >/dev/null; then continue; fi
+    log="$cand/.build.log"; rpms="$cand/home/abuild/rpmbuild/RPMS"; break
   done
 fi
 if [ -z "$log" ]; then
   echo "no readable build log for '$arg' under $BASE" >&2
+  [ -n "$CKPKG" ] && echo "(checkout package '$CKPKG' — a root belonging to a DIFFERENT package is never used)" >&2
   echo "" >&2; echo "recent build roots:" >&2; list_roots >&2
   exit 2
 fi
