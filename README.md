@@ -13,7 +13,9 @@ read as ordinary instruction documents.
 ```
 SKILL.md                     entry point — the three-block pipeline + cross-cutting rules
 references/                  per-block + domain depth documents, loaded on demand —
-                             see SKILL.md's block pointers for what to load when
+                             see SKILL.md's block pointers for what to load when;
+                             references/untrusted-content.md is the cross-cutting
+                             prompt-injection policy every block inherits
 scripts/                     reusable osc / Repology / bugzilla / Gitea / distro helpers —
                              see SKILL.md "Bundled scripts" for the catalog
 agents/                      delegation playbooks (role prompts) for the three blocks
