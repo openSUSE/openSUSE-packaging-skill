@@ -24,13 +24,14 @@
 |---|---|---|
 | yes | yes | **STOP — nothing to do.** The update is already on its way. Report the SR id; do not repackage, do not file a competing SR. |
 | yes | **no** (stranded devel update) | **Don't repackage — just forward it:** confirm green (`osc results <devel> <pkg>`), then `osc sr <devel> <pkg> openSUSE:Factory`. One command, zero packaging. (See triage.md "stranded devel update", real cases openmopac/pspg.) |
+| yes, **and the target project already carries the same version** | — (none needed) | **STOP — nothing to do.** The update already landed; devel and Factory are in sync. This is *not* a stranded update — forwarding it files an **empty SR**. Distinguish it from the row above by comparing devel against the *target project*, not only against your intended version. |
 | no | — | Proceed with the normal Block 2 update below. |
 
 If the devel version already matches and you only have *cosmetic* spec-cleaner changes left, do **not** file a cleanup-only SR over an in-flight version SR — it races the version SR and earns a "conflict in file" decline. Hold the cleanup until the version SR lands, or drop it.
 
 **Real case (the rule's origin):** asked to update two Rust-based Python packages, an agent branched both, re-bumped, re-vendored, and ran two heavy native Rust builds — only to discover *afterwards* that both versions were **already committed to devel by their co-maintainers** and **already submitted to Factory**, both SRs in review. The entire update+build was wasted; the only net delta was a cosmetic cleanup that would have conflicted with the in-flight SRs. A 30-second pre-flight `osc api .../<pkg>.spec | grep Version` + SR check would have caught it before any branch or build.
 
-`scripts/preflight.sh` mechanizes this whole check (exit 0 PROCEED / 3 STOP / 4 FORWARD).
+`scripts/preflight.sh` mechanizes this whole check (exit 0 PROCEED / 3 STOP — in flight *or* already landed / 4 FORWARD).
 
 ## Checking a spec file
 

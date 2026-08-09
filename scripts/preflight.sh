@@ -25,14 +25,16 @@
 #
 # Verdict line + exit code:
 #   0  VERDICT: PROCEED            (also for a brand-new package, with a note)
-#   3  VERDICT: STOP     — update already in flight (prints the SR id / PR #)
+#   3  VERDICT: STOP     — update already in flight (prints the SR id / PR #), or
+#      nothing to do because devel and the target project already carry the same
+#      version (the update landed; forwarding it would file an empty SR)
 #   4  VERDICT: FORWARD  — stranded devel update: devel is ahead but no Factory
 #      SR was ever filed (openmopac/pspg case); prints the exact osc sr command
 #   2  a check FAILED (network/auth) — a failed check must NEVER print PROCEED
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,29p' "$0"; exit 0;;
-  '') sed -n '2,29p' "$0"; exit 2;;
+  -h|--help) sed -n '2,33p' "$0"; exit 0;;
+  '') sed -n '2,33p' "$0"; exit 2;;
 esac
 
 pkg="" ; targetver="" ; target="openSUSE:Factory" ; user=""
@@ -190,14 +192,25 @@ if [ -n "$incoming" ] || [ -n "$outgoing" ] || [ -n "$prs" ]; then
   exit 3
 fi
 # devel ahead of the target version / of the target project, with no SR/PR = stranded
+# ahead=1 -> stranded, forward it;  ahead=2 -> devel and the target project are
+# already at the same version, i.e. the update LANDED and there is nothing to do.
+# The distinction matters: without it a package whose update is already in the
+# target project reports FORWARD, and the "fix" is an empty SR (real case
+# 2026-08-09, python-apache-tvm-ffi 0.1.13.post2 in both devel and Factory).
 ahead=0
 if [ -n "$develver" ]; then
   if [ -n "$targetver" ]; then
     # devel >= target-version ? (sort -V; equality counts as "already has it")
-    [ "$(printf '%s\n%s\n' "$targetver" "$develver" | sort -V | head -1)" = "$targetver" ] && ahead=1
+    if [ "$(printf '%s\n%s\n' "$targetver" "$develver" | sort -V | head -1)" = "$targetver" ]; then
+      if [ -n "$targetprjver" ] && [ "$develver" = "$targetprjver" ]; then ahead=2; else ahead=1; fi
+    fi
   elif [ -n "$targetprjver" ] && [ "$develver" != "$targetprjver" ]; then
     [ "$(printf '%s\n%s\n' "$targetprjver" "$develver" | sort -V | tail -1)" = "$develver" ] && ahead=1
   fi
+fi
+if [ "$ahead" = 2 ]; then
+  echo "VERDICT: STOP - nothing to do: $devel and $target are both at $develver (this update already landed)"
+  exit 3
 fi
 if [ "$ahead" = 1 ]; then
   echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}), run: osc sr $devel $pkg $target"
