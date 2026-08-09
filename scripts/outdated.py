@@ -41,7 +41,11 @@ Usage: my-packages.sh --... | cut -f2 | outdated.py
        outdated.py --names /tmp/names.txt --no-factory-check   # raw Repology
 """
 import sys, json, time, urllib.request, urllib.error, argparse, subprocess, re
+import os
 from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _sanitize    # escape/Unicode-smuggling filter for third-party text
 
 try:
     import _anitya          # sibling module; see scripts/_anitya.py
@@ -185,7 +189,9 @@ for s, cur, new_disp, status, fv in sorted(candidates, key=lambda x: x[0].lower(
             extra = f"   (not in {args.project})"
         elif fv != cur:
             extra = f"   ({shortprj}={fv})"
-    print(f"{s:32} {str(cur):24} -> {new_disp}{extra}")
+    # version strings come from Repology (any tracked repo's packager can
+    # influence them) — sanitize before display
+    print(_sanitize.sanitize(f"{s:32} {str(cur):24} -> {new_disp}{extra}"))
 
 if do_check and suppressed:
     print(f"# suppressed (already at newest in {args.project}): "
@@ -236,10 +242,13 @@ if do_check and not args.no_anitya:
         for pkg, fv, raw, how in a_hits:
             disp = _anitya.norm(raw)
             rawnote = f" = {raw}" if disp != raw else ""
-            print(f"{pkg:32} {str(fv):24} -> {disp} [anitya:{how}{rawnote}]")
+            # anitya version strings are upstream/mapping-controlled — sanitize
+            print(_sanitize.sanitize(
+                f"{pkg:32} {str(fv):24} -> {disp} [anitya:{how}{rawnote}]"))
         if a_odd:
-            print("# anitya: incomparable version schemes (check by hand): "
-                  + " ".join(f"{p}({fv} vs {raw})" for p, fv, raw in a_odd))
+            print(_sanitize.sanitize(
+                "# anitya: incomparable version schemes (check by hand): "
+                + " ".join(f"{p}({fv} vs {raw})" for p, fv, raw in a_odd)))
         if failed:
             print(f"# anitya: {len(failed)} lookup(s) FAILED (network/anti-bot) "
                   f"— NOT checked: " + " ".join(failed))

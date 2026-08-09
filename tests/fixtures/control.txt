@@ -1,0 +1,4 @@
+Plain line one.
+	tab-indented line two.
+UTF-8: Renée Müller — été 🎉
+final line, no trailing newline gets one here

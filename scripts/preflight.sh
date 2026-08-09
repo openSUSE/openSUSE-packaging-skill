@@ -52,6 +52,23 @@ done
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
 
+# Third-party text (foreign .changes entries, PR titles, spec fields) is
+# sanitized before display — see scripts/_sanitize.py. Always capture the
+# producer's output/rc FIRST and sanitize the captured text: this filter must
+# never sit in a pipeline whose exit status is a verdict.
+SDIR="$(cd "$(dirname "$0")" && pwd)"
+# On helper failure fall back to the RAW text with a loud stderr warning —
+# an empty result would be a silent false-clean (foreign text vanishing).
+sanitize() {
+  local out
+  if out=$(printf '%s' "$1" | python3 "$SDIR/_sanitize.py" 2>/dev/null); then
+    printf '%s' "$out"
+  else
+    echo "WARNING: $SDIR/_sanitize.py unavailable — printing UNSANITIZED third-party text" >&2
+    printf '%s' "$1"
+  fi
+}
+
 # osc wrapper distinguishing 404 (fact) from other failures (fatal).
 # Sets: O_OUT (stdout), O_404 (0/1). Returns 0 on success or 404, 1 otherwise.
 oapi() {
@@ -88,11 +105,12 @@ if [ -n "$devel" ]; then
   if [ "$O_404" = 1 ]; then
     echo "devel spec:     (no $pkg.spec — link/multi-spec package? verify by hand)"
   else
-    develver="$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')"
+    develver="$(sanitize "$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
     echo "devel Version:  ${develver:-?}"
   fi
   oapi "/source/$devel/$pkg/$pkg.changes" || fail "could not read $devel/$pkg/$pkg.changes"
-  [ "$O_404" = 0 ] && { echo "devel .changes top entry:"; printf '%s\n' "$O_OUT" | sed -n '1,4p' | sed 's/^/    /'; }
+  # foreign-authored prose block -> sanitized AND delimited
+  [ "$O_404" = 0 ] && { echo "devel .changes top entry:"; printf '%s\n' "$O_OUT" | sed -n '1,4p' | python3 "$SDIR/_sanitize.py" --delimit | sed 's/^/    /'; }
   # A reviewer role held by someone else means SUBMIT, never commit directly:
   # that person asked to see changes before they land, and a direct commit
   # bypasses the gate even where maintainer rights would allow it.
@@ -115,7 +133,7 @@ fi
 targetprjver=""
 if [ "$newpkg" = 0 ]; then
   oapi "/source/$target/$pkg/$pkg.spec" || fail "could not read $target/$pkg/$pkg.spec"
-  [ "$O_404" = 0 ] && targetprjver="$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')"
+  [ "$O_404" = 0 ] && targetprjver="$(sanitize "$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
   echo "$target Version: ${targetprjver:-?}"
 fi
 
@@ -176,6 +194,8 @@ for p in d:
     title = p.get("title"); url = p.get("html_url")
     print(f"PR #{num} -> {base}: {title} ({url})")
 ')" || fail "unparseable PR list for $org/$pkg"
+    # PR titles are foreign-authored; sanitize AFTER the rc-gated capture above
+    prs="$(sanitize "$prs")"
     [ -n "$prs" ] && { echo "open PR(s) on the devel repo:"; printf '%s\n' "$prs" | sed 's/^/    /'; } \
                   || echo "open PRs:       none"
   fi

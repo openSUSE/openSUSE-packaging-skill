@@ -41,8 +41,20 @@ Exit codes:
      CURRENT
 """
 import argparse, json, re, subprocess, sys, urllib.request, urllib.error, urllib.parse
+import builtins, os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _sanitize    # escape/Unicode-smuggling filter for third-party text
+
+# Every output line of this script embeds forge-controlled strings (tag names,
+# release titles, version strings, asset notes), so sanitize at the single
+# choke point: a module-local print shadow. Deliberate; args pass through
+# unchanged unless they are str.
+def print(*args, **kw):    # noqa: A001
+    builtins.print(*(_sanitize.sanitize(a) if isinstance(a, str) else a
+                     for a in args), **kw)
 
 try:
     import _anitya          # sibling module; see scripts/_anitya.py
@@ -288,7 +300,8 @@ def main():
                 errors.append(f"anitya: {e}")
 
     for err in errors:
-        sys.stderr.write(f"WARNING: probe failed — {err}\n")
+        # exception text can embed fetched bytes — sanitize the warning too
+        sys.stderr.write(_sanitize.sanitize(f"WARNING: probe failed — {err}\n"))
 
     if not results:
         if anitya_v:

@@ -27,6 +27,9 @@ the OBS-only table (it never kills the SR view).
 import sys, argparse, subprocess, json, urllib.request, urllib.error
 import os, xml.etree.ElementTree as ET
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _sanitize   # escape/Unicode-smuggling filter for third-party text
+
 GITEA = "https://src.opensuse.org/api/v1"
 
 def api(path, hard=True):
@@ -74,7 +77,10 @@ def review_full(rv):   # full name, for the bulleted blocks format
     return "?"
 
 def clip(s, n=64):
-    s = " ".join((s or "").split())
+    # Every foreign-authored comment/description body flows through here —
+    # sanitize at the choke point so no ANSI/bidi/zero-width smuggling from a
+    # request comment or PR body reaches the rendered table.
+    s = " ".join(_sanitize.sanitize(s or "").split())
     return (s[: n - 1] + "…") if len(s) > n else s
 
 def human_comment(req_id, state_el):

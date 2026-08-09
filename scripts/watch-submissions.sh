@@ -106,10 +106,14 @@ if [ "$NO_PRS" = 0 ]; then
   GITEA_RC=$?
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OBS_RC=$OBS_RC INCOMING_RC=$INCOMING_RC GITEA_RC=$GITEA_RC \
 ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING \
-OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" python3 - <<'PYEOF'
+OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
 import json, os, sys, xml.etree.ElementTree as ET
+
+sys.path.insert(0, os.environ["SCRIPT_DIR"])
+import _sanitize   # escape/Unicode-smuggling filter for third-party text
 
 tmp, base_path = os.environ["TMP"], os.environ["BASE"]
 allow_empty = os.environ["ALLOW_EMPTY"] == "1"
@@ -191,7 +195,9 @@ if not no_prs and os.environ["GITEA_RC"] == "0":
     try:
         for it in json.load(open(f"{tmp}/gitea.json")):
             repo = (it.get("repository") or {}).get("full_name", "?")
-            gitea[f"{repo}#{it.get('number')}"] = {"title": (it.get("title") or "")[:60]}
+            # PR titles are foreign-authored — sanitize at ingestion
+            gitea[f"{repo}#{it.get('number')}"] = {
+                "title": _sanitize.sanitize(it.get("title") or "")[:60]}
         gitea_ok = True
     except Exception:
         gitea_ok = False
@@ -265,7 +271,9 @@ if gitea_ok:
             changes.append(f"NEW PR {k}")
     for k, v in bg.items():
         if k not in gitea:
-            changes.append(f"RESOLVE PR {k} '{v.get('title', '')}' "
+            # re-sanitize: the title may come from a baseline written before
+            # the sanitizer existed
+            changes.append(f"RESOLVE PR {k} '{_sanitize.sanitize(v.get('title', ''))}' "
                            "(no longer open; fetch final state: merged/closed)")
 
 print("CHANGED" if changes else "NOCHANGE")

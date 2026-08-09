@@ -23,8 +23,22 @@ fac="${2:-}"
 UA='openSUSE-distro-survey/1.0'
 get() { curl -fsSL -A "$UA" --max-time 20 "$@" 2>/dev/null; }
 
+# Every version/note field below is text fetched from another distro's
+# infrastructure — sanitize before display (see scripts/_sanitize.py).
+SDIR="$(cd "$(dirname "$0")" && pwd)"
+# Falls back to the RAW text on helper failure — an empty cell would be a
+# silent false-clean (see the sanitize() helpers in preflight/build-summary).
+row() {
+  local clean
+  if ! clean=$(printf '%s' "${2:--}${3:+ $3}" | python3 "$SDIR/_sanitize.py" 2>/dev/null); then
+    echo "WARNING: $SDIR/_sanitize.py unavailable — printing UNSANITIZED third-party text" >&2
+    clean="${2:--}${3:+ $3}"
+  fi
+  printf '  %-10s %s\n' "$1" "$clean"
+}
+
 printf '== distro survey: %s ==\n' "$pkg"
-[ -n "$fac" ] && printf '  %-10s %s\n' 'Factory' "$fac"
+[ -n "$fac" ] && row 'Factory' "$fac"
 
 # One Repology call up front — feeds Gentoo + the Repology-only distros below.
 # Repology project name usually == srcname; best-effort, '-' on mismatch/absence.
@@ -53,19 +67,19 @@ except Exception:
 n = sum(1 for e in d.get("content", []) if e.get("name","").endswith(".patch"))
 if n: print(f"({n} patches)")
 ' 2>/dev/null)
-printf '  %-10s %s %s\n' 'Fedora' "${fv:--}" "${fp:-}"
+row 'Fedora' "${fv:-}" "${fp:-}"
 
 # Debian (sources.debian.org API)
 dv=$(get "https://sources.debian.org/api/src/$pkg/" | python3 -c "import sys,json;d=json.load(sys.stdin);vs=[v['version'] for v in d.get('versions',[])];print(vs[0] if vs else '-')" 2>/dev/null)
-printf '  %-10s %s\n' 'Debian' "${dv:--}"
+row 'Debian' "${dv:-}"
 
 # Gentoo — from the already-fetched Repology payload (a gitweb category scrape
 # would have to guess the category and misses dev-python/net-libs/…)
-printf '  %-10s %s\n' 'Gentoo' "$(rg gentoo)"
+row 'Gentoo' "$(rg gentoo)"
 
 # Arch (official repos)
 av=$(get "https://archlinux.org/packages/search/json/?name=$pkg" | python3 -c "import sys,json;r=json.load(sys.stdin).get('results',[]);print(r[0]['pkgver'] if r else '-')" 2>/dev/null)
-printf '  %-10s %s\n' 'Arch' "${av:--}"
+row 'Arch' "${av:-}"
 
 # Alpine (aports APKBUILD on edge, common repos)
 alv='-'
@@ -73,20 +87,20 @@ for repo in main community testing; do
   v=$(get "https://gitlab.alpinelinux.org/alpine/aports/-/raw/master/$repo/$pkg/APKBUILD" | grep -m1 -E '^pkgver=' | cut -d= -f2)
   [ -n "$v" ] && { alv="$v ($repo)"; break; }
 done
-printf '  %-10s %s\n' 'Alpine' "$alv"
+row 'Alpine' "$alv"
 
 # openEuler (src-openeuler spec on gitee)
 ov=$(get "https://gitee.com/src-openeuler/$pkg/raw/master/$pkg.spec" | grep -m1 -iE '^Version:' | awk '{print $2}')
-printf '  %-10s %s\n' 'openEuler' "${ov:--}"
+row 'openEuler' "${ov:-}"
 
 # Void Linux (void-packages template — reliable, version=<v>)
 vv=$(get "https://raw.githubusercontent.com/void-linux/void-packages/master/srcpkgs/$pkg/template" | grep -m1 -E '^version=' | cut -d= -f2)
-printf '  %-10s %s\n' 'Void' "${vv:--}"
+row 'Void' "${vv:-}"
 
 # NixOS / FreeBSD ports / OpenMandriva / Mageia — from the same Repology payload.
-printf '  %-10s %s\n' 'NixOS'       "$(rg nix)"
-printf '  %-10s %s\n' 'FreeBSD'     "$(rg freebsd)"
-printf '  %-10s %s\n' 'OpenMandr.'  "$(rg openmandriva)"
-printf '  %-10s %s\n' 'Mageia'      "$(rg mageia)"
+row 'NixOS'       "$(rg nix)"
+row 'FreeBSD'     "$(rg freebsd)"
+row 'OpenMandr.'  "$(rg openmandriva)"
+row 'Mageia'      "$(rg mageia)"
 
 echo "(divergence → a newer version, a different upstream lineage, or a patch worth pulling; inspect the laggard-vs-leader spec/patches directly.)"

@@ -40,8 +40,19 @@ done
 
 [ -r "$manifest" ] || { echo "error: manifest not found: $manifest" >&2; exit 2; }
 
-DIFFMODE=$diffmode UPDATE=$update MANIFEST=$manifest PAGES="${pages[*]:-}" python3 - <<'PY'
+SDIR="$(cd "$(dirname "$0")" && pwd)"
+DIFFMODE=$diffmode UPDATE=$update MANIFEST=$manifest PAGES="${pages[*]:-}" SDIR="$SDIR" python3 - <<'PY'
 import json, os, sys, urllib.parse, urllib.request, difflib, datetime
+
+# The live wiki is world-editable third-party content; --diff prints its raw
+# text, so it goes through the shared sanitizer (references/untrusted-content.md).
+# On import failure print RAW with a loud warning — never silently blank.
+sys.path.insert(0, os.environ.get("SDIR", "."))
+try:
+    from _sanitize import sanitize as _sanitize_text
+except Exception:
+    sys.stderr.write("WARNING: _sanitize.py unavailable — printing UNSANITIZED wiki text\n")
+    _sanitize_text = lambda s: s
 
 manifest = os.environ["MANIFEST"]
 diffmode = os.environ["DIFFMODE"] == "1"
@@ -114,7 +125,7 @@ for title, pinned_rev, pinned_ts, pinned_on in check:
         try:
             old = wikitext(oldid=pinned_rev).splitlines(keepends=True)
             new = wikitext(page=title).splitlines(keepends=True)
-            sys.stdout.writelines(difflib.unified_diff(
+            sys.stdout.writelines(_sanitize_text(line) for line in difflib.unified_diff(
                 old, new, fromfile=f"{title}@{pinned_rev}", tofile=f"{title}@{cur_rev}", n=2))
             print()
         except Exception as e:

@@ -129,6 +129,23 @@ fi
 
 strip='s/^\[[^]]*\] //'   # drop the "[  98s] " elapsed-time prefix
 
+# Build-log excerpts are third-party text (%check output and rpmlint messages
+# quote whatever upstream's tests print) — sanitize them before DISPLAY only;
+# the verdict/rc derivation above works on the raw log so sanitization can
+# never flip a verdict. See scripts/_sanitize.py.
+SDIR="$(cd "$(dirname "$0")" && pwd)"
+# On helper failure fall back to the RAW text with a loud stderr warning —
+# an empty result would be a silent false-clean (foreign text vanishing).
+sanitize() {
+  local out
+  if out=$(printf '%s' "$1" | python3 "$SDIR/_sanitize.py" 2>/dev/null); then
+    printf '%s' "$out"
+  else
+    echo "WARNING: $SDIR/_sanitize.py unavailable — printing UNSANITIZED third-party text" >&2
+    printf '%s' "$1"
+  fi
+}
+
 # --- verdict ------------------------------------------------------------------
 verdict_line=$(grep -hE 'finished "build|failed "build' "$log" | sed -E "$strip" | tail -1)
 badness_abort=$(grep -hE 'exceeds threshold, aborting' "$log" | sed -E "$strip" | tail -1)
@@ -144,9 +161,9 @@ esac
 echo "## Build summary — $arg"
 echo
 echo "### VERDICT: $verdict"
-[ -n "$verdict_line" ] && echo "$verdict_line"
-[ -n "$rpm_errors" ] && echo "$rpm_errors"
-[ -n "$badness_abort" ] && echo "$badness_abort"
+[ -n "$verdict_line" ] && sanitize "$verdict_line" && echo
+[ -n "$rpm_errors" ] && sanitize "$rpm_errors" && echo
+[ -n "$badness_abort" ] && sanitize "$badness_abort" && echo
 echo "log: $log  (last written $(date -r "$log" '+%Y-%m-%d %H:%M' 2>/dev/null))"
 # Named traps that masquerade as something else:
 if grep -qE 'error: Architecture is not included' "$log"; then
@@ -159,12 +176,12 @@ fi
 echo
 echo "### %check / tests"
 t=$(grep -hE '[0-9]+ (passed|failed)|[0-9]+% tests passed|Total Test time|No tests were found|Ran [0-9]+ test|^\[[ 0-9]+s\] *(Ok|Fail|Expected Fail|Unexpected Pass|Skipped|Timeout): +[0-9]+' "$log" | sed -E "$strip" | tail -6)
-[ -n "$t" ] && echo "$t" || echo "(no test summary found — does the spec have a %check?)"
+[ -n "$t" ] && { sanitize "$t"; echo; } || echo "(no test summary found — does the spec have a %check?)"
 echo
 echo "### rpmlint"
-grep -hE 'packages and [0-9].* checked;|[0-9]+ errors?, [0-9]+ warnings?.*badness' "$log" | sed -E "$strip" | tail -1
+sanitize "$(grep -hE 'packages and [0-9].* checked;|[0-9]+ errors?, [0-9]+ warnings?.*badness' "$log" | sed -E "$strip" | tail -1)"; echo
 issues=$(grep -hE ': (E|W): ' "$log" | sed -E "$strip" | sort -u)
-[ -n "$issues" ] && { echo; echo "$issues" | head -40; } || echo "(no E:/W: lines)"
+[ -n "$issues" ] && { echo; sanitize "$(printf '%s\n' "$issues" | head -40)"; echo; } || echo "(no E:/W: lines)"
 echo
 echo "### RPMs produced"
 if [ -n "${rpms:-}" ] && [ -d "$rpms" ]; then
