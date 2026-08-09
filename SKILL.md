@@ -123,7 +123,7 @@ The order matters: spec-cleaner output is mechanically correct *style*; the wiki
 
 ### Adding a .changes entry
 
-The canonical command is `osc vc`, which opens an editor with a fresh template. Since that's interactive, when working from this skill **write the entry directly** to `<name>.changes` using the mechanics below. The full format/content rules — bullet levels (`-`/`*`, no third level), thematic grouping, the condense-auto-generated-changelog drop/keep list, the no-URL rule, patch naming, CVE ids, the umbrella-bullet norm, the SR-must-carry-an-entry rule, and the never-edit-old-entries rule with its narrow exceptions — live in `references/specfile-guidelines.md` ("Changelog").
+The canonical command is `osc vc`, which opens an editor with a fresh template. Since that's interactive, when working from this skill **write the entry directly** to `<name>.changes` using the mechanics below. The full format/content rules — bullet levels (`-`/`*`, no third level), thematic grouping, the condense-auto-generated-changelog drop/keep list, the no-URL rule, patch naming, CVE ids (with the preferred security-bullet layout — `- CVE-XXXX-NNNN: <component + impact> (bsc#NNNNNN)` with the fixing patch as a `*` sub-bullet), the umbrella-bullet norm, the SR-must-carry-an-entry rule, and the never-edit-old-entries rule with its narrow exceptions — live in `references/specfile-guidelines.md` ("Changelog").
 
 1. Get current UTC time in the changelog format:
    ```

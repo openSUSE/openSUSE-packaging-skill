@@ -170,6 +170,17 @@ https://en.opensuse.org/openSUSE:Creating_a_changes_file_(RPM)
 - Reference bugs as `bsc#NNNNNN` (SUSE bugzilla) or `boo#NNNNNN` (openSUSE). Avoid `bnc#`.
 - **HARD RULE — name every added or removed patch (by filename) in the `.changes`.** Factory's `factory-auto`/`check_source` review **auto-declines** the SR otherwise, one line per unmentioned patch: *"A patch (foo.patch) is being added/removed without this addition/removal being mentioned in the changelog."* A summary like "replace the old patches with the distro set" does **not** satisfy it. Write `- Add foo-fix.patch: <what>` / `- Drop bar.patch: <why — merged upstream / obsolete>`; for a big patch-set swap, enumerate every added and every removed filename. Applies to git-workflow PRs too (keep the changelog consistent). (Real case: the xar mackyle→Apple lineage switch was declined for 3 removed + 9 added patches named only collectively.)
 - **HARD RULE — CVEs need full identifiers.** Any mention of fixed security issues MUST cite the literal `CVE-XXXX-NNNN` id(s), one per fix (ideally paired with a `bsc#`/`boo#`). A vague "fixes multiple CVEs" / "security hardening (CVEs)" bullet without the actual IDs is unacceptable — the SUSE/openSUSE security tracker keys off the literal CVE strings.
+- **PREFERRED LAYOUT for a security-fix bullet — CVE id first, bug ref last, patch as a sub-bullet.** One top-level `-` bullet per CVE, opening with the bare id and a colon, then what the vulnerability actually *is* (component + impact, not "security fix"), then the `bsc#`/`boo#` in parentheses at the end; the patch that fixes it goes on a `*` sub-bullet as a bare filename. Wrap at 67 cols, continuation lines indented under the text:
+  ```
+  - CVE-2026-54886: SSH SFTP server denial of service via extended
+    channel data infinite loop (bsc#1270246)
+    * fix-CVE-2026-54886.patch
+  - CVE-2026-48860: Erlang/OTP ssl (inet_tls_dist module) allows
+    unauthenticated bypass of the distribution-over-TLS LAN allowlist
+    (bsc#1268146)
+    * fix-CVE-2026-48860.patch
+  ```
+  Martin's stated preference, 2026-08-09. It satisfies three separate rules at once — the literal CVE id for the security tracker, the `bsc#` cross-reference, and the name-every-patch rule that `factory-auto` declines on — so use it whenever a patch lands *because of* a CVE. One CVE per bullet even when a single patch fixes several (repeat the patch sub-bullet), and never merge two CVEs into one bullet. For CVEs fixed by a *version bump* rather than a patch there is no patch sub-bullet: keep the `CVE-…: description (bsc#…)` shape as sub-bullets under the update dash. For CVEs the package is *not* affected by, use the state-not-authorship form in the rule further down instead.
 - **HARD RULE — proactively search upstream for CVE IDs on every version bump.** Don't wait for release notes to spell them out; mine the commit range yourself. Clone/fetch upstream and grep between the old and new tag:
   ```
   git clone --filter=blob:none <upstream-url> /tmp/x && cd /tmp/x
