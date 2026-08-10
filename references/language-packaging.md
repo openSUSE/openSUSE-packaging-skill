@@ -110,3 +110,21 @@ All learned packaging grok-build (a ~1270-crate Cargo workspace) — they genera
 - **Give up ownership of directories you no longer install into** — drop the `%dir %{nodejs_sitelib}` line from `%files` when moving out, or the package still claims a directory it has no business owning.
 - **Shipping the npm tarball's prebuilt `dist/` is accepted practice** when building from source would require dev-only type packages the distribution doesn't carry (`@types/node` and friends) — Factory's own `typescript` does exactly this via `%nodejs_install`. Verify the tarball contains **no binaries** first; prebuilt native engines normally ship as *separate* per-platform npm packages, which is what a distribution replaces with its own build.
 - **npm tarballs routinely ship CRLF endings and `#!/usr/bin/env node` shebangs.** Normalise both in `%install` (`sed -e 's|\r$||' -e '1s|^#!/usr/bin/env node$|#!%{_bindir}/node|'`) and set mode `0755` on anything carrying a shebang — rpmlint judges by the shebang, not by whether the file is ever executed.
+- **Vendoring npm runtime dependencies: the `node_modules` OBS service, never a hand-rolled tarball — HARD RULE** (the Node instance of the general "vendor via `_service`" rule at the top of this file; and whenever you *encounter* a hand-made vendor tarball in an existing package, **convert it to the service** as part of the touch). The service is `obs-service-node_modules` (in Factory; consumed at build time via `local-npm-registry`, also in Factory; reference user: `openSUSE:Factory/cockpit-podman`). Flow:
+  1. **Input is `package-lock.json`**, generated in the unpacked source: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts` (npm ≥ 7). Commit it *next to the spec* as a numbered Source; if the upstream tarball ships its own lockfile, the service's README says to prefer the one you generated.
+  2. `_service`:
+     ```
+     <services>
+       <service name="node_modules" mode="manual">
+         <param name="cpio">node_modules.obscpio</param>
+         <param name="output">node_modules.spec.inc</param>
+         <param name="source-offset">10000</param>
+       </service>
+     </services>
+     ```
+     `osc service manualrun` (host needs `obs-service-node_modules`) produces **three** files to commit: `node_modules.obscpio` (the dep tarballs), `node_modules.spec.inc` (one `Source1000N:` URL line per dep — this is what makes every vendored artifact's provenance visible to reviewers, the audit trail a hand tarball hides), and `node_modules.sums` (checksums).
+  3. Spec: `Source10: package-lock.json`, `Source11: node_modules.spec.inc`, **`%include %{_sourcedir}/node_modules.spec.inc`**, `BuildRequires: local-npm-registry`. In `%prep`/`%build`, from the directory holding `package.json` + the lockfile: `local-npm-registry %{_sourcedir} install --omit=dev --ignore-scripts` (or `--also=dev` when the build itself needs devDependencies) — it spins a local registry from the obscpio'd tarballs and runs a normal, fully offline `npm install`.
+  4. `%include` here is safe server-side: OBS's scheduler resolves `Source`/`BuildRequires` lines inside an `%include` fragment when computing the buildinfo (empirically verified; cockpit-podman ships this exact shape in Factory). The known `%include` blind spot is the *python singlespec generator*, which is irrelevant to Node packages.
+  - **Per-bump refresh:** regenerate the lockfile in the new source, re-run `osc service manualrun`, commit the three refreshed outputs. Re-derive the licence union over the lock's package set on every refresh, same as a Rust re-vendor.
+  - **Disable the nodejs dependency generator when everything is vendored** — `%global __nodejs_provides %{nil}` + `%global __nodejs_requires %{nil}` — or package.json's `dependencies` become `npm(...)` Requires nothing in the distribution provides.
+  - **npm ships dependency trees mode 0755 wholesale**, so rpmlint sees `script-without-shebang` on every README/JSON and `env-script-interpreter` on vendored helper CLIs. Fix the tree, don't filter: `chmod a-x` everything, then restore `0755` only on files starting `#!` while rewriting their interpreter to `%{_bindir}/node`; also delete `.github` dirs, dotfiles and `*.cmd`/`*.bat`/`*.ps1`.
