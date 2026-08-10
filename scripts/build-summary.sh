@@ -17,7 +17,10 @@
 # `osc build … 2>&1 | tee /tmp/osc-build.log` — and pass that file as the
 # argument; osc streams the identical log to stdout.
 #
-# Usage: build-summary.sh [repo-arch | flavor | logfile | --list]
+# Usage: build-summary.sh [repo-arch | flavor | root-name | root-path | logfile | --list]
+#   A full root NAME (exactly what --list prints, e.g. pkg-repo-arch) or a full
+#   root PATH is honored verbatim — explicit naming overrides the wrong-package
+#   guard that protects the loose repo-arch match.
 #   The build root's name comes from `build-root` in oscrc, which is a template
 #   (default `%(repo)s-%(arch)s`, often customized to include `%(package)s`), so
 #   there is NO single right answer — the arg is matched loosely against the
@@ -97,6 +100,15 @@ fi
 log=""
 if [ -f "$arg" ]; then                      # a captured/teed log file
   log="$arg"; rpms=""
+elif [ -r "$arg/.build.log" ]; then         # a build-root PATH, used verbatim
+  log="$arg/.build.log"; rpms="$arg/home/abuild/rpmbuild/RPMS"
+elif [ -r "$BASE/$arg/.build.log" ]; then   # a full root NAME (what --list prints)
+  # Explicitly named roots are honored as-is: naming the root IS the
+  # disambiguation, so the wrong-package guard below must not apply — it
+  # compares against "$CKPKG-$arg" and can never match once $arg already
+  # carries the package prefix (real case: the exact string --list printed
+  # was rejected with exit 2).
+  log="$BASE/$arg/.build.log"; rpms="$BASE/$arg/home/abuild/rpmbuild/RPMS"
 else
   # Exact expansion of the oscrc template comes FIRST — it is the only candidate
   # that cannot resolve to a different package.
@@ -105,7 +117,7 @@ else
     cands+=("$(expand_root "$CKPKG" "${arg%-*}" "${arg##*-}")")
     cands+=("$BASE/$CKPKG-$arg")
   fi
-  cands+=("$BASE/$arg" "$BASE/_repository:$arg-"* "$BASE"/*":$arg-"* "$BASE/$arg-"*)
+  cands+=("$BASE/_repository:$arg-"* "$BASE"/*":$arg-"* "$BASE/$arg-"*)
   # package-prefixed roots for this repo-arch, newest log first
   while IFS= read -r d; do [ -n "$d" ] && cands+=("$d"); done < <(
     for d in "$BASE"/*"-$arg"/; do
