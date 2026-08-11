@@ -24,6 +24,17 @@ if ! imp=$(gpg --import "$keyring" 2>&1); then
   echo "$imp" >&2
   exit 2
 fi
+# `gpg --import` exits 0 on a file holding no key at all (e.g. a detached
+# .sig passed where the keyring was meant — the args are easy to transpose).
+# Without this check the run reaches the verify with an EMPTY keyring and
+# reports "BAD or UNVERIFIABLE signature ... upstream may have rotated keys",
+# which is a false alarm on a perfectly good tarball. Fail loudly instead.
+if ! gpg --list-keys --with-colons 2>/dev/null | grep -q '^pub:'; then
+  echo "'$keyring' contains no OpenPGP public key — is it really a keyring?" >&2
+  echo "usage: gpg-verify.sh <tarball> <keyring> [signature]" >&2
+  echo "$imp" >&2
+  exit 2
+fi
 
 # Run the verify ONCE and grep the captured output (also avoids the
 # pipefail + `grep -q` SIGPIPE flake in an if-condition).
