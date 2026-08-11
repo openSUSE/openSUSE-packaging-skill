@@ -126,9 +126,16 @@ else
   cands+=("/var/tmp/build-root/$arg")        # last resort: the un-templated root
   for cand in "${cands[@]}"; do
     [ -r "$cand/.build.log" ] || continue
-    # Never answer with another package's log when this checkout has its own.
+    # Never answer with another package's log when this checkout names a
+    # package. The `compgen` form of this guard only held once SOME root for
+    # CKPKG existed; with none at all it fell through and reported a foreign
+    # package's stale log as this build's verdict — which is exactly the
+    # failure this script exists to prevent. It bit a zstd checkout whose
+    # `osc build` had refused the repo name (and still exited 0), answering
+    # with gpscorrelate's GREEN. Now: if we know the package, the root must
+    # carry its name, full stop.
     if [ -n "$CKPKG" ] && [ "${cand##*/}" != "$CKPKG-$arg" ] \
-       && compgen -G "$BASE/$CKPKG-*" >/dev/null; then continue; fi
+       && [ "${cand##*/}" != "$CKPKG" ]; then continue; fi
     log="$cand/.build.log"; rpms="$cand/home/abuild/rpmbuild/RPMS"; break
   done
 fi
