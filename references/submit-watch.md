@@ -134,6 +134,14 @@ Before `osc sr <target>`, confirm the target actually has the package — Factor
 
 For the common cases use `scripts/sr-status.py` (state + review chain + comments table; `--brief` for a plain list with staging assignments; includes src.opensuse.org PRs) / `scripts/my-requests.sh` (thin wrapper for the brief view). For a **recurring/scheduled watch** use `scripts/watch-submissions.sh` — it diffs the active SR + open PR set against a saved baseline and prints only the delta (`NOCHANGE` on most firings → stay silent; `RESOLVE SR/PR` lines mean the item left the watched set and the caller fetches the final accepted/declined/merged state). The commands below are what they wrap, for custom queries.
 
+**HARD RULE — "open" must include `declined`, or your status view is blind to the one state that needs you.** The natural definition of an active request is `states=new,review`, and it is wrong for a *creator's* view: a decline is terminal in OBS, so a declined request **leaves the active set** and vanishes from exactly the query you would reach for. The result is a status table that looks entirely healthy while a Factory submission sits dead. Anything answering "what are my submissions doing?" must fetch `new,review,declined` — which is why `sr-status.py --state open` (and `my-requests.sh` through it) does. When hand-rolling a query, spell the state out:
+
+```
+osc api '/request?view=collection&states=new,review,declined&roles=creator&user=<user>&types=submit'
+```
+
+**The delta-watcher case is different and must NOT be "fixed" the same way.** `watch-submissions.sh` deliberately snapshots only `new,review`, because it reports *change*: a decline shows up as the id **disappearing** from the active set between runs, which it emits as a `RESOLVE` line for the caller to resolve with `osc request show`. Adding `declined` to a delta watcher's baseline would make every decline a permanent resident of the snapshot and silence exactly one notification. Snapshot the active set; query the creator's set with declines included. (Real case: a Regina-REXX Factory decline was invisible in the default status table for hours because `open` meant `new,review`; the scheduled watcher's disappearance check would have caught it.)
+
 | Command | What it shows |
 |---|---|
 | `osc rq list <project>` (alias `osc request list`) | Open requests **involving** that project — both directions (source or target). |

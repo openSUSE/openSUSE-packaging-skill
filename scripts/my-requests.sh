@@ -6,7 +6,10 @@
 # request-search API with roles=creator (via sr-status.py).
 #
 # Usage: my-requests.sh [--state open|declined|accepted|all] [--user OBSUSER] [--target PRJ]
-#   --state   open (new,review) | declined | accepted | all   (default: open)
+#   --state   open (new,review,declined) | declined | accepted | all  (default: open)
+#             "open" includes declined on purpose: a decline is terminal, so it
+#             leaves the active set — filtering it out hides the one state that
+#             actually needs you. See references/submit-watch.md.
 #   --user    OBS account (default: `osc whois`)
 #   --target  restrict to a target project (e.g. openSUSE:Factory)
 set -euo pipefail
