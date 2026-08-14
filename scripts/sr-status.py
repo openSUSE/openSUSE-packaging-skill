@@ -11,7 +11,7 @@ Usage:
   sr-status.py [--user U] [--state open|all|declined|accepted] [--target PRJ]
                [--limit N] [--format table|blocks] [--brief] [--no-prs] [ID ...]
     ID ...      specific OBS request ids (overrides discovery; skips the PR leg)
-    --state     which of your creator SRs/PRs to show (default: open = new,review)
+    --state     which of your creator SRs/PRs to show (default: open = new,review,declined)
     --target    restrict SR discovery to a target project (e.g. openSUSE:Factory)
     --limit     cap discovered SRs (most recent first); each costs 2 API calls
     --format    table = one row per item; blocks = per-item bullets
@@ -217,7 +217,12 @@ def main():
     rows = []
     ids = a.ids
     if not ids:
-        states = {"open": "new,review",
+        # "open" means "still needs something from you", so it MUST include
+        # declined: a decline is the single most actionable state a request of
+        # yours can be in (it needs a fix + supersede, or a revoke), and it is
+        # what the declines-first sort below exists to surface. Leaving it out
+        # made the default view silently hide exactly the rows worth reading.
+        states = {"open": "new,review,declined",
                   "all": "new,review,declined,accepted,revoked,superseded"}.get(a.state, a.state)
         q = f"/request?view=collection&states={states}&roles=creator&user={user}&types=submit"
         if a.target:
