@@ -187,7 +187,29 @@ A recurring task is "which of my submissions are declined and need attention?" W
 3. **"The package '…' has been removed"** — the target is gone from Factory; a plain resubmit just re-declines. This is now a **new-package submission**: update + cleanup + make it build cleanly (these are often packages dropped *for* a CMake-4/GCC-15 FTBFS — fix that), then `osc sr … --supersede <declined-id>` (expect the `(new package?)` warning + stricter `opensuse-review-team` review). Or `osc rq revoke` if you don't want to re-add it.
 4. **Stale/obsolete declines** — if the devel-project sources now match Factory (`osc rdiff openSUSE:Factory <pkg> <devel-project> <pkg>` is empty), the decline is moot → `osc rq revoke <id>` to tidy (revoke works on `declined`; see state vocabulary).
 
-**Amending an in-flight Factory/devel submission** (e.g. to add a `boo#` ref after you already submitted): edit the `.changes` entry, commit, then **revoke the stale Factory SR** (`osc request revoke <id> -m "superseding: …"`) and re-submit fresh — don't leave two competing SRs for the same package. (Real: vapoursynth — revoked SR, amended changelog to reference `boo#1268226`, re-forwarded.) Note the home-branch project is auto-removed once its SR is accepted, so re-branch before amending. Use `osc sr --supersede <declined-id>` when resubmitting over a declined/pending request in one step (see specfile-guidelines.md decline handling); use explicit `osc request revoke` + a fresh `sr` when you must amend sources first — both end with exactly one live SR. For a **pending** SR of your own (same package, same target), a plain `osc sr --yes` already auto-supersedes it — no `--supersede` flag needed (confirmed live: filing a langsmith 0.9.6 SR flipped the pending 0.9.5 SR to `superseded by <new-id>` automatically); still verify with `osc request show <old-id>` afterwards.
+**Amending an in-flight Factory/devel submission** (e.g. to add a `boo#` ref after you already submitted): edit the `.changes` entry, commit, then **revoke the stale Factory SR** (`osc request revoke <id> -m "superseding: …"`) and re-submit fresh — don't leave two competing SRs for the same package. (Real: vapoursynth — revoked SR, amended changelog to reference `boo#1268226`, re-forwarded.) Note the home-branch project is auto-removed once its SR is accepted, so re-branch before amending. Use `osc sr --supersede <declined-id>` when resubmitting over a declined/pending request in one step (see specfile-guidelines.md decline handling); use explicit `osc request revoke` + a fresh `sr` when you must amend sources first — both end with exactly one live SR. For a **pending** SR of your own (same package, same target), a plain `osc sr --yes` already auto-supersedes it — no `--supersede` flag needed (confirmed live: filing a langsmith 0.9.6 SR flipped the pending 0.9.5 SR to `superseded by <new-id>` automatically); still verify with `osc request show <old-id>` afterwards. **That auto-supersede is only safe when every open request on the package is yours — see the next rule.**
+
+**HARD RULE — the `osc sr` supersede prompt is ALL-OR-NOTHING. Never answer it; always pass `-s <id> --yes`, or create the request through the API.** When other requests are already open on the package, `osc sr` prints **one** line listing *every* one of them and asks **one** question:
+
+```
+The following submit requests are already open: 909973 1287670 1371083
+Supersede the old requests? (y/n/c)
+```
+
+There is **no per-request prompt**, and the same sweep happens silently under a bare `--yes`. Answering `y` (or letting `--yes` decide) supersedes **all of them, including other people's**: `declined` flips to `superseded by <your-id>` with `who=` set to *you*. That is an unauthorised write to someone else's request and it is not cleanly reversible (`superseded` and `declined` are both terminal; the audit trail then reads as though your request replaced theirs). An instruction like "supersede mine, answer `n` for the others" is **impossible to carry out** — the choice is not offered per id.
+
+The two safe forms, both of which touch exactly one request and never render the prompt:
+
+```
+osc sr <devel-prj> <pkg> openSUSE:Factory -s <your-old-id> --yes -m "$(cat msg.txt)"
+# or, when you want no prompt logic at all in the path:
+osc api -X POST -f req.xml '/request?cmd=create'
+osc api -X POST '/request/<your-old-id>?cmd=changestate&newstate=superseded&superseded_by=<new-id>'
+```
+
+**Do not count on a permission error to stop you.** The duplicate-forward case above shows osc's auto-supersede being refused with `HTTP Error 403: Forbidden` on someone else's request — but that protection is **not reliable**, and the conditions under which it applies have not been pinned down. In the case below the identical operation went through and silently rewrote two third-party requests. Treat the 403 as a lucky outcome, never as a safety net.
+
+**Before filing, always list what is open** (`osc request list <target> <pkg> -s new,review,declined`) so you know whose requests are in the blast radius, and afterwards `osc request show` each id you did *not* intend to touch to prove it is untouched. (Real case: a Regina-REXX resubmit swept up two *other people's* long-`declined` requests on the same package, flipping both to `superseded` under the submitter's own account. The four later supersedes in the same session used `-s`/the API and each hit exactly one request — an unrelated third-party SR still open on the same package survived all of them.)
 
 ### What human Factory reviewers decline for (mined from ~600 human-declined Factory SRs)
 
