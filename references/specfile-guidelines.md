@@ -157,7 +157,17 @@ osc getbinaries openSUSE:Factory <other-pkg> standard x86_64
 rpm -qp --qf '[%{FILENAMES}\t%{FILEMODES:perms}\t%{FILEFLAGS:fflags}\n]' <rpm> | LC_ALL=C sort
 ```
 
-then `join` the two sorted lists and confirm every shared path matches on **mode *and* flags**. (`LC_ALL=C` matters — a locale-default `sort` silently breaks `join`.) Migrating both sides to libalternatives is the durable fix: it removes the modes from the picture entirely. (Real case: Regina-REXX vs ooRexx — an earlier revival, SR 1287670, was declined for exactly the conflict above; both packages moved to libalternatives with a shared `group=rexx,rxqueue`.)
+then `join` the two sorted lists and confirm every shared path matches on **mode *and* flags**. (`LC_ALL=C` matters — a locale-default `sort` silently breaks `join`.)
+
+**HARD RULE — migrating ONE side of a shared-command pair CREATES a conflict; both sides must land, and the other one has to reach the target FIRST.** libalternatives ships `%{_bindir}/<name>` as a **real** symlink to `alts`, whereas update-alternatives `%ghost`s that same path. So the moment you migrate, your package's file list stops matching the un-migrated provider's, and installcheck rejects the pair on a **real-vs-ghost flag mismatch** — a conflict that did *not* exist while both sides were on update-alternatives:
+
+```
+found conflict of Regina-REXX-3.9.7-1.2.x86_64 with ooRexx-5.2.0-1.3.x86_64
+  /usr/bin/rexx    [mode mismatch: l777 root:root -> alts, g l777 root:root]
+  /usr/bin/rxqueue [mode mismatch: l777 root:root -> alts, g l777 root:root]
+```
+
+(`-> alts` = your real symlink; the bare `g l777` = their ghost.) installcheck compares your candidate against **what is in the target now**, not against your other pending request — so the sequencing is forced: the *other* package's migration must be accepted **into the target project** before yours can pass, and a migration SR of yours sitting in a devel project does not count. Plan the order before you migrate anything: if the other package is not yours, that is a wait on its maintainers plus a Factory acceptance, and your own request will be declined in the meantime. Migrating both sides is still the durable fix — it removes the modes from the picture entirely — but it is a coordinated two-package landing, exactly like a coupled soname bump. (Real case: Regina-REXX vs ooRexx — an earlier revival, SR 1287670, was declined for exactly the conflict above; both packages moved to libalternatives with a shared `group=rexx,rxqueue`.)
 
 ## Patches
 
