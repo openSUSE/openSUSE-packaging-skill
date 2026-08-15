@@ -13,10 +13,19 @@
 #   --update  re-pin an EXISTING _service in the cwd to the newer commit and
 #             enforce the "verify it actually moved" checks from
 #             references/update-build.md: .obsinfo version advanced,
-#             _servicedata changesrevision advanced, new top-dir name
+#             _servicedata changesrevision advanced, new top-dir name.
+#             This is an IN-PLACE edit of the obs_scm <param name="revision">
+#             ONLY: every other service in the file (tar / recompress /
+#             set_version / cargo_vendor / ...) and every other param
+#             (versionformat, changesgenerate, filename, ...) are preserved
+#             byte-for-byte, and --base is ignored. Rewriting the whole file
+#             on --update used to delete the sibling services and silently
+#             re-write a '<base>+git...' versionformat to '<base>~git...',
+#             which changes the package's version string.
 #
-# Behavior: resolves the rev to a FULL sha (git ls-remote), writes/updates the
-# _service XML (obs_scm, revision=<full sha>, versionformat <base>~git%cd.%h,
+# Behavior: resolves the rev to a FULL sha (git ls-remote), writes (scaffold) or
+# re-pins in place (--update) the _service XML (obs_scm, revision=<full sha>,
+# scaffold versionformat <base>~git%cd.%h,
 # exclude .git*), runs `osc service mr` (the scaffolded service is mode="manual";
 # never `runall`, which is mode-blind) inside an .osc checkout or falls
 # back to the direct `/usr/lib/obs/service/obs_scm --outdir` invocation in a
@@ -27,8 +36,8 @@
 # Exits non-zero on any mismatch/verification failure.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,27p' "$0"; exit 0;;
-  '') sed -n '2,27p' "$0"; exit 2;;
+  -h|--help) sed -n '2,36p' "$0"; exit 0;;
+  '') sed -n '2,36p' "$0"; exit 2;;
 esac
 
 url="" ; rev="" ; base="0" ; pkg="" ; update=0
@@ -56,7 +65,8 @@ for s in r.findall("service"):
 ')"
   [ -n "$s_url" ] || { echo "no obs_scm service in ./_service" >&2; exit 2; }
   [ -n "$url" ] || url="$s_url"
-  [ "$base" != "0" ] || base="${s_vf%%~git*}"
+  [ -n "$s_vf" ] || { echo "obs_scm service has no versionformat — refusing to guess on --update" >&2; exit 2; }
+  [ "$base" = "0" ] || echo "(--base is ignored with --update; keeping the declared versionformat '$s_vf')" >&2
 elif [ "$update" = 1 ]; then
   echo "--update needs an existing ./_service" >&2; exit 2
 fi
@@ -84,9 +94,34 @@ if [ "$update" = 1 ]; then
 fi
 
 # ---- 2. write/update the _service --------------------------------------------
-vf="${base}~git%cd.%h"
-[ -f _service ] && [ "$update" = 0 ] && { cp _service _service.bak; echo "(existing _service backed up to _service.bak)"; }
-cat > _service <<EOF
+if [ "$update" = 1 ]; then
+  # IN-PLACE re-pin: rewrite ONLY the obs_scm <param name="revision">. A
+  # full-file rewrite here deletes every sibling service (tar, recompress,
+  # set_version, cargo_vendor, ...) and forces the versionformat to '~git',
+  # silently changing the package's version string on '+git' packages.
+  cp _service _service.bak
+  python3 - "$sha" <<'PY' || { mv -f _service.bak _service; echo "in-place re-pin failed; _service restored" >&2; exit 2; }
+import re, sys
+sha = sys.argv[1]
+src = open("_service", encoding="utf-8").read()
+m = re.search(r'<service\b[^>]*\bname="obs_scm".*?</service>', src, re.S)
+if not m:
+    sys.exit("no obs_scm service block in _service")
+block = m.group(0)
+new, n = re.subn(r'(<param\s+name="revision"\s*>)[^<]*(</param>)',
+                 lambda mm: mm.group(1) + sha + mm.group(2), block, count=1)
+if n != 1:
+    sys.exit('no <param name="revision"> in the obs_scm service — '
+             'pin it by hand once, then --update can maintain it')
+open("_service", "w", encoding="utf-8").write(src[:m.start()] + new + src[m.end():])
+PY
+  rm -f _service.bak
+  vf="$s_vf"
+  echo "_service re-pinned in place (obs_scm revision -> $sha; versionformat '$vf' and all sibling services preserved)"
+else
+  vf="${base}~git%cd.%h"
+  [ -f _service ] && { cp _service _service.bak; echo "(existing _service backed up to _service.bak)"; }
+  cat > _service <<EOF
 <services>
   <service name="obs_scm" mode="manual">
     <param name="url">$url</param>
@@ -98,7 +133,8 @@ cat > _service <<EOF
   </service>
 </services>
 EOF
-echo "_service written (obs_scm, pinned revision, versionformat $vf)"
+  echo "_service written (obs_scm, pinned revision, versionformat $vf)"
+fi
 
 # ---- 3. run the service -------------------------------------------------------
 if [ -d .osc ]; then
