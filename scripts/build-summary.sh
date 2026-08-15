@@ -204,6 +204,18 @@ if [ -z "$t" ]; then
   nfail=$(grep -hcE '(^|[] ])Test .* FAILED' "$log")
   [ "$npass$nfail" != "00" ] && t="$npass test(s) PASSED, $nfail FAILED"
 fi
+# GNU automake's parallel test harness ("Testsuite summary for <pkg>") reports
+# only a block of "# TOTAL:/# PASS:/# FAIL:/# SKIP:/# XFAIL:/# XPASS:/# ERROR:"
+# counters, none of which match any pattern above. par2cmdline 1.3.0 therefore
+# printed "(no test summary found — does the spec have a %check?)" on a build
+# whose %check had just run 47/47 green — precisely the "silent green" confusion
+# this section exists to prevent, only inverted. Collapse the block to one line.
+if [ -z "$t" ]; then
+  am=$(grep -hE '^\[[^]]*\] *# (TOTAL|PASS|FAIL|SKIP|XFAIL|XPASS|ERROR): +[0-9]+' "$log" \
+       | sed -E "$strip" | sed -E 's/^ *# +//; s/: +/=/' \
+       | awk '!seen[$0]++ {printf "%s%s", sep, $0; sep=", "} END {if (NR) print ""}')
+  [ -n "$am" ] && t="automake testsuite: $am"
+fi
 [ -n "$t" ] && { sanitize "$t"; echo; } || echo "(no test summary found — does the spec have a %check?)"
 echo
 echo "### rpmlint"
