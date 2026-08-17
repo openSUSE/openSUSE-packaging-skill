@@ -194,7 +194,12 @@ fi
 [ "$rc" = 3 ] && echo "   killed (exit 124) and this log is truncated — that is YOUR cap, not an FTBFS."
 echo
 echo "### %check / tests"
-t=$(grep -hE '[0-9]+ (passed|failed)|[0-9]+% tests passed|Total Test time|No tests were found|Ran [0-9]+ test|All tests (have )?(PASSED|FAILED)|^\[[ 0-9]+s\] *(Ok|Fail|Expected Fail|Unexpected Pass|Skipped|Timeout): +[0-9]+' "$log" | sed -E "$strip" | tail -6)
+# googletest is matched explicitly: it prints the count AFTER an upper-case
+# bracketed tag ("[  PASSED  ] 1547 tests.", "[  FAILED  ] 2 tests"), so the
+# lower-case '[0-9]+ (passed|failed)' alternative above never fires on it and
+# libddwaf reported "no test summary found" on a build that ran 1547 tests.
+# FAILED is matched too, so a failing gtest run cannot read as a silent pass.
+t=$(grep -hE '[0-9]+ (passed|failed)|[0-9]+% tests passed|Total Test time|No tests were found|Ran [0-9]+ test|All tests (have )?(PASSED|FAILED)|\[ *(PASSED|FAILED) *\] [0-9]+ test|[0-9]+ tests? from [0-9]+ test suites? ran|^\[[ 0-9]+s\] *(Ok|Fail|Expected Fail|Unexpected Pass|Skipped|Timeout): +[0-9]+' "$log" | sed -E "$strip" | tail -6)
 # Hand-rolled shell testsuites (autoconf-era, e.g. gpscorrelate) report one
 # "Test <name> PASSED/FAILED" line per case and no totals — synthesize the
 # count so the section is not silently empty on a package that DOES have a
