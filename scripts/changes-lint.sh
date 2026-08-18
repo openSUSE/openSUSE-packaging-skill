@@ -66,7 +66,7 @@ if nent and len(seps) > nent:
     # separator" check below, so stopping short of it blinds --entries to a
     # missing blank line at the END of the newest entry — precisely what a
     # reviewer sees. (Real case: python-cyclopts 4.22.4, SR 1369130: the gate
-    # said clean, mcalabkova added the newline by hand and superseded it.)
+    # said clean, the reviewer added the newline by hand and superseded it.)
     # So check that one boundary explicitly here. Only the blank line is in
     # scope — the separator's own dash count / whitespace belong to the older
     # entry and must not be retro-flagged.

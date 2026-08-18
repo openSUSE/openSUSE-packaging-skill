@@ -21,7 +21,7 @@
 #                Also allow the TOPMOST committed entry to be amended — grown,
 #                reworded, or rewritten, date refreshed — provided BOTH the
 #                committed top entry and its replacement carry AUTHOR (e.g.
-#                'Martin Pluskal') in the header. Use this only for an update
+#                'Jane Packager') in the header. Use this only for an update
 #                already committed to the devel project but NOT yet accepted
 #                into openSUSE:Factory: that entry describes an unreleased
 #                revision, so it is a draft, not history, and keeping ONE
