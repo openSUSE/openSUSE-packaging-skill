@@ -27,7 +27,13 @@ plain text — no other file depends on it.
 
 ## Install
 
-Clone the repo anywhere and point your agent at `SKILL.md` as context — reference it from
+Canonical repository: https://github.com/openSUSE/openSUSE-packaging-skill
+
+```
+git clone https://github.com/openSUSE/openSUSE-packaging-skill.git
+```
+
+Clone it anywhere and point your agent at `SKILL.md` as context — reference it from
 your harness's rules/context file (`AGENTS.md`, `.rules`, a system prompt, an
 `@`-include, …) or just tell the agent to read it at session start. `SKILL.md` tells the
 agent which `references/*.md` to load per work block (don't preload them all) and catalogs

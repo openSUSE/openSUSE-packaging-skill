@@ -21,14 +21,23 @@ working `osc` against api.opensuse.org.
 REPOLOGY'S "newest" IS ITSELF ONLY "newest packaged in some tracked repo" — an
 upstream release that no distro has packaged yet is invisible to the sweep
 (real case: libdispatch 6.3.3 was released upstream, every repo had 6.3.2, so
-Repology reported "newest" and the package never appeared here). To cover that
-blind spot, this script probes BOTH sources at the same time: the Anitya
-lookups for the whole name set run concurrently with the Repology sweep, and
-every name Repology did NOT flag is checked against release-monitoring.org,
-which tracks upstreams directly; extra hits print tagged [anitya:...]. Anitya
-has no release DATES, so those are candidates to verify, never confirmed
-updates. Skip the pass with --no-anitya (it needs the reference-project
-cross-check, so --no-factory-check also disables it).
+Repology reported "newest" and the package never appeared here). Brand-new TW
+packages may not be in Repology's index at all. To cover both blind spots,
+this script probes further sources at the same time as the Repology sweep:
+
+  * Anitya (release-monitoring.org) over names Repology did not flag; extra
+    hits print tagged [anitya:mapped] / [anitya:name-match]. A name-collision
+    across same-named Anitya projects is unknown, not max(version).
+  * Then a forge pass over names that still have no mapping: one `osc cat` of
+    the Factory spec (Version, URL, Source0 together), Anitya retried with
+    homepage=URL ([anitya:homepage]), and if still unmapped, GitHub/GitLab/
+    PyPI/npm/crates.io from URL/Source0 plus GitHub→npm @owner/repo
+    companions ([github:…]/[npm:…]/[crates:…]). Skip names with no URL/Source.
+
+Anitya has no release DATES; forge hits are still candidates to verify, never
+confirmed updates. --no-anitya skips Anitya and the homepage retry (it needs
+the reference-project cross-check, so --no-factory-check also disables it).
+--no-forge skips the GitHub/npm/crates probe (default ON).
 
 Surviving candidates are still CANDIDATES, not confirmed updates — verify before
 acting (see references/triage.md): compare by tag/commit DATE not version string,
@@ -37,11 +46,13 @@ pinned packages. Known false positives stay flagged here.
 
 Usage: my-packages.sh --... | cut -f2 | outdated.py
        outdated.py --names /tmp/names.txt
-       outdated.py --names /tmp/names.txt --no-anitya          # Repology only
+       outdated.py --names /tmp/names.txt --no-anitya          # Repology + forge
+       outdated.py --names /tmp/names.txt --no-forge           # Repology + Anitya
        outdated.py --names /tmp/names.txt --no-factory-check   # raw Repology
 """
 import sys, json, time, urllib.request, urllib.error, argparse, subprocess, re
 import os
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +62,10 @@ try:
     import _anitya          # sibling module; see scripts/_anitya.py
 except ImportError:
     _anitya = None
+try:
+    import _forges          # sibling module; see scripts/_forges.py
+except ImportError:
+    _forges = None
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--names", help="file of package names (default: stdin)")
@@ -61,7 +76,9 @@ ap.add_argument("--project", default="openSUSE:Factory",
 ap.add_argument("--no-factory-check", action="store_true",
                 help="skip the live cross-check; print every raw Repology hit (incl. lag false positives)")
 ap.add_argument("--no-anitya", action="store_true",
-                help="skip the release-monitoring.org pass over the names Repology did not flag")
+                help="skip the release-monitoring.org pass and the homepage-from-spec retry")
+ap.add_argument("--no-forge", action="store_true",
+                help="skip the GitHub/GitLab/PyPI/npm/crates.io pass over unmapped names")
 args = ap.parse_args()
 
 src = open(args.names) if args.names else (sys.stdin if not sys.stdin.isatty() else None)
@@ -139,35 +156,49 @@ for proj, pkgs in results.items():
             hits.append((s, p.get("version"), newest, newest_disp))
 
 # Cross-check against the live reference project to drop Repology-lag false positives.
-def ref_version(pkg):
-    """Returns (status, version): ('ok', v) | ('absent', None) | ('failed', None).
+Ref = namedtuple("Ref", "status version url src")
+
+def ref_spec(pkg):
+    """One osc cat: Version, URL, Source0. status: ok | absent | failed.
     A network hiccup / osc failure must NOT be conflated with 'not in project'."""
     try:
         r = subprocess.run(["osc", "cat", args.project, pkg, f"{pkg}.spec"],
                            capture_output=True, text=True, timeout=30)
     except Exception:
-        return ("failed", None)
+        return Ref("failed", None, None, None)
     if r.returncode != 0:
-        # 404 (package/file absent) vs any other failure (auth, network, 5xx)
         if "404" in (r.stderr or ""):
-            return ("absent", None)
-        return ("failed", None)
-    for line in r.stdout.splitlines():
-        m = re.match(r"^Version:\s*(\S+)", line)
-        if m:
-            return ("ok", m.group(1))
-    return ("absent", None)  # in project but no parseable Version
+            return Ref("absent", None, None, None)
+        return Ref("failed", None, None, None)
+    if _forges:
+        _n, ver, url, src = _forges.spec_facts(r.stdout)
+    else:
+        ver = url = src = None
+        for line in r.stdout.splitlines():
+            m = re.match(r"^Version:\s*(\S+)", line)
+            if m and not ver:
+                ver = m.group(1)
+            m = re.match(r"^URL:\s*(\S+)", line, re.I)
+            if m and not url:
+                url = m.group(1)
+            m = re.match(r"^Source0?:\s*(\S+)", line, re.I)
+            if m and not src:
+                src = m.group(1)
+    if not ver:
+        return Ref("absent", None, url, src)
+    return Ref("ok", ver, url, src)
 
 do_check = (mine is not None) and not args.no_factory_check
 refv = {}
 if do_check and hits:
     with ThreadPoolExecutor(max_workers=8) as ex:
         refv = dict(zip((h[0] for h in hits),
-                        ex.map(ref_version, (h[0] for h in hits))))
+                        ex.map(ref_spec, (h[0] for h in hits))))
 
 candidates, suppressed = [], []
 for s, cur, new, new_disp in hits:
-    status, fv = refv.get(s, (None, None))
+    ref = refv.get(s)
+    status, fv = (ref.status, ref.version) if ref else (None, None)
     if do_check and status == "ok" and new != "?" and fv == new:
         suppressed.append((s, fv))          # reference already at newest -> Repology lag
     else:
@@ -202,6 +233,7 @@ if do_check and suppressed:
 # nobody has packaged yet never shows up above (real case: libdispatch 6.3.3).
 # Anitya tracks upstreams directly, so check every name Repology did NOT flag —
 # including the suppressed ones (Repology's "newest" itself may be stale).
+lookups, a_hits, a_odd, failed = {}, [], [], []
 if do_check and not args.no_anitya:
     if _anitya is None:
         sys.stderr.write("WARNING: _anitya.py not found next to this script — "
@@ -210,7 +242,6 @@ if do_check and not args.no_anitya:
         # exclude names Repology already flagged as candidates; keep the
         # suppressed ones (Repology's own "newest" may be stale)
         rest = sorted(set(anitya_futs) - {c[0] for c in candidates})
-        lookups, failed = {}, []
         for pkg in rest:
             res = anitya_futs[pkg].result()
             if res[0] == "__failed__":
@@ -223,13 +254,13 @@ if do_check and not args.no_anitya:
         need_ref = [p for p in lookups if p not in refv]
         if need_ref:
             with ThreadPoolExecutor(max_workers=8) as ex:
-                refv.update(zip(need_ref, ex.map(ref_version, need_ref)))
+                refv.update(zip(need_ref, ex.map(ref_spec, need_ref)))
 
-        a_hits, a_odd = [], []
         for pkg, (raw, how) in sorted(lookups.items()):
-            status, fv = refv.get(pkg, (None, None))
-            if status != "ok":
+            ref = refv.get(pkg)
+            if not ref or ref.status != "ok":
                 continue        # absent from / unreadable in the reference project
+            fv = ref.version
             cmp = _anitya.vercmp(raw, fv)
             if cmp == 1:
                 a_hits.append((pkg, fv, raw, how))
@@ -252,3 +283,121 @@ if do_check and not args.no_anitya:
         if failed:
             print(f"# anitya: {len(failed)} lookup(s) FAILED (network/anti-bot) "
                   f"— NOT checked: " + " ".join(failed))
+elif anitya_futs:
+    _anitya_pool.shutdown()
+
+# ---- homepage retry + forge pass over names still without a mapping ----------
+# Only names Repology did not flag AND Anitya mapped-or-name-match did not
+# already hit. One spec cat per remaining name (Version/URL/Source0 together).
+hp_hits, forge_hits, forge_failed = [], [], []
+do_homepage = do_check and not args.no_anitya and _anitya is not None
+do_forge = do_check and not args.no_forge and _forges is not None
+if do_check and not args.no_forge and _forges is None:
+    sys.stderr.write("WARNING: _forges.py not found next to this script — "
+                     "forge pass SKIPPED\n")
+if (do_homepage or do_forge) and mine:
+    anitya_resolved = set(lookups)
+    remaining = sorted(set(mine) - {c[0] for c in candidates} - anitya_resolved)
+    need_ref = [p for p in remaining if p not in refv]
+    if need_ref:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            refv.update(zip(need_ref, ex.map(ref_spec, need_ref)))
+
+    still = []
+    for pkg in remaining:
+        ref = refv.get(pkg)
+        if not ref or ref.status != "ok" or not (ref.url or ref.src):
+            continue
+        still.append(pkg)
+
+    if do_homepage:
+        def _hp_lookup(pkg):
+            ref = refv[pkg]
+            hp = ref.url if ref.url and "%" not in ref.url else None
+            if not hp:
+                return (None, None)
+            try:
+                return _anitya.latest_stable(pkg, homepage=hp)
+            except _anitya.AnityaError as e:
+                return ("__failed__", str(e))
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            hp_res = dict(zip(still, ex.map(_hp_lookup, still)))
+        mapped_current = set()
+        for pkg in still:
+            raw, how = hp_res.get(pkg, (None, None))
+            if raw == "__failed__":
+                continue
+            if not raw:
+                continue
+            ref = refv[pkg]
+            cmp = _anitya.vercmp(raw, ref.version)
+            if cmp == 1:
+                hp_hits.append((pkg, ref.version, raw, how or "homepage"))
+                mapped_current.add(pkg)
+            else:
+                # mapping exists (current or incomparable) — not a forge target
+                mapped_current.add(pkg)
+        still = [p for p in still if p not in mapped_current]
+
+    if do_forge:
+        def _forge_lookup(pkg):
+            ref = refv[pkg]
+            prefix = _forges.tag_prefix(ref.src) or _forges.tag_prefix(ref.url)
+            rows, err = [], None
+            for spec in _forges.pick_forges(ref.url, ref.src):
+                kind, host, name, optional = _forges.unpack_forge(spec)
+                try:
+                    facts = _forges.probe_one(spec, ref.version, prefix=prefix)
+                except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
+                    if not optional and err is None:
+                        err = f"{kind}: {e}"
+                    continue
+                if facts and facts.get("latest_stable"):
+                    rows.append((kind, host, name, optional, facts))
+            rows = _forges.prefer_scoped_npm(rows)
+            if not rows:
+                return ("__failed__" if err else None, err)
+            # merge by DATE across answering forges
+            best = None
+            for kind, host, name, optional, facts in rows:
+                v, d = facts.get("latest_stable") or (None, None)
+                if not v:
+                    continue
+                if best is None or (d and (best[1] is None or d > best[1])):
+                    best = (v, d, kind, host, name)
+            if not best:
+                return (None, None)
+            v, d, kind, host, name = best
+            return (v, _forges.forge_how(kind, host, name))
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            f_res = dict(zip(still, ex.map(_forge_lookup, still)))
+        for pkg in still:
+            raw, how = f_res.get(pkg, (None, None))
+            if raw == "__failed__":
+                forge_failed.append(pkg)
+                continue
+            if not raw or not _anitya:
+                continue
+            ref = refv[pkg]
+            cmp = _anitya.vercmp(raw, ref.version)
+            if cmp == 1:
+                forge_hits.append((pkg, ref.version, raw, how))
+
+    print(f"# forge/homepage pass over {len(remaining)} unmapped name(s): "
+          f"{len(hp_hits) + len(forge_hits)} additional candidate(s) — "
+          f"VERIFY each before acting")
+    for pkg, fv, raw, how in hp_hits:
+        disp = _anitya.norm(raw) if _anitya else raw
+        rawnote = f" = {raw}" if disp != raw else ""
+        tag = how if str(how).startswith("anitya:") else f"anitya:{how}"
+        print(_sanitize.sanitize(
+            f"{pkg:32} {str(fv):24} -> {disp} [{tag}{rawnote}]"))
+    for pkg, fv, raw, how in forge_hits:
+        disp = _anitya.norm(raw) if _anitya else raw
+        rawnote = f" = {raw}" if disp != raw else ""
+        print(_sanitize.sanitize(
+            f"{pkg:32} {str(fv):24} -> {disp} [{how}{rawnote}]"))
+    if forge_failed:
+        print(f"# forge: {len(forge_failed)} lookup(s) FAILED "
+              f"— NOT checked: " + " ".join(forge_failed))
