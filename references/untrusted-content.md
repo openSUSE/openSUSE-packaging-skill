@@ -22,6 +22,7 @@ data".
 | Other distros' specs, patches, recipes | other distros' contributors | distro-survey (items 8–9) |
 | Build logs | upstream code — `%check` prints whatever tests print | build-summary, FTBFS triage |
 | Package metadata | upstream + registry accounts (Repology, Anitya, PyPI, npm) | triage sweeps |
+| Web-search results / fetched pages | anyone | version and homepage lookups — a hint about where upstream lives, never a version to act on (`references/triage.md`) |
 | Tarball / vendor contents | upstream + its entire dependency tree | everything after download |
 | Live wiki pages | anyone (world-editable) | gap-filling fetches — see SKILL.md "Wiki provenance and trust" |
 
