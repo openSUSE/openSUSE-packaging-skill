@@ -21,6 +21,17 @@ Traps encoded here (from triage.md):
     has no maintainer-uploaded tarball — only the auto-archive, which for
     autotools projects lacks `configure` (adopting it costs an autoreconf +
     autoconf/automake/libtool BRs and loses the .asc). Flagged in the output.
+  * A package REGISTRY that serves Source0 (pythonhosted/npm/crates) outranks a
+    code forge that merely hosts the sources: a git tag ahead of the registry is
+    not a release this package can consume. Without this, date-merging reports
+    phantom updates -- PyPI structurally lagging a repo's tags
+    (comfyui-frontend-package: PyPI 1.50.6 vs tag v1.53.2), monorepos with
+    parallel artefact tag streams (cubesandbox: guest-image-YYMMDD-N VM images),
+    and monorepo tags that are not the sub-package's version. Other sources are
+    still probed and printed as context; the authoritative one is marked.
+  * Pinned-snapshot packages whose spec resolves to nothing (homepage URL:, bare
+    local Source0:) fall back to the _service obs_scm url, instead of reporting
+    "no source answered" forever (monero).
   * Git-snapshot packaged versions (~git/+git/+hg + a YYYYMMDD) compare by the
     upstream HEAD commit date, not by tag.
   * Prereleases (rc/alpha/beta/dev/pre; PyPI prerelease/yanked flags) are
@@ -106,6 +117,21 @@ def main():
     prefix = _forges.tag_prefix(src) or _forges.tag_prefix(url)
     sources = _forges.pick_forges(url, src)
 
+    # Pinned-snapshot packages often have no forge-resolvable spec at all: a
+    # homepage URL: and a bare local Source0:. The real upstream is the
+    # _service obs_scm url, so fall back to it rather than giving up.
+    scm_rev = None
+    if not sources and a.pkg and not a.url:
+        r = subprocess.run(["osc", "cat", a.project, a.pkg, "_service"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            scm_url, scm_rev = _forges.service_scm_url(r.stdout)
+            if scm_url:
+                sources = _forges.pick_forges(scm_url, None)
+                if sources:
+                    url = url or scm_url
+                    prefix = prefix or _forges.tag_prefix(scm_url)
+
     def probe_job(spec):
         return _forges.probe_one(spec, packaged, prefix=prefix)
 
@@ -133,7 +159,11 @@ def main():
                 errors.append(f"anitya: {e}")
 
     answered = _forges.prefer_scoped_npm(answered)
-    results = _forges.label_results(answered)
+    authoritative = _forges.pick_authoritative(answered, src)
+    results, _label_index = _forges.label_results(answered, with_index=True)
+    auth_label = (_label_index.get((authoritative[0], authoritative[1],
+                                    authoritative[2]))
+                  if authoritative else None)
 
     for err in errors:
         # exception text can embed fetched bytes — sanitize the warning too
@@ -165,7 +195,12 @@ def main():
     # sources; packaged date from whichever source could date it.
     _floor = datetime.min.replace(tzinfo=timezone.utc)
     facts = {}
-    for f in results.values():
+    # When Source0 is served by a package registry, that registry decides the
+    # verdict: a git tag ahead of it is not a release we can package. Other
+    # sources are still probed and printed, but only as context.
+    _verdict_rows = ([results[auth_label]] if auth_label and results.get(auth_label)
+                     else list(results.values()))
+    for f in _verdict_rows:
         if f.get("packaged_date") and not facts.get("packaged_date"):
             facts["packaged_date"] = f["packaged_date"]
         if f.get("head_date"):
@@ -175,8 +210,10 @@ def main():
             if v and v[1] and (key not in facts or (facts[key][1] or _floor) < v[1]):
                 facts[key] = v
     if "latest_stable" not in facts:
-        facts["latest_stable"] = next(r["latest_stable"] for r in results.values()
-                                      if r.get("latest_stable"))
+        facts["latest_stable"] = next((r["latest_stable"] for r in _verdict_rows
+                                       if r.get("latest_stable")),
+                                      next(r["latest_stable"] for r in results.values()
+                                           if r.get("latest_stable")))
     if len(results) == 1:
         facts["asset_note"] = next(iter(results.values())).get("asset_note")
     else:
@@ -195,7 +232,15 @@ def main():
     print(f"latest stable:  {fmt(facts.get('latest_stable'))}")
     if len(results) > 1:
         for fg, r in sorted(results.items()):
-            print(f"  [{fg}] latest stable: {fmt(r.get('latest_stable'))}")
+            mark = "  <- Source0, authoritative" if fg == auth_label else ""
+            print(f"  [{fg}] latest stable: {fmt(r.get('latest_stable'))}{mark}")
+    if auth_label and len(results) > 1:
+        print(f"note:           verdict follows [{auth_label}], which serves "
+              f"Source0; a newer tag on another source is not a release this "
+              f"package can consume")
+    if scm_rev:
+        print(f"_service pin:   {scm_rev} (upstream resolved from the "
+              f"_service obs_scm url, not the spec)")
     elif any(fg.startswith("npm") or fg.startswith("crates") for fg in results):
         # Single npm/crates source: still name the backend, per the output contract.
         fg = next(iter(results))
