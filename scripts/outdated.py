@@ -34,6 +34,13 @@ this script probes further sources at the same time as the Repology sweep:
     PyPI/npm/crates.io from URL/Source0 plus GitHub→npm @owner/repo
     companions ([github:…]/[npm:…]/[crates:…]). Skip names with no URL/Source.
 
+The forge pass applies the same registry-authority rule as upstream-probe.py:
+when Source0 is served by a package registry (pythonhosted/npm/crates), that
+registry decides the candidate version and a newer git tag elsewhere is ignored
+-- it is not a release the package can consume. This is what keeps a structural
+PyPI lag, or a monorepo carrying parallel artefact tag streams, from being
+reported as an update every single sweep.
+
 Anitya has no release DATES; forge hits are still candidates to verify, never
 confirmed updates. --no-anitya skips Anitya and the homepage retry (it needs
 the reference-project cross-check, so --no-factory-check also disables it).
@@ -357,7 +364,13 @@ if (do_homepage or do_forge) and mine:
             rows = _forges.prefer_scoped_npm(rows)
             if not rows:
                 return ("__failed__" if err else None, err)
-            # merge by DATE across answering forges
+            # If Source0 is served by a package registry, that registry decides:
+            # a git tag ahead of it is not a release we can package (PyPI lag,
+            # monorepos with parallel artefact tag streams). Otherwise merge by
+            # DATE across the answering forges.
+            auth = _forges.pick_authoritative(rows, ref.src)
+            if auth:
+                rows = [auth]
             best = None
             for kind, host, name, optional, facts in rows:
                 v, d = facts.get("latest_stable") or (None, None)

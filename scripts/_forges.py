@@ -203,6 +203,62 @@ def _parse_npm(cand):
     return name
 
 
+# A registry that *serves the packaged tarball* outranks a code forge that
+# merely hosts the sources. Source0 naming pythonhosted/npm/crates means the
+# release artefact IS the registry upload, so the registry's newest version is
+# the only one we can package -- a git tag ahead of it is not a release we can
+# consume. Three real 2026-08-26 false positives came from date-merging the two:
+# comfyui-frontend-package (PyPI 1.50.6 vs GitHub v1.53.2, a structural lag),
+# cubesandbox (GitHub carries six parallel artefact tag streams, incl.
+# guest-image-YYMMDD-N VM images), and any monorepo whose repo tag is not the
+# sub-package's version.
+REGISTRY_KINDS = ("pypi", "npm", "crates")
+
+
+def source_registry(src):
+    """(kind, host, name) if Source0 is served by a package registry, else None."""
+    f = parse_forge(src)
+    return f if f and f[0] in REGISTRY_KINDS else None
+
+
+def pick_authoritative(rows, src):
+    """The answering row that actually serves Source0, or None.
+
+    rows: (kind, host, name, optional, facts) as collected by the callers.
+    """
+    target = source_registry(src)
+    if not target:
+        return None
+    for row in rows:
+        if (row[0], row[1], row[2]) == target and row[4]:
+            return row
+    return None
+
+
+_SCM_URL_RE = re.compile(
+    r'<param\s+name="url"\s*>\s*([^<\s]+)\s*</param>', re.I)
+_SCM_REV_RE = re.compile(
+    r'<param\s+name="revision"\s*>\s*([^<\s]+)\s*</param>', re.I)
+
+
+def service_scm_url(text):
+    """(url, revision) from a _service obs_scm/tar_scm block, else (None, None).
+
+    A pinned-snapshot package often has no forge-resolvable spec at all --
+    `URL:` is a project homepage and `Source0:` a bare local tarball name --
+    while the real upstream sits in _service. Without this the probe reports
+    "no source answered" forever (real case: monero, whose URL is get<name>.org
+    and whose Source0 is <name>-<version>.tar.gz).
+    """
+    if not text:
+        return (None, None)
+    m = _SCM_URL_RE.search(text)
+    if not m:
+        return (None, None)
+    rev = _SCM_REV_RE.search(text)
+    return (m.group(1), rev.group(1) if rev else None)
+
+
 def pick_forges(url, src, companions=True):
     """ALL distinct forges resolvable from Source0 and URL.
 
@@ -498,10 +554,15 @@ def prefer_scoped_npm(rows):
     return keep
 
 
-def label_results(rows):
-    """rows: (kind, host, name, optional, facts) → {label: facts}."""
+def label_results(rows, with_index=False):
+    """rows: (kind, host, name, optional, facts) → {label: facts}.
+
+    with_index also returns {(kind, host, name): label} so a caller can find
+    the label of a specific source (e.g. the authoritative one) without
+    re-deriving the naming rules.
+    """
     kinds = [r[0] for r in rows]
-    results = {}
+    results, index = {}, {}
     for kind, host, name, optional, facts in rows:
         if kind == "npm" and kinds.count("npm") > 1:
             label = f"npm:{name}"
@@ -510,4 +571,5 @@ def label_results(rows):
         if label in results:
             label = f"{kind}:{name}"
         results[label] = facts
-    return results
+        index[(kind, host, name)] = label
+    return (results, index) if with_index else results
