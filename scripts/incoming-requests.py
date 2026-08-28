@@ -312,7 +312,8 @@ def clip(s, n):
 def render_ascii(rows):
     """Fixed-width bordered table (+---+---+ style) -- easier to scan in a
     terminal than a markdown pipe table, which only renders as a real grid
-    inside a markdown viewer."""
+    inside a markdown viewer. Each row's URL prints on its own line below it
+    (never truncated) since it rarely fits alongside the other columns."""
     cols = [
         ("Kind", "kind", 4),
         ("ID", "id", 22),
@@ -339,9 +340,19 @@ def render_ascii(rows):
     def fmt(cells):
         return "| " + " | ".join(c.ljust(w) for c, w in zip(cells, widths)) + " |"
 
+    def fmt_url(url):
+        # continuation line under a row: blank under Kind, URL spans the rest.
+        # Never truncated -- a clipped URL is useless to click/copy -- so it's
+        # allowed to overflow the right border on the rare over-long one.
+        prefix = "| " + " " * widths[0] + " | "
+        span = len(sep()) - len(prefix) - 2
+        return prefix + (url.ljust(span) if len(url) <= span else url) + " |"
+
     out = [sep(), fmt([h for h, _, _ in cols]), sep()]
-    out.extend(fmt(row) for row in data)
-    out.append(sep())
+    for row, r in zip(data, rows):
+        out.append(fmt(row))
+        out.append(fmt_url(r["url"]))
+        out.append(sep())
     return "\n".join(out)
 
 
