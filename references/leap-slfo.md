@@ -110,3 +110,5 @@ The SLE-15 Backports (`openSUSE:Backports:SLE-15-SP5/6/7`) are **osc-managed mai
 | openbabel 2.4.1→3.2.0 | major (2→3) | yes (5→8) | 2 (won't build vs 3.x API) | yes (tiny hunk) + only 1/3 CVEs apply | **backport** |
 
 Decision drivers, in order: (1) does the vulnerable code even exist at the packaged version? (2) is the fix a small isolated patch or a sweeping refactor? (3) does the bump change the soname *and* are there consumers that won't survive the new major API? A clean small patch against a costly/unbuildable bump ⇒ **backport**; an un-backportable fix or a cheap ABI-safe bump ⇒ **bump**. A *cluster* can also span both flows at once — ofono needed a git PR for `Backports:SLE-16.1` (Leap) **and** an osc maintenance incident for `Backports:SLE-15-SP7` in the same session.
+
+**Once the call is "backport": patch-file mechanics (fetch, naming, `PatchN:` wiring, per-CVE quilt testing, rebase reporting) are `references/quilt-patches.md` "CVE patch backporting".**
