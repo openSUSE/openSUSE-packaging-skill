@@ -20,9 +20,12 @@ Usage:
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
-The PR leg needs a src.opensuse.org login in ~/.config/tea/config.yml; if the
-token/network is unavailable it prints a loud stderr warning and falls back to
-the OBS-only table (it never kills the SR view).
+The PR leg needs a src.opensuse.org login; if unavailable it warns and falls
+back to the OBS-only table. Direct token+urllib (~/.config/tea/config.yml) is
+tried first; falls back to `git-obs api` if no pyyaml/token (needs a default
+login: `git-obs login add`, then `git-obs login update <name>
+--set-as-default`). Two sub-legs, both always run: PRs you created, and PRs
+awaiting your review. `--no-prs` skips both.
 """
 import sys, argparse, subprocess, json, urllib.request, urllib.error
 import os, xml.etree.ElementTree as ET
@@ -105,6 +108,7 @@ def human_comment(req_id, state_el):
     return f"💬 {last.get('who','?')}: \"{clip(last.text)}\""
 
 # ---------- Gitea (src.opensuse.org) PR leg ----------
+# Primary: direct token+urllib. Fallback: `git-obs api` (own auth, no pyyaml).
 
 def tea_login():
     """Token + username from ~/.config/tea/config.yml (same loader pattern as
@@ -119,28 +123,53 @@ def tea_login():
         sys.stderr.write(f"WARNING: no usable tea login ({e.__class__.__name__}: {e})\n")
     return None, None
 
-def gitea_get(path, tok):
+_TEA_TOKEN, _TEA_USER = tea_login()
+
+def _gitea_get_urllib(path, tok):
     req = urllib.request.Request(GITEA + path,
                                  headers={"Authorization": f"token {tok}"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())
 
-def fetch_prs(state, brief):
-    """One issues/search call for the user's created PRs; per-PR detail
+def _gitea_get_git_obs(path):
+    """Fallback: `git-obs api <path>` — strips the leading 'Response:' banner
+    line and parses JSON. Returns None on any failure (missing/non-default
+    login, network, bad JSON) so the caller can emit a FETCH FAILED row."""
+    r = subprocess.run(["git-obs", "-q", "api", path], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
+        return None
+    out = r.stdout
+    if out.startswith("Response:"):
+        out = out.split("\n", 1)[1] if "\n" in out else ""
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"WARNING: git-obs api {path} returned unparsable output ({e})\n")
+        return None
+
+def gitea_get(path):
+    """Direct token+urllib first; falls back to `git-obs api` if there's no
+    usable tea token or the direct call fails. Returns None if both fail."""
+    if _TEA_TOKEN:
+        try:
+            return _gitea_get_urllib(path, _TEA_TOKEN)
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            sys.stderr.write(f"WARNING: direct src.opensuse.org fetch failed ({e}) "
+                             f"— falling back to git-obs\n")
+    return _gitea_get_git_obs(path)
+
+def fetch_prs(state, brief, leg):
+    """One issues/search call for the user's PRs (leg='created') or PRs
+    awaiting the user's review (leg='review-requested'); per-PR detail
     (base branch, mergeable, bot-build + human comments) only in full mode.
     Returns a list of row dicts, or None on failure (caller falls back)."""
-    tok, _user = tea_login()
-    if not tok:
-        sys.stderr.write("WARNING: src.opensuse.org PR leg skipped (no tea token) "
-                         "— OBS-only view. Pass --no-prs to silence.\n")
-        return None
     q_state = "open" if state == "open" else "all"
-    try:
-        issues = gitea_get(f"/repos/issues/search?type=pulls&created=true"
-                           f"&state={q_state}&limit=50", tok)
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        sys.stderr.write(f"WARNING: src.opensuse.org PR fetch failed ({e}) "
-                         f"— OBS-only view.\n")
+    issues = gitea_get(f"/repos/issues/search?type=pulls&{leg.replace('-', '_')}=true"
+                       f"&state={q_state}&limit=50")
+    if issues is None:
+        sys.stderr.write(f"WARNING: src.opensuse.org PR leg ({leg}) skipped "
+                         f"— OBS-only view. Pass --no-prs to silence.\n")
         return None
     rows = []
     for it in issues:
@@ -155,8 +184,10 @@ def fetch_prs(state, brief):
             continue
         target, status, comment = repo, "—", "—"
         if not brief:
-            try:
-                pr = gitea_get(f"/repos/{repo}/pulls/{num}", tok)
+            pr = gitea_get(f"/repos/{repo}/pulls/{num}")
+            if pr is None:
+                status = "(detail fetch failed)"
+            else:
                 base = (pr.get("base") or {}).get("ref", "?")
                 target = f"{repo}:{base}"
                 bits = []
@@ -164,7 +195,7 @@ def fetch_prs(state, brief):
                     bits.append("merged")
                 elif pr.get("mergeable") is not None:
                     bits.append("mergeable" if pr["mergeable"] else "NOT mergeable")
-                cmts = gitea_get(f"/repos/{repo}/issues/{num}/comments", tok)
+                cmts = gitea_get(f"/repos/{repo}/issues/{num}/comments") or []
                 bot_line = next((c for c in reversed(cmts)
                                  if is_bot((c.get("user") or {}).get("login"))), None)
                 if bot_line:
@@ -175,19 +206,20 @@ def fetch_prs(state, brief):
                         bits.append("bot-build ❌")
                     else:
                         bits.append("bot 💬")
+                if leg == "review-requested":
+                    bits.append("needs YOUR review")
                 status = " · ".join(bits) or "—"
                 hum = next((c for c in reversed(cmts)
                             if not is_bot((c.get("user") or {}).get("login"))), None)
                 if hum:
                     comment = (f"💬 {(hum.get('user') or {}).get('login','?')}: "
                                f"\"{clip(hum.get('body'))}\"")
-            except (urllib.error.URLError, OSError, ValueError) as e:
-                status = f"(detail fetch failed: {e.__class__.__name__})"
         rows.append({"kind": "PR", "id": f"#{num}",
                      "num": int(num or 0), "pkg": repo.split("/")[-1],
                      "target": target, "state": st, "chain": status,
                      "comment": comment,
-                     "bad": st == "closed"})   # closed-unmerged sorts first
+                     # closed-unmerged and needs-your-review both sort first
+                     "bad": st == "closed" or leg == "review-requested"})
     return rows
 
 # ---------- main ----------
@@ -285,9 +317,10 @@ def main():
                          "bad": sname == "declined"})
 
     if not a.ids and not a.no_prs:
-        prs = fetch_prs(a.state, a.brief)
-        if prs:
-            rows.extend(prs)
+        for leg in ("created", "review-requested"):
+            prs = fetch_prs(a.state, a.brief, leg)
+            if prs:
+                rows.extend(prs)
 
     # declined SRs / closed-unmerged PRs first, then ids numeric descending-safe
     rows.sort(key=lambda r: (not r["bad"], r["num"]))
