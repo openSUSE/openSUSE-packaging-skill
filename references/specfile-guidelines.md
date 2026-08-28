@@ -183,6 +183,8 @@ found conflict of Regina-REXX-3.9.7-1.2.x86_64 with ooRexx-5.2.0-1.3.x86_64
 
 https://en.opensuse.org/openSUSE:Packaging_Patches_guidelines
 
+Below: spec-side conventions once a patch exists (tags, categories, upstreaming, `.changes`). For creating/editing/rebasing the patch file itself with `quilt` (incl. CVE-backport recipe): `references/quilt-patches.md`.
+
 - Every patch needs a comment line directly above its `PatchN:` tag tagging its category, e.g. `# PATCH-FIX-UPSTREAM name.patch bsc#NNNNNN you@example.com -- short reason`.
 - Categories: `FIX` / `FEATURE` × `UPSTREAM` / `OPENSUSE` / `SLE`, plus `NEEDS-REBASE` for temporarily-disabled patches.
 - **HARD RULE — upstream-eligible patches must be sent upstream, and the spec must record where.** The `PatchN:` comment carries the upstream reference: the PR/MR URL, the merged commit hash, or — for projects with no forge — the mailing list address plus its archive URL. A patch with no upstream reference in the spec is not finished work: the next maintainer cannot tell whether it is a permanent downstream carry, an accepted backport they can drop on the next bump, or an abandoned local hack.
