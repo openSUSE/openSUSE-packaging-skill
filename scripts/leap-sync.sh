@@ -18,14 +18,21 @@
 #
 # Requires: a src.opensuse.org login in ~/.config/tea/config.yml, git-lfs, tea.
 #
-# Usage: leap-sync.sh <pkg> [leap-branch]      (leap-branch default: leap-16.0)
+# Usage: leap-sync.sh [--refresh] <pkg> [leap-branch]   (branch default: leap-16.0)
+#   --refresh: an open PR is stale (factory moved past it) — force-push the
+#   current factory tree onto that PR's own head branch and retitle it, instead
+#   of exiting 4. Keeps the PR number and its review thread.
 # Exit codes: 0 synced/PR opened or already in sync; 2 error; 3 new-to-Leap
 #             (no leap branch); 4 an open PR already targets the leap branch;
 #             5 no factory branch; 6 network failure (transient — retry)
 set -euo pipefail
+refresh=0
 case "${1:-}" in
-  -h|--help) sed -n '2,26p' "$0"; exit 0;;
-  '') sed -n '2,26p' "$0"; exit 2;;
+  -h|--help) sed -n '2,27p' "$0"; exit 0;;
+  --refresh) refresh=1; shift;;
+esac
+case "${1:-}" in
+  '') sed -n '2,27p' "$0"; exit 2;;
 esac
 pkg="$1"; leap="${2:-leap-16.0}"
 tok=$(python3 -c "import yaml,os;c=yaml.safe_load(open(os.path.expanduser('~/.config/tea/config.yml')));print([l['token'] for l in c['logins'] if l['name']=='src.opensuse.org'][0])" 2>/dev/null) || tok=""
@@ -43,11 +50,28 @@ try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 for p in d:
     if (p.get('base') or {}).get('ref') == '$leap':
-        print(p.get('html_url') or ('#%s' % p.get('number'))); break
+        h=p.get('head') or {}
+        print('%s\t%s\t%s\t%s' % (p.get('html_url') or '', p.get('number'), h.get('ref') or '', ((h.get('repo') or {}).get('owner') or {}).get('login') or '')); break
 " 2>/dev/null) || existing=""
+pr_num=""; pr_head=""; pr_owner=""
 if [ -n "$existing" ]; then
-  echo "REFUSING: an open PR already targets pool/$pkg:$leap — $existing" >&2
-  exit 4
+  pr_url=$(printf '%s' "$existing" | cut -f1)
+  if [ "$refresh" != 1 ]; then
+    echo "REFUSING: an open PR already targets pool/$pkg:$leap — $pr_url" >&2
+    exit 4
+  fi
+  pr_num=$(printf '%s' "$existing" | cut -f2)
+  pr_head=$(printf '%s' "$existing" | cut -f3)
+  pr_owner=$(printf '%s' "$existing" | cut -f4)
+  [ -n "$pr_num" ] && [ -n "$pr_head" ] && [ -n "$pr_owner" ] \
+    || { echo "--refresh: could not read the open PR's number/head ref/owner" >&2; exit 2; }
+  # Refuse a PR whose head lives in someone else's fork: we can only force-push
+  # our own, and PATCH would retitle it to a version its diff does not contain.
+  [ "$pr_owner" = "$user" ] \
+    || { echo "REFUSING --refresh: PR #$pr_num head is $pr_owner:$pr_head, not yours ($user) — $pr_url" >&2; exit 4; }
+  echo "refreshing existing PR #$pr_num ($pr_url), head $pr_head"
+elif [ "$refresh" = 1 ]; then
+  echo "--refresh given but no open PR targets pool/$pkg:$leap — filing a new one"
 fi
 
 wd=$(mktemp -d); trap 'rm -rf "$wd"' EXIT
@@ -86,6 +110,9 @@ fi
 fsha=$(git rev-parse --short origin/factory)
 if [ "$fver" = "$lver" ]; then tag="$fver-$fsha"; else tag="$fver"; fi
 br="$leap-sync-$tag"
+# --refresh must push to the PR's OWN head ref; a fresh name would leave the PR
+# pointing at the stale branch.
+[ -n "$pr_head" ] && br="$pr_head"
 git checkout -q -b "$br" "origin/$leap"
 git rm -rqf . >/dev/null 2>&1 || true
 git checkout "origin/factory" -- .
@@ -133,18 +160,33 @@ chmod 700 "$askpass"
 # through the fork network once these objects exist on the fork.
 # (Real case: pool/ollama — refs+5-object push worked where a plain push died
 # on 4 long-pruned OIDs from the 2024 leap branches.)
-GIT_ASKPASS=$askpass git push -q --no-verify fork "$br" \
+# Rebuilt from origin/$leap, so it shares no history with the old head; a bare
+# --force-with-lease would also need a fork/$br tracking ref we never fetch.
+pushopt=""; [ -n "$pr_head" ] && pushopt="--force"
+# $pushopt unquoted on purpose: empty must expand to no argument.
+# shellcheck disable=SC2086
+GIT_ASKPASS=$askpass git push -q --no-verify $pushopt fork "$br" \
   || { echo "push to $user/$pkg failed (does the fork exist? see the tea output above)" >&2; exit 2; }
 oids=$(git lfs ls-files -l | awk '{print $1}')
 if [ -n "$oids" ]; then
-  # shellcheck disable=SC2086 — word-splitting the oid list is intended
+  # word-splitting the oid list is intended
+  # shellcheck disable=SC2086
   GIT_ASKPASS=$askpass git lfs push --object-id fork $oids \
     || { echo "LFS object push to $user/$pkg failed — PR would have dangling pointers" >&2; exit 2; }
 fi
 
 body="Sync the $leap branch up to the Factory version $fver (was $lver). Sources are identical to openSUSE:Factory."
-payload=$(python3 -c "import json,sys;print(json.dumps({'head':'$user:$br','base':'$leap','title':'Update to $fver (sync $leap with Factory)','body':sys.argv[1]}))" "$body")
-resp=$(curl -sS --max-time 20 -X POST "https://src.opensuse.org/api/v1/repos/pool/$pkg/pulls" \
-  -H "Authorization: token $tok" -H "Content-Type: application/json" -d "$payload")
+title="Update to $fver (sync $leap with Factory)"
+if [ -n "$pr_num" ]; then
+  # EditPullRequestOption has no Head field; the branch is already repointed by
+  # the force-push above, so only title/body move here.
+  payload=$(python3 -c "import json,sys;print(json.dumps({'title':sys.argv[1],'body':sys.argv[2]}))" "$title" "$body")
+  resp=$(curl -sS --max-time 20 -X PATCH "https://src.opensuse.org/api/v1/repos/pool/$pkg/pulls/$pr_num" \
+    -H "Authorization: token $tok" -H "Content-Type: application/json" -d "$payload")
+else
+  payload=$(python3 -c "import json,sys;print(json.dumps({'head':'$user:$br','base':'$leap','title':sys.argv[1],'body':sys.argv[2]}))" "$title" "$body")
+  resp=$(curl -sS --max-time 20 -X POST "https://src.opensuse.org/api/v1/repos/pool/$pkg/pulls" \
+    -H "Authorization: token $tok" -H "Content-Type: application/json" -d "$payload")
+fi
 echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print('PR:', d.get('html_url') or d.get('message'))" 2>/dev/null \
   || { echo "PR API response:"; echo "$resp" | head -c 300; }
