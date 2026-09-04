@@ -170,10 +170,19 @@ oapi "/request?view=collection&types=submit&states=new,review&project=$target&pa
   || fail "could not query $target SRs for $pkg"
 outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (outgoing)"
 
+# A DECLINED request is terminal but NOT gone: `osc sr` still refuses with
+# "already open: <id>" until it is revoked or superseded. Querying only
+# new,review reports "outgoing SRs: none" and the submit then fails at the end
+# of the work (picsart-gen-ai 2026-09-04, stale declined 1375013).
+oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$pkg" \
+  || fail "could not query declined $target SRs for $pkg"
+declined="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (declined)"
+
 [ -n "$incoming" ] && { echo "incoming SR(s) at $devel (a maintainer staging the bump — already handled):"; printf '%s\n' "$incoming" | sed 's/^/    /'; } \
                    || echo "incoming SRs:   none"
 [ -n "$outgoing" ] && { echo "outgoing devel->$target SR(s):"; printf '%s\n' "$outgoing" | sed 's/^/    /'; } \
                    || echo "outgoing SRs:   none"
+[ -n "$declined" ] && { echo "DECLINED $target SR(s) - not in flight, but \`osc sr\` will refuse until superseded:"; printf '%s\n' "$declined" | sed 's/^/    /'; echo "    -> submit with: osc sr ... --supersede <id> --yes"; }
 
 # ---- 5. Gitea leg (MANDATORY for scmsync devel projects) ---------------------
 prs=""
