@@ -1,5 +1,5 @@
 ---
-name: openSUSE-packaging
+name: opensuse-packaging
 description: Authoring, modifying, reviewing, or building openSUSE RPM packages — spec files, .changes files, osc / OBS and Git (src.opensuse.org / Gitea) workflows. Use whenever the working directory has a .osc/ folder or a *.spec file, when the user mentions osc, OBS, rpmbuild, openSUSE Build Service, src.opensuse.org, the Git packaging workflow, tea, git-obs, osc fork, spec file, .changes file, rpmlint, or asks to build/submit/review/fork a package, check if packages are out of date, or open a package pull request. Covers Specfile guidelines, the Git packaging workflow, Shared library policy, Systemd packaging, Patches, Changelog format, and language-specific packaging (Python, Perl, Ruby, Go, Rust, Java, PHP, Haskell, Lua, R, Meson, Vala).
 ---
 
