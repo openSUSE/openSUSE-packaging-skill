@@ -1,0 +1,9 @@
+-------------------------------------------------------------------
+Sun Sep 13 17:13:13 UTC 2026 - Jane Packager <jane@example.com>
+
+- Add zoo-some-rather-long-descriptive-
+  fix.patch: keep the header check from misfiring on empty archives
+-------------------------------------------------------------------
+Fri Jul 31 07:09:36 UTC 2026 - Jane Packager <jane@example.com>
+
+- Add zoo-64bit-header-check.patch: fix the header check on 64-bit
