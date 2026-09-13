@@ -144,3 +144,65 @@ Shared release-monitoring.org (Anitya) lookup + version-normalize/compare module
 ## `_forges.py`
 
 Shared GitHub/GitLab/PyPI/npm/crates.io probe helpers imported by `upstream-probe.py` and `outdated.py`; not directly runnable — do not prune it.
+
+## refsection.py
+
+refsection.py — print ONE section of a skill doc instead of Reading the file.
+
+The references are big (specfile-guidelines.md, update-build.md and
+submit-watch.md are 75-110 KB each); a whole-file Read burns the context budget
+on the ~95% you did not need (references/token-budget.md). Every pointer in
+this skill is written as `references/<file>.md "<Section>"` — this turns that
+pointer into a one-liner, replacing the two-step "grep -n '^#' then Read with
+offset=/limit= and hope the window is right".
+
+  refsection.py specfile-guidelines.md "Patches"        # the section, whole
+  refsection.py update-build.md "local builds"          # substring, case-insensitive
+  refsection.py --list submit-watch.md                  # the heading outline
+  refsection.py --lines update-build.md "Common build pitfalls"   # numbered, Read for more
+  refsection.py --rule 3 7                              # numbered Core-directive rules of SKILL.md
+  refsection.py --gate build                            # optional: scripts/gates.json, if present
+
+A `##` section prints through the line before the next heading of the SAME or a
+HIGHER level, so its `###` subsections come with it. Several matches are
+ambiguous — except when one is an exact heading, or the parent of all the
+others (you get them anyway). A match on a bold lead-in (`**Section** — ...`,
+the paragraph form several references use instead of a heading) prints that
+paragraph.
+
+<file> may be a basename (`update-build.md`), a repo-relative path
+(`references/leap-slfo.md`, `scripts/README.md`) or an absolute path; it is
+resolved against the skill root (this script's parent's parent), so cwd does
+not matter.
+
+Exit: 0 printed · 1 no such section (all headings listed on stderr) · 2
+ambiguous (candidates listed on stderr) · 3 usage / no such file.
+
+Output is NOT sanitised, deliberately: these are first-party skill docs shipped
+in this repo, not fetched content. references/untrusted-content.md scopes
+`_sanitize.py` to third-party bytes — build logs, osc output, Bugzilla and
+Gitea text, API dumps. Piping our own documentation through it would only
+mangle the escapes the docs quote on purpose.
+
+Ported from the SUSE-qe-update-validation skill (scripts/refsection.py); keep
+the mechanics byte-compatible so fixes port both ways.
+
+## gate.sh
+
+The commit/SR gate chain as ONE tool call: source_validator, changes-lint.sh,
+changes-guard.sh and changes-patches.sh, each run unpiped with its exit code
+read directly, then one VERDICT line. Four separate calls cost four provider
+steps and four result blocks that ride along in context for the rest of the
+session; this costs one. The adversarial change review (agents/changes-review.md)
+still follows — it is a judgement, not a check, and stays outside this script.
+
+Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
+               [--build-log FILE] [--full]
+  DIR          package checkout (default .)
+  --entries N  entries the submission adds vs the target (changes-lint, default 1)
+  --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
+  --target     SR target for changes-patches (default: link origin, else Factory)
+  --build-log  also run build-summary.sh on this osc build log (verdict only)
+  --full       print every gate's complete output (default: last 12 lines each;
+               full output is always saved under $TMPDIR/gate-<pkg>/)
+Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage.
