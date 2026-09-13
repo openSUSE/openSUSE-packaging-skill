@@ -296,6 +296,9 @@ The XML tells you everything you need to triage a staging in one call: `<staged_
 
 ### Filing an SR
 
+**HARD RULE — the Block-2 adversarial change review must have COMPLETED and returned `PASS` before you file.** Never file the request while a review is still running, and never file one that returned blockers intending to fix them afterwards. The reason is that **a submitted request is public**: reviewers, bots and staging start acting on it immediately, so a blocker found after filing costs a supersede or a revoke and burns the accumulated review chain — and every reviewer who already looked did so at a version you knew was wrong. Fix first, submit once.
+
+
 **HARD RULE: run `osc service run source_validator` before every submit, and only file the SR if it passes.** (`run`, never `runall` — see the commit gate above.) Just as commit is gated on a green validator (see "Committing changes to OBS"), so is the SR — `factory-auto` re-runs the validator server-side and *declines* on any failure (orphaned/missing sources, unparseable spec, bad license tag, malformed `.changes` date, minisign-not-available, …), so catching it locally first avoids a pointless decline + resubmit cycle. Run it **unpiped** and check the real `rc` (`osc service run source_validator >/tmp/sv.log 2>&1; rc=$?`), then `&& osc sr ...` — never `;`, never pipe before the `&&` (a pipeline's exit status is `tail`'s, masking the failure). This applies to **every** target (Factory, NonFree, devel-project PRs' equivalent checks). For a package you committed moments ago the sources are unchanged, but still re-run it before the SR — it's cheap and it's the exact gate the server will apply.
 
 ```
