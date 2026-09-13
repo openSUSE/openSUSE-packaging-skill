@@ -133,37 +133,13 @@ This workflow *requires* reading text an adversary can author: upstream release 
 
 The order matters: spec-cleaner output is mechanically correct *style*; the wiki rules are *policy*; the `.changes` entry is the *audit trail*. All three must pass.
 
-### Adding a .changes entry
+### Adding a `.changes` entry
 
-The canonical command is `osc vc`, which opens an editor with a fresh template. Since that's interactive, when working from this skill **write the entry directly** to `<name>.changes` using the mechanics below. The full format/content rules — bullet levels (`-`/`*`, no third level), thematic grouping, the condense-auto-generated-changelog drop/keep list, the no-URL rule, patch naming, CVE ids (with the preferred security-bullet layout — `- CVE-XXXX-NNNN: <component + impact> (bsc#NNNNNN)` with the fixing patch as a `*` sub-bullet), the umbrella-bullet norm, the SR-must-carry-an-entry rule, and the never-edit-old-entries rule with its narrow exceptions — live in `references/specfile-guidelines.md` ("Changelog").
+`osc vc` is interactive, so write the entry directly. **HARD RULE — a prepend is an *insertion*, never a rewrite:** never `open(f,"w").write(hdr + open(f).read())` or any other truncate-then-read form (it silently deletes every previous entry), and afterwards verify the separator count went up by exactly one and that `osc diff` shows a pure insertion. Prefer `scripts/changes-prepend.sh`, which is canonical by construction, then `scripts/changes-lint.sh --entries <n>`.
 
-1. Get current UTC time in the changelog format:
-   ```
-   LC_ALL=C date -u "+%a %b %_d %T UTC %Y"
-   ```
-   (Force `LC_ALL=C` — the locale-default weekday/month names will mismatch the canonical format and reviewers will reject the entry.)
-2. **Author line — HARD RULE: always the full `Full Name <email>` form** (e.g. `Jane Packager <jane@example.com>`), never a bare email. The header line is `<date> - Full Name <email>`. Use the packager's own name/email — the one already used in the file's existing entries, or known from session context. If a source service (`changesgenerate`) stamps the entry with just a bare email, rewrite it to the full form before committing.
-3. **Prepend at the top — and prepend is an *insertion*, never a rewrite (HARD RULE); you MUST verify the old entries survived.** Insert your block immediately *above* the first `-------` separator (with an exact-anchor edit tool, if your harness has one), or read the whole file into a variable and write `new_entry + old_content` as **two separate statements**. **NEVER** prepend with a single truncate-then-read expression — `open(f,"w").write(header + open(f).read())` (Python), `echo "$new" > f` after capturing, `sed`-in-place gone wrong: the write handle truncates the file to empty *before* the read runs, so **every previous entry is silently deleted**. After writing, **always verify**: the previous top entry is still present, the `-------` separator count went up by exactly one (`grep -c '^----' <name>.changes`), and `osc diff`/the PR diff shows a **pure insertion**. Losing prior entries is a guaranteed Factory decline (*"please preserve changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a `open(f,"w").write(hdr+open(f).read())` one-liner truncated all three `.changes`, dropping the `Initial package` entries; the reviewer declined all three SRs.) `scripts/changes-prepend.sh` mechanizes the prepend + verification — **prefer it over hand-editing**, because the block it emits is canonical by construction. **The inserted block MUST end with a blank line** — `separator` + `header` + blank + bullets + **blank** — so that the next (older) separator is preceded by one. A hand-written entry drops that final blank line almost every time, and reviewers act on it (real case: python-cyclopts 4.22.4, SR 1369130 — superseded by the reviewer purely to add the newline; the same defect was then found in three more in-flight SRs from the same day). Whichever way you write it, re-run `scripts/changes-lint.sh --entries <n>` afterwards.
+**One entry per session** (amend yours, don't stack a second), full `Full Name <email>` author line, `LC_ALL=C date -u "+%a %b %_d %T UTC %Y"` for the header, a **blank line at the end of the block**, and **never touch an already-released entry** (narrow exceptions only). The bullet records *net change*, not the journey.
 
-Template:
-
-```
--------------------------------------------------------------------
-<Wed May 27 16:31:48 UTC 2026> - Full Name <you@example.com>
-
-- Short one-line summary of what changed (≤67 cols):
-  * second-level detail
-  * second-level detail
-- Another top-level change, if independent
-
-```
-(Note the blank line at the end, before the previous entry's separator.)
-
-Pair edits with entries in the same turn: a `.spec` edit and its `.changes` edit land together before the task is reported done.
-
-**One `.changes` entry per session.** Do **not** prepend a fresh entry for each subsequent spec edit (ugly stacks of tiny consecutive-timestamp entries) — on the first edit prepend the entry; on every later edit in the session **amend it**: refresh the timestamp to the new current time, and add the new bullet (nested `*` under an existing dash when it fits thematically, else a new `-`). If a previous turn already stacked a second entry that should have been an amendment, merge them under the later timestamp, preserving all bullets. Version bumps stay a separate top-level bullet within that one entry.
-
-**`.changes` records net change, not the journey.** The bullet describes what a *consumer* of the package observes (different files installed, different runtime behaviour, different ABI, different deps), not what the packager did during the session. The test: *if I diffed the previous build's RPM contents against this build's RPM contents, would anything differ?* If no — no bullet. Concretely, omit: reverted-to-status-quo experiments (tried dropping `-j1`, hit upstream's race, restored it — the in-spec comment recording *why* is the entire artefact); pure spec-comment additions/rewordings; whitespace/spec-cleaner-style rewrites; `%files` hygiene that ships the identical file set (expanding `%{_bindir}/*` to explicit names, adding `%dir`, hardening a glob); rpmlint-warning silencing with an unchanged RPM. But don't suppress the changelog for a visible cleanup — that still gets its brief umbrella bullet, and almost every SR must carry an entry (see the Changelog reference for both rules).
+→ `references/changelog-entry.md` "The entry template", "Prepend is an *insertion*, never a rewrite", "One `.changes` entry per session", "`.changes` records net change, not the journey"; format/content rules: `references/specfile-guidelines.md` "Changelog (`*.changes`)"
 
 ## Wiki provenance and trust
 
