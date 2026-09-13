@@ -13,7 +13,7 @@ assume it's installed** (not in a base openSUSE install). If missing:
 - Offer to install (`sudo zypper install quilt`) — get explicit confirmation
   first, like any other system-affecting command.
 - Otherwise fall back to the manual diff-tool method in
-  `references/specfile-guidelines.md` "Patches" (pre-edit tree in `a/`, edited
+  `references/patches.md` "Patches" (pre-edit tree in `a/`, edited
   copy in `b/`, `diff -u a/<path> b/<path>`) — slower, but produces an
   equivalent `a/`/`b/`-prefixed patch, so every rule below still applies to
   its output.
@@ -40,7 +40,7 @@ first. Mandatory sequence per edit:
 
 **Header standard.** `a/`/`b/` prefixes (quilt's default) for `%autosetup -p1`
 compatibility — never hand-edit to `-p0` form; failure modes:
-`references/specfile-guidelines.md` "Patches".
+`references/patches.md` "Patches".
 
 **Inspect without breaking the series.** `quilt pop`/`quilt push` to view the
 base or an intermediate state — never hand-edit to simulate a pop, it desyncs
@@ -76,10 +76,10 @@ classic-osc/maintenance flow, once `references/leap-slfo.md` §6 has decided
 6. **Clean up**: delete the build dir and the `*.patch~` backups `quilt
    refresh` leaves — don't commit them.
 7. **No `.changes` entry unless asked** — that's a separate, explicit step
-   (`references/specfile-guidelines.md` "Changelog").
+   (`references/changelog-rules.md` "Changelog (`*.changes`)").
 8. **Report CVEs left commented out** as needing a manual rebase — but first
    confirm the vulnerable code is even present at the packaged version
    (`references/leap-slfo.md` §6): a reject often means "already
    fixed/absent", not "needs rebase" (hunk-by-hunk procedure:
-   `references/specfile-guidelines.md` "Patches", "When a distro patch stops
+   `references/patches.md` "Patches", "When a distro patch stops
    applying after a version bump").
