@@ -131,7 +131,7 @@ Reverse build-deps via `_builddepinfo` (authoritative where `osc whatdependson` 
 
 ## `wiki-drift.sh`
 
-Compare the pinned wiki revisions in `references/wiki-provenance.tsv` against the live wiki and report drift for human review (`--diff` wikitext diff, `--update` re-pin after review); the only sanctioned bridge between the world-editable wiki and the vendored references — see `SKILL.md` "Wiki provenance and trust".
+Compare the pinned wiki revisions in `references/wiki-provenance.tsv` against the live wiki and report drift for human review (`--diff` wikitext diff, `--update` re-pin after review); the only sanctioned bridge between the world-editable wiki and the vendored references — see `references/untrusted-content.md` "Wiki provenance and trust".
 
 ## `factory-report.py`
 
