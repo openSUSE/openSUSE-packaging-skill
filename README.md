@@ -17,7 +17,9 @@ references/                  per-block + domain depth documents, loaded on deman
                              references/untrusted-content.md is the cross-cutting
                              prompt-injection policy every block inherits
 scripts/                     reusable osc / Repology / bugzilla / Gitea / distro helpers —
-                             see SKILL.md "Bundled scripts" for the catalog
+                             one line each in SKILL.md "Bundled scripts"; the full
+                             catalog (flags, exit codes, the trap each one encodes)
+                             is scripts/README.md
 agents/                      delegation playbooks (role prompts) for the three blocks
 ```
 
