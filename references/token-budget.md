@@ -16,9 +16,10 @@ are always-on, not a phase.
   the pointer *is* the command: `python3 <skill>/scripts/refsection.py <file>.md "<Section>"`.
   `--list <file>.md` prints the outline; `--lines` numbers the output so a follow-up
   `Read offset=/limit=` can widen it. A bare file pointer means `--list` it first.
-- **Never Read a reference whole.** `specfile-guidelines.md`, `update-build.md` and
-  `submit-watch.md` are 75–110 KB each (~20–27k tokens); a whole-file Read spends ~95 % of that on
-  sections the task never touches. Grep for the heading, then read that section.
+- **Never Read a reference whole.** The biggest (`submit-watch.md`, `specfile-guidelines.md`,
+  `update-build.md`) are 48–55 KB each (~12–14k tokens) and none may exceed 60 KB; a whole-file Read
+  still spends ~90 % of that on sections the task never touches. `--list` the outline, then read the
+  one section. A section over ~12 KB has `###` sub-sections — name one of those instead.
 - **SKILL.md is injected by the harness on trigger** — never Read it for content. In a sub-agent it is
   not injected at all; that is what the agent playbooks and rule pointers are for.
 - **Read a further section only when its trigger fires**: a failed build → `update-build.md "Common
@@ -30,9 +31,22 @@ are always-on, not a phase.
 - A spawned agent starts with an EMPTY context. Never brief it with "invoke the skill", "read
   SKILL.md" or "read references/x.md": quote the rule numbers it is bound by (number + one line)
   and name the ONE section it needs — or paste that section's `refsection.py` output into the brief
-  when it is short. Give the absolute script path; the agent's cwd is not the skill root.
-- The agent playbooks (`agents/update-build.md`, `submit-watch.md`, `triage.md`) already list the
-  sections a block needs; point at the playbook, not at the references behind it.
+  when it is short. Give the absolute skill-root path; the agent's cwd is not the skill root.
+- **Point the brief at a playbook, never at the references behind it.** `agents/update-build.md`,
+  `agents/submit-watch.md`, `agents/triage.md` and `agents/changes-review.md` each open with the 1–5
+  sections that block must read, written as `refsection.py` commands, plus a trigger table for
+  everything else. That mandatory set is the agent's step-0 cost, measured:
+
+  | playbook | mandatory sections | bytes | ≈ tokens |
+  |---|---|---|---|
+  | `agents/update-build.md` | 5 (+ the 0.8 KB entry template) | 34,200 | ~8.5k |
+  | `agents/changes-review.md` | 1 | 25,500 | ~6.4k |
+  | `agents/submit-watch.md` | 4 | 19,600 | ~4.9k |
+  | `agents/triage.md` | 5 | 18,400 | ~4.6k |
+
+  Budget: **≤ 48 KB per playbook**. A brief that adds "and read `references/<file>.md`" on top of a
+  playbook is the regression this table exists to catch — it used to be 215 KB (two files) for the
+  update-build agent, carried for ~55 steps.
 - Ask for a report, not a transcript: the parent reads the result block on every later step.
   Verdicts, ids, sizes, the one surprising thing — not the log.
 
