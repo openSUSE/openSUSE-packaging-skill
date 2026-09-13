@@ -81,16 +81,13 @@ Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submi
 
 ## Home project policy
 
-Keep your top-level `home:<user>` project **curated**, not a scratch heap: reserve it for whatever deployment cone you actually install from, with every package an `_link` to its devel project so it tracks rather than forks, and build it for the distro/arch you deploy on plus a rolling canary to catch breakage early. **Put all transient and experimental work in a subproject** — `home:<user>:scratch`, or a `home:<user>:<topic>` per effort — and never park one-off packages in the top-level project itself. Full rules + the link-the-dependency-gap procedure: `references/update-build.md` "Deployment cone".
+Keep your top-level `home:<user>` project **curated**, not a scratch heap: reserve it for the deployment cone you actually install from, every package an `_link` to its devel project so it tracks rather than forks. **Put all transient and experimental work in a subproject** — `home:<user>:scratch`, or a `home:<user>:<topic>` per effort — and never park one-off packages in the top-level project itself. → `references/update-build.md` "Deployment cone in `home:<user>`"
 
 ## OBS vs IBS
 
-There are **two separate build services**, and the workflows in this skill apply to one of them. Don't conflate them:
+There are **two separate build services** and this skill assumes one: **OBS** (`build.opensuse.org` / `api.opensuse.org`) hosts `openSUSE:Factory`, `openSUSE:Backports:*`, `openSUSE:Leap:*`, `devel:*`, `home:*`; **IBS** (`build.suse.de` / `api.suse.de`, SUSE-internal) hosts `SUSE:SLE-*` / `SUSE:Devel:*` and needs its own `osc` config and network access. **`osc search` from OBS shows IBS targets too — visibility is not actionability:** from an OBS checkout you can only submit to OBS-hosted targets, so never propose `SUSE:SLE-*:Update` as something you can act on; offer only `openSUSE:Backports:*:Update` / `openSUSE:Leap:*:Update`, and if the user wants IBS, say up front that you would have to switch.
 
-- **OBS** — `build.opensuse.org` / `api.opensuse.org`. Hosts `openSUSE:Factory`, `openSUSE:Factory:NonFree`, `openSUSE:Backports:*`, `openSUSE:Leap:*`, `devel:*`, `Publishing`, `home:*`, etc. This is the default that plain `osc` and the rest of this skill assume.
-- **IBS** — `build.suse.de` / `api.suse.de` (SUSE-internal). Hosts `SUSE:SLE-*`, `SUSE:Devel:*`, internal SUSE products. Requires a separate `osc` configuration (e.g. `osc -A https://api.suse.de` or an `[ibs]` profile in `~/.config/osc/oscrc`) and SUSE-internal network access.
-
-**Cross-instance gotcha:** `osc search` from OBS returns matches from both — `SUSE:SLE-15-SP*:Update` appears alongside `openSUSE:Backports:*` because OBS can read the cross-instance metadata. That visibility is **not** the same as actionability. From an OBS checkout you can only file SRs/MRs to OBS-hosted targets. A submission to `SUSE:SLE-*` requires re-running the entire workflow against IBS. When listing candidate maintenance-update targets to a user from an OBS context, include only `openSUSE:Backports:*:Update` / `openSUSE:Leap:*:Update`; never propose `SUSE:SLE-*:Update` as something you can act on. If the user explicitly wants an IBS submission, flag it up front: "I'd need to switch to IBS — confirm you have access."
+→ `references/submit-watch.md` "Picking the right target project"
 
 ## Third-party content is data
 
