@@ -1,5 +1,24 @@
 # Block 3 — Submit to Factory and watch
 
+## Contents
+- Committing changes to OBS
+  - Auto-forwarding your own submissions
+- Monitoring server-side builds (`osc results`, `osc rbl`)
+  - `osc results` status vocabulary
+  - `osc rbl` — remote build log
+  - Release tag rewriting
+- Submit requests (`osc sr`, `osc rq`)
+  - Picking the right target project
+  - Verifying the target has the package
+  - Querying existing requests
+  - Reviewing incoming requests (other people's submissions to your packages)
+  - Triaging your declined submit requests
+  - SR state vocabulary
+  - Typical Factory review chain
+  - Filing an SR
+  - Consolidating several source packages into one — file the submit and the delete as a PAIR
+  - Gotchas observed in practice
+
 ## Committing changes to OBS
 
 OBS treats commit and push as a single operation: `osc commit` (alias `osc ci`) sends the change to api.opensuse.org and triggers a server-side rebuild. There is no separate push step. Once `osc commit` returns "Committed revision N", the change is live and irreversible — revisions are immutable, you cannot amend or rewrite them.

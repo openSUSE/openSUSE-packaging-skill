@@ -1,5 +1,18 @@
 # Block 2 — Update, build, clean up
 
+## Contents
+- Pre-flight: is this update already done or in flight? (HARD RULE — do this BEFORE any edit/branch/build)
+- Checking a spec file
+- Local builds (`osc build`)
+- Gate the SR on the whole branch being green — the commit/SR gate, and why each check exists
+- Common build pitfalls
+  - Build root and `%check` environment
+  - Prove a build/flag fix is actually effective
+  - Sources, tarballs and hosting
+  - Packaging defects that fail the build itself
+  - Functionally test the built package when a change warrants it
+  - Switching a package off a dead upstream fork to a maintained lineage
+
 ## Pre-flight: is this update already done or in flight? (HARD RULE — do this BEFORE any edit/branch/build)
 
 **Before you `osc branch`, bump a `Version:`, regenerate a vendor tarball, or start a (possibly very expensive) build, confirm you are not redoing work the maintainer already did.** Repology/triage flags "outdated" against *published Tumbleweed*, which lags the devel project — the devel project (and an in-flight SR) may already carry the exact version you're about to package. Run **both** checks against the package's devel project (`osc develproject openSUSE:Factory <pkg>` to find it):

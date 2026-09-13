@@ -2,6 +2,17 @@
 
 **Division of labour with `update-build.md`:** this file is the *authoring policy* — what a spec should look like and **why**, including the cases spec-cleaner does **not** handle (e.g. `%cmake_build`, soname subpackage naming, `baselibs.conf`, SPDX *accuracy*). `references/spec-cleaner.md` ("Reference: what spec-cleaner mechanically rewrites") is the *mechanical scope* — the exact transformations spec-cleaner applies automatically, so you know what to leave for it. They overlap in subject by design; don't duplicate content between them — state policy here, link to the mechanical list there.
 
+## Contents
+- Spec file — general rules
+- `%prep` / `%build` / `%install` / `%check`
+- `%files`
+- Recurring rpmlint-badness fixes (common on re-ports / big bumps)
+- Systemd
+- Sysusers / system users
+- Desktop files / GUI apps
+- Web apps
+- Language-specific quick reference
+
 ## Spec file — general rules
 
 - ASCII only unless non-ASCII is genuinely needed; save as UTF-8 if so.
