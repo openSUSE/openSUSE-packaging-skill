@@ -82,6 +82,50 @@ spec-cleaner invocation, always-pass flags (`--remove-groups --pkgconfig --perl 
   - **A half-finished checkout that `osc up` greets with "Please run 'osc repairwc .'" is usually fastest fixed by `rm -rf <pkg>` + a fresh `osc co <prj> <pkg>`, not by repairing in place.** `osc repairwc` followed by `osc up` can re-hit `resuming broken update… PackageFileConflict: failed to add file '<f>' … already exists` and stay stuck; for an obs_scm/link package with no local edits, deleting and re-fetching is clean. (Real case: several `hardware` packages left mid-update by an interrupted checkout — `rm -rf` + `osc co` recovered each.)
 - **`pgrep -f` / `pkill -f "<pattern>"` self-matches the very command running it**, because the pattern string is in that process's own argv — so it reports a phantom "still running" or kills its own shell (exit 144). To check for a real process, match the binary path with the bracket trick (`ps -eo pid,cmd | grep '[/]usr/bin/osc'`) or exclude self (`pgrep -f pat | grep -v $$`); never `pkill -f` a literal you also typed on the command line.
 
+## Gate the SR on the whole branch being green — the commit/SR gate, and why each check exists
+
+The same gate leaves Block 2 **and** gates any commit, not just the SR. Six checks, each covering
+something the others structurally cannot:
+
+1. **A clean local `osc build`** — read the rpmlint summary and let `%check` run. `scripts/build-summary.sh`'s
+   exit code *is* the verdict (0 green / 1 failed / 2 no log / 3 never concluded); gate on it rather
+   than eyeballing a log tail, which is the mechanical enforcement of "never state a build result you
+   have not read". In a fan-out this means **every** package, **every** arch the repo enables
+   (including `i586`) and every `:test`/multibuild flavor.
+2. **A green `source_validator`** (`osc service run source_validator`) — it catches missing/orphaned
+   sources, unparseable specs and bad license tags. Never read its verdict through a pipe.
+3. **`scripts/changes-lint.sh --entries <n-new> <pkg>.changes`** — because `source_validator` does
+   **not** validate `.changes` *format*: it passes on a missing blank line before a separator, and on
+   a malformed date (`Thu Jul 09 00:00:00 UTC` instead of the space-padded `Thu Jul  9 …`). Both are
+   things a human reviewer declines for, and in a multi-package fan-out they sail through the green
+   build and surface only as that decline.
+4. **`scripts/changes-guard.sh <pkg>.changes`** — because `source_validator` does not check `.changes`
+   *integrity* either: it passes when a new entry silently overwrites or folds in a
+   previously-committed one, rewriting history and misdating past work. The guard asserts the
+   committed `.changes` is still an exact byte-suffix of the new file (insertion-only). This is not
+   hypothetical — a fan-out agent folded a standalone prior entry into its own new entry, deleting
+   that entry's separator+date header.
+   **One narrow case legitimately makes the guard red and is still correct to commit:** repairing a
+   `.changes` header that `check_dates_in_changes` rejects, without which factory-auto declines the
+   submission and the file cannot reach Factory at all — see `references/specfile-guidelines.md`
+   "Sanctioned exception 2" for the parser behaviour, the prove-it-on-a-copy step and the evidence to
+   record. Every *other* red guard is a real defect, not a case for overriding.
+5. **`scripts/changes-patches.sh`** — factory-auto's patch-mention rule, ported: every patch added or
+   removed **vs the SR target** must be named by literal filename on one line of the `.changes` diff.
+   A glob, a `%{version}` form, a rename given by only one of its two names, or a filename split by
+   the 67-column wrap all fail it, and the *local* `source_validator` does not run this cross-check —
+   so it is a server-side decline you only see after filing.
+6. **The adversarial change review (`agents/changes-review.md`) must return `PASS`.** None of the five
+   mechanical gates judge whether the *change itself* is correct or whether the entry is *true and
+   substantive*. A green build with a well-formatted, insertion-only entry can still carry an
+   orphaned or wrongly-dropped patch, a bad dep floor, a stray `%files` glob, a masked `%check`, a
+   soname miss — or a changelog that is a bare `Update to X.Y.Z`, omits a dropped patch or a soname
+   bump, misses a CVE, or claims a change the spec does not make. The review is a hostile-Factory-reviewer
+   pass over the **whole** change — spec hunks, patches, sources/service moves, the rpmlint/`%check`
+   result and the `.changes` entry — read against the `osc diff` and the upstream release notes.
+   Delegate it to a sub-agent or run its checklist inline; either way it must have **completed** with
+   no blockers before anything is committed or submitted.
+
 ## Unattended / remote-build mode (the sanctioned exception to "build locally by default")
 
 The two hard rules above assume an interactive session where a single local `osc build` is the fastest path to a verdict. **When the build/test block runs *unattended* (an autonomous agent run, a `/loop`, a multi-package cone where serial local builds would take hours), invert the default: drive the build through OBS remotely instead.** Local `osc build` is serial (one VM at a time) and blocks the session; OBS builds everything in parallel and re-triggers dependents automatically. The flow:
