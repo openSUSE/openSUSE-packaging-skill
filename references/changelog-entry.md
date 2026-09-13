@@ -8,7 +8,7 @@ condense-auto-generated-changelog drop/keep list, the no-URL rule, patch naming,
 preferred security-bullet layout — `- CVE-XXXX-NNNN: <component + impact> (bsc#NNNNNN)` with the
 fixing patch as a `*` sub-bullet), the umbrella-bullet norm, the SR-must-carry-an-entry rule, and
 the never-edit-old-entries rule with its narrow exceptions — live in
-`references/specfile-guidelines.md` "Changelog (`*.changes`)".
+`references/changelog-rules.md` "Changelog (`*.changes`)".
 
 The canonical command is `osc vc`, which opens an editor with a fresh template. Since that is
 interactive, when working from this skill **write the entry directly** to `<name>.changes` using
@@ -87,7 +87,7 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   down, a foreign top entry, and emptying the entry. Stop using it once the submission is accepted;
   the entry is history then.
 - Full flag/exit-code detail and the one sanctioned override (a `check_dates_in_changes` header
-  repair): `scripts/README.md` "`changes-guard.sh`" and `references/specfile-guidelines.md`
+  repair): `scripts/README.md` "`changes-guard.sh`" and `references/changelog-rules.md`
   "Sanctioned exception 2".
 
 ## One `.changes` entry per session — amend, don't stack

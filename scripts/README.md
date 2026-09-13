@@ -113,7 +113,7 @@ new one.
 **The one sanctioned override**: a header `check_dates_in_changes` rejects has to be edited in
 place — even an old, foreign, already-in-Factory entry — or the package can never be submitted;
 the guard will refuse and you proceed anyway, but only with the evidence from
-`references/specfile-guidelines.md` "Sanctioned exception 2" (diff touches nothing but that
+`references/changelog-rules.md` "Sanctioned exception 2" (diff touches nothing but that
 header, `grep -c '^----'` unchanged, and a bullet plus SR note explaining it). Every *other*
 red guard is a real defect, not a case for overriding.
 
