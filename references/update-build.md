@@ -48,7 +48,7 @@ If the devel version already matches and you only have *cosmetic* spec-cleaner c
 
 ## Checking a spec file
 
-spec-cleaner invocation, always-pass flags (`--remove-groups --pkgconfig --perl --tex`), the documented over-expansion deviations, and the mechanical-rewrite catalog now live in `references/spec-cleaner.md`.
+spec-cleaner invocation, the four always-pass flags, the documented over-expansion deviations and the mechanical-rewrite catalog live in `references/spec-cleaner.md` "Checking a spec file".
 
 ## Local builds (`osc build`)
 
