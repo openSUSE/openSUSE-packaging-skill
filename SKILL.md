@@ -19,10 +19,10 @@ Most package work is one of three blocks, run in order with a feedback loop. **L
 
 **Read references one section at a time, never whole** — every `references/<file>.md "<Section>"` pointer in this skill is an argument to `scripts/refsection.py <file>.md "<Section>"` (`--list` prints the outline). A sub-agent brief names the playbook and the sections it needs, never "read SKILL.md" or a reference in full. → `references/token-budget.md` "Reading this skill", "Briefing a sub-agent", "Tool output economy"
 
-**Block 1 — Triage: does the package need updating?** → read `references/triage.md`
+**Block 1 — Triage: does the package need updating?** → `agents/triage.md` lists the sections; otherwise `--list references/triage.md` and read the one you need.
 Enumerate what you maintain, compare against upstream **by date, not version string** — verifying each candidate against the forge / registry API directly (`scripts/upstream-probe.py`; GitHub `/releases`, the PyPI / npm / crates.io JSON endpoints), never against a web search engine; the Repology / Anitya sweep only finds candidates — and weed out multi-track / deliberately-pinned false positives. Scripts: `scripts/my-packages.sh`, `scripts/outdated.py`, `scripts/upstream-probe.py`.
 
-**Block 2 — Update, build, clean up.** → read `references/update-build.md` (plus `references/specfile-guidelines.md` for spec-section authoring rules; `references/spec-cleaner.md` for the spec-cleaner deviations/mechanical rewrites; `references/language-packaging.md` for language-specific packaging — Python singlespec, Go/Rust vendoring, …; and `references/git-workflow.md` if the package is git/scmsync rather than a classic `.osc` checkout)
+**Block 2 — Update, build, clean up.** → `agents/update-build.md` lists the sections to read and the trigger for every further one. Start from `references/update-build.md` "Pre-flight: is this update already done or in flight?" and "Running the build — repo, arch, project and flavors"; spec authoring is `references/specfile-guidelines.md` "Spec file — general rules"; the FTBFS catalog `references/build-pitfalls.md`, a `_service` package `references/source-services.md`, patches `references/patches.md`, shlibs/alts `references/shlib-alternatives.md`, a language vendor tree `references/language-packaging.md`, a git/scmsync checkout `references/git-workflow.md`, an unattended fan-out `references/remote-builds.md`, a brand-new package `references/new-package.md` — `--list` any of them first.
 Run `scripts/preflight.sh` first (HARD RULE — never repackage what devel already has), bump the version / run the source service, rebase or drop patches, run spec-cleaner, build locally with `osc build` (read the rpmlint summary, run `%check`), and fix FTBFS from the pitfalls catalog.
 
 **The gate to leave this block — and the gate on *any* commit, not just the SR. All six, every package, every arch the repo enables (`i586` included), every multibuild flavor:**
@@ -36,7 +36,7 @@ Run `scripts/preflight.sh` first (HARD RULE — never repackage what devel alrea
 `scripts/gate.sh` runs gates 2–5 as ONE tool call (`--build-log` adds gate 1).
 → the *why* of each gate: `references/update-build.md` "Gate the SR on the whole branch being green"
 
-**Block 3 — Submit to Factory and watch.** → read `references/submit-watch.md` (and `references/leap-slfo.md` when the change must also reach Leap 16.x / SLFO / SLE-15 Backports — it decides the routing and owns those mechanics)
+**Block 3 — Submit to Factory and watch.** → `agents/submit-watch.md` lists the sections. Entry points: `references/submit-watch.md` "Committing changes to OBS", "Picking the right target project", "Filing an SR"; a decline `references/decline-catalog.md`; Leap 16.x / SLFO / SLE-15 Backports routing `references/leap-slfo.md` and, for a released product, `references/maintenance-updates.md`.
 Show the diff, commit, file the `osc sr` (or a Gitea PR for git-workflow packages), then watch the submission. **HARD RULE — the adversarial change review of Block 2 must have COMPLETED and returned `PASS` before you submit**; never file while a review is still running, and never file one that returned blockers intending to fix them afterwards — a submitted request is public and cannot be un-reviewed. **First check the package/project `_meta` for a `reviewer` role held by someone else — if one exists, branch and submit instead of committing directly, and leave the accept to that reviewer (HARD RULE).** `scripts/autoforward-gate.sh <project> <package>` makes that call mechanically. A decline or comment loops straight back to **Block 2**, which re-gates before re-submitting. Scripts: `sr-status.py`, `my-requests.sh`, `devel-of.sh`, `autoforward-gate.sh`, `cone-status.sh`. → `references/submit-watch.md` "Committing changes to OBS", "Filing an SR"
 
 **Auto-forwarding your own submissions — the gate is the `reviewer` role, NOT co-maintainership.**
@@ -44,7 +44,7 @@ A request *you* created may be accepted into devel and forwarded onward unattend
 
 The three blocks form a **loop**: Block 3 feedback (a decline, a staging FTBFS, a reviewer comment) routes back into Block 2, which re-builds and re-gates before the next submit.
 
-**Bug-driven entry point.** For "check my bugs", "what needs addressing", or working an assigned VUL/CVE bug, start from `references/bugzilla-cve-triage.md` — querying, the maintainership audit, per-CVE triage, the supported-product matrix, resolving, `boo#` citing. It feeds the same three-block pipeline (a lagging supported product becomes a Block 2/3 update).
+**Bug-driven entry point.** For "check my bugs", "what needs addressing", or working an assigned VUL/CVE bug, start from `references/bugzilla-cve-triage.md` (`--list` it first) — querying, the maintainership audit, per-CVE triage, the supported-product matrix, resolving, `boo#` citing. It feeds the same three-block pipeline (a lagging supported product becomes a Block 2/3 update).
 
 ### Bundled scripts (`scripts/`)
 
@@ -82,7 +82,7 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 
 ### Delegation playbooks (`agents/`)
 
-Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus the cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** run as the final gate before every commit/SR (the Block-2 gate above). They are plain **role prompts**: a harness that can delegate hands one to a sub-agent when a block is large or wants an isolated context; without delegation, run the playbook inline. Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it is inert.
+Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus the cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** run as the final gate before every commit/SR (the Block-2 gate above). They are plain **role prompts**: a harness that can delegate hands one to a sub-agent when a block is large or wants an isolated context; without delegation, run the playbook inline. **A sub-agent gets no SKILL.md**, so each playbook opens with the 1–5 sections that block must read (as `refsection.py` commands, 18–34 KB) and a trigger table for everything else — brief an agent with the playbook and the package, never with "read the skill" or a reference file (`references/token-budget.md` "Briefing a sub-agent"). Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it is inert.
 
 ## Home project policy
 
@@ -108,7 +108,7 @@ This workflow *requires* reading text an adversary can author: upstream release 
 
 ## Core directive
 
-**Every time you author, edit, clean, or review a spec file, follow the openSUSE packaging guidelines (`references/specfile-guidelines.md`) and the spec-cleaner rules (`references/spec-cleaner.md`).** Apply them pre-emptively — do not write the deprecated form thinking spec-cleaner will fix it later. Concretely, on any non-trivial edit:
+**Every time you author, edit, clean, or review a spec file, follow the openSUSE packaging guidelines (`references/specfile-guidelines.md` — `--list` it, then read the section for the part you are editing) and the spec-cleaner rules (`references/spec-cleaner.md` "Checking a spec file").** Apply them pre-emptively — do not write the deprecated form thinking spec-cleaner will fix it later. Concretely, on any non-trivial edit:
 
 **Rule numbers below are stable — they are cited by number from `references/` and the `agents/` playbooks. Never renumber them.**
 

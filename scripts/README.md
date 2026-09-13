@@ -147,13 +147,13 @@ Shared GitHub/GitLab/PyPI/npm/crates.io probe helpers imported by `upstream-prob
 refsection.py — print ONE section of a skill doc instead of Reading the file.
 
 The references are big (specfile-guidelines.md, update-build.md and
-submit-watch.md are 75-110 KB each); a whole-file Read burns the context budget
+submit-watch.md are the largest at ~48-55 KB each); a whole-file Read burns the budget
 on the ~95% you did not need (references/token-budget.md). Every pointer in
 this skill is written as `references/<file>.md "<Section>"` — this turns that
 pointer into a one-liner, replacing the two-step "grep -n '^#' then Read with
 offset=/limit= and hope the window is right".
 
-  refsection.py specfile-guidelines.md "Patches"        # the section, whole
+  refsection.py patches.md "Patches"                    # the section, whole
   refsection.py update-build.md "local builds"          # substring, case-insensitive
   refsection.py --list submit-watch.md                  # the heading outline
   refsection.py --lines update-build.md "Common build pitfalls"   # numbered, Read for more
