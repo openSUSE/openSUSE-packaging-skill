@@ -92,12 +92,17 @@ else
 fi
 
 # 6. the real docs, by basename, with the §-anchor form
-python3 "$RS" specfile-guidelines.md "Patches" > "$out" 2> "$err"; rc=$?
+# real docs, by basename, from a cwd that is not the skill root: the first `##`
+# section of a big reference comes back whole and stops before the second `##`
+# (headings read from --list, so a reshuffle of the reference cannot break this)
+first=$(python3 "$RS" --list update-build.md 2>/dev/null | grep -m1 '## ' | sed 's/^.*## //')
+second=$(python3 "$RS" --list update-build.md 2>/dev/null | grep '## ' | sed -n '2p' | sed 's/^.*## //')
+python3 "$RS" update-build.md "$first" > "$out" 2> "$err"; rc=$?
 [ $rc -eq 0 ] && pass "real doc by basename from /: exit 0" || fail "real doc: rc=$rc ($(head -1 "$err"))"
-head -1 "$out" | grep -q '^## Patches' \
-    && pass "real doc: Patches section returned" || fail "real doc: got $(head -1 "$out")"
-grep -q '^## Changelog' "$out" \
-    && fail "real doc: ran into the next ## section" || pass "real doc: stops at the next ##"
+head -1 "$out" | grep -qF "## $first" \
+    && pass "real doc: first ## section returned" || fail "real doc: got $(head -1 "$out")"
+[ -n "$second" ] && grep -qF "## $second" "$out" \
+    && fail "real doc: ran into the next ## section ($second)" || pass "real doc: stops at the next ##"
 rm -f "$out.2"
 
 python3 "$RS" SKILL.md "Core directive" > "$out" 2> "$err"; rc=$?
