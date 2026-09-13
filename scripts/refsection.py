@@ -8,7 +8,7 @@ this skill is written as `references/<file>.md "<Section>"` — this turns that
 pointer into a one-liner, replacing the two-step "grep -n '^#' then Read with
 offset=/limit= and hope the window is right".
 
-  refsection.py specfile-guidelines.md "Patches"        # the section, whole
+  refsection.py patches.md "Patches"        # the section, whole
   refsection.py update-build.md "local builds"          # substring, case-insensitive
   refsection.py --list submit-watch.md                  # the heading outline
   refsection.py --lines update-build.md "Common build pitfalls"   # numbered, Read for more
