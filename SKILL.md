@@ -1,6 +1,6 @@
 ---
 name: opensuse-packaging
-description: Authoring, modifying, reviewing, or building openSUSE RPM packages — spec files, .changes files, osc / OBS and Git (src.opensuse.org / Gitea) workflows. Use whenever the working directory has a .osc/ folder or a *.spec file, when the user mentions osc, OBS, rpmbuild, openSUSE Build Service, src.opensuse.org, the Git packaging workflow, tea, git-obs, osc fork, spec file, .changes file, rpmlint, or asks to build/submit/review/fork a package, check if packages are out of date, or open a package pull request. Covers Specfile guidelines, the Git packaging workflow, Shared library policy, Systemd packaging, Patches, Changelog format, and language-specific packaging (Python, Perl, Ruby, Go, Rust, Java, PHP, Haskell, Lua, R, Meson, Vala).
+description: Authoring, modifying, reviewing or building openSUSE RPM packages — .spec and .changes files, osc / OBS, and the Git packaging workflow on src.opensuse.org (Gitea). Use for a .osc/ checkout or a *.spec file; when the user mentions osc, OBS, rpmbuild, git-obs, tea, rpmlint or spec-cleaner; or asks to update, build, submit, review or fork a package, check if packages are out of date, or open a package pull request.
 ---
 
 # openSUSE packaging
@@ -77,7 +77,7 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 
 ### Delegation playbooks (`agents/`)
 
-Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus a cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** (a hostile pass over the whole change: spec, patches, sources, build result, and `.changes`) run as the final gate before every commit/SR (see the Block-2 gate above). They are plain **role prompts**: any harness that can delegate to a sub-agent/sub-task uses one as the delegate's instructions when a block is large or benefits from an isolated context (e.g. "run a sub-agent with the prompt in `agents/submit-watch.md` to watch SR 12345 and loop back if it's declined"); a harness without delegation runs the playbook inline in the main session, or you can start a dedicated session from one directly. Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it's inert.
+Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus the cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** run as the final gate before every commit/SR (the Block-2 gate above). They are plain **role prompts**: a harness that can delegate hands one to a sub-agent when a block is large or wants an isolated context; without delegation, run the playbook inline. Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it is inert.
 
 ## Home project policy
 
@@ -107,6 +107,8 @@ This workflow *requires* reading text an adversary can author: upstream release 
 ## Core directive
 
 **Every time you author, edit, clean, or review a spec file, follow the openSUSE packaging guidelines (`references/specfile-guidelines.md`) and the spec-cleaner rules (`references/spec-cleaner.md`).** Apply them pre-emptively — do not write the deprecated form thinking spec-cleaner will fix it later. Concretely, on any non-trivial edit:
+
+**Rule numbers below are stable — they are cited by number from `references/` and the `agents/` playbooks. Never renumber them.**
 
 1. **Before editing**, scan the spec for which guideline + spec-cleaner rules apply to the section you're touching.
 2. **While editing**, write the modern form directly — column-16 alignment, SPDX-modern licenses, `%{macro}` over bare paths, `%make_install` / `%make_build` / `%autosetup`, one-dep-per-line sorted, `pkgconfig(...)` over `*-devel`, `%patch -P N` over `%patchN`, **no `Group:` tag**, etc. **HARD RULE — convert `update-alternatives` to `libalternatives` (`alts`) on sight** (Factory default for generic binary names): any spec you touch that still has `Requires(post): update-alternatives` or `%python_install_alternative` in `%post` is converted as part of that touch, not a follow-up. Full rule, the shared-command-pair sequencing exception, and the Python macros: `references/specfile-guidelines.md` "Alternatives"; Python recipe: `references/language-packaging.md` "Console scripts".
