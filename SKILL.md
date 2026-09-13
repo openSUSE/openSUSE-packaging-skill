@@ -17,6 +17,8 @@ Rules for authoring, modifying, and building RPM packages for openSUSE / SUSE vi
 
 Most package work is one of three blocks, run in order with a feedback loop. **Load the reference for the block you're in (don't read all of them up front), call the bundled `scripts/` for the recurring osc/Repology queries instead of re-deriving them, and — if your harness supports delegating to sub-agents — optionally hand a large or long-running block to a sub-agent running the matching `agents/` playbook (otherwise run the playbook inline).** This top-level file stays loaded the whole time and carries only the cross-cutting rules below; the per-block detail lives in `references/`.
 
+**Read references one section at a time, never whole** — every `references/<file>.md "<Section>"` pointer in this skill is an argument to `scripts/refsection.py <file>.md "<Section>"` (`--list` prints the outline). A sub-agent brief names the playbook and the sections it needs, never "read SKILL.md" or a reference in full. → `references/token-budget.md` "Reading this skill", "Briefing a sub-agent", "Tool output economy"
+
 **Block 1 — Triage: does the package need updating?** → read `references/triage.md`
 Enumerate what you maintain, compare against upstream **by date, not version string** — verifying each candidate against the forge / registry API directly (`scripts/upstream-probe.py`; GitHub `/releases`, the PyPI / npm / crates.io JSON endpoints), never against a web search engine; the Repology / Anitya sweep only finds candidates — and weed out multi-track / deliberately-pinned false positives. Scripts: `scripts/my-packages.sh`, `scripts/outdated.py`, `scripts/upstream-probe.py`.
 
@@ -31,6 +33,7 @@ Run `scripts/preflight.sh` first (HARD RULE — never repackage what devel alrea
 5. `scripts/changes-patches.sh` — every patch added/removed vs the SR **target** named by literal filename, or factory-auto declines;
 6. **then the adversarial change review (`agents/changes-review.md`) must have COMPLETED and returned `PASS`** — the mechanical gates judge format, not whether the change or the entry is correct. Delegate it to a sub-agent or run its checklist inline.
 
+`scripts/gate.sh` runs gates 2–5 as ONE tool call (`--build-log` adds gate 1).
 → the *why* of each gate: `references/update-build.md` "Gate the SR on the whole branch being green"
 
 **Block 3 — Submit to Factory and watch.** → read `references/submit-watch.md` (and `references/leap-slfo.md` when the change must also reach Leap 16.x / SLFO / SLE-15 Backports — it decides the routing and owns those mechanics)
@@ -67,6 +70,8 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks); **prefer it over hand-editing**.
 - `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets).
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
+- `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline. Every `references/<file>.md "<Section>"` pointer here is its argument.
+- `gate.sh` — gates 2–5 of the Block-2 gate (source_validator, changes-lint, changes-guard, changes-patches; `--build-log` adds build-summary) in one call, one VERDICT line.
 - `changes-guard.sh` — integrity gate: a `.changes` edit must be *insertion-only*. `--amend-top "<Name> <mail>"` permits amending your OWN not-yet-accepted top entry and nothing below it.
 - Bugzilla has **no bundled script** — all access goes through the bugwarden MCP server (core directive 7).
 - `distro-survey.sh` — version (+ Fedora patch-count hint) across all 11 surveyed distros in one call (core directive 8–9).
