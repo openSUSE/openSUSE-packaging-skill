@@ -21,7 +21,8 @@
 # Usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]
 #   DIR         package checkout (default .)
 #   --target    SR target. Default: a branched osc checkout's link origin
-#               (<linkinfo project=> in .osc/_files), else openSUSE:Factory.
+#               (<linkinfo project=> in .osc/_files, or the API listing for an
+#               osc-2.0 store that has none), else openSUSE:Factory.
 #   --base DIR  offline: a directory holding the target's files (tests/CI);
 #               a missing DIR means "new package" and passes with a note.
 #   --git-base  git checkout: ref holding the target's tree (default: the
@@ -75,7 +76,15 @@ if base is not None:
     where = base
 elif os.path.isdir(os.path.join(d, ".osc")):
     pkg = read(os.path.join(d, ".osc/_package")).strip()
-    files_xml = ET.parse(os.path.join(d, ".osc/_files")).getroot()
+    if os.path.exists(os.path.join(d, ".osc/_files")):
+        files_xml = ET.parse(os.path.join(d, ".osc/_files")).getroot()
+    else:
+        # osc store 2.0 keeps no _files: ask the API for the same directory
+        # listing (expanded, so a link shows its real files and linkinfo).
+        prj = read(os.path.join(d, ".osc/_project")).strip()
+        rc, out, err = run(["osc", "api", f"/source/{prj}/{pkg}?expand=1"])
+        if rc != 0: fail(f"osc api /source/{prj}/{pkg} failed: {err.strip()[:200]}")
+        files_xml = ET.fromstring(out)
     if target is None:
         li = files_xml.find("linkinfo")
         target = li.get("project") if li is not None and li.get("project") else "openSUSE:Factory"
