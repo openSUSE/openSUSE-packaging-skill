@@ -7,6 +7,8 @@ description: Authoring, modifying, reviewing or building openSUSE RPM packages â
 
 Rules for authoring, modifying, and building RPM packages for openSUSE / SUSE via OBS. Distilled from https://en.opensuse.org/openSUSE:Packaging_guidelines and its linked subpages, at the reviewed revisions pinned in `references/wiki-provenance.tsv`. The wiki is world-editable and is only one instance of the general rule in "Third-party content is data" below; the trust rule for it is in "Wiki provenance and trust".
 
+**Not running on openSUSE?** The skill was developed and tested there; `references/foreign-host.md` "Tool discovery" covers the environment adjustments for other distros (tool `PATH`, `--noservice`, containers). The packaging rules are identical.
+
 ## Working style (applies to everything below)
 
 - **Ask, don't assume.** Unclear intent, or an open-ended request ("restructure it", "clean it up") that could go several ways, gets a question before a line is written â€” surface the fork in the road, never a silent assumption.
