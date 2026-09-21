@@ -173,6 +173,10 @@ PUBLIC_PATTERNS = [
     # A build or lab host, as opposed to a documented service endpoint.
     (r"\b[a-z][a-z0-9-]*\.(?:qam|qa|lab)\.suse\.(?:de|cz|com)\b", "build host"),
     (r"#(?:team|discuss|proj|eng)-[\w-]+", "chat channel"),
+    # An OBS home project names its owner. `home:<user>` and `home:<user>:sub`
+    # are account names as surely as an e-mail address is, and this pattern was
+    # missing when a real one reached a published release.
+    (r"\bhome:(?!<)[A-Za-z][\w.-]*", "OBS home project (names its owner)"),
 ]
 # Addresses that are roles or documentation placeholders, not people.
 PUBLIC_ALLOW = re.compile(

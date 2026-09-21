@@ -51,7 +51,7 @@ With a skill installer:
 
 ```
 npx skills add openSUSE/openSUSE-packaging-skill --skill opensuse-packaging -g
-gh skill install openSUSE/openSUSE-packaging-skill opensuse-packaging --scope user
+gh skill install openSUSE/openSUSE-packaging-skill opensuse-packaging --agent claude-code --scope user
 ```
 
 Without `-g` / `--scope user` both install into the current project instead.
@@ -84,8 +84,11 @@ skill's directory name must equal its lowercase `name`. A stale link therefore p
 directory with no `SKILL.md` in it, and the agent just stops finding the skill — with no
 error, because a skill that does not load cannot report anything.
 
-If you installed with `npx skills` or `gh skill`, re-running the install command above
-repoints everything for you. If you symlinked by hand, replace the old link:
+**Remove the old links before installing.** An installer adds its own; it does not clean
+up a hand-made symlink, and a harness that finds both reports a duplicate skill name.
+
+If you installed with `npx skills` or `gh skill`, remove the old links and re-run the
+install command above. If you symlinked by hand, replace them:
 
 ```
 rm ~/.claude/skills/openSUSE-packaging ~/.agents/skills/openSUSE-packaging
@@ -100,13 +103,29 @@ opencode instead takes a directory to scan, so point it at `skills/`:
 { "skills": { "paths": ["/path/to/openSUSE-packaging-skill/skills"] } }
 ```
 
-The `agents/*.md` playbooks are role prompts: if your harness supports delegating to
-sub-agents/sub-tasks, use one as the sub-agent's instructions; otherwise run the playbook
-inline in the main session or paste it as a standalone session prompt.
+**The sub-agent playbooks moved too.** Any agent registered against the old
+repository-root `agents/` now points at nothing — the link resolves to a path that no
+longer exists, so the agent silently stops being available. Repoint each one at
+`skills/opensuse-packaging/agents/`:
 
-Harnesses with native skill/sub-agent support: place (or symlink) the repo where the harness
-discovers skills, and register the `agents/*.md` playbooks wherever it discovers agents so the
-three blocks become first-class delegatable agents.
+```
+ln -sfn "$PWD/skills/opensuse-packaging/agents/triage.md"         ~/.claude/agents/osc-triage.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/update-build.md"   ~/.claude/agents/osc-update-build.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/submit-watch.md"   ~/.claude/agents/osc-submit-watch.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/changes-review.md" ~/.claude/agents/changes-review.md
+```
+
+### The sub-agent playbooks
+
+`skills/opensuse-packaging/agents/*.md` are role prompts. If your harness supports
+delegating to sub-agents, register them where it discovers agents — for Claude Code
+`~/.claude/agents/`, for opencode `~/.config/opencode/agent/`, for grok `~/.grok/agents/`.
+Point each link at the file inside `skills/opensuse-packaging/agents/`, **not** at a
+repository-root `agents/` directory: that path existed before v1.0.0 and is gone, so links
+made against it now resolve to nothing.
+
+Without sub-agent support, run a playbook inline or paste it as a standalone session
+prompt — they are plain prompts and need no harness support to be useful.
 
 ## Safety model
 
