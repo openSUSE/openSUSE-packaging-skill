@@ -36,7 +36,13 @@
 #
 # Counts REQUESTS, not commits or lines: a one-line version bump and a full
 # rewrite weigh the same. Say so when presenting the numbers.
-import argparse, collections, datetime, html, json, subprocess, sys
+import argparse
+import collections
+import datetime
+import html
+import json
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 PAGE = 2000
@@ -50,9 +56,11 @@ def osc_api(path):
 
 
 def collect(project, since):
-    q = ("/search/request?match=state/@name='accepted'+and+action/@type='submit'"
-         f"+and+action/target/@project='{project}'+and+state/@when>'{since}'"
-         "&view=collection&limit={n}&offset={o}")
+    q = (
+        "/search/request?match=state/@name='accepted'+and+action/@type='submit'"
+        f"+and+action/target/@project='{project}'+and+state/@when>'{since}'"
+        "&view=collection&limit={n}&offset={o}"
+    )
     cnt = collections.Counter()
     pkgs = collections.defaultdict(set)
     when = collections.defaultdict(collections.Counter)
@@ -214,12 +222,17 @@ def sparkline(vals, kind, weekend_idx):
     W, H = 104, 22
     step = W / max(len(vals) - 1, 1)
     bands = "".join(
-        f'<rect x="{i*step-step/2:.1f}" y="0" width="{step:.1f}" height="{H}" class="we"/>'
-        for i in weekend_idx)
-    pts = " ".join(f"{i*step:.1f},{H-1.5-(v/hi)*(H-4):.1f}" for i, v in enumerate(vals))
+        f'<rect x="{i * step - step / 2:.1f}" y="0" width="{step:.1f}" height="{H}" class="we"/>'
+        for i in weekend_idx
+    )
+    pts = " ".join(
+        f"{i * step:.1f},{H - 1.5 - (v / hi) * (H - 4):.1f}" for i, v in enumerate(vals)
+    )
     ly = H - 1.5 - (vals[-1] / hi) * (H - 4)
-    return (f'<svg class="spark {kind}" viewBox="-2 0 {W+5} {H}" aria-hidden="true">{bands}'
-            f'<polyline points="{pts}"/><circle cx="{W:.1f}" cy="{ly:.1f}" r="1.8"/></svg>')
+    return (
+        f'<svg class="spark {kind}" viewBox="-2 0 {W + 5} {H}" aria-hidden="true">{bands}'
+        f'<polyline points="{pts}"/><circle cx="{W:.1f}" cy="{ly:.1f}" r="1.8"/></svg>'
+    )
 
 
 def render(meta, rows, gran, weekend_idx, weekend_share):
@@ -227,17 +240,25 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
     nb = meta["buckets"]
     trs = []
     for i, r in enumerate(rows, 1):
-        cls = " ".join(filter(None, ["row",
-                                     "me" if r["highlight"] else "",
-                                     "role" if r["role"] else ""]))
-        tag = ('<span class="tag you">you</span>' if r["highlight"]
-               else '<span class="tag bot">role account</span>' if r["role"] else "")
+        cls = " ".join(
+            filter(
+                None,
+                ["row", "me" if r["highlight"] else "", "role" if r["role"] else ""],
+            )
+        )
+        tag = (
+            '<span class="tag you">you</span>'
+            if r["highlight"]
+            else '<span class="tag bot">role account</span>'
+            if r["role"]
+            else ""
+        )
         unit = "d" if gran == "day" else "mo"
         trs.append(f'''<tr class="{cls}">
 <td class="rank">{i}</td>
 <td class="who"><span class="fx"><span class="handle">{html.escape(r["user"])}</span>{tag}</span></td>
 <td class="num">{r["srs"]:,}</td>
-<td class="volume"><span class="bar" style="--w:{r["srs"]/mx*100:.1f}%"></span></td>
+<td class="volume"><span class="bar" style="--w:{r["srs"] / mx * 100:.1f}%"></span></td>
 <td class="num pk">{r["pkgs"]:,}</td>
 <td class="axis2"><span class="fx"><span class="chip {r["shape"]}">{r["shape"]}</span>\
 <span class="ratio">{r["ratio"]:.1f}<span class="per">/pkg</span></span></span></td>
@@ -248,20 +269,29 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
 </tr>''')
 
     short = gran == "day" and nb <= 45
-    shape_note = (" Over a window this short almost nobody resubmits the same package, so shape "
-                  "compresses toward 1.0 for everyone and separates little — read rhythm here, "
-                  "and shape on a year-long report." if short else
-                  " A <b>broad</b> figure near 1 means each package was touched about once; "
-                  "<b>focused</b> means the same packages went through many times, the signature "
-                  "of a release train or a fast-moving upstream.")
-    wk = (f'<p>Shaded columns in the cadence line are Saturdays and Sundays. Only '
-          f'<b>{weekend_share:.0f}%</b> of these requests landed on one, against weekends being '
-          f'26% of the calendar.</p>' if gran == "day" else "")
-    wkstat = (f'<div class="stat"><b>{weekend_share:.0f}%</b><span>landed at a weekend</span></div>'
-              if gran == "day" else
-              f'<div class="stat"><b>{nb}</b><span>months covered</span></div>')
+    shape_note = (
+        " Over a window this short almost nobody resubmits the same package, so shape "
+        "compresses toward 1.0 for everyone and separates little — read rhythm here, "
+        "and shape on a year-long report."
+        if short
+        else " A <b>broad</b> figure near 1 means each package was touched about once; "
+        "<b>focused</b> means the same packages went through many times, the signature "
+        "of a release train or a fast-moving upstream."
+    )
+    wk = (
+        f"<p>Shaded columns in the cadence line are Saturdays and Sundays. Only "
+        f"<b>{weekend_share:.0f}%</b> of these requests landed on one, against weekends being "
+        f"26% of the calendar.</p>"
+        if gran == "day"
+        else ""
+    )
+    wkstat = (
+        f'<div class="stat"><b>{weekend_share:.0f}%</b><span>landed at a weekend</span></div>'
+        if gran == "day"
+        else f'<div class="stat"><b>{nb}</b><span>months covered</span></div>'
+    )
 
-    return f'''<title>{html.escape(meta["project"])} — contributor report</title>
+    return f"""<title>{html.escape(meta["project"])} — contributor report</title>
 <style>{CSS}</style>
 <div class="wrap">
 <header>
@@ -297,7 +327,7 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
     <span><b>Counts requests, not commits or lines</b></span>
   </div>
 </footer>
-</div>'''
+</div>"""
 
 
 def main():
@@ -324,38 +354,73 @@ def main():
     if not cnt:
         sys.exit(f"no accepted submit requests in {a.project} since {since}")
     keys, gran = buckets(since, today)
-    weekend_idx = ([i for i, k in enumerate(keys)
-                    if datetime.date.fromisoformat(k).weekday() >= 5]
-                   if gran == "day" else [])
+    weekend_idx = (
+        [i for i, k in enumerate(keys) if datetime.date.fromisoformat(k).weekday() >= 5]
+        if gran == "day"
+        else []
+    )
 
     rows = []
     for u, n in cnt.most_common(a.top):
         series = bucketise(when[u], keys, gran)
         shp, ratio = shape_of(n, len(pkgs[u]))
         rhy, active, peak = rhythm_of(series)
-        rows.append({"user": u, "srs": n, "pkgs": len(pkgs[u]), "shape": shp,
-                     "ratio": ratio, "rhythm": rhy, "active": active, "peak": peak,
-                     "spark": series, "highlight": u == me and bool(me), "role": u in roles})
+        rows.append(
+            {
+                "user": u,
+                "srs": n,
+                "pkgs": len(pkgs[u]),
+                "shape": shp,
+                "ratio": ratio,
+                "rhythm": rhy,
+                "active": active,
+                "peak": peak,
+                "spark": series,
+                "highlight": u == me and bool(me),
+                "role": u in roles,
+            }
+        )
 
     tot_all = sum(sum(r["spark"]) for r in rows) or 1
-    weekend_share = 100 * sum(sum(r["spark"][i] for i in weekend_idx) for r in rows) / tot_all
+    weekend_share = (
+        100 * sum(sum(r["spark"][i] for i in weekend_idx) for r in rows) / tot_all
+    )
 
     d0 = datetime.date.fromisoformat(since)
-    meta = {"project": a.project, "short": a.project.split(":")[-1],
-            "total": sum(cnt.values()), "contributors": len(cnt),
-            "packages": len(set().union(*pkgs.values())), "buckets": len(keys),
-            "span": f"{d0.strftime('%-d %B %Y')} to {today.strftime('%-d %B %Y')}",
-            "spanlabel": f"{(today - d0).days} days" if gran == "day" else "by month",
-            "heading": "right now" if gran == "day" and (today - d0).days <= 45 else "over the window"}
+    meta = {
+        "project": a.project,
+        "short": a.project.split(":")[-1],
+        "total": sum(cnt.values()),
+        "contributors": len(cnt),
+        "packages": len(set().union(*pkgs.values())),
+        "buckets": len(keys),
+        "span": f"{d0.strftime('%-d %B %Y')} to {today.strftime('%-d %B %Y')}",
+        "spanlabel": f"{(today - d0).days} days" if gran == "day" else "by month",
+        "heading": "right now"
+        if gran == "day" and (today - d0).days <= 45
+        else "over the window",
+    }
 
     if a.json:
-        print(json.dumps({"meta": meta, "buckets": keys, "granularity": gran,
-                          "weekend_share": round(weekend_share, 1), "rows": rows}, indent=1))
+        print(
+            json.dumps(
+                {
+                    "meta": meta,
+                    "buckets": keys,
+                    "granularity": gran,
+                    "weekend_share": round(weekend_share, 1),
+                    "rows": rows,
+                },
+                indent=1,
+            )
+        )
         return
     with open(a.output, "w") as f:
         f.write(render(meta, rows, gran, weekend_idx, weekend_share))
-    print(f"{a.output}: {len(rows)} rows, {meta['total']:,} requests, "
-          f"{meta['contributors']:,} contributors, {gran} buckets")
+    print(
+        f"{a.output}: {len(rows)} rows, {meta['total']:,} requests, "
+        f"{meta['contributors']:,} contributors, {gran} buckets"
+    )
 
 
 if __name__ == "__main__":

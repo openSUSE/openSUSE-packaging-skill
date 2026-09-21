@@ -9,6 +9,8 @@ tag-prefix extraction (digit-after-prefix), Anitya same-name collisions,
 and scoped npm URL parsing. Run from anywhere:
     python3 tests/test-update-checkers.py
 """
+
+import ast
 import http.client
 import io
 import json
@@ -54,32 +56,39 @@ def _fake_anitya_get(url):
     if "/projects/" in url and "name=codex" in url:
         return {"items": [GITHUB_CODEX, PYPI_CODEX]}
     if "/projects/" in url and "name=onlyone" in url:
-        return {"items": [{
-            "name": "onlyone",
-            "homepage": "https://example.com/onlyone",
-            "stable_versions": ["1.2.3"],
-        }]}
+        return {
+            "items": [
+                {
+                    "name": "onlyone",
+                    "homepage": "https://example.com/onlyone",
+                    "stable_versions": ["1.2.3"],
+                }
+            ]
+        }
     return {"items": []}
 
 
 class TagPrefixTests(unittest.TestCase):
-    SRC = ("https://github.com/openai/codex/archive/refs/tags/"
-           "rust-v%{version}.tar.gz#/codex-rust-v%{version}.tar.gz")
+    SRC = (
+        "https://github.com/openai/codex/archive/refs/tags/"
+        "rust-v%{version}.tar.gz#/codex-rust-v%{version}.tar.gz"
+    )
 
     def test_extracts_literal_prefix_before_version(self):
         self.assertEqual(_forges.tag_prefix(self.SRC), "rust-v")
         self.assertEqual(
             _forges.tag_prefix(
-                "https://github.com/foo/bar/archive/refs/tags/v%{version}.tar.gz"),
-            "v")
+                "https://github.com/foo/bar/archive/refs/tags/v%{version}.tar.gz"
+            ),
+            "v",
+        )
         self.assertIsNone(_forges.tag_prefix("https://github.com/openai/codex"))
 
     def test_digit_after_prefix_keeps_rust_v_drops_rusty_v8(self):
         p = "rust-v"
         self.assertTrue(_forges.tag_matches_prefix("rust-v0.148.0", p))
         self.assertFalse(_forges.tag_matches_prefix("rusty-v8-v150.4.0", p))
-        self.assertFalse(_forges.tag_matches_prefix(
-            "rust-vrust-v0.147.0-alpha.9", p))
+        self.assertFalse(_forges.tag_matches_prefix("rust-vrust-v0.147.0-alpha.9", p))
         self.assertTrue(_forges.tag_matches_prefix("v1.2.3", "v"))
         self.assertFalse(_forges.tag_matches_prefix("version-1", "v"))
         # no declared prefix → no filter
@@ -96,48 +105,54 @@ class AnityaCollisionTests(unittest.TestCase):
         with mock.patch.object(_anitya, "_get", side_effect=_fake_anitya_get):
             self.assertEqual(
                 _anitya.latest_stable(
-                    "openai-codex",
-                    homepage="https://github.com/openai/codex"),
-                ("0.148.0", "homepage"))
+                    "openai-codex", homepage="https://github.com/openai/codex"
+                ),
+                ("0.148.0", "homepage"),
+            )
             self.assertEqual(
                 _anitya.latest_stable(
-                    "codex",
-                    homepage="https://github.com/openai/codex/"),
-                ("0.148.0", "homepage"))
+                    "codex", homepage="https://github.com/openai/codex/"
+                ),
+                ("0.148.0", "homepage"),
+            )
 
     def test_unique_name_match_still_works(self):
         with mock.patch.object(_anitya, "_get", side_effect=_fake_anitya_get):
-            self.assertEqual(
-                _anitya.latest_stable("onlyone"),
-                ("1.2.3", "name-match"))
+            self.assertEqual(_anitya.latest_stable("onlyone"), ("1.2.3", "name-match"))
 
     def test_search_name_from_github_homepage(self):
         self.assertEqual(
             _anitya.search_name_from_homepage("https://github.com/openai/codex"),
-            "codex")
+            "codex",
+        )
 
 
 class NpmUrlTests(unittest.TestCase):
     def test_scoped_npmjs_com(self):
         self.assertEqual(
             _forges.parse_forge("https://www.npmjs.com/package/@openai/codex"),
-            ("npm", None, "@openai/codex"))
+            ("npm", None, "@openai/codex"),
+        )
 
     def test_scoped_registry_slash(self):
         self.assertEqual(
             _forges.parse_forge(
-                "https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz"),
-            ("npm", None, "@openai/codex"))
+                "https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz"
+            ),
+            ("npm", None, "@openai/codex"),
+        )
 
     def test_scoped_registry_urlencoded(self):
         self.assertEqual(
             _forges.parse_forge("https://registry.npmjs.org/@openai%2Fcodex"),
-            ("npm", None, "@openai/codex"))
+            ("npm", None, "@openai/codex"),
+        )
 
     def test_github_plus_npm_source_and_companions(self):
         url = "https://github.com/openai/codex"
-        src = ("https://github.com/openai/codex/archive/refs/tags/"
-               "rust-v%{version}.tar.gz")
+        src = (
+            "https://github.com/openai/codex/archive/refs/tags/rust-v%{version}.tar.gz"
+        )
         got = _forges.pick_forges(url, src)
         self.assertIn(("github", "openai", "codex", False), got)
         self.assertIn(("npm", None, "@openai/codex", True), got)
@@ -154,53 +169,66 @@ class SourceOutageTests(unittest.TestCase):
     def test_registry_down_while_another_forge_answers_is_no_answer(self):
         # pythonhosted Source0 => PyPI is the authority. It raised; GitHub
         # answered with a newer tag. That tag is not a consumable release.
-        self.assertTrue(_forges.authority_unanswered(
-            self.PYPI_SRC, [self.GH_ROW], [("pypi", None, "foo")]))
+        self.assertTrue(
+            _forges.authority_unanswered(
+                self.PYPI_SRC, [self.GH_ROW], [("pypi", None, "foo")]
+            )
+        )
 
     def test_registry_answered_wins_over_a_stale_failure_entry(self):
         # The registry is in BOTH lists (e.g. one companion probe raised while
         # the real one answered): answering must win.
-        self.assertFalse(_forges.authority_unanswered(
-            self.PYPI_SRC, [self.PYPI_ROW, self.GH_ROW],
-            [("pypi", None, "foo")]))
+        self.assertFalse(
+            _forges.authority_unanswered(
+                self.PYPI_SRC, [self.PYPI_ROW, self.GH_ROW], [("pypi", None, "foo")]
+            )
+        )
 
     def test_no_registry_source0_returns_false_before_looking_at_failures(self):
-        self.assertFalse(_forges.authority_unanswered(
-            "", [], [("pypi", None, "foo")]))
+        self.assertFalse(_forges.authority_unanswered("", [], [("pypi", None, "foo")]))
 
     def test_non_registry_source0_has_no_authority_to_lose(self):
         # A plain GitHub archive Source0: any forge may answer; a failure
         # elsewhere is an ordinary per-source degrade, not an authority gap.
-        self.assertFalse(_forges.authority_unanswered(
-            "https://github.com/someone/foo/archive/v%{version}.tar.gz",
-            [self.GH_ROW], [("npm", None, "foo")]))
+        self.assertFalse(
+            _forges.authority_unanswered(
+                "https://github.com/someone/foo/archive/v%{version}.tar.gz",
+                [self.GH_ROW],
+                [("npm", None, "foo")],
+            )
+        )
 
     def test_registry_absent_but_not_probed_is_not_an_outage(self):
         # Nothing failed — the registry simply was not among the picked
         # sources. Silence is not an outage.
-        self.assertFalse(_forges.authority_unanswered(
-            self.PYPI_SRC, [self.GH_ROW], []))
+        self.assertFalse(_forges.authority_unanswered(self.PYPI_SRC, [self.GH_ROW], []))
 
 
 class TransportVsFactTests(unittest.TestCase):
     """Only a source that could not ANSWER is an outage."""
 
     def test_connection_and_timeout_are_outages(self):
-        self.assertTrue(_forges.is_transport_error(
-            urllib.error.URLError(ConnectionRefusedError(111, "refused"))))
+        self.assertTrue(
+            _forges.is_transport_error(
+                urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+            )
+        )
         self.assertTrue(_forges.is_transport_error(TimeoutError()))
-        self.assertTrue(_forges.is_transport_error(
-            http.client.IncompleteRead(b"")))
+        self.assertTrue(_forges.is_transport_error(http.client.IncompleteRead(b"")))
 
     def test_non_json_body_is_an_outage(self):
         # A maintenance/gateway HTML page served with 200 — the usual way a
         # public API goes down.
-        self.assertTrue(_forges.is_transport_error(
-            json.JSONDecodeError("Expecting value", "<html>", 0)))
+        self.assertTrue(
+            _forges.is_transport_error(
+                json.JSONDecodeError("Expecting value", "<html>", 0)
+            )
+        )
 
     def test_5xx_and_429_are_outages_but_404_is_an_answer(self):
         def http_err(code):
             return urllib.error.HTTPError("u", code, "m", None, None)
+
         for code in (429, 500, 502, 503, 504):
             self.assertTrue(_forges.is_transport_error(http_err(code)), code)
         for code in (404, 422, 410):
@@ -210,41 +238,64 @@ class TransportVsFactTests(unittest.TestCase):
         # probe_github/probe_pypi raise this for tagless mirrors and
         # prerelease-only projects. Counting it as an outage would put every
         # large sweep permanently in the degraded state.
-        self.assertFalse(_forges.is_transport_error(
-            RuntimeError("github a/b: no releases and no datable tags")))
+        self.assertFalse(
+            _forges.is_transport_error(
+                RuntimeError("github a/b: no releases and no datable tags")
+            )
+        )
 
 
 class MacroSourceTests(unittest.TestCase):
     """An unexpanded RPM macro is not a registry identity."""
 
     def test_macro_npm_source0_has_no_authority(self):
-        self.assertIsNone(_forges.source_registry(
-            "https://registry.npmjs.org/%{name}/-/%{name}-%{version}.tgz"))
+        self.assertIsNone(
+            _forges.source_registry(
+                "https://registry.npmjs.org/%{name}/-/%{name}-%{version}.tgz"
+            )
+        )
 
     def test_macro_crates_source0_has_no_authority(self):
-        self.assertIsNone(_forges.source_registry(
-            "https://static.crates.io/crates/%{name}/%{name}-%{version}.crate"))
+        self.assertIsNone(
+            _forges.source_registry(
+                "https://static.crates.io/crates/%{name}/%{name}-%{version}.crate"
+            )
+        )
 
     def test_macro_source0_cannot_manufacture_an_outage(self):
         # Regression guard: such a target can never answer, so treating it as
         # the authority would suppress the package on every sweep, forever.
-        self.assertFalse(_forges.authority_unanswered(
-            "https://registry.npmjs.org/%{name}/-/%{name}-%{version}.tgz",
-            [("github", "someone", "thing", False,
-              {"latest_stable": ("2.0", None)})],
-            [("npm", None, "%{name}")]))
+        self.assertFalse(
+            _forges.authority_unanswered(
+                "https://registry.npmjs.org/%{name}/-/%{name}-%{version}.tgz",
+                [
+                    (
+                        "github",
+                        "someone",
+                        "thing",
+                        False,
+                        {"latest_stable": ("2.0", None)},
+                    )
+                ],
+                [("npm", None, "%{name}")],
+            )
+        )
 
     def test_a_real_registry_name_still_resolves(self):
         self.assertEqual(
             _forges.source_registry(
-                "https://files.pythonhosted.org/packages/source/f/foo/foo-1.0.tar.gz"),
-            ("pypi", None, "foo"))
+                "https://files.pythonhosted.org/packages/source/f/foo/foo-1.0.tar.gz"
+            ),
+            ("pypi", None, "foo"),
+        )
 
 
 class SweepCoverageTests(unittest.TestCase):
     """outdated.py must report what did NOT run, and say so in its exit code."""
 
-    SCRIPT = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py")
+    SCRIPT = os.path.join(
+        HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py"
+    )
 
     def _run(self, *flags, names=("somepackage",), offline=False):
         env = dict(os.environ)
@@ -254,28 +305,33 @@ class SweepCoverageTests(unittest.TestCase):
             # repology.org turning this into a full paginated download).
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy"):
                 env.pop(k, None)
-            env.update(http_proxy="http://127.0.0.1:1",
-                       https_proxy="http://127.0.0.1:1")
+            env.update(
+                http_proxy="http://127.0.0.1:1", https_proxy="http://127.0.0.1:1"
+            )
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
             fh.write("".join(f"{n}\n" for n in names))
             path = fh.name
         try:
             return subprocess.run(
                 [sys.executable, self.SCRIPT, "--names", path, *flags],
-                capture_output=True, text=True, timeout=120, env=env)
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
         finally:
             os.unlink(path)
 
     def test_all_sources_skipped_by_flag_is_full_coverage(self):
-        r = self._run("--no-repology", "--no-anitya", "--no-forge",
-                      "--no-factory-check")
+        r = self._run(
+            "--no-repology", "--no-anitya", "--no-forge", "--no-factory-check"
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("# COVERAGE: complete", r.stdout)
         self.assertIn("repology (--no-repology)", r.stdout)
 
     def test_unreachable_repology_degrades_instead_of_aborting(self):
-        r = self._run("--no-anitya", "--no-forge", "--no-factory-check",
-                      offline=True)
+        r = self._run("--no-anitya", "--no-forge", "--no-factory-check", offline=True)
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertIn("# COVERAGE: DEGRADED", r.stdout)
         self.assertIn("repology UNREACHABLE", r.stdout)
@@ -293,17 +349,28 @@ class SweepCoverageTests(unittest.TestCase):
                     "    def __enter__(self): return self\n"
                     "    def __exit__(self, *a): return False\n"
                     "urllib.request.urlopen = lambda *a, **k: "
-                    "_R(b'<html>502 Bad Gateway</html>')\n")
+                    "_R(b'<html>502 Bad Gateway</html>')\n"
+                )
             env = dict(os.environ, PYTHONPATH=d)
-            with tempfile.NamedTemporaryFile("w", suffix=".txt",
-                                             delete=False) as fh:
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
                 fh.write("somepackage\n")
                 path = fh.name
             try:
                 r = subprocess.run(
-                    [sys.executable, self.SCRIPT, "--names", path,
-                     "--no-anitya", "--no-forge", "--no-factory-check"],
-                    capture_output=True, text=True, timeout=120, env=env)
+                    [
+                        sys.executable,
+                        self.SCRIPT,
+                        "--names",
+                        path,
+                        "--no-anitya",
+                        "--no-forge",
+                        "--no-factory-check",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    env=env,
+                )
             finally:
                 os.unlink(path)
         self.assertNotIn("Traceback", r.stderr)
@@ -312,8 +379,9 @@ class SweepCoverageTests(unittest.TestCase):
 
     def test_empty_name_set_is_degraded_not_clean(self):
         # The oldest trap in the sweep: nothing was checked, so it looks clean.
-        r = self._run("--no-repology", "--no-anitya", "--no-forge",
-                      "--no-factory-check", names=())
+        r = self._run(
+            "--no-repology", "--no-anitya", "--no-forge", "--no-factory-check", names=()
+        )
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertIn("NO PACKAGE NAMES", r.stdout)
 
@@ -326,22 +394,30 @@ class ForgeWiringTests(unittest.TestCase):
     a script and a mutation there is otherwise invisible.
     """
 
-    OUTDATED = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py")
-    PROBE = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "upstream-probe.py")
+    OUTDATED = os.path.join(
+        HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py"
+    )
+    PROBE = os.path.join(
+        HERE, "..", "skills", "opensuse-packaging", "scripts", "upstream-probe.py"
+    )
 
-    SPEC = ("Name:           pkg-a\n"
-            "Version:        1.0\n"
-            "URL:            https://github.com/someone/thing\n"
-            "Source0:        https://github.com/someone/thing/archive/"
-            "refs/tags/v%{version}.tar.gz\n")
+    SPEC = (
+        "Name:           pkg-a\n"
+        "Version:        1.0\n"
+        "URL:            https://github.com/someone/thing\n"
+        "Source0:        https://github.com/someone/thing/archive/"
+        "refs/tags/v%{version}.tar.gz\n"
+    )
     # Source0 served by a registry: PyPI is the authority for this one.
-    SPEC_PYPI = ("Name:           pkg-b\n"
-                 "Version:        1.0\n"
-                 "URL:            https://github.com/someone/thing\n"
-                 "Source0:        https://files.pythonhosted.org/packages/"
-                 "source/p/pkg-b/pkg-b-1.0.tar.gz\n")
+    SPEC_PYPI = (
+        "Name:           pkg-b\n"
+        "Version:        1.0\n"
+        "URL:            https://github.com/someone/thing\n"
+        "Source0:        https://files.pythonhosted.org/packages/"
+        "source/p/pkg-b/pkg-b-1.0.tar.gz\n"
+    )
 
-    STUB = '''
+    STUB = """
 import io, json, os, subprocess, urllib.error, urllib.request
 
 MODE = os.environ["FORGE_MODE"]
@@ -401,7 +477,7 @@ def _urlopen(req, *a, **k):
             return _R(b"{}")
     return _R(b"[]")
 urllib.request.urlopen = _urlopen
-'''
+"""
 
     def _sweep(self, mode, spec=None, flags=("--no-repology", "--no-anitya")):
         with tempfile.TemporaryDirectory() as d:
@@ -410,13 +486,18 @@ urllib.request.urlopen = _urlopen
             names = os.path.join(d, "names.txt")
             with open(names, "w") as fh:
                 fh.write("pkg-a\n")
-            env = dict(os.environ, PYTHONPATH=d, FORGE_MODE=mode,
-                       FORGE_SPEC=spec or self.SPEC)
+            env = dict(
+                os.environ, PYTHONPATH=d, FORGE_MODE=mode, FORGE_SPEC=spec or self.SPEC
+            )
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy"):
                 env.pop(k, None)
             return subprocess.run(
                 [sys.executable, self.OUTDATED, "--names", names, *flags],
-                capture_output=True, text=True, timeout=120, env=env)
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
 
     def test_forge_outage_degrades_coverage(self):
         r = self._sweep("down")
@@ -439,12 +520,13 @@ urllib.request.urlopen = _urlopen
         self.assertIn("# COVERAGE: DEGRADED", r.stdout)
         self.assertEqual(r.returncode, 3, r.stdout)
 
-
     # A spec whose URL:/Source0: resolve to no forge at all.
-    SPEC_UNMAPPED = ("Name:           pkg-c\n"
-                     "Version:        1.0\n"
-                     "URL:            https://example.invalid/pkg-c\n"
-                     "Source0:        pkg-c-1.0.tar.gz\n")
+    SPEC_UNMAPPED = (
+        "Name:           pkg-c\n"
+        "Version:        1.0\n"
+        "URL:            https://example.invalid/pkg-c\n"
+        "Source0:        pkg-c-1.0.tar.gz\n"
+    )
 
     def test_unresolvable_forge_lands_in_its_own_bucket(self):
         r = self._sweep("nodata", spec=self.SPEC_UNMAPPED)
@@ -454,8 +536,10 @@ urllib.request.urlopen = _urlopen
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_partial_repology_pages_are_kept(self):
-        r = self._sweep("repology_partial", flags=("--no-anitya", "--no-forge",
-                                                   "--no-factory-check"))
+        r = self._sweep(
+            "repology_partial",
+            flags=("--no-anitya", "--no-forge", "--no-factory-check"),
+        )
         self.assertNotIn("Traceback", r.stderr)
         self.assertRegex(r.stderr, r"the [1-9]\d* project\(s\) already downloaded")
         # The warning interpolates the count BEFORE a discard would happen, so
@@ -474,11 +558,19 @@ urllib.request.urlopen = _urlopen
             spec = os.path.join(d, "pkg-b.spec")
             with open(spec, "w") as fh:
                 fh.write(self.SPEC_PYPI)
-            env = dict(os.environ, PYTHONPATH=d, FORGE_MODE="authority_404",
-                       FORGE_SPEC=self.SPEC_PYPI)
-            r = subprocess.run([sys.executable, self.PROBE, "--spec", spec],
-                               capture_output=True, text=True, timeout=120,
-                               env=env)
+            env = dict(
+                os.environ,
+                PYTHONPATH=d,
+                FORGE_MODE="authority_404",
+                FORGE_SPEC=self.SPEC_PYPI,
+            )
+            r = subprocess.run(
+                [sys.executable, self.PROBE, "--spec", spec],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
         self.assertNotIn("Traceback", r.stderr)
         self.assertNotEqual(r.returncode, 2, r.stdout + r.stderr)
 
@@ -489,11 +581,19 @@ urllib.request.urlopen = _urlopen
             spec = os.path.join(d, "pkg-b.spec")
             with open(spec, "w") as fh:
                 fh.write(self.SPEC_PYPI)
-            env = dict(os.environ, PYTHONPATH=d, FORGE_MODE="authority_down",
-                       FORGE_SPEC=self.SPEC_PYPI)
-            r = subprocess.run([sys.executable, self.PROBE, "--spec", spec],
-                               capture_output=True, text=True, timeout=120,
-                               env=env)
+            env = dict(
+                os.environ,
+                PYTHONPATH=d,
+                FORGE_MODE="authority_down",
+                FORGE_SPEC=self.SPEC_PYPI,
+            )
+            r = subprocess.run(
+                [sys.executable, self.PROBE, "--spec", spec],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
         self.assertNotIn("Traceback", r.stderr)
         # 2 = probe failed; never 0 (CURRENT) or 1 (UPDATE-CANDIDATE)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
@@ -504,20 +604,30 @@ class GhLaunderingTests(unittest.TestCase):
     """A gh failure must not read as "this repo has no releases"."""
 
     def test_gh_transport_failure_is_an_outage(self):
-        self.assertTrue(_forges.is_transport_error(
-            _forges.SourceDown("gh api repos/x/y: HTTP 403 rate limit")))
+        self.assertTrue(
+            _forges.is_transport_error(
+                _forges.SourceDown("gh api repos/x/y: HTTP 403 rate limit")
+            )
+        )
 
     def test_gh_timeout_is_an_outage(self):
-        self.assertTrue(_forges.is_transport_error(
-            subprocess.TimeoutExpired(["gh"], 30)))
+        self.assertTrue(
+            _forges.is_transport_error(subprocess.TimeoutExpired(["gh"], 30))
+        )
 
     def test_403_is_an_outage_on_every_forge(self):
-        self.assertTrue(_forges.is_transport_error(
-            urllib.error.HTTPError("u", 403, "rate limited", None, None)))
+        self.assertTrue(
+            _forges.is_transport_error(
+                urllib.error.HTTPError("u", 403, "rate limited", None, None)
+            )
+        )
 
     def test_plain_runtimeerror_is_still_an_answer(self):
-        self.assertFalse(_forges.is_transport_error(
-            RuntimeError("github x/y: no releases and no datable tags")))
+        self.assertFalse(
+            _forges.is_transport_error(
+                RuntimeError("github x/y: no releases and no datable tags")
+            )
+        )
 
 
 class GhApiBranchTests(unittest.TestCase):
@@ -530,8 +640,9 @@ class GhApiBranchTests(unittest.TestCase):
     """
 
     def _gh(self, **run_kw):
-        return mock.patch.object(_forges, "_GH", True), \
-               mock.patch.object(_forges.subprocess, "run", **run_kw)
+        return mock.patch.object(_forges, "_GH", True), mock.patch.object(
+            _forges.subprocess, "run", **run_kw
+        )
 
     def test_timeout_becomes_source_down(self):
         gh, run = self._gh(side_effect=subprocess.TimeoutExpired(["gh"], 30))
@@ -540,38 +651,51 @@ class GhApiBranchTests(unittest.TestCase):
                 _forges.gh_json("repos/x/y/tags")
 
     def test_rate_limit_becomes_source_down(self):
-        gh, run = self._gh(return_value=subprocess.CompletedProcess(
-            ["gh"], 1, "", "HTTP 403: API rate limit exceeded"))
+        gh, run = self._gh(
+            return_value=subprocess.CompletedProcess(
+                ["gh"], 1, "", "HTTP 403: API rate limit exceeded"
+            )
+        )
         with gh, run:
             with self.assertRaises(_forges.SourceDown):
                 _forges.gh_json("repos/x/y/tags")
 
     def test_non_json_stdout_becomes_source_down(self):
-        gh, run = self._gh(return_value=subprocess.CompletedProcess(
-            ["gh"], 0, "<html>gateway</html>", ""))
+        gh, run = self._gh(
+            return_value=subprocess.CompletedProcess(
+                ["gh"], 0, "<html>gateway</html>", ""
+            )
+        )
         with gh, run:
             with self.assertRaises(_forges.SourceDown):
                 _forges.gh_json("repos/x/y/tags")
 
     def test_404_is_still_a_fact_not_an_outage(self):
         # The other half of the contract: absence must stay absence.
-        gh, run = self._gh(return_value=subprocess.CompletedProcess(
-            ["gh"], 1, "", "gh: Not Found (HTTP 404)"))
+        gh, run = self._gh(
+            return_value=subprocess.CompletedProcess(
+                ["gh"], 1, "", "gh: Not Found (HTTP 404)"
+            )
+        )
         with gh, run:
             self.assertIsNone(_forges.gh_json("repos/x/y/tags"))
 
     def test_success_still_parses(self):
-        gh, run = self._gh(return_value=subprocess.CompletedProcess(
-            ["gh"], 0, '[{"name": "v1.0"}]', ""))
+        gh, run = self._gh(
+            return_value=subprocess.CompletedProcess(
+                ["gh"], 0, '[{"name": "v1.0"}]', ""
+            )
+        )
         with gh, run:
-            self.assertEqual(_forges.gh_json("repos/x/y/tags"),
-                             [{"name": "v1.0"}])
+            self.assertEqual(_forges.gh_json("repos/x/y/tags"), [{"name": "v1.0"}])
 
     def test_every_gh_failure_mode_is_seen_as_an_outage(self):
         # gh_json raising is only half the fix: the classifier must also
         # agree, or the caller files it as "answered, nothing there".
-        for exc in (subprocess.TimeoutExpired(["gh"], 30),
-                    _forges.SourceDown("gh api x: HTTP 403")):
+        for exc in (
+            subprocess.TimeoutExpired(["gh"], 30),
+            _forges.SourceDown("gh api x: HTTP 403"),
+        ):
             self.assertTrue(_forges.is_transport_error(exc), exc)
 
 
@@ -580,10 +704,15 @@ class AnityaGuardTests(unittest.TestCase):
 
     def _get_with_body(self, body):
         class _R(io.BytesIO):
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-        with mock.patch.object(_anitya.urllib.request, "urlopen",
-                               return_value=_R(body)):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch.object(
+            _anitya.urllib.request, "urlopen", return_value=_R(body)
+        ):
             return _anitya._get("https://release-monitoring.org/api/v2/projects/")
 
     def test_plain_text_waf_body_is_an_anitya_error(self):
@@ -605,11 +734,16 @@ class AnityaGuardTests(unittest.TestCase):
         # IncompleteRead is not an OSError; without the HTTPException catch it
         # escapes AnityaError and aborts the whole sweep.
         class _R:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): raise http.client.IncompleteRead(b"{", 500)
-        with mock.patch.object(_anitya.urllib.request, "urlopen",
-                               return_value=_R()):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                raise http.client.IncompleteRead(b"{", 500)
+
+        with mock.patch.object(_anitya.urllib.request, "urlopen", return_value=_R()):
             with self.assertRaises(_anitya.AnityaError):
                 _anitya._get("https://release-monitoring.org/api/v2/projects/")
 
@@ -624,20 +758,39 @@ class ExceptTupleParityTests(unittest.TestCase):
     difference here means one of them crashes where the other degrades.
     """
 
-    def _tuple(self, path, needle):
-        src = open(os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", path)).read()
-        i = src.index(needle)
-        frag = src[i:src.index(" as e:", i)]
-        return sorted(t.strip() for t in
-                      frag[frag.index("(") + 1:frag.rindex(")")].split(","))
+    # Read through the AST, not the source text: a formatter is free to spread
+    # one of these tuples over five lines and leave the other on one, which is
+    # exactly what happened, and a substring search then reports "not found"
+    # rather than a drift between the two files.
+    MARKERS = {"OSError", "RuntimeError", "ValueError"}
+
+    def _tuple(self, path, markers):
+        full = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", path)
+        with open(full) as fh:
+            tree = ast.parse(fh.read(), filename=full)
+        found = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if not isinstance(node.type, ast.Tuple):
+                continue
+            names = sorted(ast.unparse(el) for el in node.type.elts)
+            if markers.issubset(set(names)):
+                found.append(names)
+        self.assertEqual(
+            len(found),
+            1,
+            f"{path}: want exactly one except tuple over {sorted(markers)}, got {found}",
+        )
+        return found[0]
 
     def test_probe_failure_tuples_are_identical(self):
-        needle = "except (OSError, RuntimeError, ValueError"
-        got = self._tuple("outdated.py", needle)
-        self.assertEqual(got, self._tuple("upstream-probe.py", needle))
+        got = self._tuple("outdated.py", self.MARKERS)
+        self.assertEqual(got, self._tuple("upstream-probe.py", self.MARKERS))
         # Parity alone survives dropping a member from BOTH tuples, so pin the
         # one that is easy to lose: it is not an OSError.
         self.assertIn("http.client.HTTPException", got)
+
 
 if __name__ == "__main__":
     unittest.main()

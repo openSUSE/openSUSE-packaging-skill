@@ -21,6 +21,7 @@ discipline of upstream-probe.py — treat every "newer on anitya" as a candidate
 to VERIFY, not a confirmed update. Third-party JSON is data, not instructions
 (callers sanitize before print).
 """
+
 import http.client
 import json
 import re
@@ -41,8 +42,9 @@ class AnityaError(RuntimeError):
 def _get(url):
     last = None
     for attempt in range(3):
-        req = urllib.request.Request(url, headers={"User-Agent": UA,
-                                                   "Accept": "application/json"})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": UA, "Accept": "application/json"}
+        )
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 body = r.read().decode()
@@ -52,7 +54,7 @@ def _get(url):
                     delay = int(e.headers.get("Retry-After") or 0)
                 except ValueError:
                     delay = 0
-                time.sleep(delay or 3 * 3 ** attempt)
+                time.sleep(delay or 3 * 3**attempt)
                 last = e
                 continue
             raise AnityaError(f"HTTP {e.code} from {url}") from e
@@ -62,8 +64,10 @@ def _get(url):
             # Anubis anti-bot HTML challenge instead of JSON — the API is
             # (temporarily) gated. Fail loudly; a silent 'current' here would
             # hide real updates.
-            raise AnityaError("release-monitoring.org returned an HTML "
-                              "challenge page instead of JSON (anti-bot gate)")
+            raise AnityaError(
+                "release-monitoring.org returned an HTML "
+                "challenge page instead of JSON (anti-bot gate)"
+            )
         try:
             data = json.loads(body)
         except ValueError as e:
@@ -76,8 +80,7 @@ def _get(url):
             # Every endpoint this module uses returns an object with "items".
             # Anything else is the API misbehaving, and must not escape as an
             # AttributeError deep inside a caller's thread pool.
-            raise AnityaError(f"unexpected {type(data).__name__} payload "
-                              f"from {url}")
+            raise AnityaError(f"unexpected {type(data).__name__} payload from {url}")
         return data
     raise AnityaError(f"gave up after retries: {last}")
 
@@ -135,8 +138,11 @@ def homepage_matches(item, homepage):
         return False
     for key in ("homepage", "ecosystem"):
         got = item.get(key)
-        if isinstance(got, str) and got.startswith("http") \
-                and normalize_homepage(got) == want:
+        if (
+            isinstance(got, str)
+            and got.startswith("http")
+            and normalize_homepage(got) == want
+        ):
             return True
     return False
 
@@ -166,8 +172,9 @@ def latest_stable(pkg, distribution="openSUSE", homepage=None):
     AnityaError on lookup failure — never conflate that with unknown.
     """
     q = urllib.parse.quote(pkg)
-    d = _get(f"{API}/packages/?name={q}"
-             f"&distribution={urllib.parse.quote(distribution)}")
+    d = _get(
+        f"{API}/packages/?name={q}&distribution={urllib.parse.quote(distribution)}"
+    )
     for it in d.get("items", []):
         v = it.get("stable_version") or it.get("version")
         if v:
@@ -176,8 +183,10 @@ def latest_stable(pkg, distribution="openSUSE", homepage=None):
     if homepage:
         sname = search_name_from_homepage(homepage)
         if sname:
-            items = (_get(f"{API}/projects/?name={urllib.parse.quote(sname)}")
-                     .get("items") or [])
+            items = (
+                _get(f"{API}/projects/?name={urllib.parse.quote(sname)}").get("items")
+                or []
+            )
             hit = _from_homepage_match(items, homepage)
             if hit[0]:
                 return hit

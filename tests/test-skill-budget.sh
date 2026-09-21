@@ -8,6 +8,11 @@
 #     the file grew from 20 KB to 54 KB; put detail in a reference and point
 #   - any reference exceeds 60,000 B, or is > 300 lines without a `## Contents`
 # Exit 0 = within budget; 1 = over, with the offending numbers.
+# shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
+# idiom, not a broken if/then/else: pass and fail both return 0 (verified), so exactly
+# one verdict is ever printed, including at the inverted `&& fail || pass` sites.
+# shellcheck disable=SC2181  # rc is captured once with rc=$? and then asserted on
+# several times; `if cmd; then` cannot express that.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../skills/opensuse-packaging" && pwd)"
 fails=0

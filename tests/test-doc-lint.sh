@@ -5,6 +5,11 @@
 #   - a `references/<file>.md "<Section>"` pointer in SKILL.md, agents/ or
 #     references/ does not resolve through scripts/refsection.py (exit != 0)
 # Exit 0 = clean; 1 = findings (file:line: message).
+# shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
+# idiom, not a broken if/then/else: pass and fail both return 0 (verified), so exactly
+# one verdict is ever printed, including at the inverted `&& fail || pass` sites.
+# shellcheck disable=SC2181  # rc is captured once with rc=$? and then asserted on
+# several times; `if cmd; then` cannot express that.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../skills/opensuse-packaging" && pwd)"
 RS="$ROOT/scripts/refsection.py"
@@ -17,10 +22,13 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 # anti-pattern ("never read … whole", "a whole-file Read burns …") are excluded.
 DOC='(references?/[a-z-]+\.md|SKILL\.md|references?( files?)?|playbooks?|the (whole|entire) (file|reference|doc))'
 Q='(in full|whole|entire(ly)?|fully)'
-PAT="\b[Rr]ead(s|ing)?\b[^.;:]{0,40}$DOC[^.;:]{0,40}\b$Q\b|\b[Rr]ead(s|ing)?\b[^.;:]{0,60}\b$Q\b[^.;:]{0,40}$DOC|\b$Q\b[^.;:]{0,30}$DOC[^.;:]{0,30}\b[Rr]ead\b"
+PAT="\b[Rr]ead(s|ing)?\b[^.;:]{0,40}${DOC}[^.;:]{0,40}\b${Q}\b|\b[Rr]ead(s|ing)?\b[^.;:]{0,60}\b${Q}\b[^.;:]{0,40}${DOC}|\b${Q}\b[^.;:]{0,30}${DOC}[^.;:]{0,30}\b[Rr]ead\b"
 # self-test: the pattern must catch a real offender and pass a benign line,
 # else the lint is a no-op and reports clean for the wrong reason
-probe=$(mktemp); printf 'Before starting, read references/update-build.md in full.\nread `references/specfile-guidelines.md` whole first\nre-read the whole manifest before trusting it\n' > "$probe"
+probe=$(mktemp)
+# shellcheck disable=SC2016  # the backticks are literal markdown in the probe text,
+# not command substitution; the string must reach grep exactly as a doc would write it.
+printf 'Before starting, read references/update-build.md in full.\nread `references/specfile-guidelines.md` whole first\nre-read the whole manifest before trusting it\n' > "$probe"
 n=$(grep -c -E "$PAT" "$probe"); rm -f "$probe"
 [ "$n" -eq 2 ] && pass "lint pattern self-test (2 offenders caught, 1 benign passed)" || fail "lint pattern self-test caught $n of 2 — the regex is broken, nothing below is trustworthy"
 hits=$(grep -rn -E "$PAT" "$ROOT/SKILL.md" "$ROOT/agents" "$ROOT/references" 2>/dev/null \
