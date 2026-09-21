@@ -209,8 +209,9 @@ ATTRIBUTION_PATTERNS = [
 
 SKIP_DIRS = {".git", "__pycache__", ".ruff_cache", ".github"}
 # Trees that exist to imitate hostile or third-party text: scanning them would
-# report the fixtures' own contents as leaks.
-SKIP_TREES = ("tests/fixtures", "evals/")
+# report the fixtures' own contents as leaks. Note this is the files/ tree only
+# -- evals.json itself is authored here and stays in scope.
+SKIP_TREES = ("tests/fixtures", "evals/opensuse-packaging/files")
 SKIP_FILES = {"LICENSE", "tests/repo/check-skills.py"}
 TEXT_EXT = {".md", ".py", ".sh", ".txt", ".tsv", ".yml", ".yaml", ".json", ".cc", ""}
 
