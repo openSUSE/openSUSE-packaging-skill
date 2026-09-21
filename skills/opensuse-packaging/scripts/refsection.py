@@ -255,6 +255,12 @@ def hard_rules():
     out = {}
     for k, (i, n) in enumerate(starts):
         stop = starts[k + 1][0] if k + 1 < len(starts) else end
+        # The last rule would otherwise run to the end of the section, which
+        # carries its `###` subsections: stop at the next heading of any level.
+        for j in range(i + 1, stop):
+            if HEADING.match(lines[j]):
+                stop = j
+                break
         block = lines[i:stop]
         while block and not block[-1].strip():
             block.pop()
