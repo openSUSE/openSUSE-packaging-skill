@@ -35,7 +35,7 @@
    # outgoing devel -> Factory (this is the one that lands the update):
    osc api "/request?view=collection&types=submit&states=new,review&project=openSUSE:Factory&package=<pkg>"
    ```
-   - **Incoming** = someone's `home:…:branches/<pkg> -> <devel>` SR (a maintainer staging the bump into devel — e.g. a `home:favogt:branches…/python-uv -> devel:languages:python` "cleanup" SR). Even if the devel spec doesn't *yet* show the new version, an accepted/open incoming SR means it's already handled.
+   - **Incoming** = someone's `home:…:branches/<pkg> -> <devel>` SR (a maintainer staging the bump into devel — e.g. a `home:<maintainer>:branches…/python-uv -> devel:languages:python` "cleanup" SR). Even if the devel spec doesn't *yet* show the new version, an accepted/open incoming SR means it's already handled.
    - **Outgoing** = the `<devel> -> openSUSE:Factory` SR that actually delivers the update to Factory.
 
 **Decision matrix:**
