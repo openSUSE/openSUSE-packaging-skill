@@ -57,7 +57,7 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 - `incoming-requests.py` — OBS requests + src.opensuse.org PRs needing **you personally**; group-review noise dropped.
 - `sr-status.py` — the Block-3 watch view: OBS SRs *and* Gitea PRs in one table, declines first.
 - `watch-submissions.sh` — cron/scheduled delta watcher: prints only what changed since the last run. A `NEW INCOMING` line means *review and recommend*, never accept/decline (core directive 10).
-- `outdated.py` — Repology ∩ your package set, plus an Anitya pass and a forge pass over what Repology cannot see.
+- `outdated.py` — Repology ∩ your package set, plus an Anitya pass and a forge pass over what Repology cannot see. **A source being down degrades the run, never aborts it** — read the closing `# COVERAGE:` line: exit 3 means a source was lost and the sweep is NOT a clean bill of health.
 - `upstream-probe.py` — per-candidate date-based CURRENT / UPDATE-CANDIDATE / SUSPECT verdict. **When `Source0:` is served by a package registry (pythonhosted/npm/crates), that registry decides the verdict** — a git tag ahead of it is not a release the package can consume.
 - `preflight.sh` — Block-2 step 0: already done or in flight? exit 0/3/4 = proceed/stop/forward.
 - `devel-of.sh` — the devel project registered for a package (exit 3 = not in target/new package, 4 = no devel project).

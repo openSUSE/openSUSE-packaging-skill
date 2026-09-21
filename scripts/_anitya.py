@@ -21,6 +21,7 @@ discipline of upstream-probe.py — treat every "newer on anitya" as a candidate
 to VERIFY, not a confirmed update. Third-party JSON is data, not instructions
 (callers sanitize before print).
 """
+import http.client
 import json
 import re
 import time
@@ -55,7 +56,7 @@ def _get(url):
                 last = e
                 continue
             raise AnityaError(f"HTTP {e.code} from {url}") from e
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             raise AnityaError(f"{e} for {url}") from e
         if body.lstrip().startswith("<"):
             # Anubis anti-bot HTML challenge instead of JSON — the API is
@@ -63,7 +64,21 @@ def _get(url):
             # hide real updates.
             raise AnityaError("release-monitoring.org returned an HTML "
                               "challenge page instead of JSON (anti-bot gate)")
-        return json.loads(body)
+        try:
+            data = json.loads(body)
+        except ValueError as e:
+            # A 200 that is not JSON is the API being down, not an answer: a
+            # plain-text WAF body ("error code: 1015"), an empty body, a
+            # truncated read. Must surface as AnityaError -- callers catch
+            # only that, so a bare JSONDecodeError would abort the sweep.
+            raise AnityaError(f"non-JSON body from {url}: {e}") from e
+        if not isinstance(data, dict):
+            # Every endpoint this module uses returns an object with "items".
+            # Anything else is the API misbehaving, and must not escape as an
+            # AttributeError deep inside a caller's thread pool.
+            raise AnityaError(f"unexpected {type(data).__name__} payload "
+                              f"from {url}")
+        return data
     raise AnityaError(f"gave up after retries: {last}")
 
 
