@@ -1,0 +1,4 @@
+# The hostile fixtures reproduce bytes a real source sent -- CRLF, control
+# characters, odd encodings included. Normalising them would quietly disarm the
+# tests that prove _sanitize.py strips exactly those.
+tests/fixtures/** -text

@@ -1,0 +1,61 @@
+# Runs exactly what README.md "Development" documents, so the two cannot drift.
+name: CI
+
+on:
+  pull_request:
+  # Also on push, not only on pull_request: two PRs can each be green alone and
+  # break an invariant once both land -- one renames a reference section, the
+  # other adds a pointer to the old name. Only a post-merge run sees that.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is what the suites are developed against; 3.9 establishes the
+        # real floor, which nothing had ever executed.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      # No install step: the helpers and their tests are standard library only,
+      # and every suite is offline (network lookups are stubbed).
+      - name: Script suites
+        # `|| rc=1` and NOT `|| break`: break returns 0, so the loop would report
+        # success on a failing suite -- green forever, for no reason anyone sees.
+        run: (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
+      - name: Python suite
+        run: python3 tests/test-update-checkers.py
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Pinned exactly: `format --check` output moves between releases, which
+      # would fail the build on a change nobody made. The rule selection is
+      # pinned in ruff.toml for the same reason -- the default set differs
+      # between ruff builds, not just between versions.
+      - run: pipx install ruff==0.16.8
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: shellcheck tests/test-*.sh
+      # No shfmt: it rewrites the suites' deliberate one-line guards and aligned
+      # helper definitions into multi-line blocks -- ~530 lines of churn that
+      # makes the assertions harder to read and finds no defects. shellcheck,
+      # which finds real ones, is blocking above.

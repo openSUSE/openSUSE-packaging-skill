@@ -62,25 +62,33 @@ Exit codes:
   2  a probe failed (network/auth/unresolvable upstream) — never a silent
      CURRENT
 """
-import argparse, subprocess, sys, urllib.error
-import builtins, http.client, os
+
+import argparse
+import subprocess
+import sys
+import builtins
+import http.client
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _sanitize    # escape/Unicode-smuggling filter for third-party text
+import _sanitize  # escape/Unicode-smuggling filter for third-party text
 import _forges
+
 
 # Every output line of this script embeds forge-controlled strings (tag names,
 # release titles, version strings, asset notes), so sanitize at the single
 # choke point: a module-local print shadow. Deliberate; args pass through
 # unchanged unless they are str.
-def print(*args, **kw):    # noqa: A001
-    builtins.print(*(_sanitize.sanitize(a) if isinstance(a, str) else a
-                     for a in args), **kw)
+def print(*args, **kw):  # noqa: A001
+    builtins.print(
+        *(_sanitize.sanitize(a) if isinstance(a, str) else a for a in args), **kw
+    )
+
 
 try:
-    import _anitya          # sibling module; see scripts/_anitya.py
+    import _anitya  # sibling module; see scripts/_anitya.py
 except ImportError:
     _anitya = None
 
@@ -106,8 +114,12 @@ def main():
     if a.spec:
         pkgname, packaged, url, src = _forges.spec_facts(open(a.spec).read())
     elif a.pkg:
-        r = subprocess.run(["osc", "cat", a.project, a.pkg, f"{a.pkg}.spec"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["osc", "cat", a.project, a.pkg, f"{a.pkg}.spec"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         if r.returncode != 0:
             die(f"osc cat {a.project}/{a.pkg}/{a.pkg}.spec: {r.stderr.strip()}")
         _specname, packaged, url, src = _forges.spec_facts(r.stdout)
@@ -124,8 +136,12 @@ def main():
     # _service obs_scm url, so fall back to it rather than giving up.
     scm_rev = None
     if not sources and a.pkg and not a.url:
-        r = subprocess.run(["osc", "cat", a.project, a.pkg, "_service"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["osc", "cat", a.project, a.pkg, "_service"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         if r.returncode == 0:
             scm_url, scm_rev = _forges.service_scm_url(r.stdout)
             if scm_url:
@@ -142,14 +158,16 @@ def main():
     homepage = url if url and "%" not in url else None
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {ex.submit(probe_job, s): s for s in sources}
-        afut = (ex.submit(_anitya.latest_stable, pkgname, "openSUSE", homepage)
-                if _anitya and pkgname and "%" not in pkgname else None)
+        afut = (
+            ex.submit(_anitya.latest_stable, pkgname, "openSUSE", homepage)
+            if _anitya and pkgname and "%" not in pkgname
+            else None
+        )
         for fut, spec in futs.items():
             kind, host, name, optional = _forges.unpack_forge(spec)
             try:
                 facts = fut.result()
-            except (OSError, RuntimeError, ValueError,
-                    http.client.HTTPException) as e:
+            except (OSError, RuntimeError, ValueError, http.client.HTTPException) as e:
                 # Only a source that could not ANSWER is an outage; a 404 or
                 # "no datable tags" is the source answering about this package.
                 if _forges.is_transport_error(e):
@@ -172,9 +190,11 @@ def main():
     # other forge's tag is not a release this package can consume.
     authority_down = _forges.authority_unanswered(src, answered, failed_specs)
     results, _label_index = _forges.label_results(answered, with_index=True)
-    auth_label = (_label_index.get((authoritative[0], authoritative[1],
-                                    authoritative[2]))
-                  if authoritative else None)
+    auth_label = (
+        _label_index.get((authoritative[0], authoritative[1], authoritative[2]))
+        if authoritative
+        else None
+    )
 
     for err in errors:
         # exception text can embed fetched bytes — sanitize the warning too
@@ -183,32 +203,42 @@ def main():
     if authority_down:
         reg = _forges.source_registry(src)
         own = [e for e in authority_errors if e.startswith(f"{reg[0]}:")]
-        die(f"{reg[0]} serves Source0 and could not be reached "
+        die(
+            f"{reg[0]} serves Source0 and could not be reached "
             f"({'; '.join(own) or 'probe failed'}) — a newer version from any "
             f"other source is not a release this package can consume, so there "
-            f"is no verdict; re-run when {reg[0]} answers")
+            f"is no verdict; re-run when {reg[0]} answers"
+        )
 
     if not results:
         if anitya_v:
             # Anitya-only outcome: it has versions but NO dates, so this can
             # only say "a newer stable exists upstream" — never the by-date
             # renumbering analysis the forge backends do.
-            print(f"packaged:       {packaged} (date unknown — no forge source answered)")
+            print(
+                f"packaged:       {packaged} (date unknown — no forge source answered)"
+            )
             print(f"anitya latest:  {anitya_v} ({anitya_how}, release-monitoring.org)")
             cmp = _anitya.vercmp(anitya_v, packaged)
             if cmp == 1:
-                print("VERDICT: UPDATE-CANDIDATE — release-monitoring.org knows a "
-                      "newer stable; anitya has NO dates, verify the tag/upload "
-                      "date by hand before acting")
+                print(
+                    "VERDICT: UPDATE-CANDIDATE — release-monitoring.org knows a "
+                    "newer stable; anitya has NO dates, verify the tag/upload "
+                    "date by hand before acting"
+                )
                 sys.exit(1)
             if cmp == 0 or _anitya.norm(anitya_v) == _anitya.norm(packaged):
                 print("VERDICT: CURRENT (per release-monitoring.org; dates unverified)")
                 sys.exit(0)
-            die(f"anitya version {anitya_v!r} is not comparable to packaged "
-                f"{packaged!r} — verify by hand")
-        die(f"no source answered from URL={url!r} Source={src!r} "
+            die(
+                f"anitya version {anitya_v!r} is not comparable to packaged "
+                f"{packaged!r} — verify by hand"
+            )
+        die(
+            f"no source answered from URL={url!r} Source={src!r} "
             f"(supported forges: github, gitlab, pypi, npm, crates; plus "
-            f"release-monitoring.org by package name)")
+            f"release-monitoring.org by package name)"
+        )
 
     # Merge multi-source facts: latest stable/tag decided by DATE across
     # sources; packaged date from whichever source could date it.
@@ -217,8 +247,11 @@ def main():
     # When Source0 is served by a package registry, that registry decides the
     # verdict: a git tag ahead of it is not a release we can package. Other
     # sources are still probed and printed, but only as context.
-    _verdict_rows = ([results[auth_label]] if auth_label and results.get(auth_label)
-                     else list(results.values()))
+    _verdict_rows = (
+        [results[auth_label]]
+        if auth_label and results.get(auth_label)
+        else list(results.values())
+    )
     for f in _verdict_rows:
         if f.get("packaged_date") and not facts.get("packaged_date"):
             facts["packaged_date"] = f["packaged_date"]
@@ -229,19 +262,24 @@ def main():
             if v and v[1] and (key not in facts or (facts[key][1] or _floor) < v[1]):
                 facts[key] = v
     if "latest_stable" not in facts:
-        facts["latest_stable"] = next((r["latest_stable"] for r in _verdict_rows
-                                       if r.get("latest_stable")),
-                                      next(r["latest_stable"] for r in results.values()
-                                           if r.get("latest_stable")))
+        facts["latest_stable"] = next(
+            (r["latest_stable"] for r in _verdict_rows if r.get("latest_stable")),
+            next(
+                r["latest_stable"] for r in results.values() if r.get("latest_stable")
+            ),
+        )
     if len(results) == 1:
         facts["asset_note"] = next(iter(results.values())).get("asset_note")
     else:
-        facts["asset_note"] = "; ".join(f"[{fg}] {r['asset_note']}"
-                                        for fg, r in sorted(results.items())
-                                        if r.get("asset_note"))
+        facts["asset_note"] = "; ".join(
+            f"[{fg}] {r['asset_note']}"
+            for fg, r in sorted(results.items())
+            if r.get("asset_note")
+        )
 
     def fmt(pair):
-        if not pair: return "?"
+        if not pair:
+            return "?"
         v, d = pair
         return f"{v} ({d.date() if d else 'undated'})"
 
@@ -254,12 +292,16 @@ def main():
             mark = "  <- Source0, authoritative" if fg == auth_label else ""
             print(f"  [{fg}] latest stable: {fmt(r.get('latest_stable'))}{mark}")
     if auth_label and len(results) > 1:
-        print(f"note:           verdict follows [{auth_label}], which serves "
-              f"Source0; a newer tag on another source is not a release this "
-              f"package can consume")
+        print(
+            f"note:           verdict follows [{auth_label}], which serves "
+            f"Source0; a newer tag on another source is not a release this "
+            f"package can consume"
+        )
     if scm_rev:
-        print(f"_service pin:   {scm_rev} (upstream resolved from the "
-              f"_service obs_scm url, not the spec)")
+        print(
+            f"_service pin:   {scm_rev} (upstream resolved from the "
+            f"_service obs_scm url, not the spec)"
+        )
     elif any(fg.startswith("npm") or fg.startswith("crates") for fg in results):
         # Single npm/crates source: still name the backend, per the output contract.
         fg = next(iter(results))
@@ -267,15 +309,19 @@ def main():
     if facts.get("latest_tag") and facts["latest_tag"] != facts.get("latest_stable"):
         print(f"latest tag:     {fmt(facts.get('latest_tag'))}")
     if facts.get("head_date"):
-        print(f"upstream HEAD:  {facts['head_date'].date()} (snapshot package — compare by commit date)")
+        print(
+            f"upstream HEAD:  {facts['head_date'].date()} (snapshot package — compare by commit date)"
+        )
     if facts.get("asset_note"):
         print(f"release assets: {facts['asset_note']}")
     if anitya_v:
         print(f"anitya:         {anitya_v} ({anitya_how}, release-monitoring.org)")
         if lv and _anitya.vercmp(anitya_v, lv) == 1:
-            print(f"WARNING: release-monitoring.org knows a NEWER stable "
-                  f"({anitya_v}) than this forge probe found ({lv}) — check the "
-                  f"project on release-monitoring.org before trusting CURRENT")
+            print(
+                f"WARNING: release-monitoring.org knows a NEWER stable "
+                f"({anitya_v}) than this forge probe found ({lv}) — check the "
+                f"project on release-monitoring.org before trusting CURRENT"
+            )
 
     # ---- verdict ----
     # Anitya sees releases the forge scans can miss (and vice versa): a
@@ -285,15 +331,19 @@ def main():
         return anitya_v and _anitya and _anitya.vercmp(anitya_v, v or "") == 1
 
     def anitya_elevate():
-        print(f"VERDICT: UPDATE-CANDIDATE — forge source(s) look CURRENT but "
-              f"release-monitoring.org knows a newer stable ({anitya_v}); anitya "
-              f"has NO dates, verify the tag/upload date by hand before acting")
+        print(
+            f"VERDICT: UPDATE-CANDIDATE — forge source(s) look CURRENT but "
+            f"release-monitoring.org knows a newer stable ({anitya_v}); anitya "
+            f"has NO dates, verify the tag/upload date by hand before acting"
+        )
         sys.exit(1)
 
-    if facts.get("head_date") and pd:          # snapshot package
+    if facts.get("head_date") and pd:  # snapshot package
         if facts["head_date"].date() > pd.date():
-            print(f"VERDICT: UPDATE-CANDIDATE — upstream HEAD ({facts['head_date'].date()}) "
-                  f"is newer than the packaged snapshot ({pd.date()})")
+            print(
+                f"VERDICT: UPDATE-CANDIDATE — upstream HEAD ({facts['head_date'].date()}) "
+                f"is newer than the packaged snapshot ({pd.date()})"
+            )
             sys.exit(1)
         print("VERDICT: CURRENT (snapshot at upstream HEAD)")
         sys.exit(0)
@@ -306,19 +356,28 @@ def main():
         if pd == ld:
             if anitya_newer(packaged):
                 anitya_elevate()
-            print("VERDICT: CURRENT (packaged tag and latest stable share the same date)")
+            print(
+                "VERDICT: CURRENT (packaged tag and latest stable share the same date)"
+            )
             sys.exit(0)
         if ld > pd:
-            print(f"VERDICT: UPDATE-CANDIDATE — {lv} is newer by date ({ld.date()} > {pd.date()})")
+            print(
+                f"VERDICT: UPDATE-CANDIDATE — {lv} is newer by date ({ld.date()} > {pd.date()})"
+            )
             sys.exit(1)
-        print(f"VERDICT: SUSPECT: \"newer\" version {lv} is OLDER by date "
-              f"({ld.date()} <= {pd.date()}) — possible renumbering, do not downgrade")
+        print(
+            f'VERDICT: SUSPECT: "newer" version {lv} is OLDER by date '
+            f"({ld.date()} <= {pd.date()}) — possible renumbering, do not downgrade"
+        )
         sys.exit(3)
     if ld and not pd:
-        print(f"VERDICT: UPDATE-CANDIDATE — latest stable {lv} ({ld.date()}); packaged "
-              f"version's date unknown (tag not found) — VERIFY the dates by hand before acting")
+        print(
+            f"VERDICT: UPDATE-CANDIDATE — latest stable {lv} ({ld.date()}); packaged "
+            f"version's date unknown (tag not found) — VERIFY the dates by hand before acting"
+        )
         sys.exit(1)
     die("could not date either side — verify by hand")
+
 
 if __name__ == "__main__":
     main()

@@ -9,6 +9,7 @@ GitHub companion npm: when a spec already selected github.com/OWNER/REPO,
 also probe npm `@OWNER/REPO` and `REPO` (404 is skip, not a failure). That is
 the whole companion guess list — nothing else is invented.
 """
+
 import http.client
 import json
 import re
@@ -50,8 +51,11 @@ class SourceDown(RuntimeError):
 def http_json(url, headers=None, missing_ok=False, ua=None):
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": ua or UA, "Accept": "application/json",
-                 **(headers or {})},
+        headers={
+            "User-Agent": ua or UA,
+            "Accept": "application/json",
+            **(headers or {}),
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
@@ -70,8 +74,12 @@ def gh_ok():
     global _GH
     if _GH is None:
         try:
-            _GH = subprocess.run(["gh", "auth", "status"], capture_output=True,
-                                 timeout=15).returncode == 0
+            _GH = (
+                subprocess.run(
+                    ["gh", "auth", "status"], capture_output=True, timeout=15
+                ).returncode
+                == 0
+            )
         except Exception:
             _GH = False
     return _GH
@@ -81,8 +89,9 @@ def gh_json(path):
     """GET a GitHub API path; returns parsed JSON or None on 404."""
     if gh_ok():
         try:
-            r = subprocess.run(["gh", "api", path], capture_output=True,
-                               text=True, timeout=30)
+            r = subprocess.run(
+                ["gh", "api", path], capture_output=True, text=True, timeout=30
+            )
         except subprocess.SubprocessError as e:
             # A hung or unspawnable gh is GitHub being unreachable, and
             # TimeoutExpired is not an OSError, so it would otherwise escape
@@ -179,7 +188,7 @@ def tag_matches_prefix(tag, prefix):
         return True
     if not tag or not tag.startswith(prefix):
         return False
-    rest = tag[len(prefix):]
+    rest = tag[len(prefix) :]
     return bool(rest) and rest[0].isdigit()
 
 
@@ -192,8 +201,7 @@ def parse_forge(cand):
         return ("github", m.group(1), m.group(2).removesuffix(".git"))
     if "gitlab" in cand:
         host_m = re.search(r"(gitlab\.[^/]+)", cand)
-        proj_m = re.search(
-            r"gitlab\.[^/]+/([^#?]+?)(?:/-/|\.git|/archive|$)", cand)
+        proj_m = re.search(r"gitlab\.[^/]+/([^#?]+?)(?:/-/|\.git|/archive|$)", cand)
         if host_m and proj_m:
             return ("gitlab", host_m.group(1), proj_m.group(1).strip("/"))
     npm = _parse_npm(cand)
@@ -204,8 +212,8 @@ def parse_forge(cand):
         return ("crates", None, m.group(1))
     if "pythonhosted.org" in cand or "pypi.org" in cand or "pypi.python.org" in cand:
         m = re.search(
-            r"(?:packages/source/./|pypi\.org/(?:project|pypi)/)([A-Za-z0-9._-]+)",
-            cand)
+            r"(?:packages/source/./|pypi\.org/(?:project|pypi)/)([A-Za-z0-9._-]+)", cand
+        )
         if m:
             return ("pypi", None, m.group(1))
     return None
@@ -213,8 +221,7 @@ def parse_forge(cand):
 
 def _parse_npm(cand):
     """npm package name from registry.npmjs.org or npmjs.com/package/… URLs."""
-    m = re.search(
-        r"(?:www\.)?npmjs\.com/package/(@[^/]+/[^/#?]+|[^/#?]+)", cand)
+    m = re.search(r"(?:www\.)?npmjs\.com/package/(@[^/]+/[^/#?]+|[^/#?]+)", cand)
     if m:
         return urllib.parse.unquote(m.group(1))
     m = re.search(r"registry\.npmjs\.org/(@[^/]+/[^/#?]+|[^/#?]+)", cand)
@@ -285,9 +292,16 @@ def is_transport_error(e):
         # The cost is asymmetric: a false outage is a visible exit 3 you can
         # re-run, a false answer is a silent clean sweep.
         return e.code in (403, 408, 429, 500, 502, 503, 504)
-    return isinstance(e, (OSError, http.client.HTTPException,
-                          json.JSONDecodeError, UnicodeDecodeError,
-                          subprocess.SubprocessError))
+    return isinstance(
+        e,
+        (
+            OSError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            subprocess.SubprocessError,
+        ),
+    )
 
 
 def authority_unanswered(src, rows, failed):
@@ -310,10 +324,8 @@ def authority_unanswered(src, rows, failed):
     return any((f[0], f[1], f[2]) == target for f in failed)
 
 
-_SCM_URL_RE = re.compile(
-    r'<param\s+name="url"\s*>\s*([^<\s]+)\s*</param>', re.I)
-_SCM_REV_RE = re.compile(
-    r'<param\s+name="revision"\s*>\s*([^<\s]+)\s*</param>', re.I)
+_SCM_URL_RE = re.compile(r'<param\s+name="url"\s*>\s*([^<\s]+)\s*</param>', re.I)
+_SCM_REV_RE = re.compile(r'<param\s+name="revision"\s*>\s*([^<\s]+)\s*</param>', re.I)
 
 
 def service_scm_url(text):
@@ -382,20 +394,26 @@ def probe_pypi(name, packaged):
 
     def rel_date(v):
         files = releases.get(v) or []
-        ds = [parse_date(f.get("upload_time_iso_8601")) for f in files
-              if not f.get("yanked")]
+        ds = [
+            parse_date(f.get("upload_time_iso_8601"))
+            for f in files
+            if not f.get("yanked")
+        ]
         ds = [x for x in ds if x]
         return max(ds) if ds else None
 
-    stable = [(v, rel_date(v)) for v in releases
-              if not is_prerelease(v) and rel_date(v)]
+    stable = [
+        (v, rel_date(v)) for v in releases if not is_prerelease(v) and rel_date(v)
+    ]
     if not stable:
         raise RuntimeError(f"pypi {name}: no dated stable releases")
     latest_v, latest_d = max(stable, key=lambda x: x[1])
-    return {"packaged_date": rel_date(packaged) or rel_date(norm(packaged)),
-            "latest_stable": (latest_v, latest_d),
-            "latest_tag": (latest_v, latest_d),
-            "asset_note": "PyPI sdist/wheel (real release files)"}
+    return {
+        "packaged_date": rel_date(packaged) or rel_date(norm(packaged)),
+        "latest_stable": (latest_v, latest_d),
+        "latest_tag": (latest_v, latest_d),
+        "asset_note": "PyPI sdist/wheel (real release files)",
+    }
 
 
 def probe_npm(name, packaged, missing_ok=False):
@@ -420,18 +438,19 @@ def probe_npm(name, packaged, missing_ok=False):
     if latest and is_prerelease(latest):
         latest = None
     if not latest:
-        stable = [(v, vdate(v)) for v in versions
-                  if not is_prerelease(v) and vdate(v)]
+        stable = [(v, vdate(v)) for v in versions if not is_prerelease(v) and vdate(v)]
         if not stable:
             if missing_ok:
                 return None
             raise RuntimeError(f"npm {name}: no dated stable releases")
         latest = max(stable, key=lambda x: x[1])[0]
     ld = vdate(latest)
-    return {"packaged_date": vdate(packaged) or vdate(norm(packaged)),
-            "latest_stable": (latest, ld),
-            "latest_tag": (latest, ld),
-            "asset_note": "npm packument (dist-tags.latest)"}
+    return {
+        "packaged_date": vdate(packaged) or vdate(norm(packaged)),
+        "latest_stable": (latest, ld),
+        "latest_tag": (latest, ld),
+        "asset_note": "npm packument (dist-tags.latest)",
+    }
 
 
 def probe_crates(name, packaged, missing_ok=False):
@@ -446,15 +465,17 @@ def probe_crates(name, packaged, missing_ok=False):
         return None
     crate = d.get("crate") or {}
     versions = d.get("versions") or []
-    by_num = {v.get("num"): v for v in versions
-              if v.get("num") and not v.get("yanked")}
+    by_num = {v.get("num"): v for v in versions if v.get("num") and not v.get("yanked")}
     latest = crate.get("max_stable_version") or crate.get("newest_version")
     if latest and (is_prerelease(latest) or latest not in by_num):
-        dated = [(v.get("num"), parse_date(v.get("created_at")))
-                 for v in versions
-                 if v.get("num") and not v.get("yanked")
-                 and not is_prerelease(v.get("num"))
-                 and parse_date(v.get("created_at"))]
+        dated = [
+            (v.get("num"), parse_date(v.get("created_at")))
+            for v in versions
+            if v.get("num")
+            and not v.get("yanked")
+            and not is_prerelease(v.get("num"))
+            and parse_date(v.get("created_at"))
+        ]
         latest = max(dated, key=lambda x: x[1])[0] if dated else None
     if not latest:
         if missing_ok:
@@ -464,10 +485,12 @@ def probe_crates(name, packaged, missing_ok=False):
     ld = parse_date(ver.get("created_at") or crate.get("updated_at"))
     pver = by_num.get(packaged) or by_num.get(norm(packaged)) or {}
     pd = parse_date(pver.get("created_at"))
-    return {"packaged_date": pd,
-            "latest_stable": (latest, ld),
-            "latest_tag": (latest, ld),
-            "asset_note": "crates.io crate (max_stable_version)"}
+    return {
+        "packaged_date": pd,
+        "latest_stable": (latest, ld),
+        "latest_tag": (latest, ld),
+        "asset_note": "crates.io crate (max_stable_version)",
+    }
 
 
 def probe_github(owner, repo, packaged, prefix=None):
@@ -475,24 +498,32 @@ def probe_github(owner, repo, packaged, prefix=None):
 
     def tag_date(tag):
         c = gh_json(f"{base}/commits/{urllib.parse.quote(tag, safe='')}")
-        return parse_date(((c or {}).get("commit") or {}).get("committer", {})
-                          .get("date")) if c else None
+        return (
+            parse_date(((c or {}).get("commit") or {}).get("committer", {}).get("date"))
+            if c
+            else None
+        )
 
     out = {}
     snap = SNAPSHOT.search(packaged or "")
     if snap:
         out["packaged_date"] = datetime.strptime(snap.group(1), "%Y%m%d").replace(
-            tzinfo=timezone.utc)
+            tzinfo=timezone.utc
+        )
         head = gh_json(f"{base}/commits?per_page=1")
-        out["head_date"] = parse_date(((head or [{}])[0].get("commit") or {})
-                                      .get("committer", {}).get("date")) if head else None
+        out["head_date"] = (
+            parse_date(
+                ((head or [{}])[0].get("commit") or {}).get("committer", {}).get("date")
+            )
+            if head
+            else None
+        )
     else:
         out["packaged_date"] = None
         cands = []
         if prefix:
             cands.append(f"{prefix}{packaged}")
-        cands.extend([packaged, f"v{packaged}", norm(packaged),
-                      f"{repo}-{packaged}"])
+        cands.extend([packaged, f"v{packaged}", norm(packaged), f"{repo}-{packaged}"])
         for cand in _uniq(cands):
             d = tag_date(cand)
             if d:
@@ -516,10 +547,12 @@ def probe_github(owner, repo, packaged, prefix=None):
     if dated_rel:
         tag, d, rel = max(dated_rel, key=lambda x: x[1])
         out["latest_stable"] = (tag, d)
-        out["asset_note"] = (f"{len(rel.get('assets') or [])} release asset(s)"
-                             if rel.get("assets") else
-                             "NO release assets — auto-archive only (autotools: "
-                             "no configure -> autoreconf + autoconf/automake/libtool cost)")
+        out["asset_note"] = (
+            f"{len(rel.get('assets') or [])} release asset(s)"
+            if rel.get("assets")
+            else "NO release assets — auto-archive only (autotools: "
+            "no configure -> autoreconf + autoconf/automake/libtool cost)"
+        )
     tags = gh_json(f"{base}/tags?per_page=20") or []
     if isinstance(tags, dict):
         tags = []
@@ -533,8 +566,9 @@ def probe_github(owner, repo, packaged, prefix=None):
         c = t.get("commit") or {}
         if c.get("sha"):
             cc = gh_json(f"{base}/commits/{c['sha']}")
-            d = parse_date(((cc or {}).get("commit") or {}).get("committer", {})
-                           .get("date"))
+            d = parse_date(
+                ((cc or {}).get("commit") or {}).get("committer", {}).get("date")
+            )
         if d:
             dated.append((tname, d))
             n_dated += 1
@@ -545,8 +579,11 @@ def probe_github(owner, repo, packaged, prefix=None):
         if "latest_stable" not in out:
             out["latest_stable"] = out["latest_tag"]
             rt = gh_json(f"{base}/releases/tags/{out['latest_tag'][0]}")
-            out["asset_note"] = ("release object present" if rt else
-                                 "tag has NO release object — auto-archive only")
+            out["asset_note"] = (
+                "release object present"
+                if rt
+                else "tag has NO release object — auto-archive only"
+            )
     if "latest_stable" not in out:
         raise RuntimeError(f"github {owner}/{repo}: no releases and no datable tags")
     return out
@@ -573,11 +610,13 @@ def probe_gitlab(host, proj, packaged, prefix=None):
         cands.update((packaged, f"v{packaged}", norm(packaged)))
     packaged_date = next((dd for n, dd in dated if n in cands), None)
     if packaged_date is None:
-        packaged_date = next((dd for n, dd in dated
-                              if norm(n) == norm(packaged)), None)
-    return {"packaged_date": packaged_date, "latest_stable": latest,
-            "latest_tag": max(dated, key=lambda x: x[1]),
-            "asset_note": "gitlab: check the release for uploaded assets vs auto-archive"}
+        packaged_date = next((dd for n, dd in dated if norm(n) == norm(packaged)), None)
+    return {
+        "packaged_date": packaged_date,
+        "latest_stable": latest,
+        "latest_tag": max(dated, key=lambda x: x[1]),
+        "asset_note": "gitlab: check the release for uploaded assets vs auto-archive",
+    }
 
 
 def unpack_forge(spec):
@@ -622,8 +661,12 @@ def prefer_scoped_npm(rows):
     keep = []
     for row in rows:
         kind, host, name, optional, facts = row
-        if (kind == "npm" and optional and "/" not in (name or "")
-                and name in scoped_pkgs):
+        if (
+            kind == "npm"
+            and optional
+            and "/" not in (name or "")
+            and name in scoped_pkgs
+        ):
             continue
         keep.append(row)
     return keep

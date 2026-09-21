@@ -100,6 +100,24 @@ Harnesses with native skill/sub-agent support: place (or symlink) the repo where
 discovers skills, and register the `agents/*.md` playbooks wherever it discovers agents so the
 three blocks become first-class delegatable agents.
 
+## Development
+
+CI runs exactly these, so the two cannot drift:
+
+```
+(rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
+python3 tests/test-update-checkers.py
+ruff check . && ruff format --check .
+shellcheck tests/test-*.sh
+```
+
+The suites are offline — network lookups are stubbed and the subprocess cases run with
+every source disabled or behind a dead proxy — and need only the Python standard library.
+
+Before making any check blocking, break the thing it guards and watch it go red. A check
+that has never failed is not yet a check: the obvious runner loop here, `... || break`,
+returns 0 on a failing suite and would report success forever.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

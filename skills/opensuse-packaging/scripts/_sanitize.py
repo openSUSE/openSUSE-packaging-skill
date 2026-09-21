@@ -56,6 +56,7 @@ content can itself CONTAIN the marker line and "close" the block early. The
 markers are a labelling aid for readers of the output, not a security
 boundary; the boundary is the reader's rule that fetched content is data.
 """
+
 import re
 import sys
 
@@ -70,11 +71,11 @@ DELIM_CLOSE = "--->8--- end third-party content --->8---"
 # any remaining two-character sequence without ever consuming a newline (a
 # lone trailing ESC falls through to the control-character class below).
 _SEQ = re.compile(
-    r"\x1b\[[0-9;:<=>?]*[ -/]*[@-~]"          # CSI
+    r"\x1b\[[0-9;:<=>?]*[ -/]*[@-~]"  # CSI
     r"|\x1b\][^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c|(?=\n)|\Z)"  # OSC (BEL/ST/EOL/EOF)
-    r"|\x9b[0-9;:<=>?]*[ -/]*[@-~]"           # C1 CSI
+    r"|\x9b[0-9;:<=>?]*[ -/]*[@-~]"  # C1 CSI
     r"|\x9d[^\x07\x9c\n]*(?:\x07|\x9c|(?=\n)|\Z)"  # C1 OSC
-    r"|\x1b[^\n]"                              # other two-char ESC sequence
+    r"|\x1b[^\n]"  # other two-char ESC sequence
 )
 
 # Remaining forbidden characters, as one class:
@@ -84,13 +85,13 @@ _SEQ = re.compile(
 #   (U+E0000-U+E007F), an invisible ASCII shadow that can carry a whole
 #   instruction string no human reader sees.
 _CTRL = re.compile(
-    "[\\x00-\\x08\\x0b-\\x1f\\x7f"     # C0 minus \t \n, plus DEL
-    "\\x80-\\x9f"                      # C1 codepoints
-    "\\udc80-\\udc9f"                  # C1 arriving as raw undecoded bytes
-    "\\u202a-\\u202e\\u2066-\\u2069"   # bidi controls
-    "\\u200e\\u200f\\u061c"            # directional marks LRM/RLM/ALM
-    "\\u200b-\\u200d\\u2060\\ufeff"    # zero-width
-    "\\U000e0000-\\U000e007f]"         # Unicode Tags block
+    "[\\x00-\\x08\\x0b-\\x1f\\x7f"  # C0 minus \t \n, plus DEL
+    "\\x80-\\x9f"  # C1 codepoints
+    "\\udc80-\\udc9f"  # C1 arriving as raw undecoded bytes
+    "\\u202a-\\u202e\\u2066-\\u2069"  # bidi controls
+    "\\u200e\\u200f\\u061c"  # directional marks LRM/RLM/ALM
+    "\\u200b-\\u200d\\u2060\\ufeff"  # zero-width
+    "\\U000e0000-\\U000e007f]"  # Unicode Tags block
 )
 
 
@@ -105,8 +106,10 @@ def main(argv):
     delimit = "--delimit" in argv[1:]
     unknown = [a for a in argv[1:] if a not in ("--delimit",)]
     if unknown:
-        sys.stderr.write(__doc__.split("\n\n")[0] + "\n"
-                         "usage: _sanitize.py [--delimit] < input > output\n")
+        sys.stderr.write(
+            __doc__.split("\n\n")[0] + "\n"
+            "usage: _sanitize.py [--delimit] < input > output\n"
+        )
         return 2
     data = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
     out = sanitize(data)

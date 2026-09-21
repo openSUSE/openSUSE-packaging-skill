@@ -4,6 +4,11 @@
 # byte-identically, wraps correctly in --delimit mode, and imports as a
 # module. Exit 0 = all assertions hold; any failure exits 1 with the first
 # failing assertion named. Run from anywhere; paths are self-relative.
+# shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
+# idiom, not a broken if/then/else: pass and fail both return 0 (verified), so exactly
+# one verdict is ever printed, including at the inverted `&& fail || pass` sites.
+# shellcheck disable=SC2181  # rc is captured once with rc=$? and then asserted on
+# several times; `if cmd; then` cannot express that.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPTS="$HERE/../skills/opensuse-packaging/scripts"

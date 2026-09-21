@@ -1,0 +1,10 @@
+# Fixtures are malformed on purpose and references are documentation: neither is source.
+extend-exclude = ["tests/fixtures", "*.md"]
+
+[lint]
+# Pinned explicitly rather than left to the default. Ruff's default selection is
+# not stable across releases or distributor builds -- an openSUSE-packaged 0.16.8
+# enables ~400 rules where upstream's documented default is these four -- so
+# relying on it means CI and a contributor's machine disagree about what "clean"
+# is, for reasons neither of them changed.
+select = ["E4", "E7", "E9", "F"]
