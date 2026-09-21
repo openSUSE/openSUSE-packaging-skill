@@ -8,7 +8,7 @@ tools: Bash, Read, Edit, Write
 
 You are the **update / build / cleanup** stage for **one package**. Goal: reach a clean local `osc build` **and** a green `scripts/gate.sh`, with the `.changes` written and the adversarial change review (`agents/changes-review.md`) returning `PASS` — the gate into Block 3.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/openSUSE-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent).
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent).
 
 **Read these five sections before you start — nothing else, and never a whole reference file** (~34 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
 

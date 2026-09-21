@@ -9,7 +9,7 @@
 #   - any reference exceeds 60,000 B, or is > 300 lines without a `## Contents`
 # Exit 0 = within budget; 1 = over, with the offending numbers.
 set -u
-HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../skills/opensuse-packaging" && pwd)"
 fails=0
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }

@@ -11,17 +11,22 @@ read as ordinary instruction documents.
 ## Layout
 
 ```
-SKILL.md                     entry point — the three-block pipeline + cross-cutting rules
-references/                  per-block + domain depth documents, loaded on demand —
+skills/opensuse-packaging/   the skill — this directory is the unit of distribution
+  SKILL.md                   entry point — the three-block pipeline + cross-cutting rules
+  references/                per-block + domain depth documents, loaded on demand —
                              see SKILL.md's block pointers for what to load when;
                              references/untrusted-content.md is the cross-cutting
                              prompt-injection policy every block inherits
-scripts/                     reusable osc / Repology / bugzilla / Gitea / distro helpers —
+  scripts/                   reusable osc / Repology / bugzilla / Gitea / distro helpers —
                              one line each in SKILL.md "Bundled scripts"; the full
                              catalog (flags, exit codes, the trap each one encodes)
                              is scripts/README.md
-agents/                      delegation playbooks (role prompts) for the three blocks
+  agents/                    delegation playbooks (role prompts) for the three blocks
+tests/                       the guard suite — repo-only, never installed
 ```
+
+Tests live outside the skill directory because installers copy that directory verbatim,
+and nothing inside a skill may reference a path outside itself.
 
 The YAML frontmatter at the top of `SKILL.md` and `agents/*.md` is metadata for harnesses
 with native skill/sub-agent support; everywhere else it is harmless
@@ -31,15 +36,61 @@ plain text — no other file depends on it.
 
 Canonical repository: https://github.com/openSUSE/openSUSE-packaging-skill
 
+Requirements: `bash`, `python3`, `osc` and `curl`. The helper scripts use only the Python
+standard library.
+
+With a skill installer:
+
 ```
-git clone https://github.com/openSUSE/openSUSE-packaging-skill.git
+npx skills add openSUSE/openSUSE-packaging-skill --skill opensuse-packaging -g
+gh skill install openSUSE/openSUSE-packaging-skill opensuse-packaging --scope user
 ```
 
-Clone it anywhere and point your agent at `SKILL.md` as context — reference it from
-your harness's rules/context file (`AGENTS.md`, `.rules`, a system prompt, an
-`@`-include, …) or just tell the agent to read it at session start. `SKILL.md` tells the
-agent which `references/*.md` to load per work block (don't preload them all) and catalogs
-the `scripts/` helpers, which need only `bash`, `python3`, `osc`, and `curl`.
+Without `-g` / `--scope user` both install into the current project instead.
+
+Manually, tracking a git checkout:
+
+```
+git clone https://github.com/openSUSE/openSUSE-packaging-skill.git
+mkdir -p ~/.agents/skills ~/.claude/skills
+ln -s "$PWD/openSUSE-packaging-skill/skills/opensuse-packaging" ~/.agents/skills/opensuse-packaging
+ln -s ../../.agents/skills/opensuse-packaging ~/.claude/skills/opensuse-packaging
+```
+
+Use one install method only: harnesses that scan several directories report duplicate
+names, and an installer will repoint the agent directories at its own copy, so a checkout
+you symlinked by hand stops being what the agent reads. The link or directory name must
+stay `opensuse-packaging` — the Agent Skills format requires the directory to equal the
+skill name.
+
+Any other harness can simply be pointed at `skills/opensuse-packaging/SKILL.md`: reference
+it from your rules/context file (`AGENTS.md`, `.rules`, a system prompt, an `@`-include, …)
+or tell the agent to read it at session start. `SKILL.md` tells the agent which
+`references/*.md` to load per work block — don't preload them all.
+
+### Upgrading from a checkout made before the `skills/` layout
+
+`SKILL.md` used to sit at the repository root, so older installs symlink the **repo root**
+into the agent's skills directory. It now lives in `skills/opensuse-packaging/`, and the
+skill's directory name must equal its lowercase `name`. A stale link therefore points at a
+directory with no `SKILL.md` in it, and the agent just stops finding the skill — with no
+error, because a skill that does not load cannot report anything.
+
+If you installed with `npx skills` or `gh skill`, re-running the install command above
+repoints everything for you. If you symlinked by hand, replace the old link:
+
+```
+rm ~/.claude/skills/openSUSE-packaging ~/.agents/skills/openSUSE-packaging
+ln -s "$PWD/skills/opensuse-packaging" ~/.agents/skills/opensuse-packaging
+ln -s ../../.agents/skills/opensuse-packaging ~/.claude/skills/opensuse-packaging
+```
+
+Adjust the agent directory for your harness (`~/.grok/skills/`, `~/.codex/skills/`, …);
+opencode instead takes a directory to scan, so point it at `skills/`:
+
+```
+{ "skills": { "paths": ["/path/to/openSUSE-packaging-skill/skills"] } }
+```
 
 The `agents/*.md` playbooks are role prompts: if your harness supports delegating to
 sub-agents/sub-tasks, use one as the sub-agent's instructions; otherwise run the playbook

@@ -1,6 +1,7 @@
 ---
 name: opensuse-packaging
 description: Authoring, modifying, reviewing or building openSUSE RPM packages — .spec and .changes files, osc / OBS, and the Git packaging workflow on src.opensuse.org (Gitea). Use for a .osc/ checkout or a *.spec file; when the user mentions osc, OBS, rpmbuild, git-obs, tea, rpmlint or spec-cleaner; or asks to update, build, submit, review or fork a package, check if packages are out of date, or open a package pull request.
+license: Apache-2.0
 ---
 
 # openSUSE packaging

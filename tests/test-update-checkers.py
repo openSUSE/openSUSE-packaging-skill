@@ -21,7 +21,7 @@ import urllib.error
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts"))
 
 import _anitya  # noqa: E402
 import _forges  # noqa: E402
@@ -244,7 +244,7 @@ class MacroSourceTests(unittest.TestCase):
 class SweepCoverageTests(unittest.TestCase):
     """outdated.py must report what did NOT run, and say so in its exit code."""
 
-    SCRIPT = os.path.join(HERE, "..", "scripts", "outdated.py")
+    SCRIPT = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py")
 
     def _run(self, *flags, names=("somepackage",), offline=False):
         env = dict(os.environ)
@@ -326,8 +326,8 @@ class ForgeWiringTests(unittest.TestCase):
     a script and a mutation there is otherwise invisible.
     """
 
-    OUTDATED = os.path.join(HERE, "..", "scripts", "outdated.py")
-    PROBE = os.path.join(HERE, "..", "scripts", "upstream-probe.py")
+    OUTDATED = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "outdated.py")
+    PROBE = os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", "upstream-probe.py")
 
     SPEC = ("Name:           pkg-a\n"
             "Version:        1.0\n"
@@ -625,7 +625,7 @@ class ExceptTupleParityTests(unittest.TestCase):
     """
 
     def _tuple(self, path, needle):
-        src = open(os.path.join(HERE, "..", "scripts", path)).read()
+        src = open(os.path.join(HERE, "..", "skills", "opensuse-packaging", "scripts", path)).read()
         i = src.index(needle)
         frag = src[i:src.index(" as e:", i)]
         return sorted(t.strip() for t in

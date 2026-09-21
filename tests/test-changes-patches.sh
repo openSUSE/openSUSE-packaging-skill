@@ -7,7 +7,7 @@
 # hint fires. Exit 0 = all assertions hold; any failure exits 1.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$HERE/../scripts/changes-patches.sh"
+SCRIPT="$HERE/../skills/opensuse-packaging/scripts/changes-patches.sh"
 FIX="$HERE/fixtures/changes-patches"
 fails=0
 pass() { printf 'PASS: %s\n' "$*"; }
