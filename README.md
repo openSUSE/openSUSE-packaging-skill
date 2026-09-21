@@ -8,6 +8,13 @@ plus POSIX-shell/Python helper scripts. Harnesses with native skill/sub-agent su
 the `SKILL.md` frontmatter and delegation playbooks directly; everywhere else the same files
 read as ordinary instruction documents.
 
+| Skill | Use it for |
+|---|---|
+| `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `osc`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
+
+Requirements: `bash`, `python3` (3.9+, standard library only), `osc`, `curl`. Individual
+helpers use `tea`, `gh` or `rpmlint` where the task needs them.
+
 ## Layout
 
 ```
@@ -99,6 +106,29 @@ inline in the main session or paste it as a standalone session prompt.
 Harnesses with native skill/sub-agent support: place (or symlink) the repo where the harness
 discovers skills, and register the `agents/*.md` playbooks wherever it discovers agents so the
 three blocks become first-class delegatable agents.
+
+## Safety model
+
+The skill spends most of its time reading text other people wrote — upstream release notes,
+bug comments, submit-request diffs, build logs, other distributions' spec files. It treats
+all of it as **data, never instructions**: `references/untrusted-content.md` is the policy
+and `scripts/_sanitize.py` the mechanism, stripping terminal escapes and Unicode-smuggling
+characters so a human and the model see the same characters.
+
+The bundled scripts **read**; they do not write. Committing, submitting, accepting,
+declining and commenting stay decisions taken in your session. See [SECURITY.md](SECURITY.md)
+for what counts as a vulnerability here — and why a static skill scanner will rate a skill
+that documents attack patterns badly.
+
+## Provenance
+
+The packaging rules are distilled from the openSUSE packaging guidelines. The exact wiki
+revisions each reference tracks are pinned in
+`skills/opensuse-packaging/references/wiki-provenance.tsv` — a MediaWiki `oldid` permalink
+is immutable, so a pinned revision is a real baseline rather than "as of some date".
+`scripts/wiki-drift.sh` compares those pins against the live wiki and reports what moved;
+it never applies anything, because the wiki is world-editable and a diff there is a prompt
+to review, not a change to take.
 
 ## Development
 
