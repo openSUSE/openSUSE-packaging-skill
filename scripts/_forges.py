@@ -9,6 +9,7 @@ GitHub companion npm: when a spec already selected github.com/OWNER/REPO,
 also probe npm `@OWNER/REPO` and `REPO` (404 is skip, not a failure). That is
 the whole companion guess list — nothing else is invented.
 """
+import http.client
 import json
 import re
 import subprocess
@@ -34,6 +35,16 @@ _TAG_PREFIX_RES = (
     re.compile(r"/-/archive/([^/]*?)%\{version\}", re.I),
     re.compile(r"/archive/([^/]*?)%\{version\}", re.I),
 )
+
+
+class SourceDown(RuntimeError):
+    """The source could not ANSWER — network, timeout, rate limit, gateway.
+
+    Distinct from the plain RuntimeError the probes raise to report a FACT
+    about a package ("no releases and no datable tags"). The distinction
+    decides whether a sweep degrades its coverage or not, and it cannot be
+    recovered from the message text, so it is carried in the type.
+    """
 
 
 def http_json(url, headers=None, missing_ok=False, ua=None):
@@ -69,15 +80,27 @@ def gh_ok():
 def gh_json(path):
     """GET a GitHub API path; returns parsed JSON or None on 404."""
     if gh_ok():
-        r = subprocess.run(["gh", "api", path], capture_output=True, text=True,
-                           timeout=30)
+        try:
+            r = subprocess.run(["gh", "api", path], capture_output=True,
+                               text=True, timeout=30)
+        except subprocess.SubprocessError as e:
+            # A hung or unspawnable gh is GitHub being unreachable, and
+            # TimeoutExpired is not an OSError, so it would otherwise escape
+            # every caller's except tuple and abort the run.
+            raise SourceDown(f"gh api {path}: {e}") from e
         if r.returncode != 0:
             # 404 = absent; 422 = "No commit found for SHA: <tag>" (a ref that
             # does not exist) — both are facts ("not there"), not failures
             if "404" in r.stderr or "Not Found" in r.stderr or "HTTP 422" in r.stderr:
                 return None
-            raise RuntimeError(f"gh api {path}: {r.stderr.strip()}")
-        return json.loads(r.stdout)
+            # Everything else (rate limit, expired token, DNS, 5xx) is the
+            # source not answering. Raising a bare RuntimeError here would
+            # make it indistinguishable from "this repo has no releases".
+            raise SourceDown(f"gh api {path}: {r.stderr.strip()}")
+        try:
+            return json.loads(r.stdout)
+        except ValueError as e:
+            raise SourceDown(f"gh api {path}: non-JSON output: {e}") from e
     try:
         return http_json(f"https://api.github.com/{path}")
     except urllib.error.HTTPError as e:
@@ -216,9 +239,17 @@ REGISTRY_KINDS = ("pypi", "npm", "crates")
 
 
 def source_registry(src):
-    """(kind, host, name) if Source0 is served by a package registry, else None."""
+    """(kind, host, name) if Source0 is served by a package registry, else None.
+
+    A name still carrying an unexpanded RPM macro (`%{name}`, `%{version}`) is
+    NOT a registry identity: callers read Source0 straight out of the spec text,
+    and such a target can never answer, so treating it as the authority would
+    permanently suppress the package instead of ranking its sources.
+    """
     f = parse_forge(src)
-    return f if f and f[0] in REGISTRY_KINDS else None
+    if not f or f[0] not in REGISTRY_KINDS:
+        return None
+    return None if "%" in (f[2] or "") else f
 
 
 def pick_authoritative(rows, src):
@@ -233,6 +264,50 @@ def pick_authoritative(rows, src):
         if (row[0], row[1], row[2]) == target and row[4]:
             return row
     return None
+
+
+def is_transport_error(e):
+    """True when an exception means "the source did not answer".
+
+    The probes raise for two very different reasons and only one of them is an
+    outage. A refused connection, a timeout, a 403/429/5xx or a body that is
+    not JSON means the source is down; a 404, or a plain RuntimeError such as
+    "no releases and no datable tags", is the source ANSWERING with a fact
+    about that package. Conflating them makes every tagless mirror look like an
+    outage, which would put a several-hundred-package sweep permanently in the
+    degraded state and so destroy the signal.
+    """
+    if isinstance(e, SourceDown):
+        return True
+    if isinstance(e, urllib.error.HTTPError):
+        # 403 is GitHub's primary AND secondary rate-limit response, and how
+        # crates.io refuses a request it does not like (see CRATES_UA above).
+        # The cost is asymmetric: a false outage is a visible exit 3 you can
+        # re-run, a false answer is a silent clean sweep.
+        return e.code in (403, 408, 429, 500, 502, 503, 504)
+    return isinstance(e, (OSError, http.client.HTTPException,
+                          json.JSONDecodeError, UnicodeDecodeError,
+                          subprocess.SubprocessError))
+
+
+def authority_unanswered(src, rows, failed):
+    """Source0's registry is the authority here and it did NOT answer.
+
+    A verdict taken from some other forge while the registry is unreachable is
+    not the registry's verdict — it is the PyPI-lag / parallel-tag-stream false
+    positive the authority rule exists to suppress. Callers must degrade.
+
+    rows: answering (kind, host, name, optional, facts). failed: (kind, host,
+    name) triples whose probe raised a TRANSPORT error — a 404 from the
+    registry is an answer ("no such package there"), not an outage, so callers
+    must not put it in this list.
+    """
+    target = source_registry(src)
+    if not target:
+        return False
+    if any((r[0], r[1], r[2]) == target for r in rows):
+        return False
+    return any((f[0], f[1], f[2]) == target for f in failed)
 
 
 _SCM_URL_RE = re.compile(

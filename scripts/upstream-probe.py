@@ -42,10 +42,12 @@ Traps encoded here (from triage.md):
     selected, npm `@OWNER/REPO` and `REPO` companions (404 skipped), plus
     release-monitoring.org (Anitya) by package name (homepage-from-URL
     disambiguates same-named Anitya projects). One source failing degrades
-    to a warning as long as another answers; merged latest stable/tag are
-    decided by DATE. Anitya publishes versions WITHOUT dates, so when only
-    it sees a newer stable the verdict is UPDATE-CANDIDATE with an explicit
-    verify-by-hand caveat.
+    to a warning as long as another answers — EXCEPT the registry that
+    serves Source0, whose outage has no fallback (another forge's tag is
+    not a release this package can consume), and which therefore exits 2.
+    Merged latest stable/tag are decided by DATE. Anitya publishes versions
+    WITHOUT dates, so when only it sees a newer stable the verdict is
+    UPDATE-CANDIDATE with an explicit verify-by-hand caveat.
 
 Usage:
   upstream-probe.py <pkg> [--project openSUSE:Factory]   # spec fetched via osc
@@ -61,7 +63,7 @@ Exit codes:
      CURRENT
 """
 import argparse, subprocess, sys, urllib.error
-import builtins, os
+import builtins, http.client, os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -136,7 +138,7 @@ def main():
         return _forges.probe_one(spec, packaged, prefix=prefix)
 
     anitya_v = anitya_how = None
-    answered, errors = [], []
+    answered, errors, failed_specs, authority_errors = [], [], [], []
     homepage = url if url and "%" not in url else None
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {ex.submit(probe_job, s): s for s in sources}
@@ -146,7 +148,13 @@ def main():
             kind, host, name, optional = _forges.unpack_forge(spec)
             try:
                 facts = fut.result()
-            except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
+            except (OSError, RuntimeError, ValueError,
+                    http.client.HTTPException) as e:
+                # Only a source that could not ANSWER is an outage; a 404 or
+                # "no datable tags" is the source answering about this package.
+                if _forges.is_transport_error(e):
+                    failed_specs.append((kind, host, name))
+                    authority_errors.append(f"{kind}: {e}")
                 if not optional:
                     errors.append(f"{kind}: {e}")
                 continue
@@ -160,6 +168,9 @@ def main():
 
     answered = _forges.prefer_scoped_npm(answered)
     authoritative = _forges.pick_authoritative(answered, src)
+    # Source0's own registry down + another forge up is NOT a fallback: the
+    # other forge's tag is not a release this package can consume.
+    authority_down = _forges.authority_unanswered(src, answered, failed_specs)
     results, _label_index = _forges.label_results(answered, with_index=True)
     auth_label = (_label_index.get((authoritative[0], authoritative[1],
                                     authoritative[2]))
@@ -168,6 +179,14 @@ def main():
     for err in errors:
         # exception text can embed fetched bytes — sanitize the warning too
         sys.stderr.write(_sanitize.sanitize(f"WARNING: probe failed — {err}\n"))
+
+    if authority_down:
+        reg = _forges.source_registry(src)
+        own = [e for e in authority_errors if e.startswith(f"{reg[0]}:")]
+        die(f"{reg[0]} serves Source0 and could not be reached "
+            f"({'; '.join(own) or 'probe failed'}) — a newer version from any "
+            f"other source is not a release this package can consume, so there "
+            f"is no verdict; re-run when {reg[0]} answers")
 
     if not results:
         if anitya_v:
