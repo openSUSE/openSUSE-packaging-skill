@@ -46,7 +46,8 @@ base_override=""
 amend_author=""
 while :; do
   case "${1:-}" in
-    -h|--help|"") sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    -h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "") sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     --base) base_override=$2; shift 2 ;;
     --amend-top) amend_author=$2; shift 2 ;;
     *) break ;;

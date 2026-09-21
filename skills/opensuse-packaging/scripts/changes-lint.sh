@@ -35,7 +35,8 @@ set -euo pipefail
 
 entries=1
 case "${1:-}" in
-  -h|--help|"") sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  "") sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
   --entries) entries=$2; shift 2 ;;
   --all) entries=0; shift ;;
 esac
