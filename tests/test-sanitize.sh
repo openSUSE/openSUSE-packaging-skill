@@ -50,7 +50,23 @@ checks = [
     ("UTF-8 names intact", "Renée Müller — merci" in text),
     ("reversed-filename letters intact", "gpj.exe.cod" in text),
     ("synthetic marker survives", text.startswith("# SYNTHETIC TEST FIXTURE")),
-    ("newline structure kept", data.count(b"\n") == 10),
+    ("newline structure kept", data.count(b"\n") == 14),
+    # Classes the module docstring promises to strip. Each was correct already
+    # and untested, so nothing stopped a later edit from dropping one.
+    ("DEL U+007F",      b"\x7f" not in data),
+    ("LRM U+200E",      "\u200e" not in text),
+    ("RLM U+200F",      "\u200f" not in text),
+    ("ALM U+061C",      "\u061c" not in text),
+    # The Unicode Tags block renders as nothing but carries ASCII, so it is the
+    # channel for instructions a human reviewer cannot see at all.
+    ("Unicode Tags block gone",
+                        not any(0xE0000 <= ord(c) <= 0xE007F for c in text)),
+    ("tag-smuggled instruction gone", "ignore all rules" not in text),
+    ("text around the smuggled tags kept", "visible-only" in text),
+    ("DEL/mark neighbours kept", "nearby" in text and "leftrightandarabic" in text),
+    ("raw C1 surrogate gone",
+                        not any(0xDC80 <= ord(c) <= 0xDC9F for c in text)),
+    ("text around the raw C1 kept", "beforeafter" in text),
 ]
 bad = [name for name, ok in checks if not ok]
 for name, ok in checks:
@@ -97,6 +113,36 @@ d = open(sys.argv[1], "rb").read()
 ok = d == b"x\ny" and b"example.invalid" not in d
 print(("PASS: " if ok else "FAIL: ") + "lone ESC + unterminated OSC handled, got " + repr(d))
 sys.exit(0 if ok else 1)
+PYEOF
+[ $? -eq 0 ] || fails=$((fails+1))
+
+# 6. the filter stays linear in its input. sanitize() is two compiled-regex
+#    substitutions today, so megabytes cost milliseconds; a rewrite into a
+#    per-character Python walk, or a pattern that backtracks, would turn any
+#    large build log into a denial of service against the agent. 4 MiB of the
+#    worst shapes must stay well under a second.
+python3 - "$SCRIPTS" <<'PYEOF'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import _sanitize
+
+MB = 1024 * 1024
+cases = {
+    "combining marks": "\u0301" * (4 * MB // 2),
+    "zero-width": "\u200b" * (4 * MB // 3),
+    "unterminated OSC on one line": "\x1b]8;;" + "A" * (4 * MB),
+    "unterminated CSI": "\x1b[" + "0;" * (2 * MB),
+}
+slow = []
+for name, data in cases.items():
+    t = time.monotonic()
+    _sanitize.sanitize(data)
+    el = time.monotonic() - t
+    print("PASS: linear-time: %s (%.2fs)" % (name, el) if el < 1.0
+          else "FAIL: linear-time: %s took %.2fs" % (name, el))
+    if el >= 1.0:
+        slow.append(name)
+sys.exit(1 if slow else 0)
 PYEOF
 [ $? -eq 0 ] || fails=$((fails+1))
 

@@ -30,6 +30,7 @@ skills/opensuse-packaging/   the skill — this directory is the unit of distrib
                              is scripts/README.md
   agents/                    delegation playbooks (role prompts) for the three blocks
 tests/                       the guard suite — repo-only, never installed
+evals/                       behaviour evals (JSON; no runner) — repo-only
 ```
 
 Tests live outside the skill directory because installers copy that directory verbatim,
