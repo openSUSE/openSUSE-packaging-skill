@@ -41,6 +41,10 @@ jobs:
         run: (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
       - name: Python suite
         run: python3 tests/test-update-checkers.py
+      - name: Repository gates
+        run: |
+          python3 tests/repo/check-skills.py
+          python3 tests/repo/check-flags.py
 
   lint:
     runs-on: ubuntu-latest
