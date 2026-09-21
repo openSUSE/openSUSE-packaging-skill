@@ -158,7 +158,6 @@ offset=/limit= and hope the window is right".
   refsection.py --list submit-watch.md                  # the heading outline
   refsection.py --lines update-build.md "Common build pitfalls"   # numbered, Read for more
   refsection.py --rule 3 7                              # numbered Core-directive rules of SKILL.md
-  refsection.py --gate build                            # optional: scripts/gates.json, if present
 
 A `##` section prints through the line before the next heading of the SAME or a
 HIGHER level, so its `###` subsections come with it. Several matches are

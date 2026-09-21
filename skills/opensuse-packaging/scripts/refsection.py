@@ -13,7 +13,6 @@ offset=/limit= and hope the window is right".
   refsection.py --list submit-watch.md                  # the heading outline
   refsection.py --lines update-build.md "Common build pitfalls"   # numbered, Read for more
   refsection.py --rule 3 7                              # numbered Core-directive rules of SKILL.md
-  refsection.py --gate build                            # optional: scripts/gates.json, if present
 
 A `##` section prints through the line before the next heading of the SAME or a
 HIGHER level, so its `###` subsections come with it. Several matches are
@@ -41,7 +40,6 @@ the mechanics byte-compatible so fixes port both ways.
 """
 
 import argparse
-import json
 import os
 import re
 import signal
@@ -230,64 +228,18 @@ def locate(lines, headings, bolds, q, anchor=False):
     return "none", None, None
 
 
-# ---- rule-54 gates ---------------------------------------------------------
-
-GATES = os.path.join(ROOT, "scripts", "gates.json")
-RS = os.path.join(ROOT, "scripts", "refsection.py")
-CEILING = 28800  # bytes before the trailer: one gate must arrive as ONE tool result
-RULE_REF = re.compile(r"\brules?[ -](\d+(?:\s*[/,]\s*(?:and\s+)?\d+)*)", re.I)
-
-
-def load_gates():
-    """gates.json minus the `_` keys, validated: a malformed manifest is reported
-    like a broken gate (problems -> exit 2), never a traceback."""
-    try:
-        with open(GATES, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
-        print(
-            "refsection.py: no usable gates manifest (%s: %s) — this skill defines no --gate "
-            "classes; read sections by name instead" % (GATES, e),
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    gates = {k: v for k, v in data.items() if not k.startswith("_")}
-    for name, spec in gates.items():
-        bad = []
-        if not isinstance(spec, dict):
-            bad.append("not an object")
-        else:
-            if not all(isinstance(n, int) for n in spec.get("rules") or []):
-                bad.append("rules must be integers")
-            for key in ("sections", "read_by_name"):
-                if not all(
-                    isinstance(p, list)
-                    and len(p) == 2
-                    and all(isinstance(x, str) for x in p)
-                    for p in spec.get(key) or []
-                ):
-                    bad.append("%s entries must be [file, section] pairs" % key)
-            if spec.get("max_chars") is not None and not isinstance(
-                spec["max_chars"], int
-            ):
-                bad.append("max_chars must be an integer")
-            for key in ("rules", "sections", "read_by_name", "tools"):
-                if spec.get(key) is None:
-                    spec[key] = []
-        if bad:
-            print(
-                "refsection.py: gate %s is broken in %s: %s"
-                % (name, GATES, "; ".join(bad)),
-                file=sys.stderr,
-            )
-            sys.exit(2)
-    return gates
+# ---- SKILL.md hard rules, by number ----------------------------------------
 
 
 def hard_rules():
-    """The numbered rules of SKILL.md 'Hard rules at a glance' as {n: [lines]}:
-    from the `NN. **` line through the line before the next blank one. Only that
-    section — the lifecycle list uses the same `N. **` form."""
+    """The numbered rules of SKILL.md's core-directive section as {n: [lines]}.
+
+    A rule runs from its `NN. **` line to the next one, so that its indented
+    sub-bullets and `NNb.` continuations travel with it. Ending at the first
+    blank line instead would be wrong in both directions: consecutive rules
+    with no blank between them get swallowed into the first of the run (which
+    made rules 2-5 unretrievable, and `--rule 1` print five rules), while a
+    rule whose bullets are separated by a blank line loses them."""
     _, lines = load_doc("SKILL.md")
     headings, bolds = parse(lines)
     for section in ("Hard rules at a glance", "Core directive"):
@@ -296,230 +248,18 @@ def hard_rules():
             break
     else:
         return {}
-    out, i = {}, start
-    while i < end:
-        m = re.match(r"^(\d+)\. \*\*", lines[i])
-        if m:
-            j = i
-            while j < end and lines[j].strip():
-                j += 1
-            out[int(m.group(1))] = lines[i:j]
-            i = j
-        else:
-            i += 1
+    rule = re.compile(r"^(\d+)\. \*\*")
+    starts = [
+        (i, int(m.group(1))) for i in range(start, end) if (m := rule.match(lines[i]))
+    ]
+    out = {}
+    for k, (i, n) in enumerate(starts):
+        stop = starts[k + 1][0] if k + 1 < len(starts) else end
+        block = lines[i:stop]
+        while block and not block[-1].strip():
+            block.pop()
+        out[n] = block
     return out
-
-
-def cited_rules(text):
-    found = set()
-    for m in RULE_REF.finditer(text):
-        for n in re.findall(r"\d+", m.group(1)):
-            found.add(int(n))
-    return found
-
-
-def trim_footer(body):
-    """A section that runs to EOF drags the file's attribution footer along."""
-    body = list(body)
-    while body and (
-        not body[-1].strip() or re.match(r"^(-{3,}|\*.*\*)\s*$", body[-1].strip())
-    ):
-        body.pop()
-    return body
-
-
-def _resolve_pairs(pairs, problems, docs):
-    """[(file, section)] -> [(file, section, body, kind)] via locate()."""
-    out = []
-    for fname, section in pairs:
-        if fname not in docs:
-            path, lines = load_doc(fname)
-            if path:
-                headings, bolds = parse(lines)
-                docs[fname] = (lines, headings, bolds)
-            else:
-                problems.append(lines)
-                docs[fname] = None
-        if docs[fname] is None:
-            continue
-        lines, headings, bolds = docs[fname]
-        status, start, end = locate(lines, headings, bolds, section)
-        if status != "ok":
-            problems.append(
-                "%s %r: %s"
-                % (
-                    fname,
-                    section,
-                    "ambiguous" if status == "ambiguous" else "no such section",
-                )
-            )
-            continue
-        kind = (
-            "H%d" % headings[[h[0] for h in headings].index(start)][1]
-            if start in [h[0] for h in headings]
-            else "bold lead-in"
-        )
-        body = lines[start:end]
-        if end >= len(lines):
-            body = trim_footer(body)
-        out.append((fname, section, body, kind))
-    return out
-
-
-def gate_text(cls, spec, seen=(), no_rules=False):
-    """Assemble one gate. Returns (text, problems, bytes_before_trailer)."""
-    out, problems, docs = [], [], {}
-    gates = load_gates()
-    already = set()
-    for s in seen:
-        if s not in gates:
-            problems.append("--seen: no gate class %r" % s)
-        else:
-            already |= set(gates[s].get("rules", []))
-    out.append(
-        "# GATE %s — rule 54: read this before %s"
-        % (cls, spec.get("before", "the first call"))
-    )
-    out.append("Tools in this class: %s." % ", ".join(spec.get("tools", [])))
-    if spec.get("scoped"):
-        out.append(
-            "Scope: with more than one template loaded, scope every call in this class "
-            'with template="<RRID>" [rule 28].'
-        )
-    if no_rules:
-        out.append(
-            "Read this once per session, right before that first call; the hard rules are "
-            "in SKILL.md, which you hold."
-        )
-    else:
-        out.append(
-            "Read this once per session, right before that first call. Do not read the whole "
-            "reference; a sub-agent does not load SKILL.md — the hard rules that bind this "
-            "class are printed below, and a rule a section cites by number but that is not "
-            "printed here is still binding: `python3 %s --rule N` prints it." % RS
-        )
-    rbn = _resolve_pairs(spec.get("read_by_name", []), problems, docs)
-    if rbn:
-        out.append(
-            "Later-stage sections, read by name when you reach them "
-            '(`python3 %s <file> "<Section>"`): '
-            % RS
-            + "; ".join('%s "%s"' % (f, s) for f, s, _, _ in rbn)
-            + "."
-        )
-    out.append("")
-    rules = hard_rules()
-    want = [] if no_rules else [n for n in spec.get("rules", []) if n not in already]
-    if not no_rules:
-        out.append("## Hard rules for this class (SKILL.md, verbatim)")
-        skipped = sorted(n for n in spec.get("rules", []) if n in already)
-        if skipped:
-            out.append(
-                "(already printed by gate%s %s: rule%s %s)"
-                % (
-                    "s" if len(seen) > 1 else "",
-                    ", ".join(seen),
-                    "s" if len(skipped) > 1 else "",
-                    ", ".join(map(str, skipped)),
-                )
-            )
-        out.append("")
-        for n in want:
-            if n not in rules:
-                problems.append(
-                    "rule %d not found in SKILL.md 'Hard rules at a glance'" % n
-                )
-                continue
-            out.extend(rules[n])
-            out.append("")
-    sections = _resolve_pairs(spec.get("sections", []), problems, docs)
-    cited = cited_rules("\n".join(out[1:]))  # skip the title line: it names rule 54
-    for _, _, body, _ in sections:
-        cited |= cited_rules("\n".join(body))
-    printed = set(spec.get("rules", [])) if no_rules else (set(want) | already)
-    printed.add(54)  # reading this gate IS rule 54
-    missing = sorted(n for n in cited if n not in printed and n in rules)
-    if missing and not no_rules:
-        out.append(
-            "Also cited by the sections below but not printed above (still binding): rule%s %s "
-            "— `python3 %s --rule N`."
-            % ("s" if len(missing) > 1 else "", ", ".join(map(str, missing)), RS)
-        )
-        out.append("")
-    for fname, section, body, kind in sections:
-        out.append(
-            '---- references/%s "%s" (%s, %d lines) ----'
-            % (os.path.basename(fname), section, kind, len(body))
-        )
-        out.extend(body)
-        out.append("")
-    text = "\n".join(out).rstrip("\n") + "\n"
-    n = len(text.encode("utf-8"))
-    text += "---- end of gate %s: %d bytes above, %d rules, %d sections ----\n" % (
-        cls,
-        n,
-        len(want),
-        len(sections),
-    )
-    return text, problems, n
-
-
-def run_gate(cls, want_list, seen=(), no_rules=False):
-    gates = load_gates()
-    if want_list or not cls:
-        bad = 0
-        print("%-13s %7s %5s %4s  %s" % ("class", "bytes", "rules", "sect", "tools"))
-        for name, spec in gates.items():
-            text, problems, n = gate_text(name, spec)
-            over = n > min(spec.get("max_chars", CEILING), CEILING)
-            flag = "!" if (problems or over) else " "
-            bad += 1 if (problems or over) else 0
-            print(
-                "%s%-12s %7d %5d %4d  %s"
-                % (
-                    flag,
-                    name,
-                    n,
-                    len(spec.get("rules", [])),
-                    len(spec.get("sections", [])),
-                    ", ".join(spec.get("tools", [])),
-                )
-            )
-        if bad:
-            print(
-                "refsection.py: %d gate(s) marked '!' are broken or over budget" % bad,
-                file=sys.stderr,
-            )
-        return 2 if bad else 0
-    if cls not in gates:
-        print(
-            "refsection.py: no gate class %r; classes are: %s"
-            % (cls, ", ".join(gates)),
-            file=sys.stderr,
-        )
-        return 3
-    text, problems, n = gate_text(cls, gates[cls], seen, no_rules)
-    if problems:
-        print(
-            "refsection.py: gate %s is broken (scripts/gates.json vs the docs):" % cls,
-            file=sys.stderr,
-        )
-        for p in problems:
-            print("  " + p, file=sys.stderr)
-        return 2
-    try:
-        sys.stdout.write(text)
-    except UnicodeEncodeError:
-        sys.stdout.buffer.write(text.encode("utf-8", "replace"))
-    cap = min(gates[cls].get("max_chars", CEILING), CEILING)
-    if n > cap:
-        print(
-            "refsection.py: gate %s is %d bytes, over its %d budget — trim it (the text "
-            "above is still the gate; read it)" % (cls, n, cap),
-            file=sys.stderr,
-        )
-        return 2
-    return 0
 
 
 def run_rules(nums):
@@ -543,8 +283,7 @@ def main(argv=None):
         prog="refsection.py",
         description="Print one section of a skill doc.",
         epilog='refsection.py specfile-guidelines.md "Patches" | --list <file> | '
-        "--anchor <file> A6 | --gate <class> [--seen a,b] "
-        "[--no-rules] | --gate --list | --rule 26 32",
+        "--anchor <file> A6 | --rule 26 32",
     )
     ap.add_argument(
         "--list", action="store_true", help="print the heading outline only"
@@ -556,24 +295,6 @@ def main(argv=None):
     )
     ap.add_argument(
         "--lines", action="store_true", help="prefix output with line numbers"
-    )
-    ap.add_argument(
-        "--gate",
-        metavar="CLASS",
-        nargs="?",
-        const="",
-        help="rule-54 gate: the class's hard rules + operative sections "
-        "(scripts/gates.json); `--gate --list` lists the classes",
-    )
-    ap.add_argument(
-        "--seen",
-        metavar="CLASSES",
-        help="with --gate: omit rules these comma-separated gates already printed",
-    )
-    ap.add_argument(
-        "--no-rules",
-        action="store_true",
-        help="with --gate: sections only (the orchestrator holds SKILL.md)",
     )
     ap.add_argument(
         "--rule",
@@ -591,36 +312,15 @@ def main(argv=None):
         head, tail = argv[: argv.index("--")], argv[argv.index("--") + 1 :]
     else:
         head, tail = argv, []
-    mode, marg, seen, no_rules, hoisted, i, twice = None, None, [], False, [], 0, False
+    mode, marg, hoisted, i, twice = None, None, [], 0, False
     while i < len(head):
         x = head[i]
-        if x == "--gate" or x.startswith("--gate="):
-            twice |= mode is not None
-            mode = "gate"
-            if "=" in x:
-                marg = x.split("=", 1)[1]
-            elif i + 1 < len(head) and not head[i + 1].startswith("-"):
-                marg = head[i + 1]
-                i += 1
-            else:
-                marg = ""
-        elif x == "--rule":
+        if x == "--rule":
             twice |= mode is not None
             mode, marg = "rule", []
             while i + 1 < len(head) and head[i + 1].isdigit():
                 marg.append(int(head[i + 1]))
                 i += 1
-        elif x == "--seen" or x.startswith("--seen="):
-            if "=" in x:
-                v = x.split("=", 1)[1]
-            elif i + 1 < len(head) and not head[i + 1].startswith("-"):
-                v = head[i + 1]
-                i += 1
-            else:
-                v = ""
-            seen = [s for s in v.split(",") if s] or ["?"]  # "?" = a value was missing
-        elif x == "--no-rules":
-            no_rules = True
         else:
             hoisted.append(x)
         i += 1
@@ -630,33 +330,16 @@ def main(argv=None):
     a = ap.parse_args(flags + ["--"] + rest)
 
     if mode:
-        bad = (
-            twice
-            or a.args
-            or a.lines
-            or a.anchor
-            or (a.list and mode == "rule")
-            or (a.list and mode == "gate" and (marg or seen or no_rules))
-            or (mode == "gate" and not marg and not a.list)
-            or ((seen or no_rules) and mode != "gate")
-            or "?" in seen
-        )
+        bad = twice or a.args or a.lines or a.anchor or a.list
         if bad:
             print(
-                "refsection.py: one of --gate CLASS | --gate --list | --rule N…; no FILE/SECTION, "
-                "no --lines/--anchor; --seen/--no-rules only with --gate CLASS",
+                "refsection.py: --rule N… takes rule numbers only — no FILE/SECTION, "
+                "no --list/--lines/--anchor",
                 file=sys.stderr,
             )
             ap.print_usage(sys.stderr)
             return 3
-        return (
-            run_gate(marg, a.list, seen, no_rules)
-            if mode == "gate"
-            else run_rules(marg)
-        )
-    if seen or no_rules:
-        print("refsection.py: --seen/--no-rules need --gate CLASS", file=sys.stderr)
-        return 3
+        return run_rules(marg)
 
     if not a.args or len(a.args) > 2 or (not a.list and len(a.args) != 2):
         ap.print_usage(sys.stderr)
