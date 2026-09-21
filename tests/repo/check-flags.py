@@ -143,6 +143,33 @@ def main(argv=None):
                                 (rel, line, f"{name} --help does not mention {flag}")
                             )
 
+        # AGENTS.md: every runnable script prints usage with -h/--help. An
+        # explicit help request is a request that SUCCEEDED, so it exits 0; 2 is
+        # for a usage error, and conflating them misleads any caller that
+        # checks the status.
+        for fn in sorted(os.listdir(scripts)) if os.path.isdir(scripts) else []:
+            if fn.startswith("_") or not fn.endswith((".py", ".sh")):
+                continue
+            full = os.path.join(scripts, fn)
+            cmd = (
+                [sys.executable, full, "--help"]
+                if fn.endswith(".py")
+                else ["bash", full, "--help"]
+            )
+            try:
+                r = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=30, cwd=ROOT
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                findings.append((f"scripts/{fn}", 0, f"--help could not run: {e}"))
+                continue
+            if r.returncode != 0:
+                findings.append(
+                    (f"scripts/{fn}", 0, f"--help exits {r.returncode}, want 0")
+                )
+            elif not (r.stdout or r.stderr).strip():
+                findings.append((f"scripts/{fn}", 0, "--help prints nothing"))
+
     for path, line, msg in findings:
         print(f"flags: {path}:{line}: {msg}")
     if findings:
