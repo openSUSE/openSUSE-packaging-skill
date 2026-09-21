@@ -6,7 +6,7 @@
 # failing assertion named. Run from anywhere; paths are self-relative.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPTS="$HERE/../scripts"
+SCRIPTS="$HERE/../skills/opensuse-packaging/scripts"
 FIX="$HERE/fixtures"
 SAN="$SCRIPTS/_sanitize.py"
 fails=0

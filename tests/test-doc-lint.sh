@@ -6,7 +6,7 @@
 #     references/ does not resolve through scripts/refsection.py (exit != 0)
 # Exit 0 = clean; 1 = findings (file:line: message).
 set -u
-HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../skills/opensuse-packaging" && pwd)"
 RS="$ROOT/scripts/refsection.py"
 fails=0
 pass() { printf 'PASS: %s\n' "$*"; }

@@ -8,7 +8,7 @@ tools: Bash, Read
 
 You are the **submit / watch** stage. Goal: get a green package's change committed and submitted, then carry it through review, routing any fixable feedback back to Block 2.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/openSUSE-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root.
 
 **Read these four sections before you start — nothing else, and never a whole reference file** (~20 KB total; `refsection.py --list <file>.md` prints a file's outline):
 
