@@ -45,6 +45,30 @@ TABLE
 out="$("$SCRIPT" "$FIX/rename-glob/new" --base "$FIX/rename-glob/old" 2>/dev/null)"
 grep -qxF 'A patch (zoo-2.10.1-tempfile.patch) is being added without this addition being mentioned in the changelog.' <<<"$out" \
   && pass "finding uses factory-auto's exact sentence" || fail "finding wording drifted from factory-auto"
+# An scmsync package carries BOTH .osc and .git, and the osc side cannot see the
+# change: it keeps no _files, so the listing comes back as git HEAD (the
+# unmodified side) and `osc status` says nothing in a git checkout. Taking the
+# osc branch therefore reports "no patch added or removed" over a real added
+# patch. This builds that exact shape offline and asserts the finding fires.
+scm="$(mktemp -d)"
+trap 'rm -rf "$scm"' EXIT
+(
+  cd "$scm" || exit 1
+  git init -q . && git config user.email t@example.com && git config user.name t
+  printf -- '-------------------------------------------------------------------\nMon Jan  1 00:00:00 UTC 2024 - you@example.com\n\n- initial\n' > p.changes
+  printf 'Name: p\n' > p.spec
+  git add p.changes p.spec && git commit -qm base
+  mkdir -p .osc && printf 'url=https://example.invalid/p.git\n' > .osc/_scm
+  printf 'x\n' > added.patch && git add added.patch          # added, unmentioned
+) || fail "could not build the scmsync fixture"
+out="$("$SCRIPT" "$scm" --git-base HEAD 2>&1)"; rc=$?
+if [ "$rc" = 1 ] && grep -q 'added.patch) is being added' <<<"$out"; then
+  pass "scmsync checkout: unmentioned added patch is found (not a false clean)"
+else
+  fail "scmsync checkout: expected rc=1 with an 'is being added' finding, got rc=$rc"
+  printf '%s\n' "$out" | sed 's/^/    /'
+fi
+
 # usage errors never look clean
 "$SCRIPT" --target 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"
 "$SCRIPT" /nonexistent-dir-for-test --base "$FIX/rename-glob/old" >/dev/null 2>&1; [ $? -ne 0 ] && pass "nonexistent DIR does not exit 0" || fail "nonexistent DIR exited 0"
