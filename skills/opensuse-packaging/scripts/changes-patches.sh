@@ -74,7 +74,7 @@ if base is not None:
     new_files = {f for f in os.listdir(d)
                  if os.path.isfile(os.path.join(d, f)) and not f.startswith(".")}
     where = base
-elif os.path.isdir(os.path.join(d, ".osc")):
+elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(d, ".osc/_scm")):
     pkg = read(os.path.join(d, ".osc/_package")).strip()
     if os.path.exists(os.path.join(d, ".osc/_files")):
         files_xml = ET.parse(os.path.join(d, ".osc/_files")).getroot()
@@ -109,6 +109,12 @@ elif os.path.isdir(os.path.join(d, ".osc")):
             (new_files.add if line[0] == "A" else new_files.discard)(line[4:].strip())
     where = f"{tprj}/{tpkg}"
 elif run(["git", "rev-parse", "--show-toplevel"], cwd=d)[0] == 0:
+    # An scmsync package carries BOTH .osc and .git. The osc side is useless
+    # here: it keeps no _files, so the API returns the *server's* listing --
+    # which is git HEAD, i.e. the unmodified side -- and `osc status` reports
+    # nothing in a git checkout, so a real patch delta reads as "no change".
+    if os.path.exists(os.path.join(d, ".osc/_scm")):
+        print("note: scmsync package — comparing the git tree, not the osc listing")
     ref = gitbase
     if ref is None:
         rc, out, _ = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=d)
