@@ -1,10 +1,13 @@
 # OBS API token authentication
 
 Client-side contract for authenticating to the Open Build Service with a
-general API token instead of a username and password. The server side
-(token issuance UI, validation, expiry) is proposed and tracked separately;
-this document fixes what the client — `osc`, scripts, and agents — must do
-so both sides can be built against the same expectations.
+general API token instead of a username and password. The server side is
+implemented alongside this contract as a draft in open-build-service
+(`Token::APIToken`: `Authorization: Bearer` authentication, SHA256-hashed
+secret storage, optional expiry, web UI plus API issuance/revocation —
+branch `draft/api-tokens` on scarabeusiv/open-build-service); this document
+fixes what the client — `osc`, scripts, and agents — must do so both sides
+stay aligned.
 
 ## Token model
 
