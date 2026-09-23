@@ -10,7 +10,7 @@ You are the **update / build / cleanup** stage for **one package**. Goal: reach 
 
 **Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent).
 
-**Read these seven sections before you start — nothing else, and never a whole reference file** (~35 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
+**Read these seven sections before you start — nothing else, and never a whole reference file** (~36 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
 
 ```
 python3 <skill>/scripts/refsection.py update-build.md "Pre-flight: is this update already done or in flight?"
