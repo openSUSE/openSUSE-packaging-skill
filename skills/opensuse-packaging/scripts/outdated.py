@@ -154,9 +154,15 @@ ap.add_argument(
 )
 args = ap.parse_args()
 
-src = (
-    open(args.names) if args.names else (sys.stdin if not sys.stdin.isatty() else None)
-)
+try:
+    src = (
+        open(args.names)
+        if args.names
+        else (sys.stdin if not sys.stdin.isatty() else None)
+    )
+except OSError as e:
+    print(f"outdated.py: cannot read --names: {e}", file=sys.stderr)
+    sys.exit(2)
 mine = set(line.strip() for line in src if line.strip()) if src else None
 
 # Kick off the release-monitoring.org lookups for the WHOLE name set right

@@ -39,7 +39,8 @@
 # do not wire an override into the automated flow.
 #
 #   Exit: 0 = insertion-only (or an allowed --amend-top edit, or new file),
-#         1 = a prior entry was modified, 2 = usage error.
+#         1 = a prior entry was modified, 2 = usage error,
+#         3 = an input (a .changes file or the --base FILE) is unreadable.
 set -euo pipefail
 
 base_override=""
@@ -53,6 +54,8 @@ while :; do
     *) break ;;
   esac
 done
+[ $# -gt 0 ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ -z "$base_override" ] || [ -r "$base_override" ] || { echo "$base_override: unreadable" >&2; exit 3; }
 
 find_base() {                      # $1 = working .changes path; echoes baseline to stdout
   local work=$1 dir bn
@@ -104,9 +107,9 @@ amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
        >/dev/null 2>&1
 }
 
-rc=0
+rc=0; unreadable=0
 for work in "$@"; do
-  [ -r "$work" ] || { echo "$work: unreadable" >&2; rc=1; continue; }
+  [ -r "$work" ] || { echo "$work: unreadable" >&2; unreadable=1; continue; }
   base=$(mktemp); find_base "$work" > "$base"
   if [ ! -s "$base" ]; then
     echo "$work: OK — no prior committed .changes to protect (new file)"
@@ -128,4 +131,5 @@ for work in "$@"; do
   fi
   rm -f "$base"
 done
+[ $unreadable = 0 ] || exit 3
 exit $rc

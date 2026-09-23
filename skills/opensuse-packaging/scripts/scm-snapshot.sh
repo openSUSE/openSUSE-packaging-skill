@@ -7,6 +7,7 @@
 #
 # Usage: scm-snapshot.sh <git-url> [--rev <sha|branch>] [--base X.Y.Z]
 #                        [--pkg NAME] [--update]
+#   <git-url> may be omitted with --update: the existing _service's url is used.
 #   --rev     commit-ish to pin (default: the remote HEAD)
 #   --base    version base for '<base>~git%cd.%h' (default: 0)
 #   --pkg     package name (default: url basename without .git)

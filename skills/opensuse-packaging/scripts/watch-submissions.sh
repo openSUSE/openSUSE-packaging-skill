@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
     --allow-empty) ALLOW_EMPTY=1; shift;;
     --no-prs) NO_PRS=1; shift;;
     --no-incoming) NO_INCOMING=1; shift;;
-    *) echo "unknown argument: $1 (see --help)" >&2; exit 2;;
+    *) echo "unknown argument: $1 (usage: references/script-usage.md)" >&2; exit 2;;
   esac
 done
 

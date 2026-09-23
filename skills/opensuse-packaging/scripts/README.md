@@ -45,11 +45,11 @@ Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/st
 
 ## `devel-of.sh`
 
-The devel project registered for a package (exit 3 = not in target/new package, exit 4 = present but no devel project).
+The devel project registered for a package (exit 3 = not in target/new package, exit 4 = present but no devel project, exit 5 = lookup failed — never read as "new package").
 
 ## `autoforward-gate.sh`
 
-May **your own** accepted request be forwarded onward unattended? **The gate is the `reviewer` role, NOT co-maintainership**: eligible when no explicit `reviewer` (person *or* group, package *or* project) is set *and* either you hold `maintainer` on the package, or the package has **no maintainer at all** and you hold `maintainer` on the project. A co-maintainer who never set a reviewer role has not asked to be consulted; an explicit `reviewer` has — and gating on "does anyone else co-maintain this" blocks most ordinary packages while catching nothing the reviewer role misses. exit 0 ELIGIBLE / 3 BLOCKED / 4 NOT_YOURS / 5 unreadable; `--batch <file>` takes `<project>\t<package>` lines. **Applies only to requests you created** — accepting or declining someone else's is always an explicit human decision (core directive item 10) — and always check for an already in-flight target request first, since devel maintainers and OBS itself often auto-forward on accept.
+May **your own** accepted request be forwarded onward unattended? **The gate is the `reviewer` role, NOT co-maintainership**: eligible when no explicit `reviewer` (person *or* group, package *or* project) is set *and* either you hold `maintainer` on the package, or the package has **no maintainer at all** and you hold `maintainer` on the project. A co-maintainer who never set a reviewer role has not asked to be consulted; an explicit `reviewer` has — and gating on "does anyone else co-maintain this" blocks most ordinary packages while catching nothing the reviewer role misses. exit 0 ELIGIBLE / 3 BLOCKED / 4 NOT_YOURS / 5 unreadable; `--batch <file>` takes `<project>\t<package>` lines and exits with the worst row (5 > 3 > 4 > 0), so one unreadable or foreign package never lets the set read as ELIGIBLE. **Applies only to requests you created** — accepting or declining someone else's is always an explicit human decision (core directive item 10) — and always check for an already in-flight target request first, since devel maintainers and OBS itself often auto-forward on accept.
 
 ## `gpg-verify.sh`
 
@@ -65,7 +65,7 @@ After building anything that ships a shared library, audit the produced RPMs for
 
 ## `cone-status.sh`
 
-Per-package build-status table for a whole project with a loopable exit code (0 green / 1 in-flight / 2 settled failure); encodes the stale-failure-while-rebuilding guard.
+Per-package build-status table for a whole project with a loopable exit code (0 green / 1 in-flight / 2 settled failure / 3 no answer: usage or a failed lookup, kept apart from a real build failure); encodes the stale-failure-while-rebuilding guard.
 
 ## `leap-sync.sh`
 
@@ -73,7 +73,7 @@ Content-sync a package's Leap pool branch up to factory and open the Package Hub
 
 ## `leap-status.sh`
 
-Is the package in Leap, at what version per branch, and is a PR ALREADY open? exit 0/1/2/3 = in-sync / behind-no-PR / behind-PR-open / not-in-Leap.
+Is the package in Leap, at what version per branch, and is a PR ALREADY open? exit 0/1/2/3 = in-sync / behind-no-PR / behind-PR-open / not-in-Leap; 4 = no verdict (a branch's Version unreadable, or usage), 5 = network — neither ever reads as in-sync or PR-open.
 
 ## `scm-snapshot.sh`
 

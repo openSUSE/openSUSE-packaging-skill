@@ -30,7 +30,8 @@
 #       a real decline: "modify the changelog entry to contain more
 #       details"); the format checks above pass on such an entry, so this
 #       is the gate that catches it
-#   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage.
+#   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
+#         3 = a file is unreadable.
 set -euo pipefail
 
 entries=1
@@ -41,9 +42,10 @@ case "${1:-}" in
   --all) entries=0; shift ;;
 esac
 
-rc=0
+[ $# -gt 0 ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+rc=0; unreadable=0
 for f in "$@"; do
-  [ -r "$f" ] || { echo "$f: unreadable" >&2; rc=1; continue; }
+  [ -r "$f" ] || { echo "$f: unreadable" >&2; unreadable=1; continue; }
   python3 - "$f" "$entries" <<'PY' || rc=1
 import re, sys
 f, nent = sys.argv[1], int(sys.argv[2])
@@ -122,5 +124,6 @@ for i, msg in sorted(set(bad)):
 sys.exit(1 if bad else 0)
 PY
 done
+[ $unreadable = 0 ] || exit 3
 [ $rc -eq 0 ] && echo "OK: clean"
 exit $rc

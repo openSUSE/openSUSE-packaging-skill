@@ -34,8 +34,8 @@ Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
   --verbose  print scanned/skipped counts and why each skip happened
   --no-prs   skip bucket C
 
-Exit: 0 on success (empty result isn't an error); 2 on an OBS query/parse
-failure (never read as "nothing pending"). Gitea leg fails soft.
+Exit: 0 on success (empty result isn't an error); 2 on a usage error or an
+OBS query/parse failure (never read as "nothing pending"). Gitea leg fails soft.
 """
 
 import sys

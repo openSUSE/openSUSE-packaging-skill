@@ -33,7 +33,7 @@ OBS treats commit and push as a single operation: `osc commit` (alias `osc ci`) 
 
 A co-maintainer who never set a reviewer role has not asked to be consulted; an explicit `reviewer` has. Gating instead on "does anyone else co-maintain this" is the wrong test: it blocks the large majority of ordinary packages while catching nothing the reviewer role does not already catch. (Real case that produced this rule: two packages that had to be handled differently were distinguishable *only* by the reviewer role — both had co-maintainers.)
 
-`scripts/autoforward-gate.sh` mechanizes the call: exit 0 ELIGIBLE, 3 BLOCKED (reviewer set — report and wait), 4 NOT_YOURS, 5 meta unreadable. `--batch <file>` takes `<project>\t<package>` lines for a whole set.
+`scripts/autoforward-gate.sh` mechanizes the call: exit 0 ELIGIBLE, 3 BLOCKED (reviewer set — report and wait), 4 NOT_YOURS, 5 meta unreadable. `--batch <file>` takes `<project>\t<package>` lines for a whole set and exits with the worst row (5 > 3 > 4 > 0).
 
 Two absolute limits:
 - It applies **only to requests you created**. Accepting or declining **somebody else's** request is always an explicit human decision, whatever the roles say — holding maintainer rights is not permission to use them unattended. See SKILL.md core directive item 10 and "Reviewing incoming requests" below.
