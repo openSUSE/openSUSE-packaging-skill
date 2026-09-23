@@ -20,6 +20,7 @@
 #   2  behind, PR already open   -> do nothing (no double-filing); PR printed
 #   3  not in Leap (factory-only branches) -> pool-maintainer onboarding, see
 #      references/leap-slfo.md §4 (leap-sync.sh refuses this case)
+#   4  no verdict: a branch's spec Version could not be read, or usage error
 #   5  network/API failure (NEVER reported as a fake in-sync)
 #
 # Public reads work unauthenticated; a token from ~/.config/tea/config.yml is
@@ -27,7 +28,7 @@
 set -uo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
-  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 4;;
 esac
 pkg="$1"
 G="https://src.opensuse.org"
@@ -134,7 +135,7 @@ for b in leap-16.0 leap-16.1 slfo-1.2 slfo-main; do
 done
 if [ -n "$unknown" ]; then
   echo "VERDICT: UNKNOWN — could not read the spec Version on:$unknown (network, auth, or a renamed spec). Refusing to guess; check manually before syncing." >&2
-  exit 2
+  exit 4
 fi
 behind=""
 for b in leap-16.0 leap-16.1 slfo-1.2 slfo-main; do

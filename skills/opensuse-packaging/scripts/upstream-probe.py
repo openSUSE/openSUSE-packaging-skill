@@ -117,7 +117,12 @@ def main():
 
     pkgname, packaged, url, src = a.pkg, a.version, a.url, None
     if a.spec:
-        pkgname, packaged, url, src = _forges.spec_facts(open(a.spec).read())
+        try:
+            with open(a.spec) as fh:
+                spec_text = fh.read()
+        except OSError as e:
+            die(f"cannot read --spec: {e}")
+        pkgname, packaged, url, src = _forges.spec_facts(spec_text)
     elif a.pkg:
         r = subprocess.run(
             ["osc", "cat", a.project, a.pkg, f"{a.pkg}.spec"],
@@ -385,4 +390,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # An uncaught exception would exit 1, which reads as UPDATE-CANDIDATE.
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        die("internal error — no verdict")

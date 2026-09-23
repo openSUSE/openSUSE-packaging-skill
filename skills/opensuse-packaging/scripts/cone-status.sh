@@ -15,6 +15,7 @@
 #   2  a settled failure (failed/broken/unresolvable/UNKNOWN code) with nothing
 #      in flight — an unrecognized status code counts as settled-failure, NOT
 #      pending, so a stuck package can't keep the loop spinning forever
+#   3  no answer: usage error, or the _meta/_result lookup failed or did not parse
 #
 # Usage: cone-status.sh <project> [repo] [arch]
 #   repo default: first <repository> in the project _meta;  arch default: x86_64
@@ -24,7 +25,7 @@
 set -uo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
-  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 3;;
 esac
 prj="$1"; repo="${2:-}"; arch="${3:-x86_64}"
 
@@ -38,11 +39,11 @@ except ET.ParseError:
 r = root.find("repository")
 if r is not None: print(r.get("name",""))
 ')"
-  [ -n "$repo" ] || { echo "no repository in $prj/_meta — pass one explicitly" >&2; exit 2; }
+  [ -n "$repo" ] || { echo "no repository in $prj/_meta — pass one explicitly" >&2; exit 3; }
 fi
 
 res="$(osc api "/build/$prj/_result?repository=$repo&arch=$arch" 2>/dev/null)"
-[ -n "$res" ] || { echo "no build result for $prj $repo/$arch" >&2; exit 2; }
+[ -n "$res" ] || { echo "no build result for $prj $repo/$arch" >&2; exit 3; }
 
 # Parse with xml.etree (attribute-order-independent), classify, print, and
 # encode the verdict in the exit code.
@@ -51,15 +52,15 @@ import sys, os, xml.etree.ElementTree as ET
 try:
     root = ET.fromstring(sys.stdin.read())
 except ET.ParseError as e:
-    sys.stderr.write(f"unparseable _result: {e}\n"); sys.exit(2)
+    sys.stderr.write(f"unparseable _result: {e}\n"); sys.exit(3)
 result = root.find("result")
 if result is None:
-    sys.stderr.write("no <result> element\n"); sys.exit(2)
+    sys.stderr.write("no <result> element\n"); sys.exit(3)
 dirty = result.get("dirty") == "true"
 overall = result.get("state") or result.get("code") or "?"
 rows = [(s.get("code",""), s.get("package","")) for s in result.findall("status")]
 if not rows:
-    sys.stderr.write("no package statuses parsed\n"); sys.exit(2)
+    sys.stderr.write("no package statuses parsed\n"); sys.exit(3)
 
 prj, repo, arch = os.environ["PRJ"], os.environ["REPO"], os.environ["ARCH"]
 dirty_s = ", dirty" if dirty else ""

@@ -47,12 +47,12 @@ prs=$(curl -sS --max-time 20 -H "Authorization: token $tok" \
 existing=$(printf '%s' "$prs" | python3 -c "
 import sys,json
 try: d=json.load(sys.stdin)
-except Exception: sys.exit(0)
+except Exception: sys.exit(1)
 for p in d:
     if (p.get('base') or {}).get('ref') == '$leap':
         h=p.get('head') or {}
         print('%s\t%s\t%s\t%s' % (p.get('html_url') or '', p.get('number'), h.get('ref') or '', ((h.get('repo') or {}).get('owner') or {}).get('login') or '')); break
-" 2>/dev/null) || existing=""
+" 2>/dev/null) || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate" >&2; exit 6; }
 pr_num=""; pr_head=""; pr_owner=""
 if [ -n "$existing" ]; then
   pr_url=$(printf '%s' "$existing" | cut -f1)

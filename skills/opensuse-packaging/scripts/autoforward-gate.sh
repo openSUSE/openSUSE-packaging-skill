@@ -26,7 +26,9 @@
 #   exit 3  BLOCKED    — an explicit reviewer role exists; stop, report, wait
 #   exit 4  NOT_YOURS  — package has a maintainer and it is not you
 #   exit 5  package/meta unreadable (404, auth, network)
-#   exit 2  usage error
+#   exit 2  usage error (also an empty --batch file)
+#
+# --batch exits with the worst row: 5 UNREADABLE > 3 BLOCKED > 4 NOT_YOURS > 0.
 #
 # Usage: autoforward-gate.sh <project> <package> [--user <account>]
 #        autoforward-gate.sh --batch <file>   # lines of "<project>\t<package>"
@@ -100,14 +102,17 @@ check_one() {
 
 if [ -n "$batch" ]; then
   [ -r "$batch" ] || { echo "cannot read $batch" >&2; exit 2; }
-  rc_any=0
+  rc_any=0; rows=0
+  rank() { case $1 in 5) echo 3;; 3) echo 2;; 4) echo 1;; *) echo 0;; esac; }
   while IFS=$'\t' read -r bp bk; do
     [ -n "${bp:-}" ] && [ -n "${bk:-}" ] || continue
+    rows=$((rows+1))
     out="$(check_one "$bp" "$bk")"; rc=$?
     [ $rc -eq 5 ] && out=$'UNREADABLE\t-\t-\tmeta unreadable'
     printf '%s/%s\t%s\n' "$bp" "$bk" "$out"
-    [ $rc -eq 3 ] && rc_any=3
+    [ "$(rank $rc)" -gt "$(rank $rc_any)" ] && rc_any=$rc
   done < "$batch"
+  [ $rows -gt 0 ] || { echo "no project/package rows in $batch" >&2; exit 2; }
   exit $rc_any
 fi
 
