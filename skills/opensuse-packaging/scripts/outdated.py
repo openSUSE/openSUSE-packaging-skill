@@ -53,8 +53,9 @@ NO SOURCE IS ALLOWED TO ABORT THE SWEEP, AND A LOST SOURCE IS NOT A CLEAN BILL
 OF HEALTH. Any of these can be down at any time, and Repology in particular is
 down often. When one is, the run degrades to the others with ONE WARNING per
 source on stderr as it happens (keeping whatever it had already downloaded),
-and the report's last line is a short COVERAGE verdict naming what was lost. So an unattended caller can tell
-"nothing needs updating" apart from "nothing was checked".
+and the report's last line is a short COVERAGE verdict naming what was lost.
+So an unattended caller can tell "nothing needs updating" apart from "nothing
+was checked".
 
 A source is only LOST when it could not ANSWER: a refused connection, a
 timeout, a 403/429/5xx, or a body that is not JSON (a maintenance or gateway
@@ -203,7 +204,6 @@ if _anitya is not None and mine and not args.no_anitya and not args.no_factory_c
         try:
             return _anitya.latest_stable(pkg)
         except _anitya.AnityaError as e:
-            warn_down("release-monitoring.org", e)
             return ("__failed__", str(e))
 
     _anitya_pool = ThreadPoolExecutor(max_workers=6)
@@ -404,6 +404,9 @@ if do_check and not args.no_anitya:
         for pkg in rest:
             res = anitya_futs[pkg].result()
             if res[0] == "__failed__":
+                # warned here, not in the lookup: a name Repology already
+                # flagged does not need Anitya, so its failure loses nothing
+                warn_down("release-monitoring.org", res[1])
                 failed.append(pkg)
             elif res[0]:
                 lookups[pkg] = res
@@ -531,8 +534,11 @@ if forge_pass_ran:
                     http.client.HTTPException,
                 ) as e:
                     if _forges.is_transport_error(e):
-                        # github's host slot is the repo owner, not a server
-                        warn_down(f"gitlab:{host}" if kind == "gitlab" else kind, e)
+                        # optional companions never degrade the verdict, so
+                        # they must not warn either; github's host slot is the
+                        # repo owner, not a server
+                        if not optional:
+                            warn_down(f"gitlab:{host}" if kind == "gitlab" else kind, e)
                         down_specs.append((kind, host, name))
                         was_down = was_down or not optional
                     if not optional and err is None:
@@ -694,9 +700,9 @@ else:
 
 # The detail goes first and the verdict last, kept short: callers read the
 # final line through `tail | cut`, and a long one lost the verdict itself.
-if skipped:
-    print("# skipped on purpose: " + "; ".join(skipped))
 if down:
+    if skipped:
+        print("# skipped on purpose: " + "; ".join(skipped))
     print("# lost: " + "; ".join(d for _, d in down))
     print(
         "# names only the lost source(s) could have flagged are UNCHECKED, not "
