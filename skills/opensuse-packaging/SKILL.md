@@ -53,7 +53,7 @@ The three blocks form a **loop**: Block 3 feedback (a decline, a staging FTBFS, 
 
 ### Bundled scripts (`scripts/`)
 
-Call these instead of hand-writing the osc-API / Repology / Gitea incantations — they encode queries that are easy to get subtly wrong. **Exact usage (every flag, exit codes): `references/script-usage.md`, one `refsection.py` read per block — "Triage", "Update and build", "Changelog and gates", "Submit and watch", "Leap", "Skill upkeep". Don't run `--help`; CI checks the file against the scripts.** The trap each encodes: `scripts/README.md` (one `## <script>` section each).
+Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc itself: `references/osc-usage.md` — "Package and checkout", "Build", "Requests", "Lookup"; never guess an osc form or run `osc <cmd> --help`, CI checks every osc citation against osc.** **Exact usage (every flag, exit codes): `references/script-usage.md`, one `refsection.py` read per block — "Triage", "Update and build", "Changelog and gates", "Submit and watch", "Leap", "Skill upkeep". Don't run `--help`; CI checks the file against the scripts.** The trap each encodes: `scripts/README.md` (one `## <script>` section each).
 
 - `my-packages.sh` — your **explicit package-level** maintainerships; unions the two *disjoint* maintainer indexes (OBS `_meta` + git `_maintainership.json`) — never substitute a single OBS query (core directive 11).
 - `my-requests.sh` — your submit requests as a plain list.

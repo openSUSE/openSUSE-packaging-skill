@@ -18,6 +18,7 @@ python3 <skill>/scripts/refsection.py submit-watch.md "Picking the right target 
 python3 <skill>/scripts/refsection.py submit-watch.md "Filing an SR"
 python3 <skill>/scripts/refsection.py submit-watch.md "Querying existing requests"
 python3 <skill>/scripts/refsection.py script-usage.md "Submit and watch"
+python3 <skill>/scripts/refsection.py osc-usage.md "Requests"
 ```
 
 **Read further ONLY when its trigger fires:**
