@@ -289,7 +289,9 @@ def main(argv=None):
         prog="refsection.py",
         description="Print one section of a skill doc.",
         epilog='refsection.py specfile-guidelines.md "Patches" | --list <file> | '
-        "--anchor <file> A6 | --rule 26 32",
+        "--anchor <file> A6 | --rule 26 32\n\n"
+        "Exit: 0 printed · 1 no such section · 2 ambiguous · 3 usage / no such file",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
         "--list", action="store_true", help="print the heading outline only"

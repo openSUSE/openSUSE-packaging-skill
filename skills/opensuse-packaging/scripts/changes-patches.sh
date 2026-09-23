@@ -34,7 +34,7 @@
 # Exit: 0 = clean (or new package), 1 = findings, 2 = usage / lookup failure
 #       (a failed lookup never reports clean).
 set -euo pipefail
-case "${1:-}" in -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0;; esac
+case "${1:-}" in -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0;; esac
 exec python3 - "$@" <<'PY'
 import os, re, sys, difflib, subprocess, xml.etree.ElementTree as ET
 

@@ -28,11 +28,11 @@
 set -euo pipefail
 refresh=0
 case "${1:-}" in
-  -h|--help) sed -n '2,27p' "$0"; exit 0;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
   --refresh) refresh=1; shift;;
 esac
 case "${1:-}" in
-  '') sed -n '2,27p' "$0"; exit 2;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 pkg="$1"; leap="${2:-leap-16.0}"
 tok=$(python3 -c "import yaml,os;c=yaml.safe_load(open(os.path.expanduser('~/.config/tea/config.yml')));print([l['token'] for l in c['logins'] if l['name']=='src.opensuse.org'][0])" 2>/dev/null) || tok=""

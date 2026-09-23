@@ -15,10 +15,12 @@
 #   but also unrelated names that merely contain it ("mbed" hits *embed* too,
 #   e.g. ghc-file-embed/texlive-embedall). Eyeball-filter the obvious noise, or
 #   pass a more distinctive needle when the family name allows it.
+# Exit: 0 = listed (no consumers is noted on stderr), 1 = no _builddepinfo
+#       (wrong repo/arch, project not built, or the API failed), 2 = usage.
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,17p' "$0"; exit 0;;
-  '') sed -n '2,17p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 # arch defaults to x86_64 because OBS builds it on every project — unlike
 # aarch64; the host's aarch64 applies to LOCAL build roots only (see

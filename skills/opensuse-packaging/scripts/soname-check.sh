@@ -35,7 +35,7 @@
 #        soname-check.sh                      # auto-detect the last osc build
 set -uo pipefail
 
-usage() { sed -n '2,33p' "$0"; }
+usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 case "${1:-}" in -h|--help) usage; exit 0;; esac
 
 rpms=()

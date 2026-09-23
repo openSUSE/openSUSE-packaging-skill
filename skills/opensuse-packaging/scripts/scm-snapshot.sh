@@ -33,11 +33,12 @@
 # produced .obsinfo and prints:
 #   version=<X.Y.Z~gitYYYYMMDD.hash> commit=<full sha> obsinfo=OK|MISMATCH
 # plus the ready-to-paste '- Update to X.Y.Z~git...' changelog line.
-# Exits non-zero on any mismatch/verification failure.
+# Exit: 0 = pinned and verified (or already pinned), 1 = obsinfo mismatch or
+#       a failed --update check, 2 = usage or a step failed.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,36p' "$0"; exit 0;;
-  '') sed -n '2,36p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 
 url="" ; rev="" ; base="0" ; pkg="" ; update=0

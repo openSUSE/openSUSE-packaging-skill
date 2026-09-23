@@ -12,10 +12,11 @@
 #             actually needs you. See references/submit-watch.md.
 #   --user    OBS account (default: `osc whois`)
 #   --target  restrict to a target project (e.g. openSUSE:Factory)
+# Exit: 0 = listed, 2 = usage or the OBS query failed.
 set -euo pipefail
 
 case "${1:-}" in
-  -h|--help) sed -n '2,12p' "$0"; exit 0;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
 esac
 
 exec "$(dirname "$0")/sr-status.py" --brief --no-prs "$@"

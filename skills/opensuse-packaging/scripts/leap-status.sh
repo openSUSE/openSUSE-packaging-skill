@@ -26,8 +26,8 @@
 # used when present (rate limits).
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,28p' "$0"; exit 0;;
-  '') sed -n '2,28p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 pkg="$1"
 G="https://src.opensuse.org"

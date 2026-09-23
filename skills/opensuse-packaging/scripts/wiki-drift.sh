@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
     --update) update=1 ;;
     --page) shift; [ $# -gt 0 ] || { echo "error: --page needs a title" >&2; exit 2; }
             pages+=("$1") ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
   shift

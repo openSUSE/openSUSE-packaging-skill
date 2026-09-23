@@ -33,7 +33,7 @@
 #   --user defaults to `osc whois`.
 set -uo pipefail
 
-usage() { sed -n '2,36p' "$0"; }
+usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 case "${1:-}" in
   -h|--help) usage; exit 0;;
   '') usage; exit 2;;
