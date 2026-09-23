@@ -32,6 +32,7 @@ esac
 
 file="" ; author=""
 while [ $# -gt 0 ]; do
+  case "$1" in --author) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --author) author="$2"; shift 2;;
     -*) echo "unknown arg: $1" >&2; exit 2;;

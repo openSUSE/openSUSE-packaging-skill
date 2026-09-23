@@ -40,12 +40,14 @@
 #
 #   Exit: 0 = insertion-only (or an allowed --amend-top edit, or new file),
 #         1 = a prior entry was modified, 2 = usage error,
-#         3 = an input (a .changes file or the --base FILE) is unreadable.
+#         3 = an input (a .changes file or the --base FILE) is unreadable
+#         (wins over 1: the run is incomplete).
 set -euo pipefail
 
 base_override=""
 amend_author=""
 while :; do
+  case "${1:-}" in --base|--amend-top) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "${1:-}" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;

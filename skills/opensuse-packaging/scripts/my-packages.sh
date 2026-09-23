@@ -38,6 +38,7 @@ set -euo pipefail
 
 user="" ; project="" ; source_sel="both" ; all_projects=0 ; show_source=0
 while [ $# -gt 0 ]; do
+  case "$1" in --user|--project|--source) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --user) user="$2"; shift 2;;
     --project) project="$2"; shift 2;;
