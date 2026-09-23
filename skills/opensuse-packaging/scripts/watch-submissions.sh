@@ -57,6 +57,7 @@
 # a leg failure never fabricates RESOLVE lines. A pre-existing baseline
 # without the incoming set (written by an older version) is upgraded silently:
 # the current incoming set is recorded without reporting it all as NEW.
+# Exit: 0 = BASELINE-INIT / NOCHANGE / CHANGED, 2 = WATCH-ERROR or usage.
 set -o pipefail
 
 OBSUSER="" LOGIN="src.opensuse.org"

@@ -311,7 +311,11 @@ def fetch_prs(state, brief, leg):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        epilog="Exit: 0 = printed (a PR-leg failure only warns), 2 = usage or the "
+        "OBS query failed.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("ids", nargs="*")
     ap.add_argument("--user")
     ap.add_argument("--state", default="open")

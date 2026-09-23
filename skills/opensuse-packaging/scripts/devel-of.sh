@@ -12,8 +12,8 @@
 # Usage: devel-of.sh <package> [target-project]   (target default: openSUSE:Factory)
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,13p' "$0"; exit 0;;
-  '') sed -n '2,13p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 pkg="$1" ; target="${2:-openSUSE:Factory}"
 if out="$(osc develproject "$target" "$pkg" 2>/dev/null)" && [ -n "$out" ]; then

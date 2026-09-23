@@ -5,11 +5,13 @@
 #
 # Usage: gpg-verify.sh <tarball> <keyring> [signature]
 #   signature defaults to <tarball>.asc, then <tarball>.sig
+# Exit: 0 = good signature, 1 = bad or unverifiable signature,
+#       2 = usage / no signature file / unusable keyring.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,7p' "$0"; exit 0;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
 esac
-[ $# -ge 2 ] || { sed -n '2,7p' "$0"; exit 2; }
+[ $# -ge 2 ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2; }
 tarball="$1" ; keyring="$2"
 sig="${3:-}"
 if [ -z "$sig" ]; then

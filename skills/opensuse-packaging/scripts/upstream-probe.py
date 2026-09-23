@@ -102,7 +102,12 @@ def die(msg, code=2):
 
 # ---------- main ---------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog="Exit: 0 = CURRENT, 1 = UPDATE-CANDIDATE, 3 = SUSPECT (renumbering),\n"
+        "      2 = usage or no verdict (Source0 registry down, undatable).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("pkg", nargs="?", help="package name (spec fetched via osc)")
     ap.add_argument("--spec", help="local spec file to read instead")
     ap.add_argument("--url", help="probe this forge/pypi/npm/crates URL directly")

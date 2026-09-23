@@ -118,7 +118,11 @@ try:
 except ImportError:
     _forges = None
 
-ap = argparse.ArgumentParser()
+ap = argparse.ArgumentParser(
+    epilog="Exit: 0 = every source answered or was skipped on purpose,\n"
+    "      3 = a source was lost or a pass never ran, 2 = usage.",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+)
 ap.add_argument("--names", help="file of package names (default: stdin)")
 ap.add_argument("--repo", default="opensuse_tumbleweed")
 ap.add_argument("--ua", default="osc-update-check/1.0")

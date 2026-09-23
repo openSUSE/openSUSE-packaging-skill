@@ -21,7 +21,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 dir=.; entries=1; amend=""; target=""; buildlog=""; full=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) entries=$2; shift 2 ;;
     --amend-top) amend=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;

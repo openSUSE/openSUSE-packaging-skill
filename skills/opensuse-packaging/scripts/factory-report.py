@@ -331,7 +331,11 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
 
 
 def main():
-    ap = argparse.ArgumentParser(add_help=True)
+    ap = argparse.ArgumentParser(
+        epilog="Exit: 0 = report written, 1 = osc api failed or no accepted SRs in "
+        "the window, 2 = usage.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--since")
     ap.add_argument("--project", default="openSUSE:Factory")

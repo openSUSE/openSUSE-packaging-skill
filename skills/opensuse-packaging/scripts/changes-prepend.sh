@@ -21,12 +21,13 @@
 #   * every pre-existing line still present, in order (insertion-only diff —
 #     checked as byte-identical old content at the tail)
 #   * the previous top entry's header line is byte-identical
-# On any verification failure the backup is restored, the discrepancy printed,
-# and the exit is 1. Exit 0 only on verified success.
+# On any verification failure the backup is restored and the discrepancy printed.
+# Exit: 0 = verified insertion, 1 = verification failed (backup restored),
+#       2 = usage / no author.
 set -euo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,25p' "$0"; exit 0;;
-  '') sed -n '2,25p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 
 file="" ; author=""
@@ -64,7 +65,7 @@ if [ -z "$author" ]; then
     fi
   fi
 fi
-[ -n "$file" ] || { sed -n '2,25p' "$0"; exit 2; }
+[ -n "$file" ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2; }
 case "$author" in
   *"<"*"@"*">"*) : ;;
   *) echo "--author must be the full 'Full Name <email>' form, got: $author" >&2; exit 2;;

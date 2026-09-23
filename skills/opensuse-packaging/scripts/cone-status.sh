@@ -23,8 +23,8 @@
 #   THIS host's build root. Don't "fix" the mismatch.)
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,24p' "$0"; exit 0;;
-  '') sed -n '2,24p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 prj="$1"; repo="${2:-}"; arch="${3:-x86_64}"
 

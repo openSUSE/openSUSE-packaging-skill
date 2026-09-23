@@ -33,8 +33,8 @@
 #   2  a check FAILED (network/auth) — a failed check must NEVER print PROCEED
 set -uo pipefail
 case "${1:-}" in
-  -h|--help) sed -n '2,33p' "$0"; exit 0;;
-  '') sed -n '2,33p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 
 pkg="" ; targetver="" ; target="openSUSE:Factory" ; user=""
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
        else echo "unexpected arg: $1" >&2; exit 2; fi; shift;;
   esac
 done
-[ -n "$pkg" ] || { sed -n '2,29p' "$0"; exit 2; }
+[ -n "$pkg" ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2; }
 [ -n "$user" ] || user="$(timeout 30 osc whois 2>/dev/null | sed 's/:.*//')" || true
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }

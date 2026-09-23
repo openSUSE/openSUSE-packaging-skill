@@ -32,6 +32,8 @@
 # like "maintains no packages"; a genuinely empty result says so on stderr.
 # A failure of EITHER backend is fatal for the same reason: a half-answer that
 # looks complete is worse than an error.
+# Exit: 0 = listed (an empty result is noted on stderr), 2 = usage or a
+#       backend query failed.
 set -euo pipefail
 
 user="" ; project="" ; source_sel="both" ; all_projects=0 ; show_source=0
@@ -42,7 +44,7 @@ while [ $# -gt 0 ]; do
     --source) source_sel="$2"; shift 2;;
     --all-projects) all_projects=1; shift;;
     --show-source) show_source=1; shift;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0;;
+    -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done

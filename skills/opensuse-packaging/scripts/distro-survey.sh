@@ -22,10 +22,11 @@
 #         always Repology's project slug — 'thrift' is 'apache-thrift' there).
 #         Debian reports its sid version (versions[0] is experimental); a suite
 #         in parentheses means the package is NOT in sid under that name.
+# Exit: 0 = survey printed (unanswered rows show '?'), 2 = usage.
 set -u
 case "${1:-}" in
-  -h|--help) sed -n '2,24p' "$0"; exit 0;;
-  '') sed -n '2,24p' "$0"; exit 2;;
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
+  '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 pkg="$1"
 fac="${2:-}"
