@@ -51,7 +51,7 @@ case_ mkpac-two-args 1 "mkpac takes ONE package name" \
   "add 'Run \`osc mkpac devel:x pkg\`.'"
 case_ mkpac-negated 0 "osc citations match osc" \
   "add 'Never \`osc mkpac devel:x pkg\`.'"
-case_ checkout-into-tmp 1 "checks out into /tmp" \
+case_ checkout-into-tmp 1 "checks out into a temp dir" \
   "add 'Run \`osc co PRJ PKG -o /tmp/y\`.'"
 case_ api-put-meta 1 "PUTs _meta by hand" \
   "add 'Run \`osc api -X PUT -T m.xml /source/P/K/_meta\`.'"
@@ -59,6 +59,20 @@ case_ no-synopsis 1 "\`osc whois\` has no synopsis line" \
   "sed -i '/^- \`osc whois/d' $U && ! grep -q '^- \`osc whois' $U"
 case_ usage-file-missing 1 "missing; the skill cites osc subcommands" \
   "rm $U && [ ! -e $U ]"
+case_ global-opts-prefix 1 "mkpac takes ONE package name" \
+  "add 'Run \`osc --apiurl=https://api.example -H mkpac devel:x pkg\`.'"
+case_ substitution-hides-nothing 1 "osc submitrequest has no option --bogus" \
+  "add 'Run \`osc sr A B C -m \"\$(cat f)\" --bogus\`.'"
+case_ substitution-lends-nothing 0 "osc citations match osc" \
+  "add 'Run \`osc sr A B C -m \"\$(sed -n 1p -Z f)\"\`.'"
+case_ negation-is-per-occurrence 1 "mkpac takes ONE package name" \
+  "add 'Never \`osc mkpac a b\` there, but do run \`osc mkpac a b\` here.'"
+case_ checkout-into-var-tmp 1 "checks out into a temp dir" \
+  "add 'Run \`osc co PRJ PKG --output-dir=/var/tmp/y\`.'"
+case_ wrong-form-outside-section 1 "mkpac takes ONE package name" \
+  "sed -i 's/^## Lookup\$/&\n\n- \`osc mkpac a b\` — wrong here/' $U && grep -q '^- .osc mkpac a b' $U"
+case_ wrong-bullet-is-no-synopsis 1 "\`osc checkout\` has no synopsis line" \
+  "sed -i '/^- \`osc co PRJ PKG\` (checkout)/d' $U && ! grep -q '^- .osc co PRJ PKG. (checkout)' $U"
 case_ osc-not-importable 2 "cannot import osc" ":" "-S"
 
 [ $fails -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"
