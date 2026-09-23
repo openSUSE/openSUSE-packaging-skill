@@ -6,9 +6,10 @@ then keeps only those whose TW source-package name is in your set, printing
   <srcname>  <packaged-version> -> <newest-version>
 
 Your package set: pass package names on stdin or via --names FILE (one per line,
-e.g. the second column of my-packages.sh). With no names it prints the full TW
-outdated list (large) and reports DEGRADED coverage: nothing was checked against
-a package set, so the result is not a statement about any package.
+e.g. the second column of my-packages.sh). A names file or stdin that holds no
+names is a usage error (exit 2), not an empty sweep. Run from a terminal with
+neither, it prints the full TW outdated list (large) and reports DEGRADED
+coverage: nothing was checked against a package set.
 
 REPOLOGY LAGS PUBLISHED TUMBLEWEED, WHICH LAGS THE DEVEL PROJECT, so a large
 fraction of raw hits are false positives — the update already landed in Factory
@@ -50,9 +51,9 @@ the Repology sweep.
 
 NO SOURCE IS ALLOWED TO ABORT THE SWEEP, AND A LOST SOURCE IS NOT A CLEAN BILL
 OF HEALTH. Any of these can be down at any time, and Repology in particular is
-down often. When one is, the run degrades to the others with a WARNING on
-stderr (keeping whatever it had already downloaded), and the report's last line
-is a COVERAGE verdict naming what did not run. So an unattended caller can tell
+down often. When one is, the run degrades to the others with ONE WARNING per
+source on stderr as it happens (keeping whatever it had already downloaded),
+and the report's last line is a short COVERAGE verdict naming what was lost. So an unattended caller can tell
 "nothing needs updating" apart from "nothing was checked".
 
 A source is only LOST when it could not ANSWER: a refused connection, a
@@ -77,8 +78,8 @@ registry identity and never triggers this.
 Exit codes:
   0  the sweep ran with full coverage (deliberate --no-* skips are named)
   3  COVERAGE DEGRADED — a source was unreachable or missing, or a pass never
-     ran (including: no package names were given at all); names only it could
-     have flagged are UNCHECKED
+     ran; names only it could have flagged are UNCHECKED
+  2  usage, including a names file or stdin that holds no names
 
 Surviving candidates are still CANDIDATES, not confirmed updates — verify before
 acting (see references/triage.md): compare by tag/commit DATE not version string,
@@ -103,6 +104,7 @@ import subprocess
 import re
 import http.client
 import os
+import threading
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,7 +122,8 @@ except ImportError:
 
 ap = argparse.ArgumentParser(
     epilog="Exit: 0 = every source answered or was skipped on purpose,\n"
-    "      3 = a source was lost or a pass never ran, 2 = usage.",
+    "      3 = a source was lost or a pass never ran,\n"
+    "      2 = usage or no package names.",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 ap.add_argument("--names", help="file of package names (default: stdin)")
@@ -164,6 +167,31 @@ except OSError as e:
     print(f"outdated.py: cannot read --names: {e}", file=sys.stderr)
     sys.exit(2)
 mine = set(line.strip() for line in src if line.strip()) if src else None
+# An empty set would silently skip every pass, and alongside a Repology outage
+# that reads as the sweep bailing. Say which input was empty — usually a names
+# file read before the step writing it had finished.
+if mine is not None and not mine:
+    if args.names:
+        why = f"--names {args.names} contains no package names (was it written yet?)"
+    else:
+        why = "stdin carried no package names — pipe them in or pass --names FILE"
+    print(f"outdated.py: {why}", file=sys.stderr)
+    sys.exit(2)
+
+_warned, _warn_lock = set(), threading.Lock()
+
+
+def warn_down(source, err):
+    """One live WARNING per source; the sweep carries on with the others."""
+    with _warn_lock:
+        if source in _warned:
+            return
+        _warned.add(source)
+    sys.stderr.write(
+        f"WARNING: {source} unreachable ({err}) — continuing with the other "
+        "sources; names only it could answer are UNCHECKED\n"
+    )
+
 
 # Kick off the release-monitoring.org lookups for the WHOLE name set right
 # away, so they run while the (slow, paginated) Repology sweep downloads —
@@ -175,6 +203,7 @@ if _anitya is not None and mine and not args.no_anitya and not args.no_factory_c
         try:
             return _anitya.latest_stable(pkg)
         except _anitya.AnityaError as e:
+            warn_down("release-monitoring.org", e)
             return ("__failed__", str(e))
 
     _anitya_pool = ThreadPoolExecutor(max_workers=6)
@@ -502,6 +531,8 @@ if forge_pass_ran:
                     http.client.HTTPException,
                 ) as e:
                     if _forges.is_transport_error(e):
+                        # github's host slot is the repo owner, not a server
+                        warn_down(f"gitlab:{host}" if kind == "gitlab" else kind, e)
                         down_specs.append((kind, host, name))
                         was_down = was_down or not optional
                     if not optional and err is None:
@@ -613,44 +644,68 @@ if forge_pass_ran:
 # "nothing was checked". Only a source that could not ANSWER counts as a loss —
 # "answered, nothing there" is an ordinary result (see _forges.is_transport_error),
 # or exit 3 would be the steady state of every large sweep and mean nothing.
-down, skipped = [], []
+down, skipped = [], []  # down: (short label for the verdict, detail)
 if not mine:
-    down.append("NO PACKAGE NAMES given — nothing was checked at all")
+    down.append(("names", "NO PACKAGE NAMES given — nothing was checked at all"))
 if args.no_repology:
     skipped.append("repology (--no-repology)")
 elif not repology_ok:
     down.append(
-        f"repology UNREACHABLE (kept {len(results)} project(s) "
-        "downloaded before it went)"
+        (
+            "repology",
+            f"repology UNREACHABLE (kept {len(results)} project(s) "
+            "downloaded before it went)",
+        )
     )
 if args.no_anitya or args.no_factory_check:
     skipped.append("anitya (--no-anitya/--no-factory-check)")
 elif _anitya is None:
-    down.append("anitya module MISSING")
+    down.append(("anitya", "anitya module MISSING"))
 elif not anitya_pass_ran:
-    down.append("anitya pass NEVER RAN")
+    down.append(("anitya", "anitya pass NEVER RAN"))
 elif failed:
-    down.append(f"anitya UNREACHABLE for {len(failed)} name(s)")
+    down.append(
+        (
+            f"anitya({len(failed)} names)",
+            f"anitya UNREACHABLE for {len(failed)} name(s)",
+        )
+    )
 if args.no_forge or args.no_factory_check:
     skipped.append("forge (--no-forge/--no-factory-check)")
 elif _forges is None:
-    down.append("forge module MISSING")
+    down.append(("forge", "forge module MISSING"))
 elif not forge_pass_ran:
-    down.append("forge pass NEVER RAN")
+    down.append(("forge", "forge pass NEVER RAN"))
 else:
     if forge_failed:
-        down.append(f"forge UNREACHABLE for {len(forge_failed)} name(s)")
+        down.append(
+            (
+                f"forge({len(forge_failed)} names)",
+                f"forge UNREACHABLE for {len(forge_failed)} name(s)",
+            )
+        )
     if forge_authority:
-        down.append(f"{len(forge_authority)} name(s) whose Source0 registry is down")
+        down.append(
+            (
+                f"registry({len(forge_authority)} names)",
+                f"{len(forge_authority)} name(s) whose Source0 registry is down",
+            )
+        )
 
+# The detail goes first and the verdict last, kept short: callers read the
+# final line through `tail | cut`, and a long one lost the verdict itself.
+if skipped:
+    print("# skipped on purpose: " + "; ".join(skipped))
 if down:
+    print("# lost: " + "; ".join(d for _, d in down))
     print(
-        "# COVERAGE: DEGRADED — lost: "
-        + "; ".join(down)
-        + ("." if not skipped else ". Skipped on purpose: " + "; ".join(skipped) + ".")
-        + " Names only the lost source(s) could have flagged are UNCHECKED, "
-        "not clean — re-run when they are back before concluding nothing "
-        "needs updating."
+        "# names only the lost source(s) could have flagged are UNCHECKED, not "
+        "clean — re-run when they are back before concluding nothing needs updating"
+    )
+    print(
+        "# COVERAGE: DEGRADED (exit 3) — lost: "
+        + ", ".join(s for s, _ in down)
+        + "; results above are partial"
     )
     sys.exit(3)
 print(

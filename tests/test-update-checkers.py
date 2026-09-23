@@ -377,13 +377,33 @@ class SweepCoverageTests(unittest.TestCase):
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertIn("# COVERAGE: DEGRADED", r.stdout)
 
-    def test_empty_name_set_is_degraded_not_clean(self):
-        # The oldest trap in the sweep: nothing was checked, so it looks clean.
-        r = self._run(
-            "--no-repology", "--no-anitya", "--no-forge", "--no-factory-check", names=()
+    def test_empty_names_file_is_a_usage_error_naming_the_file(self):
+        # An empty set skipped every pass; beside a Repology outage the run
+        # looked like it had bailed. It must never read as clean either.
+        r = self._run("--no-repology", names=())
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertRegex(r.stderr, r"--names \S+ contains no package names")
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("# COVERAGE: complete", r.stdout)
+
+    def test_empty_stdin_is_a_usage_error(self):
+        r = subprocess.run(
+            [sys.executable, self.SCRIPT, "--no-repology"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
-        self.assertEqual(r.returncode, 3, r.stderr)
-        self.assertIn("NO PACKAGE NAMES", r.stdout)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("stdin carried no package names", r.stderr)
+
+    def test_degraded_verdict_is_last_and_survives_cut(self):
+        # Callers read `tail | cut -c1-160`; a long verdict lost itself.
+        r = self._run("--no-anitya", "--no-forge", "--no-factory-check", offline=True)
+        last = r.stdout.rstrip("\n").splitlines()[-1]
+        self.assertTrue(last.startswith("# COVERAGE: DEGRADED (exit 3)"), last)
+        self.assertIn("repology", last)
+        self.assertLessEqual(len(last), 160, last)
 
 
 class ForgeWiringTests(unittest.TestCase):
@@ -458,6 +478,8 @@ def _urlopen(req, *a, **k):
                                          None, None)
         return _R(json.dumps({"info": {"version": "1.0"}, "releases": {}}).encode())
     if "release-monitoring.org" in url:
+        if MODE == "anitya_down":
+            raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
         return _R(json.dumps({"items": []}).encode())
     if "api.github.com" in url:
         if MODE == "authority_404":
@@ -479,20 +501,22 @@ def _urlopen(req, *a, **k):
 urllib.request.urlopen = _urlopen
 """
 
-    def _sweep(self, mode, spec=None, flags=("--no-repology", "--no-anitya")):
+    def _sweep(
+        self, mode, spec=None, flags=("--no-repology", "--no-anitya"), names=("pkg-a",)
+    ):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "sitecustomize.py"), "w") as fh:
                 fh.write(self.STUB)
-            names = os.path.join(d, "names.txt")
-            with open(names, "w") as fh:
-                fh.write("pkg-a\n")
+            path = os.path.join(d, "names.txt")
+            with open(path, "w") as fh:
+                fh.write("".join(f"{n}\n" for n in names))
             env = dict(
                 os.environ, PYTHONPATH=d, FORGE_MODE=mode, FORGE_SPEC=spec or self.SPEC
             )
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy"):
                 env.pop(k, None)
             return subprocess.run(
-                [sys.executable, self.OUTDATED, "--names", names, *flags],
+                [sys.executable, self.OUTDATED, "--names", path, *flags],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -503,6 +527,24 @@ urllib.request.urlopen = _urlopen
         r = self._sweep("down")
         self.assertNotIn("Traceback", r.stderr)
         self.assertIn("UNREACHABLE", r.stdout)
+        self.assertIn("# COVERAGE: DEGRADED", r.stdout)
+        self.assertEqual(r.returncode, 3, r.stdout)
+
+    def test_forge_outage_warns_once_per_source(self):
+        r = self._sweep("down", names=("pkg-a", "pkg-x", "pkg-y"))
+        self.assertEqual(r.stderr.count("WARNING: github unreachable"), 1, r.stderr)
+        self.assertEqual(r.returncode, 3, r.stdout)
+
+    def test_anitya_outage_warns_once_and_the_sweep_proceeds(self):
+        r = self._sweep(
+            "anitya_down",
+            flags=("--no-repology", "--no-forge"),
+            names=("pkg-a", "pkg-x", "pkg-y"),
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(
+            r.stderr.count("WARNING: release-monitoring.org unreachable"), 1, r.stderr
+        )
         self.assertIn("# COVERAGE: DEGRADED", r.stdout)
         self.assertEqual(r.returncode, 3, r.stdout)
 
