@@ -2,8 +2,9 @@
 
 Reference detail for the scripts listed one-line-each in `SKILL.md` "Bundled scripts".
 Call these instead of hand-writing the osc-API / Repology / bugzilla / Gitea incantations
-every time — they encode the exact queries that are easy to get subtly wrong. Each script's
-own `--help` header is authoritative for flags; this file carries the *why* and the traps.
+every time — they encode the exact queries that are easy to get subtly wrong. Every flag and
+exit code is in `references/script-usage.md` (guarded against the scripts, so an agent needs
+no `--help` call); this file carries the *why* and the traps.
 
 Every runnable script prints usage with `-h`/`--help` (`_anitya.py` and `_forges.py` are
 modules, not commands); the user-scoped ones (`my-packages`, `my-requests`, `sr-status`,

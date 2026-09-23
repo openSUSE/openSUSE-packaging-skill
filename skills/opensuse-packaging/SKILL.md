@@ -53,7 +53,7 @@ The three blocks form a **loop**: Block 3 feedback (a decline, a staging FTBFS, 
 
 ### Bundled scripts (`scripts/`)
 
-Call these instead of hand-writing the osc-API / Repology / Gitea incantations every time — they encode the exact queries that are easy to get subtly wrong. **Flags, exit codes, and the trap each one encodes: `<script> --help` and `scripts/README.md`** (one `## <script>` section each).
+Call these instead of hand-writing the osc-API / Repology / Gitea incantations — they encode queries that are easy to get subtly wrong. **Exact usage (every flag, exit codes): `references/script-usage.md`, one read per block — don't run `--help`, CI keeps the file matching the scripts.** The trap each encodes: `scripts/README.md` (one `## <script>` section each).
 
 - `my-packages.sh` — your **explicit package-level** maintainerships; unions the two *disjoint* maintainer indexes (OBS `_meta` + git `_maintainership.json`) — never substitute a single OBS query (core directive 11).
 - `my-requests.sh` — your submit requests as a plain list.
@@ -62,15 +62,15 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 - `watch-submissions.sh` — cron/scheduled delta watcher: prints only what changed since the last run. A `NEW INCOMING` line means *review and recommend*, never accept/decline (core directive 10).
 - `outdated.py` — Repology ∩ your package set, plus an Anitya pass and a forge pass over what Repology cannot see. **A source being down degrades the run, never aborts it** — read the closing `# COVERAGE:` line: exit 3 means a source was lost and the sweep is NOT a clean bill of health.
 - `upstream-probe.py` — per-candidate date-based CURRENT / UPDATE-CANDIDATE / SUSPECT verdict. **When `Source0:` is served by a package registry (pythonhosted/npm/crates), that registry decides the verdict** — a git tag ahead of it is not a release the package can consume.
-- `preflight.sh` — Block-2 step 0: already done or in flight? exit 0/3/4 = proceed/stop/forward.
-- `devel-of.sh` — the devel project registered for a package (exit 3 = not in target/new package, 4 = no devel project).
+- `preflight.sh` — Block-2 step 0: already done or in flight?
+- `devel-of.sh` — the devel project registered for a package.
 - `autoforward-gate.sh` — may **your own** accepted request be forwarded onward unattended? exit 0 ELIGIBLE / 3 BLOCKED / 4 NOT_YOURS / 5 meta unreadable; `--batch <file>` for a set.
 - `gpg-verify.sh` — verify a signed source tarball against a package keyring.
 - `build-summary.sh` — the last `osc build`'s verdict, `%check` count, rpmlint badness, produced RPMs. **Its exit code IS the verdict** (0 green / 1 failed / 2 no log / 3 never concluded) — gate on it instead of eyeballing a tail.
 - `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME. exit 0 clean / 3 findings / 2 nothing checked.
 - `cone-status.sh` — per-package build-status table for a whole project with a loopable exit code (0 green / 1 in-flight / 2 settled failure).
 - `leap-sync.sh` — content-sync a Leap pool branch up to Factory and open the Package Hub PR.
-- `leap-status.sh` — in Leap? at what version per branch? PR already open? exit 0/1/2/3.
+- `leap-status.sh` — in Leap? at what version per branch? PR already open?
 - `scm-snapshot.sh` — scaffold + verify a pinned-commit `obs_scm` `_service`. **`--update` edits ONLY the obs_scm `revision` param, in place** — sibling services and the declared `versionformat` survive byte-for-byte.
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks); **prefer it over hand-editing**.
 - `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets).
@@ -87,7 +87,7 @@ Call these instead of hand-writing the osc-API / Repology / Gitea incantations e
 
 ### Delegation playbooks (`agents/`)
 
-Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus the cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** run as the final gate before every commit/SR (the Block-2 gate above). They are plain **role prompts**: a harness that can delegate hands one to a sub-agent when a block is large or wants an isolated context; without delegation, run the playbook inline. **A sub-agent gets no SKILL.md**, so each playbook opens with the 1–5 sections that block must read (as `refsection.py` commands, 18–34 KB) and a trigger table for everything else — brief an agent with the playbook and the package, never with "read the skill" or a reference file (`references/token-budget.md` "Briefing a sub-agent"). Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it is inert.
+Each block has an `agents/<block>.md` playbook (`triage`, `update-build`, `submit-watch`), plus the cross-cutting `agents/changes-review.md` — the **adversarial change reviewer** run as the final gate before every commit/SR (the Block-2 gate above). They are plain **role prompts**: a harness that can delegate hands one to a sub-agent when a block is large or wants an isolated context; without delegation, run the playbook inline. **A sub-agent gets no SKILL.md**, so each playbook opens with the 2–7 sections that block must read (as `refsection.py` commands, 21–35 KB) and a trigger table for everything else — brief an agent with the playbook and the package, never with "read the skill" or a reference file (`references/token-budget.md` "Briefing a sub-agent"). Their YAML frontmatter is sub-agent metadata for harnesses that register agents from files (see README "Install"); elsewhere it is inert.
 
 ## Home project policy
 

@@ -69,4 +69,5 @@ are always-on, not a phase.
 - Print a **verdict line** the caller can act on, then only the rows that matter; row counts and
   the path to the full output go to stderr or a file.
 - Offer `--brief`/`--limit`/`--json`, cap cells, and never echo an input file back.
-- Re-print its own header comment for `--help` instead of duplicating docs in SKILL.md.
+- `--help` re-prints its own header comment, for humans; agents read the script's line in
+  `script-usage.md` (CI keeps the two in step). Duplicate neither in SKILL.md.
