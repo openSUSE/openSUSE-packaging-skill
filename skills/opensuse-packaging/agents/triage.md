@@ -19,6 +19,7 @@ python3 <skill>/scripts/refsection.py triage.md "Compare by DATE, not by version
 python3 <skill>/scripts/refsection.py triage.md "Deliberately pinned packages — never bump them"
 python3 <skill>/scripts/refsection.py triage.md "Who maintains it — two indexes, and the OBS one is blind to git"
 python3 <skill>/scripts/refsection.py script-usage.md "Triage"
+python3 <skill>/scripts/refsection.py osc-usage.md "Lookup"
 ```
 
 **Read further ONLY when its trigger fires:**

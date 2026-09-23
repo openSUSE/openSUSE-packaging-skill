@@ -20,6 +20,8 @@ python3 <skill>/scripts/refsection.py specfile-guidelines.md "Spec file — gene
 python3 <skill>/scripts/refsection.py changelog-rules.md "How much to write — upstream bumps vs packaging-only changes"
 python3 <skill>/scripts/refsection.py script-usage.md "Update and build"
 python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
+python3 <skill>/scripts/refsection.py osc-usage.md "Package and checkout"
+python3 <skill>/scripts/refsection.py osc-usage.md "Build"
 ```
 (plus `changelog-entry.md "The entry template"` — 0.8 KB — when you write the `.changes`.)
 
