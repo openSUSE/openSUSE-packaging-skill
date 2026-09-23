@@ -155,16 +155,20 @@ to review, not a change to take.
 CI runs exactly these, so the two cannot drift:
 
 ```
+python3 -m pip install osc==1.27.3
 (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
 python3 tests/test-update-checkers.py
 python3 tests/repo/check-skills.py
 python3 tests/repo/check-flags.py
+python3 tests/repo/check-osc.py
 ruff check . && ruff format --check .
 shellcheck tests/test-*.sh
 ```
 
 The suites are offline — network lookups are stubbed and the subprocess cases run with
-every source disabled or behind a dead proxy — and need only the Python standard library.
+every source disabled or behind a dead proxy — and need only the Python standard library,
+plus osc itself for `check-osc.py`, which validates every `osc` citation against osc's
+own parser (pinned in CI; bump the pin to re-validate against a newer osc).
 
 Before making any check blocking, break the thing it guards and watch it go red. A check
 that has never failed is not yet a check: the obvious runner loop here, `... || break`,
