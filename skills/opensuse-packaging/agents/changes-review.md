@@ -12,13 +12,14 @@ The mechanical gates run before you and are assumed green (spec-cleaner no-diff 
 
 **Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, so prefix every `scripts/…` and `references/…` path with that root.
 
-**Read ONE section before you start — the changelog rules — and no whole reference file:**
+**Read two sections before you start — the changelog rules and the gate scripts' usage — and no whole reference file:**
 
 ```
 python3 <skill>/scripts/refsection.py changelog-rules.md "Changelog (`*.changes`)"
+python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
 ```
 
-That is the rulebook for checklist items 4–8 (~26 KB). `refsection.py --list changelog-rules.md` prints its seven `###` sub-sections if you later want just one — "Format and layout", "Never alter a previous entry", "Name every added or removed patch literally", "CVEs and security bullets", "How much to write — upstream bumps vs packaging-only changes". **Read further only when a trigger fires:** a spec-idiom doubt → `specfile-guidelines.md` (the section for that spec part); `update-alternatives` left in a spec → `shlib-alternatives.md` "Alternatives"; a soname/shlib change → `shlib-alternatives.md` "Shared libraries"; a patch question → `patches.md` "Patches"; "would a reviewer really decline this?" → `decline-catalog.md` "What human Factory reviewers decline for".
+The first is the rulebook for checklist items 4–8 (~26 KB); the second is every gate script's flags and exit codes (~0.7 KB). `refsection.py --list changelog-rules.md` prints its seven `###` sub-sections if you later want just one — "Format and layout", "Never alter a previous entry", "Name every added or removed patch literally", "CVEs and security bullets", "How much to write — upstream bumps vs packaging-only changes". **Read further only when a trigger fires:** a spec-idiom doubt → `specfile-guidelines.md` (the section for that spec part); `update-alternatives` left in a spec → `shlib-alternatives.md` "Alternatives"; a soname/shlib change → `shlib-alternatives.md` "Shared libraries"; a patch question → `patches.md` "Patches"; "would a reviewer really decline this?" → `decline-catalog.md` "What human Factory reviewers decline for".
 
 **Re-running a gate yourself: never use `spec-cleaner -d`.** `-d` shells out to
 `vimdiff`, which has no TTY here, so it hangs forever and leaves a `.spec.swp` in

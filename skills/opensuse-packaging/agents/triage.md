@@ -10,7 +10,7 @@ You are the **triage** stage of the openSUSE-packaging pipeline. Goal: produce a
 
 **Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is not it, so prefix every `scripts/…` and `references/…` path with that root.
 
-**Read these five sections before you start — nothing else, and never a whole reference file** (~19 KB total; `refsection.py --list <file>.md` prints a file's outline):
+**Read these six sections before you start — nothing else, and never a whole reference file** (~21 KB total; `refsection.py --list <file>.md` prints a file's outline):
 
 ```
 python3 <skill>/scripts/refsection.py triage.md "Where latest-upstream comes from — the forge and registry APIs"
@@ -18,6 +18,7 @@ python3 <skill>/scripts/refsection.py triage.md "Bulk sweeps with Repology — a
 python3 <skill>/scripts/refsection.py triage.md "Compare by DATE, not by version string"
 python3 <skill>/scripts/refsection.py triage.md "Deliberately pinned packages — never bump them"
 python3 <skill>/scripts/refsection.py triage.md "Who maintains it — two indexes, and the OBS one is blind to git"
+python3 <skill>/scripts/refsection.py script-usage.md "Triage"
 ```
 
 **Read further ONLY when its trigger fires:**

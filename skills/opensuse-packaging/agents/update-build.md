@@ -10,7 +10,7 @@ You are the **update / build / cleanup** stage for **one package**. Goal: reach 
 
 **Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent).
 
-**Read these five sections before you start — nothing else, and never a whole reference file** (~34 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
+**Read these seven sections before you start — nothing else, and never a whole reference file** (~35 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
 
 ```
 python3 <skill>/scripts/refsection.py update-build.md "Pre-flight: is this update already done or in flight?"
@@ -18,6 +18,8 @@ python3 <skill>/scripts/refsection.py update-build.md "Running the build — rep
 python3 <skill>/scripts/refsection.py update-build.md "Reading the build result — never state one you have not read"
 python3 <skill>/scripts/refsection.py specfile-guidelines.md "Spec file — general rules"
 python3 <skill>/scripts/refsection.py changelog-rules.md "How much to write — upstream bumps vs packaging-only changes"
+python3 <skill>/scripts/refsection.py script-usage.md "Update and build"
+python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
 ```
 (plus `changelog-entry.md "The entry template"` — 0.8 KB — when you write the `.changes`.)
 

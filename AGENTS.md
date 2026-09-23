@@ -47,8 +47,10 @@ readable that way.
 
 - Every runnable script prints usage with `-h`/`--help`. A leading underscore
   (`_forges.py`) means an imported module, not a command.
-- The docs cite exact invocations so an agent never spends a turn probing `--help`.
-  `tests/repo/check-flags.py` checks every cited flag against the real `--help`.
+- The docs cite exact invocations so an agent never spends a turn probing `--help`:
+  `references/script-usage.md` holds every script's flags and exit codes, and
+  `tests/repo/check-flags.py` checks it, and every flag cited elsewhere, against the
+  real `--help`.
 - **A failed lookup must never read as good news.** This is the recurring bug class here:
   a watcher that reported success when its query failed, a status script that printed
   IN-SYNC when it could not read any version, a missing script whose "No such file" was
@@ -75,9 +77,10 @@ reported success forever.
    anywhere else that needs it. Check the budget still passes.
 2. **A new reference section** — give it a `##` heading so `refsection.py` can address it,
    and keep it independently readable: someone will read that section and nothing else.
-3. **A new script** — add `--help`, a `## <script>` entry in `scripts/README.md` with its
-   exit codes and the trap it encodes, a one-line mention in `SKILL.md`'s bundled-scripts
-   list, and a test. Say what a failed lookup returns.
+3. **A new script** — add `--help` (with an `Exit:` line), a `## <script>` entry in
+   `scripts/README.md` with its exit codes and the trap it encodes, its synopsis line in
+   `references/script-usage.md` (CI fails without it), a one-line mention in `SKILL.md`'s
+   bundled-scripts list, and a test. Say what a failed lookup returns.
 4. **A new skill** — a directory under `skills/` whose name equals its `name:` frontmatter,
    lowercase and hyphenated, carrying `license:`. Nothing inside a skill may reference a
    path outside its own directory: installers copy that directory verbatim.
