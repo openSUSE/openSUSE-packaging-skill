@@ -26,19 +26,45 @@ case_() {
   }
 }
 
+U=$SK/references/script-usage.md; T=$SK/agents/triage.md
+N=$(( $(wc -l < "$REPO/$T") + 1 ))   # the line a case appends to the playbook
 case_ clean 0 "flag citations match --help" ":"
 case_ undocumented-argparse-flag 1 "upstream-probe.py: synopsis lacks --foo" \
   "sed -i 's/^    ap.add_argument(\"--project\", default=\"openSUSE:Factory\")$/&\n    ap.add_argument(\"--foo\")/' $SK/scripts/upstream-probe.py && grep -q -- '\"--foo\"' $SK/scripts/upstream-probe.py"
 case_ synopsis-flag-removed 1 "gate.sh: synopsis lacks --full" \
-  "sed -i '/^- \`gate.sh/s/ \[--full\]//' $SK/references/script-usage.md && ! grep -q '^- \`gate.sh.*--full' $SK/references/script-usage.md"
-case_ exit-code-changed 1 "leap-status.sh: exit codes [0, 1, 2, 3, 4], --help says [0, 1, 2, 3, 5]" \
-  "sed -i '/^- \`leap-status.sh/s/· 5 network/· 4 network/' $SK/references/script-usage.md && grep -q '· 4 network' $SK/references/script-usage.md"
+  "sed -i '/^- \`gate.sh/s/ \[--full\]//' $U && ! grep -q '^- \`gate.sh.*--full' $U"
+case_ synopsis-flag-extra 1 "gate.sh: synopsis has --bogus, --help does not" \
+  "sed -i '/^- \`gate.sh/s/ \[--full\]/ [--full] [--bogus]/' $U && grep -q '^- \`gate.sh.*--bogus' $U"
+case_ synopsis-value-dropped 1 "gate.sh: --entries takes a value only in --help" \
+  "sed -i '/^- \`gate.sh/s/\[--entries N\]/[--entries]/' $U && grep -q '^- \`gate.sh.*\[--entries\]' $U"
+case_ synopsis-short-dropped 1 "factory-report.py: -o|--output only in --help" \
+  "sed -i '/^- \`factory-report.py/s/\[-o|--output FILE\]/[--output FILE]/' $U && grep -q '^- \`factory-report.py.*\[--output FILE\]' $U"
+case_ synopsis-duplicate 1 "second synopsis for gate.sh" \
+  "sed -i '/^- \`gate.sh/p' $U && [ \"\$(grep -c '^- \`gate.sh' $U)\" = 2 ]"
+case_ exit-code-changed 1 "leap-status.sh: exit codes [0, 1, 2, 3, 4, 6], --help says [0, 1, 2, 3, 4, 5]" \
+  "sed -i '/^- \`leap-status.sh/s/· 5 network/· 6 network/' $U && grep -q '· 6 network' $U"
+case_ help-declares-no-exit 1 "gpg-verify.sh --help declares no exit codes" \
+  "sed -i '/^# Exit: 0 = good signature/,+1d' $SK/scripts/gpg-verify.sh && ! grep -q '^# Exit' $SK/scripts/gpg-verify.sh"
+case_ help-exits-nonzero 1 "scripts/gpg-verify.sh:0: --help exits 1, want 0" \
+  "sed -i 's/^\(  -h|--help) .*\)exit 0;;\$/\1exit 1;;/' $SK/scripts/gpg-verify.sh && grep -q -- '-h|--help).*exit 1;;' $SK/scripts/gpg-verify.sh"
+case_ foreign-exemption-stale 1 "soname-check.sh: FOREIGN exempts --provides, --help no longer shows it" \
+  "sed -i 's/(\`--provides\` gives/(the provides query gives/' $SK/scripts/soname-check.sh && ! bash $SK/scripts/soname-check.sh --help | grep -q -- --provides"
 case_ undocumented-script 1 "no synopsis line for x.sh" \
-  "printf '#!/bin/bash\n# Usage: x.sh\n# Exit: 0 = ok.\ncase \"\${1:-}\" in -h|--help) sed -n 2,3p \"\$0\"; exit 0;; esac\n' > $SK/scripts/x.sh"
+  "printf '#!/bin/bash\n# Usage: x.sh\n# Exit: 0 = ok.\ncase \"\${1:-}\" in -h|--help) sed -n 2,3p \"\$0\"; exit 0;; esac\n' > $SK/scripts/x.sh && [ -s $SK/scripts/x.sh ]"
 case_ synopsis-for-missing-script 1 "names ghost.sh, which is not a runnable script" \
-  "echo '- \`ghost.sh\` — exit 0 ok' >> $SK/references/script-usage.md"
-case_ doc-says-run-help 1 "tells the agent to run --help" \
-  "echo 'Run \`gate.sh --help\` first.' >> $SK/agents/triage.md"
+  "echo '- \`ghost.sh\` — exit 0 ok' >> $U && grep -q ghost.sh $U"
+case_ prose-cites-missing-flag 1 "gate.sh --help does not mention --nope" \
+  "echo 'Then \`gate.sh --nope\`.' >> $T && grep -q -- --nope $T"
+case_ doc-script-help 1 "$T:$N: tells the agent to run --help" \
+  "echo 'Run \`gate.sh --help\` first.' >> $T && tail -1 $T | grep -q 'gate.sh --help'"
+case_ doc-run-its-help 1 "$T:$N: tells the agent to run --help" \
+  "echo 'Before calling a script, run its \`--help\`.' >> $T && tail -1 $T | grep -q 'run its'"
+case_ doc-with-help 1 "$T:$N: tells the agent to run --help" \
+  "echo 'Call a script with \`--help\` first.' >> $T && tail -1 $T | grep -q 'with \`--help'"
+case_ doc-help-output 1 "$T:$N: tells the agent to run --help" \
+  "echo \"Read the script's \\\`--help\\\` output.\" >> $T && tail -1 $T | grep -q 'help\` output'"
+case_ doc-negated-help 0 "flag citations match --help" \
+  "echo 'Do not ever run \`--help\`.' >> $T && tail -1 $T | grep -q 'not ever run'"
 
 [ "$fails" -eq 0 ] && { echo "OK: check-flags.py catches every mutation"; exit 0; }
 echo "$fails failure(s)"; exit 1

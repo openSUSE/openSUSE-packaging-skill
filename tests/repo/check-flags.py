@@ -13,6 +13,13 @@ least and matter most.
 
   python3 tests/repo/check-flags.py [--skill NAME]
 
+references/script-usage.md, the agents' substitute for --help, is checked the
+other way round too: one synopsis line per runnable script, whose long flags,
+short-to-long pairs (`-o|--output`), value-taking flags (`--days N`) and exit
+codes equal what that script's --help shows. Positionals and the meaning
+attached to each flag or exit code are NOT checked. No doc may tell the agent
+to run --help.
+
 Prints "flags: <file>:<line>: <message>" per finding; exit 1 on any finding.
 Runs each script's --help once, offline (argparse does no I/O of its own).
 """
@@ -50,12 +57,32 @@ FOREIGN = {
     "soname-check.sh": {"--provides"},
     "watch-submissions.sh": {"--diff"},
 }
-# Telling the agent to run --help, which script-usage.md replaces.
-HELP_RUN = re.compile(
-    r"(?<!n't )(?<!not )(?<!never )\b(?:run|call|check|consult|see|read)\s+"
-    r"(?:its\s+|the\s+)?`?(?:--help|-h)(?![\w-])",
+# `-o, --output` (argparse) or `-o|--output` (bash, synopsis).
+SHORT_PAIR = re.compile(r"(?<![\w-])(-[a-zA-Z])(?:, |\|)(--[a-z][a-z0-9-]*)")
+# A flag followed by ONE space (or =) and a metavar: `--days N`, `--user <u>`,
+# `--source obs|git`, `--rule [N ...]`. Two spaces start a description instead.
+VALUED = re.compile(
+    r"(?<![\w-])(--[a-z][a-z0-9-]*)[ =](?:<|'|\[|\{|[A-Z][A-Z0-9_]*\b|[a-z]+(?:\|[a-z]+)+)"
+)
+# Telling the agent to run --help, which script-usage.md replaces: a verb a few
+# words before it, "with --help", or "--help output".
+HELP = r"`?(?:--help|-h)(?![\w-])"
+HELP_ADVICE = re.compile(
+    r"\b(?:run|call|check|consult|see|read|use|pass|invoke|try)\b"
+    r"((?:\s+[\w'`<>.-]+?){0,3}?)\s+"
+    + HELP
+    + r"|\bwith\s+()"
+    + HELP
+    + r"|((?:[\w'`<>.-]+\s+)?)"
+    + HELP
+    + r"`?\s+output\b",
     re.I,
 )
+NEGATED = re.compile(r"\b(?:don't|do not|never|not|no)\b(?:\s+\w+)?\s*$", re.I)
+# Words that may sit between the verb and --help without naming a command.
+FILLER = {"its", "the", "a", "their", "script's", "scripts'", "ever", "with", "it"}
+# The one sentence that states the convention rather than advising a call.
+HELP_CONVENTION = "prints usage with `-h`/`--help`"
 
 
 def spans(path):
@@ -80,18 +107,34 @@ def spans(path):
 
 
 @functools.lru_cache(maxsize=None)
-def help_text(script_path):
-    """A script's --help output, or None if it has no usable --help."""
+def run_help(script_path):
+    """(exit code, output) of `<script> --help`; the exit code is None and the
+    output the error when it could not run."""
     if script_path.endswith(".py"):
         cmd = [sys.executable, script_path, "--help"]
     else:
         cmd = ["bash", script_path, "--help"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=ROOT)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    out = (r.stdout or "") + (r.stderr or "")
-    return out if out.strip() else None
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, str(e)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def help_text(script_path):
+    """A script's --help output, or None if it has no usable --help."""
+    rc, out = run_help(script_path)
+    return out if rc is not None and out.strip() else None
+
+
+def valued(text):
+    """Long flags the text shows taking a value."""
+    return set(VALUED.findall(text))
+
+
+def short_pairs(text):
+    """(short, long) option pairs the text shows, minus -h/--help."""
+    return set(SHORT_PAIR.findall(text)) - {("-h", "--help")}
 
 
 def help_flags(script_path):
@@ -156,6 +199,17 @@ def check_usage(scripts, usage_path, runnable):
             findings.append((rel, n, f"{name}: synopsis lacks {flag} (in --help)"))
         for flag in sorted(have - want):
             findings.append((rel, n, f"{name}: synopsis has {flag}, --help does not"))
+        for flag in sorted(FOREIGN.get(name, set()) - set(FLAG.findall(out))):
+            findings.append(
+                (rel, n, f"{name}: FOREIGN exempts {flag}, --help no longer shows it")
+            )
+        both = want & have
+        for flag in sorted((valued(out) ^ valued(line)) & both):
+            where = "--help" if flag in valued(out) else "the synopsis"
+            findings.append((rel, n, f"{name}: {flag} takes a value only in {where}"))
+        for s, lng in sorted(short_pairs(out) ^ short_pairs(line)):
+            where = "--help" if (s, lng) in short_pairs(out) else "the synopsis"
+            findings.append((rel, n, f"{name}: {s}|{lng} only in {where}"))
         want_x = help_exits(out)
         have_x = {int(c) for c in SYN_EXIT.findall(line.split("`", 2)[2])}
         if not want_x:
@@ -176,14 +230,26 @@ def check_usage(scripts, usage_path, runnable):
 def check_no_help_advice(docs, runnable):
     """No doc tells the agent to run a bundled script's --help."""
     names = "|".join(re.escape(x) for x in sorted(runnable))
-    by_name = re.compile(
-        rf"(?<![\w.-])(?:{names}|<script>)`?\s+`?(?:--help|-h)(?![\w-])"
-    )
+    by_name = re.compile(rf"(?<![\w.-])(?:{names}|<script>)`?\s+" + HELP)
+
+    def advice(line):
+        for m in HELP_ADVICE.finditer(line):
+            if NEGATED.search(line[max(0, m.start() - 40) : m.start()]):
+                continue
+            between = next((g for g in m.groups() if g is not None), "")
+            words = between.replace("`", " ").split()
+            # `run configure --help` is another command's help, not ours.
+            if words and words[-1] not in FILLER | set(runnable) | {"<script>"}:
+                continue
+            return True
+        return False
+
     findings = []
     for doc in docs:
         with open(doc, encoding="utf-8") as fh:
             for n, line in enumerate(fh.read().splitlines(), start=1):
-                if by_name.search(line) or HELP_RUN.search(line):
+                line = line.replace(HELP_CONVENTION, "")
+                if by_name.search(line) or advice(line):
                     findings.append(
                         (
                             os.path.relpath(doc, ROOT),
@@ -274,24 +340,13 @@ def main(argv=None):
         for fn in sorted(os.listdir(scripts)) if os.path.isdir(scripts) else []:
             if fn.startswith("_") or not fn.endswith((".py", ".sh")):
                 continue
-            full = os.path.join(scripts, fn)
-            cmd = (
-                [sys.executable, full, "--help"]
-                if fn.endswith(".py")
-                else ["bash", full, "--help"]
-            )
-            try:
-                r = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=30, cwd=ROOT
-                )
-            except (OSError, subprocess.SubprocessError) as e:
-                findings.append((f"scripts/{fn}", 0, f"--help could not run: {e}"))
+            rc, out = run_help(os.path.join(scripts, fn))
+            if rc is None:
+                findings.append((f"scripts/{fn}", 0, f"--help could not run: {out}"))
                 continue
-            if r.returncode != 0:
-                findings.append(
-                    (f"scripts/{fn}", 0, f"--help exits {r.returncode}, want 0")
-                )
-            elif not (r.stdout or r.stderr).strip():
+            if rc != 0:
+                findings.append((f"scripts/{fn}", 0, f"--help exits {rc}, want 0"))
+            elif not out.strip():
                 findings.append((f"scripts/{fn}", 0, "--help prints nothing"))
 
         runnable = [
