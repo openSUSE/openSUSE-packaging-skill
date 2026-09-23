@@ -18,7 +18,7 @@ other way round too: one synopsis line per runnable script, whose long flags,
 short-to-long pairs (`-o|--output`), value-taking flags (`--days N`) and exit
 codes equal what that script's --help shows. Positionals and the meaning
 attached to each flag or exit code are NOT checked. No doc may tell the agent
-to run --help.
+to run --help; that last check is a phrase heuristic, not a parser.
 
 Prints "flags: <file>:<line>: <message>" per finding; exit 1 on any finding.
 Runs each script's --help once, offline (argparse does no I/O of its own).
@@ -58,29 +58,37 @@ FOREIGN = {
     "watch-submissions.sh": {"--diff"},
 }
 # `-o, --output` (argparse) or `-o|--output` (bash, synopsis).
-SHORT_PAIR = re.compile(r"(?<![\w-])(-[a-zA-Z])(?:, |\|)(--[a-z][a-z0-9-]*)")
+# argparse before 3.13 repeats the metavar: `-o OUTPUT, --output OUTPUT`.
+SHORT_PAIR = re.compile(
+    r"(?<![\w-])(-[a-zA-Z])(?: [A-Z][A-Z0-9_]*| \{[^}\s]*\})?(?:, |\|)(--[a-z][a-z0-9-]*)"
+)
 # A flag followed by ONE space (or =) and a metavar: `--days N`, `--user <u>`,
 # `--source obs|git`, `--rule [N ...]`. Two spaces start a description instead.
 VALUED = re.compile(
     r"(?<![\w-])(--[a-z][a-z0-9-]*)[ =](?:<|'|\[|\{|[A-Z][A-Z0-9_]*\b|[a-z]+(?:\|[a-z]+)+)"
 )
 # Telling the agent to run --help, which script-usage.md replaces: a verb a few
-# words before it, "with --help", or "--help output".
+# words before it, "with --help", "--help output" or "--help lists".
 HELP = r"`?(?:--help|-h)(?![\w-])"
 HELP_ADVICE = re.compile(
-    r"\b(?:run|call|check|consult|see|read|use|pass|invoke|try)\b"
+    r"\b(?:run|call|check|consult|see|read|use|pass|invoke|try|look\s+at)\b"
     r"((?:\s+[\w'`<>.-]+?){0,3}?)\s+"
     + HELP
     + r"|\bwith\s+()"
     + HELP
     + r"|((?:[\w'`<>.-]+\s+)?)"
     + HELP
-    + r"`?\s+output\b",
+    + r"`?\s+(?:output|lists)\b",
     re.I,
 )
-NEGATED = re.compile(r"\b(?:don't|do not|never|not|no)\b(?:\s+\w+)?\s*$", re.I)
+NEGATED = re.compile(
+    r"\b(?:don't|do not|never|not|no need to|no)\b(?:\s+\w+)?\s*$", re.I
+)
+# Describing a check against --help, not advising a call.
+DESCRIBED = re.compile(r"\b(?:checked|compared|guarded)\s+(?:against|with)\b", re.I)
 # Words that may sit between the verb and --help without naming a command.
-FILLER = {"its", "the", "a", "their", "script's", "scripts'", "ever", "with", "it"}
+FILLER = {"its", "the", "a", "their", "script's", "scripts'", "helper's", "helpers'"}
+FILLER |= {"ever", "with", "it", "each"}
 # The one sentence that states the convention rather than advising a call.
 HELP_CONVENTION = "prints usage with `-h`/`--help`"
 
@@ -234,12 +242,13 @@ def check_no_help_advice(docs, runnable):
 
     def advice(line):
         for m in HELP_ADVICE.finditer(line):
-            if NEGATED.search(line[max(0, m.start() - 40) : m.start()]):
+            before = line[max(0, m.start() - 40) : m.start()]
+            if NEGATED.search(before) or DESCRIBED.search(before):
                 continue
             between = next((g for g in m.groups() if g is not None), "")
             words = between.replace("`", " ").split()
             # `run configure --help` is another command's help, not ours.
-            if words and words[-1] not in FILLER | set(runnable) | {"<script>"}:
+            if words and words[-1].lower() not in FILLER | set(runnable) | {"<script>"}:
                 continue
             return True
         return False

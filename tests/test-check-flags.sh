@@ -65,6 +65,28 @@ case_ doc-help-output 1 "$T:$N: tells the agent to run --help" \
   "echo \"Read the script's \\\`--help\\\` output.\" >> $T && tail -1 $T | grep -q 'help\` output'"
 case_ doc-negated-help 0 "flag citations match --help" \
   "echo 'Do not ever run \`--help\`.' >> $T && tail -1 $T | grep -q 'not ever run'"
+case_ doc-no-need-to 0 "flag citations match --help" \
+  "echo 'No need to run \`--help\`.' >> $T && tail -1 $T | grep -q 'No need'"
+case_ doc-described-check 0 "flag citations match --help" \
+  "echo \"The file is checked against each script's \\\`--help\\\` output in CI.\" >> $T && tail -1 $T | grep -q 'checked against'"
+case_ doc-foreign-command-help 0 "flag citations match --help" \
+  "echo 'Run \`configure --help\` for its options.' >> $T && tail -1 $T | grep -q 'configure --help'"
+case_ doc-script-short-help 1 "$T:$N: tells the agent to run --help" \
+  "echo '\`gate.sh -h\` shows the flags.' >> $T && tail -1 $T | grep -q 'gate.sh -h'"
+case_ doc-look-at-help 1 "$T:$N: tells the agent to run --help" \
+  "echo \"Look at the helper's \\\`--help\\\`.\" >> $T && tail -1 $T | grep -q 'Look at'"
+case_ prose-cites-missing-script 1 "cites scripts/nope.sh, which does not exist" \
+  "echo 'See \`scripts/nope.sh\`.' >> $T && tail -1 $T | grep -q nope.sh"
+case_ synopsis-value-extra 1 "gate.sh: --full takes a value only in the synopsis" \
+  "sed -i '/^- \`gate.sh/s/\[--full\]/[--full MODE]/' $U && grep -q '^- \`gate.sh.*--full MODE' $U"
+case_ synopsis-short-extra 1 "gate.sh: -f|--full only in the synopsis" \
+  "sed -i '/^- \`gate.sh/s/\[--full\]/[-f|--full]/' $U && grep -q '^- \`gate.sh.*-f|--full' $U"
+case_ usage-file-missing 1 "script-usage.md:0: missing; every runnable script needs a synopsis line" \
+  "rm $U && [ ! -e $U ]"
+case_ help-prints-nothing 1 "scripts/gpg-verify.sh:0: --help prints nothing" \
+  "sed -i 's/^  -h|--help) .*exit 0;;\$/  -h|--help) exit 0;;/' $SK/scripts/gpg-verify.sh && grep -qx '  -h|--help) exit 0;;' $SK/scripts/gpg-verify.sh"
+case_ help-unusable 1 "gpg-verify.sh has no usable --help" \
+  "sed -i 's/^  -h|--help) .*exit 0;;\$/  -h|--help) exit 0;;/' $SK/scripts/gpg-verify.sh && grep -qx '  -h|--help) exit 0;;' $SK/scripts/gpg-verify.sh"
 
 [ "$fails" -eq 0 ] && { echo "OK: check-flags.py catches every mutation"; exit 0; }
 echo "$fails failure(s)"; exit 1
