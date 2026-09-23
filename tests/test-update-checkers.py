@@ -477,6 +477,8 @@ def _urlopen(req, *a, **k):
             raise urllib.error.HTTPError(url, 404, "no such project",
                                          None, None)
         return _R(json.dumps({"info": {"version": "1.0"}, "releases": {}}).encode())
+    if "registry.npmjs.org" in url and MODE == "npm_down":
+        raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
     if "release-monitoring.org" in url:
         if MODE == "anitya_down":
             raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
@@ -534,6 +536,13 @@ urllib.request.urlopen = _urlopen
         r = self._sweep("down", names=("pkg-a", "pkg-x", "pkg-y"))
         self.assertEqual(r.stderr.count("WARNING: github unreachable"), 1, r.stderr)
         self.assertEqual(r.returncode, 3, r.stdout)
+
+    def test_optional_companion_outage_does_not_warn(self):
+        # The GitHub->npm companions never degrade the verdict, so a warning
+        # beside "COVERAGE: complete" would contradict it.
+        r = self._sweep("npm_down")
+        self.assertNotIn("WARNING: npm", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_anitya_outage_warns_once_and_the_sweep_proceeds(self):
         r = self._sweep(
