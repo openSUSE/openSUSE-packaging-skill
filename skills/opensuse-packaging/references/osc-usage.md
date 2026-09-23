@@ -36,7 +36,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc lbl` (localbuildlog) — log of the last local build.
 - `osc repos [PRJ [PKG]]` (repositories) — repository/arch pairs a project builds.
 - `osc results PRJ [PKG]` (r) — remote status; `-r REPO`, `-a ARCH`, `-w` waits, `--verbose` adds details.
-- `osc rbl PRJ PKG REPO ARCH` (buildlog / blt / buildlogtail) — remote build log; `--lastsucceeded` shows the last green one.
+- `osc rbl PRJ PKG REPO ARCH` (buildlog) — remote build log (`blt`/`buildlogtail` print only its tail); `--lastsucceeded` shows the last green one.
 - `osc getbinaries PRJ PKG REPO ARCH` — download remote build results.
 - `osc whatdependson PRJ PKG REPO ARCH` — reverse build deps (`scripts/rdeps.sh` wraps it).
 - `osc service run source_validator` — the validator gate. `osc service manualrun` (mr) runs the `mode="manual"` services; `osc service run NAME` one service. Never `runall` (it also fires `buildtime` services).
@@ -48,7 +48,8 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc creq -a change_devel PRJ PKG DEVEL_PRJ [DEVEL_PKG] -m MSG` (createrequest) · `osc changedevelrequest PRJ PKG DEVEL_PRJ -m MSG` — change a package's devel project.
 - `osc deletereq PRJ PKG -m MSG` (deleterequest) — request deletion.
 - `osc mr [SRC_PRJ [PKGS RELEASE_PRJ]] -m MSG` (maintenancerequest) — maintenance incident request.
-- `osc mbranch PKG` (maintained) — branch every maintained product's copy of a package.
+- `osc maintained PKG` (sm) — dry run: lists the maintained products carrying the package, branches nothing.
+- `osc mbranch PKG` — branch every maintained product's copy of the package.
 - `osc rq list -U USER -s new,review -t submit [PRJ [PKG]]` (request) — list requests.
 - `osc rq show ID` (`-d` adds the diff) · `osc rq log ID` — one request · its history.
 - `osc rq accept -m MSG ID` · `osc rq decline -m MSG ID` · `osc rq revoke -m MSG ID` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: after a devel accept, file the onward `osc sr` yourself.
@@ -56,7 +57,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 ## Lookup
 
 - `osc develproject PRJ PKG` (dp) — the registered devel project.
-- `osc maintainer PRJ [PKG]` (bugowner) — maintainers; `-U USER` lists what a user maintains.
+- `osc maintainer PRJ PKG` — maintainers of a package (`osc maintainer PRJ` for a project); `-U USER` lists what a user maintains. Not `osc bugowner`: that alias lists bugowners only.
 - `osc whois USER` (user) — account name and email.
 - `osc search TERM` (se) — find packages/projects; `osc search --package TERM` matches package names only.
 - `osc api PATH` — a read-only GET for what no subcommand covers (search, `/request?view=collection`). Not a workaround for a failing subcommand: find its right form here.

@@ -42,11 +42,15 @@ _spec.loader.exec_module(_cf)
 spans, NEGATED = _cf.spans, _cf.NEGATED
 
 # `osc [global opts] <subcommand> <rest>`; the rest stops where another command
-# starts (a pipe, ;, &&, a command substitution).
+# starts (a pipe, ;, &). Global options that take a value take the next word.
 CALL = re.compile(
-    r"(?<![\w./-])osc((?:\s+(?:-A|--apiurl)\s+\S+|\s+--no-pager|\s+-[qv])*)"
-    r"\s+([a-z][a-z_]*)\b((?:[^`\n|;&$]|\|\|)*)"
+    r"(?<![\w./-])osc((?:\s+(?:(?:-A|--apiurl|--config|--setopt)(?:\s+(?!-)\S+|=\S+)"
+    r"|(?!(?:-A|--apiurl|--config|--setopt)\b)--?[A-Za-z][\w-]*(?:=\S+)?))*)"
+    r"\s+([a-z][a-z_]*)\b([^`\n|;&]*)"
 )
+# A command substitution is its own command: `-m "$(cat f)"` must not hide the
+# options after it, nor lend it its own.
+SUBST = re.compile(r"\$\([^()]*\)")
 OPT = re.compile(r"(?<![\w/.<>=-])(--?[A-Za-z][\w-]*)")
 # A synopsis bullet: "- `osc sub ...` · `osc other ...` — meaning"; every
 # `osc <sub>` span before the dash defines that subcommand.
@@ -63,11 +67,11 @@ WRONG = [
         "create a package with `osc meta pkg PRJ PKG -F FILE`",
     ),
     (
-        re.compile(r"^checkout\b.*\s-o\s+/tmp\b"),
-        "checks out into /tmp; checkouts belong in the osc working area",
+        re.compile(r"^checkout\b.*\s(?:-o|--output-dir)(?:\s+|=)?/(?:var/)?tmp\b"),
+        "checks out into a temp dir; checkouts belong in the osc working area",
     ),
     (
-        re.compile(r"^api\b.*-X\s+PUT\b.*_meta\b"),
+        re.compile(r"^api\b.*(?:-X|--method)(?:\s+|=)?PUT\b.*_meta\b"),
         "PUTs _meta by hand; use `osc meta pkg|prj ... -F FILE`",
     ),
 ]
@@ -124,7 +128,9 @@ def check(base, table):
         rel = os.path.relpath(doc, ROOT)
         with open(doc, encoding="utf-8") as fh:
             raw = fh.read().splitlines()
+        cursor = {}
         for n, text in spans(doc):
+            text = SUBST.sub("SUBST", text)
             for m in CALL.finditer(text):
                 word, rest = m.group(2), m.group(3)
                 if word not in table:
@@ -141,8 +147,12 @@ def check(base, table):
                 if doc == usage and n in wrong_ok:
                     continue
                 call = f"{sub} {rest.strip()}"
-                line = raw[n - 1]
-                before = line[: max(0, line.find(m.group(0)))]
+                # Negation is judged at THIS occurrence: a later, un-negated
+                # repeat of the same call must not borrow an earlier "never".
+                line = SUBST.sub("SUBST", raw[n - 1])
+                at = line.find(m.group(0), cursor.get(n, 0))
+                cursor[n] = at + 1
+                before = line[: max(0, at)]
                 before = before.replace("`", "").replace("*", "")
                 for pat, msg in WRONG:
                     if pat.search(call) and not NEGATED.search(before[-40:]):
@@ -155,7 +165,8 @@ def check(base, table):
     defined = {}
     with open(usage, encoding="utf-8") as fh:
         for n, line in enumerate(fh.read().splitlines(), start=1):
-            if not SYNOPSIS.match(line):
+            # A wrong form defines nothing; only the real synopsis lines count.
+            if n in wrong_ok or not SYNOPSIS.match(line):
                 continue
             # An unknown word here is already reported as a citation above.
             for word in DEFINES.findall(line.split(" — ", 1)[0]):
