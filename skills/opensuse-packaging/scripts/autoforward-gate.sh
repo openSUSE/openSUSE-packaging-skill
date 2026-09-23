@@ -43,6 +43,7 @@ esac
 
 user=""; batch=""; prj=""; pkg=""
 while [ $# -gt 0 ]; do
+  case "$1" in --user|--batch) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --user)  user="${2:-}"; shift 2;;
     --batch) batch="${2:-}"; shift 2;;

@@ -31,14 +31,15 @@
 #       details"); the format checks above pass on such an entry, so this
 #       is the gate that catches it
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
-#         3 = a file is unreadable.
+#         3 = a file is unreadable (wins over 1: the other files are still
+#         linted and printed, but the run is incomplete).
 set -euo pipefail
 
 entries=1
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
-  --entries) entries=$2; shift 2 ;;
+  --entries) [ $# -ge 2 ] || { echo "--entries needs a value" >&2; exit 2; }; entries=$2; shift 2 ;;
   --all) entries=0; shift ;;
 esac
 

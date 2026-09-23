@@ -20,6 +20,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir=.; entries=1; amend=""; target=""; buildlog=""; full=0
 while [ $# -gt 0 ]; do
+  case "$1" in --entries|--amend-top|--target|--build-log) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) entries=$2; shift 2 ;;

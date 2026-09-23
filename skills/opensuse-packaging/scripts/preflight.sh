@@ -39,6 +39,7 @@ esac
 
 pkg="" ; targetver="" ; target="openSUSE:Factory" ; user=""
 while [ $# -gt 0 ]; do
+  case "$1" in --target-project|--user) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --target-project) target="$2"; shift 2;;
     --user) user="$2"; shift 2;;

@@ -64,6 +64,7 @@ OBSUSER="" LOGIN="src.opensuse.org"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/osc-submission-watch"
 ALLOW_EMPTY=0 NO_PRS=0 NO_INCOMING=0
 while [ $# -gt 0 ]; do
+  case "$1" in --user|--login|--state-dir) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     -h|--help) awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "$0"; exit 0;;
     --user) OBSUSER="$2"; shift 2;;

@@ -44,6 +44,7 @@ esac
 
 url="" ; rev="" ; base="0" ; pkg="" ; update=0
 while [ $# -gt 0 ]; do
+  case "$1" in --rev|--base|--pkg) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --rev) rev="$2"; shift 2;;
     --base) base="$2"; shift 2;;
