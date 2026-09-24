@@ -40,6 +40,14 @@ git init -q --bare "$work/forge/$U/foo.git"
 cat > "$work/forge/$U/foo.git/hooks/pre-receive" <<'EOF'
 #!/bin/sh
 [ -z "$FAKE_PUSH_FAIL" ] || { echo "pre-receive hook declined" >&2; exit 1; }
+# FAKE_DELETE_FAIL declines branch deletes only (the new ref is all zeros):
+# the run's initial push still lands, so a GREEN run can hit a failing cleanup.
+if [ -n "$FAKE_DELETE_FAIL" ]; then
+  while read -r _old new _ref; do
+    case "$new" in 0000000000000000000000000000000000000000)
+      echo "pre-receive hook declined the delete" >&2; exit 1 ;; esac
+  done
+fi
 EOF
 chmod +x "$work/forge/$U/foo.git/hooks/pre-receive"
 
@@ -579,8 +587,15 @@ check_ remote-stale-no-stamp "[ ! -e $(stampf "$C") ]"
   echo '</resultlist>'; } > "$FAKE/results.xml"
 case_ remote-other-repo-ignored 0 "VERDICT: GREEN" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
+# A sibling branch proves the GREEN cleanup deletes exactly its own branch.
+# (Planted straight into the fake forge: a git push here is text the
+# pr-guard would have to refuse, it cannot tell where the push lands.)
+git -C "$work/forge/$U/foo.git" update-ref "refs/heads/$BR-keep" "$H"
 case_ remote-green 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) built on $GPRJ/leap-16.0 at commit ${H:0:12}" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
+check_ remote-green-deleted-branch "[ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/$BR)\" ]"
+check_ remote-green-kept-sibling "[ -n \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/$BR-keep)\" ]"
+git -C "$work/forge/$U/foo.git" update-ref -d "refs/heads/$BR-keep"
 printf 'PASS tree %s\n' "$(tree "$C")" > "$R.remote"
 case_ remote-green-passes-gate 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: build GREEN (remote" \
   "cd $C && bash $TG --review $R.remote && bash $TG"
@@ -588,6 +603,12 @@ check_ remote-green-stamp "python3 -c 'import json,sys; d=json.load(open(sys.arg
 results "i586:succeeded x86_64:unresolvable aarch64:succeeded"
 case_ remote-red-drops-stamp 1 "VERDICT: RED" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 check_ remote-red-drops-stamp-file "[ ! -e $(stampf "$C") ]"
+check_ remote-red-kept-branch "[ \"\$(git -C $work/forge/$U/foo.git rev-parse refs/heads/$BR)\" = $H ]"
+# A failing cleanup is a warning, not a verdict change: still GREEN, rc 0.
+results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
+case_ remote-green-delete-failed 0 "note: could not delete the fork branch $BR" \
+  "FAKE_OBSINFO_COMMIT=$H FAKE_DELETE_FAIL=1 bash $TG $C --remote"
+check_ remote-green-delete-failed-kept-branch "[ -n \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/$BR)\" ]"
 case_ remote-other-base-repoints 3 "pointed $GPRJ/foo at leapgate/leap-16.1-${H:0:12}" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --branch leap-16.1 --remote"
 check_ remote-other-base-disables-16.0 "grep -qF '<disable repository=\"leap-16.0\" />' $PKGMETA"
