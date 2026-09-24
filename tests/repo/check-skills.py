@@ -224,6 +224,9 @@ def _text_files():
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fn in files:
+            # In a git worktree .git is a file naming the absolute gitdir.
+            if fn in SKIP_DIRS:
+                continue
             full = os.path.join(base, fn)
             rel = os.path.relpath(full, ROOT)
             if rel in SKIP_FILES or rel.startswith(SKIP_TREES):
