@@ -30,6 +30,8 @@ skills/opensuse-packaging/   the skill — this directory is the unit of distrib
                              is scripts/README.md
   agents/                    delegation playbooks (role prompts) for the three blocks
 tests/                       the guard suite — repo-only, never installed
+contrib/harness/             drafts that wire scripts/pr-guard.py into Claude Code and
+                             opencode as a pinned hook — repo-only, installed by hand
 evals/                       behaviour evals (JSON; no runner) — repo-only
 ```
 
@@ -163,6 +165,7 @@ python3 tests/repo/check-flags.py
 python3 tests/repo/check-osc.py
 ruff check . && ruff format --check .
 shellcheck tests/test-*.sh
+shellcheck skills/opensuse-packaging/scripts/{leap-sync,pool-pr,target-gate}.sh
 ```
 
 The suites are offline — network lookups are stubbed and the subprocess cases run with

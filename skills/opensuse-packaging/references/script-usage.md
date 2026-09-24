@@ -30,7 +30,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 ## Submit and watch
 
-- `sr-status.py [ID ...] [--user U] [--state open|all|declined|accepted] [--target PRJ] [--limit N] [--format table|blocks] [--brief] [--no-prs]` — exit 0 printed · 2 usage or OBS query failed
+- `sr-status.py [ID ...] [--user U] [--state open|all|declined|accepted] [--target PRJ] [--limit N] [--format table|blocks] [--brief] [--no-prs] [--pr OWNER/REPO#N]` — `--pr` reads one PR's staging build from OBS at the PR head; exit 0 printed, or `--pr` green at the PR head or merged · 1 `--pr` red at the head or closed unmerged · 2 usage or a lookup failed · 3 `--pr` pending (building, or a succeeded arch not yet rebuilt from the current sources) · 4 `--pr` stale (built commit is not the head) · 6 `--pr` network failure
 - `my-requests.sh [--state open|declined|accepted|all] [--user U] [--target PRJ]` — exit 0 listed · 2 usage or query failed
 - `incoming-requests.py [--user U] [--format ascii|table|plain] [--verbose] [--no-prs]` — exit 0 listed · 2 usage or OBS query failed
 - `watch-submissions.sh [--user U] [--login NAME] [--state-dir DIR] [--allow-empty] [--no-prs] [--no-incoming]` — baseline in `$XDG_STATE_HOME/osc-submission-watch` unless `--state-dir`; first line BASELINE-INIT, NOCHANGE, CHANGED or WATCH-ERROR; exit 0 · 2 WATCH-ERROR or usage
@@ -40,9 +40,12 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 ## Leap
 
 - `leap-status.sh <pkg>` — exit 0 in sync · 1 behind, no PR · 2 behind, PR open · 3 not in Leap · 4 no verdict (a Version unreadable, or usage) · 5 network
-- `leap-sync.sh [--refresh] <pkg> [leap-branch]` — exit 0 synced · 2 error · 3 new to Leap · 4 PR already open · 5 no factory branch · 6 network
+- `leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]` — sync + target build, never pushes; exit 0 synced and target build green, or already in sync · 2 error · 3 new to Leap · 4 someone else's PR open · 5 no factory branch · 6 network · 7 target build red · 8 remote build pending
+- `target-gate.sh [DIR] [--branch BASE] (--build [--jobs N] | --remote | --review FILE)` — no mode = check GREEN build + PASS review for HEAD's tree; `--review`: FILE's first non-empty line starts with `PASS` and names `tree <sha12>` of HEAD; PR arches from `openSUSE:Backports:SLE-16.x:PullRequest`; exit 0 green · 1 red · 2 refused or usage · 3 no stamp, stale or pending
+- `pool-pr.sh DIR [--title T] [--body-file F] [--replace]` — the only route to open/update a pool PR; your open PR is updated only when HEAD contains its head, `--replace` drops its commits and resets its body; exit 0 opened/updated · 2 refused or usage · 6 network/API failure · 7 gate not green, nothing pushed
 
 ## Skill upkeep
 
 - `refsection.py [--lines] FILE SECTION | --list FILE | --anchor FILE ID | --rule N...` — exit 0 printed · 1 no such section · 2 ambiguous · 3 usage or no file
 - `wiki-drift.sh [--diff] [--page TITLE]... [--update]` — exit 0 no drift · 1 drift · 2 error
+- `pr-guard.py < EVENT` — the harness hook, run by Claude Code or opencode on each tool call, never by an agent; env `PR_GUARD_SKILL_DIR`, `PR_GUARD_PIN_REF` (default `refs/remotes/origin/main`), `PR_GUARD_ARCH`, `PR_GUARD_PULLS_DIR`; exit 0 allowed · 2 refused
