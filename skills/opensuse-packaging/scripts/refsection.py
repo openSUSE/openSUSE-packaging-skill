@@ -35,7 +35,8 @@ in this repo, not fetched content. references/untrusted-content.md scopes
 Gitea text, API dumps. Piping our own documentation through it would only
 mangle the escapes the docs quote on purpose.
 
-Ported from the SUSE-qe-update-validation skill (scripts/refsection.py); keep
+Ported from the SUSE-qe-update-validation skill
+(skills/suse-qe-update-validation/scripts/refsection.py); keep
 the mechanics byte-compatible so fixes port both ways.
 """
 

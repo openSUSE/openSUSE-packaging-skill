@@ -101,6 +101,9 @@ import _sanitize
 assert _sanitize.sanitize("a\x1b[31mb") == "ab"
 assert _sanitize.sanitize("") == ""
 assert _sanitize.sanitize(None) is None
+# Decoded C1 codepoints: the hostile fixture only carries raw 0x85 bytes, so
+# without this the U+0080-U+009F range could be dropped from the filter unseen.
+assert _sanitize.sanitize("a\x85b\x80c\x9fd") == "abcd"
 print("PASS: module import + sanitize()")
 PYEOF
 [ $? -eq 0 ] || fails=$((fails+1))
