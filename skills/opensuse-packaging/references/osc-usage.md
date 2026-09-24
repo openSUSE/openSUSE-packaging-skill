@@ -30,12 +30,12 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 ## Build
 
-- `osc build [--alternative-project PRJ] REPO ARCH PKG.spec` — local build; `REPO` is a repository of the checkout's project (`osc repos PRJ`), `ARCH` the host's. Flags used here: `--clean`, `-k DIR` (keep RPMs), `-p DIR` (prefer packages), `--trust-all-projects`, `-M FLAVOR` (multibuild), `--noinit`, `--release N`. Never bind-mount host paths into the root.
+- `osc build [--alternative-project PRJ] REPO ARCH PKG.spec` — local build; `REPO` is a repository of the checkout's project (`osc repos PRJ`), `ARCH` the host's. Flags used here: `--clean`, `-k DIR` (keep RPMs), `-p DIR` (prefer packages), `--trust-all-projects`, `-M FLAVOR` (multibuild), `--noinit`, `--release N`, `--root ROOT` (a build root of its own instead of the oscrc one; `scripts/target-gate.sh` uses one per package and base). Never bind-mount host paths into the root. For a Leap pool PR, `scripts/target-gate.sh --build` runs this build — never hand-run it as the proof.
 - `osc chroot [--alternative-project PRJ] REPO ARCH PKG.spec` (build alias) — enter the preserved build root of the last build; `--shell-cmd CMD` runs one command.
 - `osc buildinfo [--alternative-project PRJ] REPO ARCH PKG.spec` — the resolved build deps, without building.
 - `osc lbl` (localbuildlog) — log of the last local build.
 - `osc repos [PRJ [PKG]]` (repositories) — repository/arch pairs a project builds.
-- `osc results PRJ [PKG]` (r) — remote status; `-r REPO`, `-a ARCH`, `-w` waits, `--verbose` adds details.
+- `osc results PRJ [PKG]` (r) — remote status; `-r REPO`, `-a ARCH`, `-w` waits, `--verbose` adds details, `--xml` for a script to parse.
 - `osc rbl PRJ PKG REPO ARCH` (buildlog) — remote build log (`blt`/`buildlogtail` print only its tail); `--lastsucceeded` shows the last green one.
 - `osc getbinaries PRJ PKG REPO ARCH` — download remote build results.
 - `osc whatdependson PRJ PKG REPO ARCH` — reverse build deps (`scripts/rdeps.sh` wraps it).
@@ -71,3 +71,4 @@ Each was actually run by an agent, and each failed or did damage. The correct fo
 - `osc co -c PRJ PKG -o /tmp/x` — checkout outside the working area → `osc co PRJ PKG` from the area.
 - `osc service runall` — mode-blind, also runs `buildtime` services on the host → name the service.
 - `osc rq accept` expecting a forward — there is no forward option; accept, then `osc sr` the next hop.
+- `osc build 16.0 aarch64 <pkg>.spec` in a devel checkout (its project's `16.0` repository), offered as proof for a Leap pool PR — another tree, built against another project than the PR bot's → `scripts/target-gate.sh <pool clone> --build`.

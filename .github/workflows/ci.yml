@@ -67,6 +67,9 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: shellcheck tests/test-*.sh
+      # The pool PR gate's own scripts. The older scripts are not listed: they
+      # carry findings nobody has triaged yet.
+      - run: shellcheck skills/opensuse-packaging/scripts/{leap-sync,pool-pr,target-gate}.sh
       # No shfmt: it rewrites the suites' deliberate one-line guards and aligned
       # helper definitions into multi-line blocks -- ~530 lines of churn that
       # makes the assertions harder to read and finds no defects. shellcheck,
