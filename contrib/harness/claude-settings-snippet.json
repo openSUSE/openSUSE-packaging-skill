@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/pr-guard.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Edit(~/.claude/settings.json)",
+      "Write(~/.claude/settings.json)",
+      "Edit(~/.claude/hooks/**)",
+      "Write(~/.claude/hooks/**)",
+      "Edit(~/.config/opencode/**)",
+      "Write(~/.config/opencode/**)"
+    ]
+  }
+}

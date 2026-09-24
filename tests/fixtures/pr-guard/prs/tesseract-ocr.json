@@ -1,0 +1,8 @@
+[
+  {"number": 4, "state": "open", "base": {"ref": "leap-16.1"},
+   "head": {"ref": "tess-88053-16.1", "label": "tess-88053-16.1",
+            "repo": {"name": "tesseract-ocr", "owner": {"login": "someone"}}}},
+  {"number": 3, "state": "open", "base": {"ref": "leap-16.0"},
+   "head": {"ref": "tess-88053-16.0", "label": "tess-88053-16.0",
+            "repo": {"name": "tesseract-ocr", "owner": {"login": "someone"}}}}
+]

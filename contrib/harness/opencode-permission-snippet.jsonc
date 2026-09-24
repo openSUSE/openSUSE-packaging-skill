@@ -1,0 +1,34 @@
+// Merge the "permission" block into ~/.config/opencode/opencode.jsonc.
+// A backstop for pr-guard.py, not a replacement: these patterns see one command
+// at a time and cannot resolve a push destination or read a script. The last
+// matching pattern wins, so "*" comes first. git runs "git obs" as git-obs, so
+// each git-obs pattern comes in both spellings.
+{
+  "permission": {
+    "bash": {
+      "*": "allow",
+
+      // Merging a pool PR is never an agent's job.
+      "tea pr merge *pool/*": "deny",
+      "tea pr m *pool/*": "deny",
+      "tea pulls merge *pool/*": "deny",
+      "tea pulls m *pool/*": "deny",
+      "tea pull merge *pool/*": "deny",
+      "git-obs *pr merge *pool/*": "deny",
+      "git obs *pr merge *pool/*": "deny",
+      "*repos/pool/*/pulls/*/merge*": "deny",
+
+      // Pool PRs are opened by pool-pr.sh; a direct create gets a human look.
+      "tea pr create *": "ask",
+      "tea pr c *": "ask",
+      "tea pulls create *": "ask",
+      "tea pulls c *": "ask",
+      "git-obs *pr create*": "ask",
+      "git obs *pr create*": "ask",
+      "git-obs *pr forward*": "ask",
+      "git obs *pr forward*": "ask",
+      "*-X POST*repos/pool/*/pulls*": "ask",
+      "*repos/pool/*/pulls*-X POST*": "ask"
+    }
+  }
+}
