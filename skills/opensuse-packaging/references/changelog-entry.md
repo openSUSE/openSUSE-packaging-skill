@@ -72,7 +72,9 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
 
 - **`scripts/changes-prepend.sh` mechanizes the prepend + verification — prefer it over
   hand-editing**, because the block it emits is canonical by construction (separator count and
-  insertion-only are checked; it restores the file on failure).
+  insertion-only are checked; it restores the file on failure). It refuses a file that already
+  differs from its committed version — see
+  `references/changelog-entry.md` "One `.changes` entry per change — amend, don't stack".
 - Whichever way you write it, re-run **`scripts/changes-lint.sh --entries <n>`** afterwards: it
   format-lints the newest N entries (separators, headers, blank lines, bullets) and is the pre-SR
   gate against "fix the format of the changes entries" declines. `source_validator` does **not**

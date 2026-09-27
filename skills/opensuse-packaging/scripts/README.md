@@ -107,7 +107,7 @@ Scaffold + verify a pinned-commit `obs_scm` `_service` for tagless upstreams (re
 
 ## `changes-prepend.sh`
 
-Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure).
+Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure). Refuses (exit 3, nothing written) when the file already differs from its committed version (looked up as `changes-guard.sh` does): an entry is already pending, and a second prepend would stack two into one submission — edit that top entry, then `changes-guard.sh --amend-top`.
 
 ## `changes-lint.sh`
 

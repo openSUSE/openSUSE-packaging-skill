@@ -22,8 +22,12 @@
 #     checked as byte-identical old content at the tail)
 #   * the previous top entry's header line is byte-identical
 # On any verification failure the backup is restored and the discrepancy printed.
+# Refuses up front when the file already differs from its committed version
+# (baseline found as changes-guard.sh finds it): an entry is already pending, so
+# edit that one instead of stacking a second into the same submission.
 # Exit: 0 = verified insertion, 1 = verification failed (backup restored),
-#       2 = usage / no author.
+#       2 = usage / no author, 3 = refused: the file differs from its
+#       committed version (nothing written).
 set -euo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
@@ -71,6 +75,23 @@ case "$author" in
   *"<"*"@"*">"*) : ;;
   *) echo "--author must be the full 'Full Name <email>' form, got: $author" >&2; exit 2;;
 esac
+
+# A prepend over uncommitted changes stacks a second entry into the same
+# submission. Baseline lookup order is changes-guard.sh's.
+dir=$(dirname -- "$file"); bn=$(basename -- "$file"); committed=$(mktemp)
+if [ -r "$dir/.osc/sources/$bn" ]; then cp -- "$dir/.osc/sources/$bn" "$committed"
+elif [ -r "$dir/.osc/$bn" ]; then cp -- "$dir/.osc/$bn" "$committed"
+elif git -C "$dir" rev-parse --show-toplevel >/dev/null 2>&1; then
+  git -C "$dir" show "HEAD:./$bn" > "$committed" 2>/dev/null || true
+fi
+if [ -s "$committed" ] && ! cmp -s "$committed" "$file"; then
+  rm -f "$committed"
+  echo "$file already differs from its committed version: it holds an uncommitted entry or edit." >&2
+  echo "Do not prepend a second one: edit the top entry instead, then verify with" >&2
+  echo "  changes-guard.sh --amend-top '<Your Name>' $file" >&2
+  exit 3
+fi
+rm -f "$committed"
 
 body="$(cat)"   # the bullets, from stdin
 [ -n "$body" ] || { echo "empty body on stdin — nothing to add" >&2; exit 2; }
