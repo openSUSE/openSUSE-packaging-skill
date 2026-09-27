@@ -124,15 +124,25 @@ case "$sub" in
       /source/*)
         [ -z "${FAKE_SRC_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
         printf '<directory name="foo" rev="2" srcmd5="%s"><entry name="_scmsync.obsinfo"/></directory>\n' "$FAKE_SRCMD5" ;;
-      /build/*/_history)
-        # FAKE_HIST_*="<arch>/<packid> ...": which builds are stale, empty or unreadable.
-        ap=${1#/build/*/*/}; ap=${ap%/_history}
+      /build/*/_history|/build/*/_jobhistory\?package=*)
+        # FAKE_HIST_*="<arch>/<packid> ...": which builds are stale, empty or
+        # unreadable. FAKE_HIST_UNCHANGED: rebuilt from the current sources with
+        # an unchanged result, a new job that adds no _history entry.
+        case "$1" in
+          */_history) ap=${1#/build/*/*/}; ap=${ap%/_history}; kind=hist ;;
+          *) ap=${1#/build/*/*/}; ap=${ap%%/*}; p=${1##*package=}; ap="$ap/${p%%&*}"; kind=job ;;
+        esac
         case " ${FAKE_HIST_FAIL:-} " in *" $ap "*) echo "Server returned an error: HTTP Error 502"; exit 1;; esac
-        case " ${FAKE_HIST_EMPTY:-} " in *" $ap "*) echo '<buildhistory/>'; exit 0;; esac
+        case " ${FAKE_HIST_EMPTY:-} " in *" $ap "*) [ $kind = hist ] && echo '<buildhistory/>' || echo '<jobhistlist/>'; exit 0;; esac
         case " ${FAKE_HIST_GARBAGE:-} " in *" $ap "*) echo 'Server returned garbage'; exit 0;; esac
         a=$FAKE_OLDMD5 b=$FAKE_SRCMD5
         case " ${FAKE_HIST_STALE:-} " in *" $ap "*) a=$FAKE_SRCMD5 b=$FAKE_OLDMD5;; esac
-        printf '<buildhistory>\n  <entry rev="1" srcmd5="%s" bcnt="1"/>\n  <entry rev="2" srcmd5="%s" bcnt="1"/>\n</buildhistory>\n' "$a" "$b" ;;
+        case " ${FAKE_HIST_UNCHANGED:-} " in *" $ap "*) [ $kind = hist ] && a=$FAKE_SRCMD5 b=$FAKE_OLDMD5;; esac
+        if [ $kind = hist ]; then
+          printf '<buildhistory>\n  <entry rev="1" srcmd5="%s" bcnt="1"/>\n  <entry rev="2" srcmd5="%s" bcnt="1"/>\n</buildhistory>\n' "$a" "$b"
+        else
+          printf '<jobhistlist>\n  <jobhist package="%s" rev="2" srcmd5="%s" bcnt="1" code="succeeded"/>\n</jobhistlist>\n' "${ap#*/}" "$b"
+        fi ;;
       *) echo "fake osc: unexpected api path $1" >&2; exit 99 ;;
     esac ;;
   *) echo "fake osc: unexpected subcommand $sub" >&2; exit 99 ;;
@@ -618,11 +628,12 @@ results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s39
 case_ remote-stale-build 3 "source ${FAKE_SRCMD5:0:12} not built yet on aarch64/foo (built ${FAKE_OLDMD5:0:12})" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_STALE=aarch64/foo bash $TG $C --remote"
 check_ remote-obsinfo-read-at-that-source "grep -qxF 'osc api /source/$GPRJ/foo?expand=1' $FAKE/calls && grep -qxF 'osc cat -r $FAKE_SRCMD5 $GPRJ foo _scmsync.obsinfo' $FAKE/calls"
+check_ remote-reads-last-job "grep -qxF 'osc api /build/$GPRJ/leap-16.0/aarch64/_jobhistory?package=foo&limit=1' $FAKE/calls"
 case_ remote-never-built 3 "not built yet on x86_64/foo (built nothing)" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_EMPTY=x86_64/foo bash $TG $C --remote"
-case_ remote-history-unreadable 2 "cannot read the $GPRJ/leap-16.0/ppc64le/foo build history: Server returned an error: HTTP Error 502" \
+case_ remote-history-unreadable 2 "cannot read the $GPRJ/leap-16.0/ppc64le/foo job history: Server returned an error: HTTP Error 502" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_FAIL=ppc64le/foo bash $TG $C --remote"
-case_ remote-history-garbage 2 "unparseable $GPRJ/leap-16.0/i586/foo build history" \
+case_ remote-history-garbage 2 "unparseable $GPRJ/leap-16.0/i586/foo job history" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_GARBAGE=i586/foo bash $TG $C --remote"
 case_ remote-sources-unreadable 2 "cannot read the $GPRJ/foo sources: Server returned an error: HTTP Error 500" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_SRC_FAIL=1 bash $TG $C --remote"
@@ -635,6 +646,12 @@ case_ remote-sources-unreadable 2 "cannot read the $GPRJ/foo sources: Server ret
 case_ remote-stale-flavor 3 "not built yet on aarch64/foo:test (built ${FAKE_OLDMD5:0:12})" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_STALE=aarch64/foo:test bash $TG $C --remote"
 check_ remote-stale-no-stamp "[ ! -e $(stampf "$C") ]"
+# An unchanged rebuild of the new sources is a new job but no new _history
+# entry: the last job, not _history, says which sources were built.
+results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
+case_ remote-unchanged-rebuild 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) built on $GPRJ/leap-16.0" \
+  "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_UNCHANGED='i586/foo x86_64/foo aarch64/foo ppc64le/foo' bash $TG $C --remote"
+bash "$TG" "$C" --remote >/dev/null
 # The other base's repository is not this base's verdict.
 { echo '<resultlist state="x">'
   printf '<result repository="leap-16.1" arch="x86_64" code="published" state="published"><status package="foo" code="failed"/></result>\n'

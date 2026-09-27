@@ -313,15 +313,18 @@ def older_builds(prj, pkg, ok, errors):
         return None, f"the {prj}/{pkg} srcmd5"
     older = []
     for label, path in ok.items():
-        what = f"the {prj}/{path} build history"
-        hist = api(f"/build/{prj}/{path}/_history?limit=1", hard=False, errors=errors)
+        what = f"the {prj}/{path} job history"
+        # The last job, not _history: an unchanged rebuild adds no entry there.
+        where, name = path.rsplit("/", 1)
+        url = f"/build/{prj}/{where}/_jobhistory?package={name}&limit=1"
+        hist = api(url, hard=False, errors=errors)
         if hist is None:
             return None, what
         try:
-            entries = ET.fromstring(hist).findall("entry")
+            jobs = ET.fromstring(hist).findall("jobhist")
         except ET.ParseError:
             return None, what
-        got = entries[-1].get("srcmd5", "") if entries else ""
+        got = jobs[-1].get("srcmd5", "") if jobs else ""
         if got != cur:
             built = got[:12] or "nothing recorded"
             older.append(f"{label} (built {built}, sources {cur[:12]})")

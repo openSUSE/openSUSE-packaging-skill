@@ -474,12 +474,12 @@ def results(repo, required):
 
 
 def srcmd5():
-    # A source listing's directory srcmd5; a build _history's last entry's.
+    # A source listing's directory srcmd5; a _jobhistory's last job's.
     try:
         root = ET.fromstring(sys.stdin.read())
     except ET.ParseError:
         return 2
-    e = root if root.tag == "directory" else (root.findall("entry") or [None])[-1]
+    e = root if root.tag == "directory" else (root.findall("jobhist") or [None])[-1]
     m = e.get("srcmd5") if e is not None else None
     if not m:
         return 1
@@ -704,10 +704,11 @@ if [ "$mode" = remote ]; then
   why=$(sed -n 's/^#why //p' <<<"$sum")
   if [ $rc = 0 ]; then
     stale=()
+    # The last job, not _history: an unchanged rebuild adds no entry there.
     while read -r a p; do
-      h=$(osc api "/build/$gprj/$base/$a/$p/_history" 2>&1) \
-        || refuse "cannot read the $gprj/$base/$a/$p build history: $(tail -1 <<<"$h")"
-      m=$(py srcmd5 <<<"$h"); [ $? != 2 ] || refuse "unparseable $gprj/$base/$a/$p build history"
+      h=$(osc api "/build/$gprj/$base/$a/_jobhistory?package=$p&limit=1" 2>&1) \
+        || refuse "cannot read the $gprj/$base/$a/$p job history: $(tail -1 <<<"$h")"
+      m=$(py srcmd5 <<<"$h"); [ $? != 2 ] || refuse "unparseable $gprj/$base/$a/$p job history"
       [ "$m" = "$smd5" ] || { m=${m:0:12}; stale+=("$a/$p (built ${m:-nothing})"); }
     done < <(sed -n 's/^#built //p' <<<"$sum")
     [ ${#stale[@]} -eq 0 ] || pending "source ${smd5:0:12} not built yet on ${stale[*]} — re-run to poll"

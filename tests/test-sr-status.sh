@@ -95,8 +95,15 @@ buildhist() { # <project> <arch>/<package> <srcmd5>: the last successful build t
   <entry rev=\"7\" srcmd5=\"$3\" versrel=\"5.5.3-160000.1\" bcnt=\"1\" time=\"1790171300\" duration=\"812\"/>
 </buildhistory>"
 }
+jobhist() { # <project> <arch>/<package> <srcmd5>: the last build job there
+  put "$B/obs/build/$1/standard/${2%%/*}/_jobhistory_package_${2#*/}_limit_1" "<jobhistlist>
+  <jobhist package=\"${2#*/}\" rev=\"7\" srcmd5=\"$3\" versrel=\"5.5.3-160000.1\" bcnt=\"1\" code=\"succeeded\"/>
+</jobhistlist>"
+}
 built() { # <project> <srcmd5>: sources, and both building arches' last build, at srcmd5
-  srcmd5 "$1" "$2" && buildhist "$1" x86_64/tesseract-ocr "$2" && buildhist "$1" aarch64/tesseract-ocr "$2"
+  srcmd5 "$1" "$2" && for a in x86_64 aarch64; do
+    buildhist "$1" "$a/tesseract-ocr" "$2" && jobhist "$1" "$a/tesseract-ocr" "$2" || return 1
+  done
 }
 pin() { # <project> <products PR> <head repo> <head ref>
   put "$B/obs/source/$1/_meta" "<project name=\"$1\">
@@ -191,23 +198,27 @@ case_ dirty-excluded-arch 3 "standard/i586 excluded (dirty)" \
 # The scheduler race: obsinfo is at the head and the results say succeeded, not
 # dirty, but x86_64's last build is of the previous sources.
 case_ succeeded-from-older-sources 3 "VERDICT: PENDING — not yet rebuilt from the current sources" \
-  "buildhist $P4 x86_64/tesseract-ocr $OLD" --pr 'pool/tesseract-ocr#4'
+  "jobhist $P4 x86_64/tesseract-ocr $OLD" --pr 'pool/tesseract-ocr#4'
 grep -qF "built from older sources: standard/x86_64 succeeded (built ${OLD:0:12}, sources ${S4:0:12})" <<<"$LAST" \
   && ! grep -qF "standard/aarch64 succeeded (built" <<<"$LAST" \
   && pass "succeeded-from-older-sources: names only the older arch" || fail "succeeded-from-older-sources: $LAST"
 case_ no-build-recorded 3 "standard/aarch64 succeeded (built nothing recorded, sources ${S4:0:12})" \
-  "put \$B/obs/build/$P4/standard/aarch64/tesseract-ocr/_history_limit_1 '<buildhistory/>'" --pr 'pool/tesseract-ocr#4'
+  "put \$B/obs/build/$P4/standard/aarch64/_jobhistory_package_tesseract-ocr_limit_1 '<jobhistlist/>'" --pr 'pool/tesseract-ocr#4'
+# An unchanged rebuild of the current sources is a new job but no new _history
+# entry: the last job, not _history, says which sources were built.
+case_ unchanged-rebuild 0 "VERDICT: GREEN at the PR head" \
+  "buildhist $P4 x86_64/tesseract-ocr $OLD" --pr 'pool/tesseract-ocr#4'
 # A flavor is judged by its own history, not the main package's.
 case_ flavor-at-current-sources 0 "VERDICT: GREEN at the PR head" \
-  "extra $P4 tesseract-ocr:docs succeeded && buildhist $P4 x86_64/tesseract-ocr:docs $S4" --pr 'pool/tesseract-ocr#4'
+  "extra $P4 tesseract-ocr:docs succeeded && jobhist $P4 x86_64/tesseract-ocr:docs $S4" --pr 'pool/tesseract-ocr#4'
 case_ flavor-from-older-sources 3 "standard/x86_64:docs succeeded (built ${OLD:0:12}, sources ${S4:0:12})" \
-  "extra $P4 tesseract-ocr:docs succeeded && buildhist $P4 x86_64/tesseract-ocr:docs $OLD" --pr 'pool/tesseract-ocr#4'
-case_ history-missing 2 "could not read the $P4/standard/x86_64/tesseract-ocr build history (lookup failed)" \
-  "rm \$B/obs/build/$P4/standard/x86_64/tesseract-ocr/_history_limit_1" --pr 'pool/tesseract-ocr#4'
-case_ history-unparsable 2 "could not read the $P4/standard/x86_64/tesseract-ocr build history (lookup failed)" \
-  "put \$B/obs/build/$P4/standard/x86_64/tesseract-ocr/_history_limit_1 '<buildhistory'" --pr 'pool/tesseract-ocr#4'
-case_ history-network 6 "could not read the $P4/standard/x86_64/tesseract-ocr build history (network failure)" \
-  "put \$B/obs/build/$P4/standard/x86_64/tesseract-ocr/_history_limit_1 @NET" --pr 'pool/tesseract-ocr#4'
+  "extra $P4 tesseract-ocr:docs succeeded && jobhist $P4 x86_64/tesseract-ocr:docs $OLD" --pr 'pool/tesseract-ocr#4'
+case_ history-missing 2 "could not read the $P4/standard/x86_64/tesseract-ocr job history (lookup failed)" \
+  "rm \$B/obs/build/$P4/standard/x86_64/_jobhistory_package_tesseract-ocr_limit_1" --pr 'pool/tesseract-ocr#4'
+case_ history-unparsable 2 "could not read the $P4/standard/x86_64/tesseract-ocr job history (lookup failed)" \
+  "put \$B/obs/build/$P4/standard/x86_64/_jobhistory_package_tesseract-ocr_limit_1 '<jobhistlist'" --pr 'pool/tesseract-ocr#4'
+case_ history-network 6 "could not read the $P4/standard/x86_64/tesseract-ocr job history (network failure)" \
+  "put \$B/obs/build/$P4/standard/x86_64/_jobhistory_package_tesseract-ocr_limit_1 @NET" --pr 'pool/tesseract-ocr#4'
 case_ srcmd5-missing 2 "could not read the $P4/tesseract-ocr srcmd5 (lookup failed)" \
   "rm \$B/obs/source/$P4/tesseract-ocr_expand_1" --pr 'pool/tesseract-ocr#4'
 case_ srcmd5-unparsable 2 "could not read the $P4/tesseract-ocr srcmd5 (lookup failed)" \
