@@ -50,8 +50,8 @@ grep -qxF 'A patch (zoo-2.10.1-tempfile.patch) is being added without this addit
 # unmodified side) and `osc status` says nothing in a git checkout. Taking the
 # osc branch therefore reports "no patch added or removed" over a real added
 # patch. This builds that exact shape offline and asserts the finding fires.
-scm="$(mktemp -d)"
-trap 'rm -rf "$scm"' EXIT
+scm="$(mktemp -d)"; prj="$(mktemp -d)"
+trap 'rm -rf "$scm" "$prj"' EXIT
 (
   cd "$scm" || exit 1
   git init -q . && git config user.email t@example.com && git config user.name t
@@ -66,6 +66,17 @@ if [ "$rc" = 1 ] && grep -q 'added.patch) is being added' <<<"$out"; then
   pass "scmsync checkout: unmentioned added patch is found (not a false clean)"
 else
   fail "scmsync checkout: expected rc=1 with an 'is being added' finding, got rc=$rc"
+  printf '%s\n' "$out" | sed 's/^/    /'
+fi
+
+# An osc project checkout has .osc/_project but no _package (gate.sh run from
+# the project directory): a usage failure that says where to go, no traceback.
+mkdir -p "$prj/.osc" && printf 'devel:example\n' > "$prj/.osc/_project"
+out="$("$SCRIPT" "$prj" 2>&1)"; rc=$?
+if [ "$rc" = 2 ] && grep -q 'osc project checkout — cd into the package directory' <<<"$out" && ! grep -q Traceback <<<"$out"; then
+  pass "osc project checkout: exit 2 with a pointer, no traceback"
+else
+  fail "osc project checkout: expected rc=2 and a pointer, got rc=$rc"
   printf '%s\n' "$out" | sed 's/^/    /'
 fi
 

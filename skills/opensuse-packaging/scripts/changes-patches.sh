@@ -75,6 +75,8 @@ if base is not None:
                  if os.path.isfile(os.path.join(d, f)) and not f.startswith(".")}
     where = base
 elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(d, ".osc/_scm")):
+    if not os.path.isfile(os.path.join(d, ".osc/_package")):
+        fail(f"{d}: osc project checkout — cd into the package directory")
     pkg = read(os.path.join(d, ".osc/_package")).strip()
     if os.path.exists(os.path.join(d, ".osc/_files")):
         files_xml = ET.parse(os.path.join(d, ".osc/_files")).getroot()
