@@ -225,8 +225,8 @@ OSC_REQUEST = Rx(
 # --nodevelproject, or a prefix argparse expands to it, on a submit request.
 NODEVEL = "|".join("--nodevelproject"[:n] for n in range(5, 17))
 OSC_NODEVEL = Rx(
-    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest"
-    rf"|(?:rq|request){SEP}create)(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
+    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)"
+    rf"(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
 )
 # A maintenance or update project, which takes no direct write; one under
 # home: is the user's own branch, whatever its name ends in.
