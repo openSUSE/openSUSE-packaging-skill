@@ -43,7 +43,7 @@ Per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / S
 
 ## `preflight.sh`
 
-Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward.
+Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none".
 
 ## `devel-of.sh`
 

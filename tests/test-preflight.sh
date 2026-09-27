@@ -1,6 +1,7 @@
 #!/bin/bash
-# test-preflight.sh — preflight.sh offline: a fake `osc` on PATH answers from a
-# per-case fixture tree (a missing fixture is a 404). The base package foo has
+# test-preflight.sh — preflight.sh offline: fake `osc` and `git-obs` on PATH
+# answer from a per-case fixture tree (a missing fixture is a 404), and a fake
+# `curl` fails and records that it was called. The base package foo has
 # devel devel:example at 1.1 against openSUSE:Factory at 1.0, nothing in
 # flight, and one declined devel->Factory SR. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
@@ -16,7 +17,7 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 cat > "$work/bin/osc" <<'EOF'
 #!/bin/bash
-echo "osc $*" >> "$FIX/calls"
+echo "osc $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
 case $1 in
   whois) [ -e "$FIX/no-whois" ] && exit 1; echo 'tester: "Tester"' ;;
   develproject) echo "devel:example/$3" ;;
@@ -25,6 +26,22 @@ case $1 in
        cat "$f" ;;
   *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
 esac
+EOF
+cat > "$work/bin/git-obs" <<'EOF'
+#!/bin/bash
+echo "git-obs $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
+# Only the src.opensuse.org login may answer: the default one can be another forge.
+[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
+echo "Response:" >&2
+f="$FIX/gitea$(printf %s "$5" | tr '?&=' '___')"
+[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
+[ "$(cat "$f")" = @HANG ] && exec sleep 20
+cat "$f"
+EOF
+cat > "$work/bin/curl" <<'EOF'
+#!/bin/bash
+echo "curl $*" >> "$FIX/calls"
+echo "curl: (7) Failed to connect" >&2; exit 7
 EOF
 chmod +x "$work/bin/"*
 
@@ -42,11 +59,14 @@ obs '/request?view=collection&types=submit&states=declined&project=openSUSE:Fact
   <target project="openSUSE:Factory" package="foo"/></action><state name="declined"/></request></collection>'
 
 # case_ <name> <expected rc> <expected message> <mutation> [preflight args after foo]
+# XPATH, when set, goes first on PATH.
+XPATH=""
 case_() {
   local name=$1 rc=$2 msg=$3 mut=$4 dir="$work/$1" out got; shift 4
   cp -a "$B" "$dir"
   (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
-  out="$(cd "$dir" && FIX=$dir PATH="$work/bin:$PATH" bash "$PF" foo "$@" 2>&1)"; got=$?
+  mkdir -p "$dir/tmp"
+  out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" foo "$@" 2>&1)"; got=$?
   LAST=$out
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -72,6 +92,39 @@ case_ declined-owner-unknown 4 "could not tell which are yours" ": > \$B/no-whoi
 case_ declined-user-flag 4 "-> 1375013 is yours" ": > \$B/no-whois" --user tester
 case_ no-declined 4 "$FWD -m \"<short message>\"" "echo '<collection/>' > \$B/obs/*states_declined*"
 ! grep -qF "DECLINED" <<<"$LAST" && pass "no-declined: nothing to supersede" || fail "no-declined: $LAST"
+
+# A git devel project's in-flight update is a PR on src.opensuse.org, read
+# through git-obs pinned to that login. A failed or unreadable read is
+# CHECK-FAILED, never "open PRs: none".
+SCM="echo '<project name=\"devel:example\"><scmsync>https://src.opensuse.org/example/_ObsPrj</scmsync></project>' \
+  > \$B/obs/_source_devel:example__meta && mkdir -p \$B/gitea/repos/example/foo"
+PULLS='gitea/repos/example/foo/pulls_state_open'
+case_ scm-no-prs 4 "open PRs:       none" "$SCM && echo '[]' > \$B/$PULLS"
+no_curl() { ! grep -q '^curl ' "$work/$1/calls" && pass "$1: git-obs, not curl" || fail "$1: curl was called"; }
+no_curl scm-no-prs
+case_ scm-pr-open 3 "VERDICT: STOP - already in flight: PR #5 -> factory: Update foo to 1.2" \
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+case_ scm-pr-lookup-failed 2 "CHECK FAILED: could not query open PRs on example/foo: ERROR: 404 Not Found" "$SCM"
+grep -qF "VERDICT: CHECK-FAILED" <<<"$LAST" && ! grep -qF "open PRs:       none" <<<"$LAST" \
+  && pass "scm-pr-lookup-failed: not read as none" || fail "scm-pr-lookup-failed: $LAST"
+case_ scm-pr-unparsable 2 "unparseable PR list for example/foo" "$SCM && echo '<html>' > \$B/$PULLS"
+case_ scm-pr-empty-answer 2 "unparseable PR list for example/foo" "$SCM && : > \$B/$PULLS"
+# Captured stderr goes to a mktemp file under $TMPDIR, never a predictable
+# /tmp path another user could plant first.
+paths="$(cat "$work/scm-no-prs/stderr-paths")"
+grep -q "^$work/scm-no-prs/tmp/" <<<"$paths" && ! grep -q '^/tmp/preflight\.' <<<"$paths" \
+  && pass "stderr captured under \$TMPDIR" || fail "stderr capture paths: $paths"
+left="$(find "$work/scm-no-prs/tmp" "$work/scm-pr-lookup-failed/tmp" -type f)"
+[ -z "$left" ] && pass "the capture file is removed, on CHECK-FAILED too" || fail "left behind: $left"
+# A git-obs read that never answers is cut off and CHECK-FAILED. A stand-in
+# `timeout` gives the real one 2s whatever the script asks for.
+mkdir -p "$work/tbin"
+printf '#!/bin/bash\nshift\nexec %q 2 "$@"\n' "$(command -v timeout)" > "$work/tbin/timeout" && chmod +x "$work/tbin/timeout"
+XPATH="$work/tbin"
+case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: git-obs timed out after 30s" \
+  "$SCM && echo @HANG > \$B/$PULLS"
+XPATH=""
+! grep -qF "open PRs:       none" <<<"$LAST" && pass "scm-pr-hang: not read as none" || fail "scm-pr-hang: $LAST"
 
 echo "---"; [ "$fails" = 0 ] && echo "all preflight checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

@@ -10,7 +10,8 @@
 #   3. outgoing devel -> Factory SRs (the one that lands the update)
 #   4. for a git/scmsync devel project: open PRs on the devel Gitea repo
 #      (MANDATORY — an in-flight update there is a PR, not an SR; an osc-only
-#      check gives a false PROCEED)
+#      check gives a false PROCEED), read with `git-obs -G src.opensuse.org`;
+#      a failed or unreadable answer is CHECK-FAILED, never "none"
 #   5. a `reviewer` role (package or project _meta) held by someone OTHER than
 #      you -> prints a REVIEWER ROLE notice. That person asked to see changes
 #      before they land, so the update must go as a BRANCH + SR to the devel
@@ -52,6 +53,8 @@ done
 [ -n "$user" ] || user="$(timeout 30 osc whois 2>/dev/null | sed 's/:.*//')" || true
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
+# captured stderr of osc / git-obs: mktemp under $TMPDIR, not a guessable /tmp name
+errf="$(mktemp)" || fail "mktemp failed"; trap 'rm -f "$errf"' EXIT
 
 # Third-party text (foreign .changes entries, PR titles, spec fields) is
 # sanitized before display — see scripts/_sanitize.py. Always capture the
@@ -74,8 +77,8 @@ sanitize() {
 # Sets: O_OUT (stdout), O_404 (0/1). Returns 0 on success or 404, 1 otherwise.
 oapi() {
   local err rc
-  O_OUT="$(timeout 30 osc api "$1" 2>/tmp/preflight.$$.err)"; rc=$?
-  err="$(cat /tmp/preflight.$$.err 2>/dev/null || true)"; rm -f /tmp/preflight.$$.err
+  O_OUT="$(timeout 30 osc api "$1" 2>"$errf")"; rc=$?
+  err="$(cat "$errf" 2>/dev/null || true)"
   O_404=0
   if [ $rc -ne 0 ]; then
     if printf '%s' "$err" | grep -q "404"; then O_404=1; O_OUT=""; return 0; fi
@@ -207,11 +210,16 @@ if [ -n "$devel" ]; then
   if [ -n "$scm" ]; then
     org="$(printf '%s' "$scm" | sed -E 's#https?://src\.opensuse\.org/##; s#[/?].*##')"
     echo "scmsync:        $scm (git devel project — checking Gitea PRs on $org/$pkg)"
-    resp="$(curl -fsS --max-time 20 "https://src.opensuse.org/api/v1/repos/$org/$pkg/pulls?state=open" 2>&1)" \
-      || fail "could not query open PRs on $org/$pkg: $resp"
+    # -G: without it git-obs takes its default login, which may be another forge
+    resp="$(timeout 30 git-obs -G src.opensuse.org -q api "/repos/$org/$pkg/pulls?state=open" 2>"$errf")"; grc=$?
+    err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
+    [ "$grc" = 124 ] && err="git-obs timed out after 30s"
+    [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
     prs="$(printf '%s' "$resp" | python3 -c '
 import sys, json
-try: d = json.load(sys.stdin)
+raw = sys.stdin.read()
+if raw.startswith("Response:"): raw = raw.split("\n", 1)[1] if "\n" in raw else ""
+try: d = json.loads(raw)
 except Exception: sys.exit(2)
 for p in d:
     num = p.get("number"); base = (p.get("base") or {}).get("ref")
