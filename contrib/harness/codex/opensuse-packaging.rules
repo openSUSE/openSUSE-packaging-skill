@@ -1,0 +1,95 @@
+# Copy to ~/.codex/rules/opensuse-packaging.rules: a regular file, not a symlink, and not
+# default.rules, which Codex appends approvals to. Replace /home/USER: rules expand neither ~
+# nor $HOME. A rule matches an exact argv prefix; a list is a set of alternatives, and an
+# absolute program path also matches by basename. A `bash -lc` script is split only when it is
+# plain words, so ~, $VAR, redirects, $(...) and globs go unmatched. The tool configs are
+# covered here only for a reader below given the exact absolute path; grep, sed, python and a
+# path with ~ get past, and the default profile in config.toml denies only .netrc,
+# .git-credentials, the bugzilla key and .env.
+# A parse error or a failing match example in ANY rules file disables all of them; after every
+# edit run: codex execpolicy check --rules <file> <argv...>
+HOME = "/home/USER"
+
+CRED_FILES = [
+    HOME + "/.config/gh/hosts.yml",
+    HOME + "/.config/osc/oscrc",
+    HOME + "/.oscrc",
+    HOME + "/.config/tea/config.yml",
+    HOME + "/.netrc",
+    HOME + "/.git-credentials",
+    HOME + "/.local/state/osc/cookiejar",
+    HOME + "/.config/mcp-bugzilla/api-key",
+]
+# osc takes an option by any unambiguous prefix.
+HTTP_DEBUG = [s[:n] for s in ["--http-debug", "--http-full-debug"] for n in range(8, len(s) + 1)]
+DUMP_FULL = ["--dump-full"[:n] for n in range(7, 12)]
+READERS = ["cat", "less", "more", "head", "tail", "bat", "nl", "tac", "strings",
+           "xxd", "od", "hexdump", "base64", "cp", "scp", "rsync", "vi", "vim", "view", "nano"]
+
+prefix_rule(
+    pattern = [READERS, CRED_FILES],
+    decision = "forbidden",
+    justification = "credential file: the tool that owns it reads it itself",
+    match = [["cat", HOME + "/.netrc"], ["head", HOME + "/.config/tea/config.yml"]],
+    not_match = [["cat", "-n", HOME + "/.netrc"]],
+)
+prefix_rule(pattern = ["gh", "auth", "token"], decision = "forbidden",
+            justification = "prints the gh token")
+prefix_rule(pattern = ["gh", "auth", "status"], decision = "forbidden",
+            justification = "prints the gh token with -t, also as -at")
+prefix_rule(pattern = ["gh", "auth", "git-credential"], decision = "forbidden",
+            justification = "prints the gh token as a git credential")
+prefix_rule(pattern = ["openqa-cli", ["api", "archive", "monitor", "schedule"], ["--apikey", "--apisecret"]],
+            decision = "forbidden", justification = "openQA key on the command line; openqa-cli reads client.conf itself")
+prefix_rule(pattern = ["git-obs", "login", ["list", "gitcredentials-helper"]], decision = "forbidden",
+            justification = "prints the Gitea tokens")
+prefix_rule(pattern = ["git", "obs", "login", ["list", "gitcredentials-helper"]], decision = "forbidden",
+            justification = "prints the Gitea tokens")
+prefix_rule(pattern = ["tea", ["login", "logins"], ["helper", "git-credential", "edit", "e"]],
+            decision = "forbidden", justification = "prints the Gitea token")
+prefix_rule(pattern = ["osc", "config", DUMP_FULL], decision = "forbidden",
+            justification = "prints the osc credentials")
+prefix_rule(pattern = ["osc", ["-H", "-qH", "-vH"] + HTTP_DEBUG], decision = "forbidden",
+            justification = "prints request headers, the OBS credentials among them")
+prefix_rule(pattern = ["osc", "token"], decision = "forbidden",
+            justification = "lists or creates OBS tokens with their secrets")
+prefix_rule(pattern = ["git", "credential", "fill"], decision = "forbidden",
+            justification = "prints a stored git credential")
+prefix_rule(pattern = [["git-credential-libsecret", "git-credential-store", "git-credential-cache",
+                        "git-credential-oauth", "git-credential-keepassxc"], "get"],
+            decision = "forbidden", justification = "prints a stored git credential")
+prefix_rule(
+    pattern = ["osc", ["sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"], "--nodevelproject"],
+    decision = "forbidden",
+    justification = "a Factory request comes from the registered devel project",
+    match = [["osc", "sr", "--nodevelproject"]],
+    not_match = [["osc", "sr", "-m", "x"]],
+)
+prefix_rule(
+    pattern = ["sudo", "chroot"],
+    decision = "forbidden",
+    justification = "build roots are entered with osc chroot",
+    match = [["sudo", "chroot", "/var/tmp/build-root"]],
+    not_match = [["osc", "chroot"]],
+)
+prefix_rule(
+    pattern = ["tea", ["pr", "pulls", "pull"], ["merge", "m"]],
+    decision = "forbidden",
+    justification = "merging a PR on src.opensuse.org is the maintainer's call",
+    match = [["tea", "pr", "merge", "3"], ["tea", "pulls", "m", "3"]],
+    not_match = [["tea", "pr", "list"]],
+)
+prefix_rule(
+    pattern = ["git-obs", "pr", "merge"],
+    decision = "forbidden",
+    justification = "merging a PR on src.opensuse.org is the maintainer's call",
+    match = [["git-obs", "pr", "merge"]],
+    not_match = [["git-obs", "pr", "list"]],
+)
+prefix_rule(
+    pattern = ["git", "obs", "pr", "merge"],
+    decision = "forbidden",
+    justification = "merging a PR on src.opensuse.org is the maintainer's call",
+    match = [["git", "obs", "pr", "merge"]],
+    not_match = [["git", "obs", "pr", "list"]],
+)

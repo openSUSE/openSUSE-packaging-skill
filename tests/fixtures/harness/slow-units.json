@@ -1,5 +1,5 @@
 {
-  "_comment": "Pathological input for tests/test-harness.sh: each unit is repeated to about 64 kB and fed to every Gemini CLI rule. Kept out of the suite: pr-guard reads the suite and refuses the merge commands.",
+  "_comment": "Pathological input for tests/test-harness.sh: each unit is repeated to about 64 kB and fed to every Gemini CLI rule; kimi_parts holds one sample of each part of the Kimi hook's multi-part rules, each in a segment of its own, so every such rule becomes a candidate without any firing. Kept out of the suite: pr-guard reads the suite and refuses the merge commands.",
   "units": [
     "osc config x ",
     "osc ",
@@ -36,5 +36,27 @@
     "config x ",
     "/person/x/token ",
     "-"
+  ],
+  "kimi_parts": [
+    "git obs",
+    "login list",
+    "tea",
+    "login e",
+    "osc",
+    "-H",
+    "token",
+    "config",
+    "pass",
+    "git-credential-x",
+    "get",
+    "curl",
+    "api.opensuse.org",
+    "sr",
+    "--nod",
+    "sudo",
+    "chroot",
+    "pr",
+    "merge",
+    "/pulls/1/merge"
   ]
 }

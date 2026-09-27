@@ -27,7 +27,8 @@ or container that does not mount these files.
 | grok | `grok/config.toml` | `[permission]` `deny` of `~/.grok/config.toml` |
 | Gemini CLI | `gemini/opensuse-packaging.toml` | copy to `~/.gemini/policies/opensuse-packaging.toml` |
 | Antigravity CLI (`agy`) | `agy/settings.json` | `~/.gemini/antigravity-cli/settings.json`, with `/home/USER` replaced |
-| Codex, Kimi | — | not yet: snippets follow once their permission formats are verified |
+| Codex CLI | `codex/opensuse-packaging.rules`, `codex/config.toml`, `codex/requirements.toml` | a copy in `~/.codex/rules/`, with `/home/USER` replaced; merged into `~/.codex/config.toml`; optionally, as root, `/etc/codex/requirements.toml` |
+| Kimi Code | `kimi/config.toml`, `kimi/opensuse-packaging.py` | appended to `~/.kimi-code/config.toml`; the hook copied to `~/.kimi-code/hooks/` |
 
 Every snippet denies, as far as its harness can express it:
 
@@ -46,7 +47,7 @@ Every snippet denies, as far as its harness can express it:
     `osc config <apiurl> pass`/`passx`, `osc token` as a whole (it lists and creates
     tokens with their secrets; `--delete` and `--trigger` go with it), `osc api` on
     `/person/<login>/token`, and HTTP debugging: `-H`, `-qH` and `-vH` (the Gemini CLI
-    rules take any short-option cluster ending in `H`),
+    rules and the Kimi hook take any short-option cluster ending in `H`),
     `--http-d...`, `--http-f...`, and `http_debug`/`http_full_debug` as an environment
     variable, `--setopt` or config key;
   - git: `git credential fill`, and `git credential-<helper> get` or
@@ -64,38 +65,46 @@ The rules match the mechanism, not the word, where the two differ: work on the
 openssh-askpass and git-credential-* packages, a grep for `api-key` or `Authorization:` in
 a source tree, `osc config --dump`, `tea logins list`, and a commit or request message
 that mentions a token or a config pass still run. The Claude Code,
-opencode and grok blocks are meant to match the openQA skill's rule for rule where the two
-overlap; the Gemini CLI and Antigravity snippets cover the same set in their own form. opencode also denies `.env` files but allows `.env.example`, and asks before a PR
+opencode, grok and Codex blocks are meant to match the openQA skill's rule for rule where
+the two overlap; the Gemini CLI and Antigravity snippets cover the same set in their own
+form. opencode also denies `.env` files but allows `.env.example`, and asks before a PR
 create. `tests/test-harness.sh` checks that every snippet parses, names the whole set and
 every path it claims for its read tool, has the command globs of Claude Code, grok and
-opencode refuse its probes and leave packaging commands alone, and runs the Gemini CLI
-rules against probes and against 64 KB of pathological input.
+opencode refuse its probes and leave packaging commands alone, runs the Gemini CLI rules
+and the Kimi hook against probes and against 64 KB of pathological input, and, where
+codex and kimi are installed, has `codex execpolicy check` and `kimi doctor config` judge
+theirs.
 
 These are pattern lists, and no pattern list is complete. Limits every harness shares:
 
 - A global option before the subcommand hides it from a rule that expects the
   subcommand next: `tea --login x pr merge 3`, `tea logins --output simple e`, `git -C
   dir obs pr merge`, `osc -A URL sr --nodevelproject`, `osc -A URL token`. The Claude
-  Code, grok and opencode globs catch none of these, nor do the Antigravity prefixes;
-  the Gemini CLI rules catch the merge behind `--login`, the request and the token call
-  behind `-A`, and neither of the other two (checked by `tests/test-harness.sh`). They
-  take one global option before `osc token` or `osc config`.
+  Code, grok and opencode globs catch none of these, nor do the Codex and Antigravity
+  prefixes; the Gemini CLI rules and the Kimi hook catch the merge behind `--login`, the
+  request and the token call behind `-A`, and neither of the other two (checked by
+  `tests/test-harness.sh`). The Gemini CLI rules take one global option before `osc
+  token` or `osc config`, the Kimi hook up to sixteen.
 - `osc` takes an option by any unambiguous prefix, so `--nod` is `--nodevelproject`: the
-  `osc sr *--nodevelproject*` rules miss it, the Gemini CLI rule takes `--nod`.
-  Antigravity lists only the full option names.
+  `osc sr *--nodevelproject*` rules miss it, the Kimi hook and the Gemini CLI rule take
+  `--nod`. The Codex rules list every prefix of the HTTP-debug and `--dump-full` options;
+  Antigravity lists only the full names.
 - A short-option cluster other than `-qH` and `-vH` (`-dH`, `-qvH`) passes the Claude
-  Code, grok, opencode and Antigravity rules.
-- The API hosts are matched on `curl` only, not `wget` or httpie's `http`, nor a header
-  given another way (a config file, httpie's `Name:value`).
-- `osc api /person/<login>/token` and `git credential-<helper> get` are beyond the
-  Antigravity prefixes, which list only the `git-credential-<helper> get` form of a few
-  helpers. `gh config get oauth_token` is refused nowhere; it prints the token when gh
-  keeps it in `hosts.yml`.
+  Code, grok, opencode, Codex and Antigravity rules.
+- The API hosts are matched on `curl` only; the Kimi hook also takes `wget`; none takes
+  httpie's `http` or a header given another way (a config file, httpie's `Name:value`).
+- `osc api /person/<login>/token` and `git credential-<helper> get` are beyond the Codex
+  and Antigravity prefixes, which list only the `git-credential-<helper> get` form of a
+  few helpers. `gh config get oauth_token` is refused nowhere; it prints the token when
+  gh keeps it in `hosts.yml`.
 - False positives the globs keep: the glob for a password in a URL also refuses an osc
   call whose explicit URL argument holds a `:` and an `@` (an XPath search, say), and
   `*-H*uthorization*` refuses `grep -H Authorization` and a command that passes through a
-  `perl-HTTP-*` directory and mentions `Authorization`. The Gemini CLI regexes avoid
-  both.
+  `perl-HTTP-*` directory and mentions `Authorization`. The Gemini CLI and Kimi regexes
+  avoid both.
+- The Kimi hook splits a command at every `&` outside quotes, `2>&1` included, and reads
+  `$'...'` as a plain single-quoted word; either can put a rule's parts in different
+  simple commands.
 - Secrets outside files are not covered: the desktop keyring (`secret-tool lookup`, gh's
   token when gh stores it there, reached over D-Bus), SSH private keys under `~/.ssh`, an
   agent socket, or a credential helper not named above.
@@ -103,7 +112,7 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
   read the tea token from `~/.config/tea/config.yml` themselves and hand it to git
   through an askpass script until their migration lands. A snippet that stops the agent's
   commands does not stop a script's own reads, and one that denies the file to every
-  process (Antigravity's sandboxed terminal, if it does) breaks them.
+  process (Codex's `credentials-strict`, Antigravity's sandboxed terminal) breaks them.
 
 ### Claude Code
 
@@ -217,6 +226,107 @@ not that each rule is valid. Check `/permissions`, Global, deny after merging.
   `~/.config/gh/hosts.yml` and the cookie jar.
 - Whether the rules survive `--dangerously-skip-permissions` is not verified: do not use
   that flag with this skill.
+
+### Codex CLI
+
+Checked on 0.154.0 in a throw-away home under `env -i` with D-Bus disabled: `codex
+execpolicy check --resolve-host-executables` decides all 64 probes as intended, gaps
+included, and exits 1 with "failed to parse policy" on a failing `match` example or a
+syntax error (both tried). `codex sandbox -P <profile> -C <dir> -- <command>` gives the
+sandbox's verdict on dummy files and a dummy osc config. The profile names match the
+openQA skill's: if its snippet is merged already, add these keys to the same tables (TOML
+refuses a table twice).
+
+What the default `credentials` profile covers is narrow. It denies `.netrc`,
+`~/.git-credentials`, the bugzilla key, and `.env` and `.env.local` at the workspace root,
+to every sandboxed process; `.env.example`, an openssh-askpass spec and project files
+stay readable (measured). The tool configs and the cookie jar are covered only by the
+rules, and there only for a reader given the exact absolute path: `grep`, `sed`, `python3`,
+a path with `~`, `cat -n` or a relative path in another `workdir` get past. Only the
+opt-in `credentials-strict` profile denies them to every process.
+
+- The profile runs every command in a workspace-write sandbox with no-new-privileges:
+  only the workspace and `/tmp` are writable, `/var/tmp` is not, and `sudo` refuses to
+  run (all measured). A local `osc build` therefore cannot run inside Codex, and the
+  skill's gate scripts, which default their temporary files to `/var/tmp`, need `TMPDIR`
+  set to a writable root. A path that must stay writable goes into
+  `[permissions.credentials.filesystem]` as `"<path>" = "write"` (measured).
+- osc takes a lock beside its cookie jar on every call, so the profile makes
+  `~/.local/state/osc` writable; without it every osc command failed with "Read-only file
+  system" (measured with a dummy config). The directory must exist before Codex starts,
+  since a write entry for a missing path lets nothing create it (measured): run osc once
+  outside Codex. `credentials-strict` still denies the cookie jar file itself (measured).
+  Accepting an unknown certificate writes `~/.config/osc/trusted-certs`, which needs its
+  own write entry.
+- The workspace's `.git` stays read-only under this profile, so `git commit` and every
+  osc call in a git package checkout fail (measured; osc takes a lock under `.git/obs`).
+  A deny list also keeps an escalated call sandboxed, so approving it does not help. The
+  commented `".git" = "write"` lifts that (measured), and with it lets the agent write
+  `.git/hooks` and `.git/config`, which run outside the sandbox on your next git command.
+  Weigh that before enabling it.
+- Rules are exact argv prefixes, and a `bash -lc` script is split only when it is plain
+  words: `cat -n FILE`, a path spelled with `~`, `FOO=1 cat FILE`, `sudo -E chroot`,
+  `osc -A URL sr --nodevelproject`, `osc sr -m x --nodevelproject` (the flag not right
+  after the subcommand), `osc -A URL token`, `osc config <apiurl> pass`, `tea pr --repo X
+  merge 3` and `git-obs -G x pr merge` get past them. A header, a key in a URL, the
+  askpass and HTTP-debug environment forms and `curl` to the APIs cannot be expressed.
+- A parse error or a failing example in any rules file drops them all, `/etc/codex/rules`
+  included: `codex exec` refuses to start and the TUI only warns. Check after every edit.
+- `exec_command` takes a `workdir` the rules never see: `cat config.yml` run in
+  `~/.config/tea` gets past them (measured on 0.154.0); only `credentials-strict` stops it.
+- The profile is dropped by `-s`, `-c sandbox_mode=...`, `--approve-for-me`,
+  `--dangerously-bypass-approvals-and-sandbox`, `codex exec --ignore-user-config` and a
+  `sandbox_mode` in a project config (measured on 0.154.0, not re-run here). Only
+  `requirements.toml`, as root, survives them, by refusing to start Codex in those modes;
+  it was not tried here.
+- Any glob in a profile is expanded with rg before every command, and one unreadable
+  directory under its root, or more than 8192 matches, fails every command (measured with
+  `**/.env` and one unreadable directory in the workspace). So the profile names literal
+  paths only, and `.env` is denied at the workspace root, not in subdirectories.
+- `credentials-strict` also keeps osc, tea, git-obs, gh and the skill's gate scripts from
+  reading their own credentials inside Codex (osc then asks for a user name), so it is
+  opt-in per session. gh's token lives in the keyring, reached over D-Bus, not a file: the
+  commented socket deny cuts it off.
+
+### Kimi Code
+
+Kimi 0.42.0 parses `[permission]` rules but does not enforce them, so the snippet is a
+PreToolUse hook. Checked on 0.42.0 in a throw-away home under `env -i`: `kimi doctor
+config` accepts the entry and rejects an unknown key or event name (both tried), but does
+not compile the matcher, so `tests/test-harness.sh` does, and checks it selects Bash,
+Read, Grep, Write and MCP tools. The suite feeds the hook 147 events on stdin: it refuses
+the set, including a `;` inside a quoted message, a continued line, a relative path
+resolved against an ACP session's `workDir`, the process directory or the Bash call's own
+`cwd`, a Grep over the home directory and a Write to its own config, refuses input that is
+not JSON, and lets ordinary calls and the openssh-askpass and git-credential-* packages
+through.
+
+- One invalid `[[hooks]]` entry anywhere makes Kimi ignore every hook, with only a warning
+  on stderr, and a matcher that does not compile skips its hook silently: run `kimi doctor
+  config` after every edit. Appending such an entry is also the easy way to switch the
+  guard off. The hook refuses Write and Edit on its config and itself, but a shell command
+  can still change them.
+- It fails open when `python3` is missing, on the 10 s timeout and on a kill: Kimi runs
+  the call. Errors inside the hook, bad input and a missing script refuse it. A command
+  is cut into simple commands at `;`, `&`, `|` and newlines outside quotes, in one pass,
+  with continued lines joined first. Only the rules whose parts all occur somewhere are
+  then tried on each simple command; osc's subcommand is found by walking its words past
+  at most sixteen global options, not by a regex; and a text over 64 KB is refused
+  unread. The suite times every regex part on 64 KB of pathological input (the slowest
+  takes 0.02 s) and the hook on its worst cases (every multi-part rule a candidate across
+  28,000 simple commands: 0.4 s), so a long command cannot outrun the timeout. Earlier
+  versions took 16 s on 63 KB of `osc sr tea pr`, 10 s or more on `-H` and a run of
+  spaces or on `git-credential-` repeated, and over 30 s on a run of osc global options.
+- Kimi runs a hook in its own process directory, which an ACP or web session need not
+  share; the hook also resolves relative paths against the session's `workDir` from
+  `session_index.jsonl`, skipping a line cut short by a concurrent write, and resolves
+  each word of a Bash command against the call's `cwd`, or, without one, against every
+  directory the session may run in.
+- It matches text: a variable, `cd` into a directory and a relative name, a glob, `eval`,
+  `python3 -c` or a script written first and run later get past it. It errs the other way
+  too: a Grep rooted at the home directory, `~/.config`, `~/.local` or `/` is refused, and
+  `tea` or `git obs` with `pr` and the word `merge` anywhere in one command.
+- MCP arguments are checked only under keys that look like a path, URL or command.
 
 ## The pool PR guard
 

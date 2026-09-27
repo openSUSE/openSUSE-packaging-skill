@@ -1,0 +1,7 @@
+# Optional, as root: /etc/codex/requirements.toml. Per the Codex source and a
+# separate check on 0.154.0, not tried here: the one deny yolo cannot drop, as
+# --dangerously-bypass-approvals-and-sandbox then refuses to start and
+# danger-full-access falls back to read-only with the list.
+# Absolute paths: replace /home/USER.
+[permissions.filesystem]
+deny_read = ["/home/USER/.netrc", "/home/USER/.git-credentials", "/home/USER/.config/mcp-bugzilla"]

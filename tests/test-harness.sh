@@ -10,15 +10,20 @@
 # packaging work alone. The Gemini CLI regexes, which nothing here can run, go
 # through a port of its loader: the ReDoS rule, the '"command":"' prefix, the
 # probes, and 64 kB of pathological input, which each rule must scan in under 1 s.
+# The Kimi hook is fed events on stdin and must refuse, let through, fail closed on
+# bad input and stay under 1 s on its worst cases. Where codex and kimi are
+# installed, `codex execpolicy check` decides the Codex probes and `kimi doctor
+# config` validates the hook entry, in a throw-away home under a bare environment.
 # No probe is ever run as a command. The probes live in fixtures/harness/: pr-guard
 # reads this suite and would refuse the merge ones. The TOML files need tomllib
 # (Python 3.11+); older Pythons skip them. Exit 0 = all assertions hold.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-python3 - "$HERE/../contrib/harness" "$HERE/fixtures/harness" <<'PY'
-import fnmatch, json, os, re, subprocess, sys
+work="$(mktemp -d /var/tmp/test-harness.XXXXXX)"; trap 'rm -rf "$work"' EXIT
+python3 - "$HERE/../contrib/harness" "$HERE/fixtures/harness" "$work" <<'PY'
+import fnmatch, json, os, re, shutil, subprocess, sys, time
 
-H, FXDIR = sys.argv[1:3]
+H, FXDIR, WORK = sys.argv[1:4]
 fails = 0
 
 
@@ -221,6 +226,145 @@ covers([r for r in deny if r.startswith("read_file(")], READ_PATHS, "read_file",
 covers([r for r in deny if r.startswith("command(")], fixture("agy-commands.json")["commands"], "command", "agy")
 check(all(r.startswith(("read_file(/home/USER/", "command(")) for r in deny),
       "agy: read_file targets use the /home/USER placeholder")
+
+# Codex: prefix rules with a placeholder home, and a permission profile whose globs
+# rg expands before every command (an error there fails the command: no /tmp glob).
+rules = open(os.path.join(H, "codex/opensuse-packaging.rules"), encoding="utf-8").read()
+covers([rules], READ_PATHS[:5] + [".local/state/osc/cookiejar", ".config/mcp-bugzilla"], "prefix", "codex")
+check('HOME = "/home/USER"' in rules and '"~/' not in rules, "codex: rules use the /home/USER placeholder")
+
+
+def bare_env(home, **extra):
+    return {"PATH": "/usr/bin:/bin", "HOME": home, "DBUS_SESSION_BUS_ADDRESS": "disabled:", **extra}
+
+
+fake = os.path.join(WORK, "home")
+os.makedirs(os.path.join(fake, ".codex"))
+os.makedirs(os.path.join(fake, ".kimi-code"))
+if tomllib is not None:
+    conf = load("codex/config.toml")
+    prof = conf["permissions"]
+    def deny_keys(table):
+        for k, v in table.items():
+            yield from deny_keys(v) if isinstance(v, dict) else [k] if v == "deny" else []
+
+    denied = [k for name in ("credentials", "credentials-strict") for k in deny_keys(prof[name]["filesystem"])]
+    covers(denied, READ_PATHS, "profile", "codex")
+    check(conf["default_permissions"] == "credentials" and "sandbox_mode" not in conf,
+          "codex: the credentials profile is the default, with no legacy sandbox_mode")
+    globs = [k for k in denied if any(c in k for c in "*?[")]
+    check(not globs, "codex: no deny glob, whose rg scan fails every command on one unreadable directory"
+          + (f" -- {globs}" if globs else ""))
+    req = load("codex/requirements.toml")["permissions"]["filesystem"]["deny_read"]
+    check(all(p.startswith("/home/USER/") for p in req), "codex: requirements deny_read is absolute")
+if shutil.which("codex"):
+    for want, *argv in fixture("codex-probes.json")["cases"]:
+        r = subprocess.run(
+            ["codex", "execpolicy", "check", "--resolve-host-executables",
+             "--rules", os.path.join(H, "codex/opensuse-packaging.rules"), *argv],
+            env=bare_env(fake, CODEX_HOME=os.path.join(fake, ".codex")),
+            capture_output=True, text=True)
+        try:
+            got = json.loads(r.stdout).get("decision") or "none"
+        except ValueError:
+            got = "error: " + (r.stderr or r.stdout).strip()[:120]
+        check(got == want, f"codex execpolicy: {' '.join(argv)} -> {want}" + ("" if got == want else f" (got {got})"))
+else:
+    print("SKIP: codex execpolicy (codex not installed)")
+
+# Kimi: [permission] rules are inert in 0.42.0, so a PreToolUse hook does the work.
+hook = os.path.join(H, "kimi/opensuse-packaging.py")
+kimi_home = os.path.join(fake, ".kimi-code")
+with open(os.path.join(kimi_home, "session_index.jsonl"), "w", encoding="utf-8") as fh:
+    fh.write(json.dumps({"sessionId": "acp-1", "workDir": fake + "/.config"}) + "\n")
+    fh.write(json.dumps({"sessionId": "acp-2", "workDir": fake + "/.config/osc"}) + "\n")
+    fh.write('{"sessionId": "acp-1", "workDir": "/va')  # cut short by a concurrent write
+
+
+def run_hook(stdin):
+    try:
+        return subprocess.run([sys.executable, hook], input=stdin, capture_output=True, text=True,
+                              env=bare_env(fake, KIMI_CODE_HOME=kimi_home), timeout=10)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(hook, "timeout", "", "")
+
+
+def bash_event(cmd):
+    return json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": fake + "/work"})
+
+
+events = fixture("kimi-probes.json")
+for want, name in ((2, "refuse"), (0, "allow")):
+    for ev in events[name]:
+        if isinstance(ev, str):
+            ev = {"tool_name": "Bash", "tool_input": {"command": ev}}
+        ev = json.loads(json.dumps(ev).replace("@HOME@", fake))
+        ev.setdefault("cwd", fake + "/work")
+        r = run_hook(json.dumps(ev))
+        what = ev["tool_input"].get("command") or json.dumps(ev["tool_input"])
+        check(r.returncode == want, f"kimi hook: {name}s {ev['tool_name']} {what}"
+              + ("" if r.returncode == want else f" (exit {r.returncode})"))
+r = run_hook("not json")
+check(r.returncode == 2, "kimi hook: input that is not JSON fails closed")
+r = run_hook(bash_event("gh auth token"))
+check("Denied by opensuse-packaging hook" in r.stderr, "kimi hook: a refusal says why on stderr")
+# Kimi runs the call unchecked once its 10 s timeout passes, so the worst case must stay
+# far below it: a text over the cap, a separator per character, every multi-part rule's
+# parts in segments of their own, and the shapes that once backtracked.
+worst = {"parts": ";".join(fixture("slow-units.json")["kimi_parts"]) + ";a" * 28000,
+         "separators": ";" * 65000, "one-char segments": "a;" * 32500,
+         "osc sr tea pr": "osc sr tea pr " * 4600, "-H and spaces": "-H" + " " * 64000 + "x",
+         "git-credential-": "git-credential-" * 4300, "osc global options": "osc -A " * 9200,
+         "over the cap": "osc sr tea pr " * 5000}
+for name, text in worst.items():
+    want = 2 if len(text) > 64 * 1024 else 0
+    start = time.monotonic()
+    r = run_hook(bash_event(text))
+    took = time.monotonic() - start
+    check(r.returncode == want and took < 1, f"kimi hook: {name} ({len(text) // 1000} kB) exits {want} in {took:.2f} s"
+          + ("" if r.returncode == want else f" (exit {r.returncode})"))
+# Every part on its own, on each pathological unit repeated to 64 kB, in a child a
+# timeout can stop: the README says no part backtracks.
+scan = """
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+worst, which = 0.0, ""
+for rx in [hook.PATH_RE] + [part for parts in hook.RULES for part in parts]:
+    for unit in json.loads(sys.argv[2]):
+        text = unit * (65000 // len(unit))
+        start = time.monotonic()
+        rx.search(text)
+        took = time.monotonic() - start
+        if took > worst:
+            worst, which = took, rx.pattern[:40]
+print(f"{worst:.3f} {which}")
+"""
+try:
+    out = subprocess.run([sys.executable, "-c", scan, hook, json.dumps(fixture("slow-units.json")["units"])],
+                         capture_output=True, text=True, timeout=120, env=bare_env(fake)).stdout
+    took, which = float(out.split(" ", 1)[0]), out.split(" ", 1)[1].strip()
+except (subprocess.TimeoutExpired, ValueError, IndexError):
+    took, which = float("inf"), "?"
+check(took < 0.25, f"kimi hook: every part scans 64 kB of pathological input, the slowest in {took:.3f} s ({which})")
+got = [run_hook(bash_event(c)).returncode == 2 for c in fixture("global-options.json")["commands"]]
+want = fixture("global-options.json")["caught"]["kimi"]
+check(got == want, "kimi hook: catches the global-option forms the README credits it with"
+      + ("" if got == want else f" -- got {got}"))
+if tomllib is not None:
+    entry = load("kimi/config.toml")["hooks"][0]
+    matcher = re.compile(entry["matcher"])  # kimi doctor does not compile it
+    check(entry["event"] == "PreToolUse" and "opensuse-packaging.py" in entry["command"]
+          and all(matcher.search(t) for t in ("Bash", "Read", "Grep", "Write", "mcp__x__y")),
+          "kimi: the hook matcher compiles and selects Bash, Read, Grep, Write and MCP tools")
+if shutil.which("kimi"):
+    r = subprocess.run(["kimi", "doctor", "config", os.path.join(H, "kimi/config.toml")],
+                       env=bare_env(fake), capture_output=True, text=True)
+    check(r.returncode == 0, "kimi doctor config accepts the hook entry"
+          + ("" if r.returncode == 0 else f": {r.stdout.strip()[-200:]}"))
+else:
+    print("SKIP: kimi doctor (kimi not installed)")
 
 print("ALL PASS" if not fails else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

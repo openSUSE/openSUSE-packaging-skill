@@ -1,0 +1,8 @@
+# Append to ~/.kimi-code/config.toml, copy opensuse-packaging.py to ~/.kimi-code/hooks/, then run
+# kimi doctor config ~/.kimi-code/config.toml
+# One invalid [[hooks]] entry disables ALL hooks, so validate after every edit.
+[[hooks]]
+event = "PreToolUse"
+matcher = "^(Bash|Read|ReadMediaFile|Grep|Glob|Write|Edit|FetchURL|mcp__.*)$"
+command = 'python3 "$HOME/.kimi-code/hooks/opensuse-packaging.py"'
+timeout = 10

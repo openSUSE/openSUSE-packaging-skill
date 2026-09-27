@@ -229,6 +229,7 @@ TEXT_EXT = {
     ".jsonc",
     ".toml",
     ".ts",
+    ".rules",
     ".cc",
     "",
 }

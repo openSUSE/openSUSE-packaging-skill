@@ -1,0 +1,53 @@
+# Merge into ~/.codex/config.toml and remove sandbox_mode and [sandbox_workspace_write] there.
+# Codex's sandbox enforces these denies on every shell command, escalated ones included. They are
+# dropped by -s/--sandbox, -c sandbox_mode=..., --approve-for-me,
+# --dangerously-bypass-approvals-and-sandbox, `codex exec --ignore-user-config` and a sandbox_mode in
+# a project .codex/config.toml; -a keeps them.
+default_permissions = "credentials"
+
+[shell_environment_policy]
+ignore_default_excludes = false        # drop *KEY*, *SECRET*, *TOKEN* variables from commands
+
+[permissions.credentials]
+extends = ":workspace"
+
+[permissions.credentials.network]
+enabled = true
+
+[permissions.credentials.filesystem]
+# Literal paths only: a glob is expanded with rg before every command, and one unreadable
+# directory under its root, or more than 8192 matches, then fails every command.
+"~/.netrc" = "deny"
+"~/.git-credentials" = "deny"
+"~/.config/mcp-bugzilla" = "deny"
+# osc takes a lock beside its cookie jar on every call; the directory must exist already.
+"~/.local/state/osc" = "write"
+# Only the workspace and /tmp are writable, and no-new-privileges stops sudo, so a local osc build
+# cannot run inside Codex. A path that must stay writable goes here, e.g. a TMPDIR for the
+# skill's scripts, or osc's trusted-certs to accept an unknown certificate:
+# "/var/tmp/codex-tmp" = "write"
+# "~/.config/osc/trusted-certs" = "write"
+
+# At the workspace root only: "**/.env" would reach nested ones, at the price above.
+[permissions.credentials.filesystem.":workspace_roots"]
+".env" = "deny"
+".env.local" = "deny"
+# The workspace's .git stays read-only, so git commit and every osc call in a git package
+# checkout fail. This lifts it, and with it lets the agent write .git/hooks and .git/config,
+# which run outside the sandbox on your next git command:
+# ".git" = "write"
+
+# The tools' own configs. Denying them also stops gh, osc, tea and git-obs from authenticating
+# inside Codex, so opt in per session: codex -c 'default_permissions="credentials-strict"'
+[permissions.credentials-strict]
+extends = "credentials"
+
+[permissions.credentials-strict.filesystem]
+"~/.config/gh/hosts.yml" = "deny"
+"~/.config/osc" = "deny"
+"~/.oscrc" = "deny"
+"~/.config/tea" = "deny"
+"~/.local/state/osc/cookiejar" = "deny"
+# gh keeps its token in the desktop keyring, reached over D-Bus, which no file deny stops. To cut
+# it off as well (gh and secret-tool then fail inside Codex), replace UID and uncomment:
+# "/run/user/UID/bus" = "deny"

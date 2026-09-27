@@ -1,0 +1,311 @@
+{
+  "_comment": "Events for the Kimi hook in tests/test-harness.sh: a string is a Bash command, @HOME@ is the throw-away home, the default cwd is @HOME@/work, session acp-1 has the workDir @HOME@/.config, with a line cut short after it, and acp-2 has @HOME@/.config/osc. Kept out of the suite: pr-guard reads the suite and refuses the merge commands. Text only: tests/test-harness.sh never runs a command.",
+  "refuse": [
+    "cat ~/.config/tea/config.yml",
+    "cat ~/.config/osc/oscrc",
+    "cat ~/.oscrc",
+    "cat ~/.config/gh/hosts.yml",
+    "cat ~/.netrc",
+    "cat ~/.local/state/osc/cookiejar",
+    "cat ~/.config/mcp-bugzilla/api-key",
+    "true && cat ~/.netrc",
+    "tea login helper get",
+    "tea logins helper get",
+    "tea login git-credential get",
+    "osc config --dump-full",
+    "osc --http-full-debug ls",
+    "git credential fill",
+    "git-credential-libsecret get",
+    "gh auth token",
+    "gh auth status",
+    "gh auth status -at",
+    "gh auth status --show-token",
+    "curl -H \"authorization: token x\" https://example.org",
+    "openqa-cli api --apikey K jobs",
+    "x --apisecret S",
+    "GIT_ASKPASS=/var/tmp/a git push",
+    "SSH_ASKPASS=/var/tmp/a ssh host",
+    "git -c core.askPass=/var/tmp/a push",
+    "curl -s https://api.opensuse.org/source/x",
+    "curl -X POST https://build.opensuse.org/x",
+    "curl https://src.opensuse.org/api/v1/version",
+    "tea pr merge --repo pool/x 3",
+    "tea pr --repo pool/x merge 3",
+    "tea pulls --login obs merge 3",
+    "tea pr m 5",
+    "tea pulls m 3",
+    "tea pull m 3",
+    "tea api repos/pool/x/pulls/3/merge",
+    "git obs pr merge pool/x#3",
+    "git-obs pr merge pool/x#3",
+    "git-obs -G obs pr merge 1",
+    "git-obs api -X POST /repos/pool/x/pulls/3/merge",
+    "curl -X POST https://src.opensuse.org/api/v1/repos/AI/x/pulls/3/merge",
+    "osc -A https://api.opensuse.org sr --nod",
+    "osc creq --nodevel",
+    "osc submitpac --nodevelproject",
+    "sudo -E chroot /x",
+    "sudo /usr/sbin/chroot /x",
+    "cat .env",
+    "cat .env*",
+    "source .env.local",
+    "osc sr --nodevelproject",
+    "osc sr -m x --nodevelproject devel:x pkg",
+    "sudo chroot /x",
+    "cat ~/.git-credentials",
+    "git-obs login gitcredentials-helper get",
+    "git-obs login list",
+    "git obs login list --show-t",
+    "tea login edit",
+    "tea logins e",
+    "tea login git-credential get",
+    "gh auth git-credential get",
+    "osc token",
+    "osc token --create -o workflow home:x pkg",
+    "osc config https://api.opensuse.org pass",
+    "osc config https://api.opensuse.org passx",
+    "osc config --dump-f",
+    "osc -H ls",
+    "osc ls -H",
+    "osc --http-d ls",
+    "osc --http-f ls",
+    "osc --setopt http_full_debug=1 ls",
+    "OSC_HTTP_DEBUG=1 osc ls",
+    "git credential-oauth get",
+    "wget --header='Authorization: Bearer x' https://example.org",
+    "git clone https://bob:pw@src.opensuse.org/pool/x",
+    "osc sr -m \"fix; see bug\" --nodevelproject",
+    "osc sr \\\n  --nodevelproject",
+    "curl -H'Authorization: token x' https://example.org",
+    "git credential-store get",
+    "osc -A https://api.opensuse.org token",
+    "osc -q token",
+    "osc -A https://api.opensuse.org config https://api.opensuse.org pass",
+    "osc --apiurl https://api.opensuse.org token",
+    "osc -qH ls",
+    "osc -vH ls",
+    "osc api /person/x/token",
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat config.yml",
+        "cwd": "~/.config/tea"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "~/.netrc"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "@HOME@/.config/tea/config.yml"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "../.oscrc"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "tea/config.yml"
+      },
+      "cwd": "/var/tmp",
+      "session_id": "acp-1"
+    },
+    {
+      "tool_name": "Grep",
+      "tool_input": {
+        "pattern": "token",
+        "path": "~"
+      }
+    },
+    {
+      "tool_name": "Grep",
+      "tool_input": {
+        "pattern": "token",
+        "path": "@HOME@/.config"
+      }
+    },
+    {
+      "tool_name": "Glob",
+      "tool_input": {
+        "pattern": "*",
+        "path": "~/.config/osc"
+      }
+    },
+    {
+      "tool_name": "FetchURL",
+      "tool_input": {
+        "url": "file:///root/.netrc"
+      }
+    },
+    {
+      "tool_name": "mcp__fs__read_file",
+      "tool_input": {
+        "path": "~/.oscrc"
+      }
+    },
+    {
+      "tool_name": "Write",
+      "tool_input": {
+        "path": ".env",
+        "content": "A=1"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "~/.config/mcp-bugzilla/api-key"
+      }
+    },
+    {
+      "tool_name": "Write",
+      "tool_input": {
+        "path": "@HOME@/.kimi-code/config.toml",
+        "content": "x"
+      }
+    },
+    {
+      "tool_name": "Edit",
+      "tool_input": {
+        "path": "~/.kimi-code/hooks/opensuse-packaging.py"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat tea/config.yml",
+        "cwd": "~/.config"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat .git-credentials",
+        "cwd": "~"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "~/.git-credentials"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat oscrc"
+      },
+      "cwd": "@HOME@/.config/osc"
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat oscrc"
+      },
+      "cwd": "/var/tmp",
+      "session_id": "acp-2"
+    }
+  ],
+  "allow": [
+    "osc build openSUSE_Tumbleweed x86_64 openssh-askpass-gnome.spec",
+    "cat openssh-askpass-gnome.spec",
+    "osc co security ksshaskpass",
+    "grep -rn api_key src/",
+    "grep -rn api-key src/",
+    "osc build",
+    "osc sr -m x",
+    "tea pr list --repo pool/x",
+    "tea pr create --repo AI/x",
+    "git obs pr list pool/x",
+    "tea pr view 3",
+    "curl -sS https://api.github.com/repos/o/r/releases",
+    "cat README.md",
+    "osc chroot",
+    "tea pr list --state merged",
+    "gh api -X PUT repos/o/r/pulls/1/merge",
+    "cat .env.example",
+    "node -e \"console.log(process.env.HOME)\"",
+    "sudo osc chroot",
+    "osc config --dump",
+    "osc -h",
+    "osc co devel:languages:perl perl-HTML-Parser",
+    "osc co devel:languages:python python-tokenizers",
+    "osc co devel:tools:scm git-credential-oauth",
+    "cat git-credential-oauth.spec",
+    "grep -rn Authorization: src/",
+    "tea logins list",
+    "git clone https://src.opensuse.org/pool/x",
+    "git clone ssh://gitea@src.opensuse.org:3022/pool/x.git",
+    "echo 'a;b' && tea pr list",
+    "osc ci -m 'fix token handling'",
+    "osc sr -m 'update config, pass tests'",
+    "cd git-credential-oauth && osc getbinaries openSUSE_Tumbleweed x86_64",
+    "cd perl-HTTP-Tiny && grep -rn Authorization lib",
+    "grep -H Authorization src/",
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "README.md"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "tea/config.yml"
+      },
+      "cwd": "/var/tmp"
+    },
+    {
+      "tool_name": "Grep",
+      "tool_input": {
+        "pattern": "Version",
+        "path": "@HOME@/work"
+      }
+    },
+    {
+      "tool_name": "Glob",
+      "tool_input": {
+        "pattern": "*.spec"
+      }
+    },
+    {
+      "tool_name": "FetchURL",
+      "tool_input": {
+        "url": "https://build.opensuse.org/package/show/x/y"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "~/.kimi-code/config.toml"
+      }
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "README.md"
+      },
+      "session_id": "acp-1"
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "path": "@HOME@/obs/openssh-askpass-gnome/openssh-askpass-gnome.spec"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "ls",
+        "cwd": "~/.config"
+      }
+    }
+  ]
+}
