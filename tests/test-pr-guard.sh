@@ -46,6 +46,7 @@ git -C "$work/clone" branch tess-88053-16.0
 clone_ "$work/track" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
 git -C "$work/track" config branch.tess-88053-16.0.pushRemote fork
 clone_ "$work/other" factory origin=$F/AI/other-pkg.git fork=$F/someone/other-pkg.git
+clone_ "$work/devel" factory origin=$F/javascript/js-pkg.git fork=$F/someone/js-pkg.git
 clone_ "$work/broken" leap-16.0 fork=$F/someone/broken-pkg.git
 clone_ "$work/many" leap-16.0 fork=$F/someone/many-prs.git
 clone_ "$work/odd" leap-16.0 fork=$F/someone/odd-pkg.git
@@ -122,7 +123,8 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     OTHER="$work/other" BROKEN="$work/broken" MANY="$work/many" ODD="$work/odd" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
-    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc"
+    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
+    DEVEL="$work/devel"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -209,6 +211,16 @@ case_ quoted-backticks          0 - ""
 case_ stash-push-rtk            0 - ""
 case_ stash-push-bash-c         0 - ""
 case_ stash-push-naming-pool    0 - ""
+# Repairing a PR whose LFS object never reached the forge: upload the objects
+# (git lfs push is no git push), then amend and force-push a devel-org or fork
+# branch to retrigger the sync. Only a pool PR's head stays refused.
+case_ lfs-push-object-id        0 - ""
+case_ lfs-push-all              0 - ""
+# Read as a push this would be refused: --all takes in a branch that heads pool PR #3.
+case_ lfs-push-all-fork-pr-clone 0 - ""
+case_ push-force-lease-devel    0 - ""
+case_ push-force-lease-fork     0 - ""
+case_ push-force-lease-pool-head 2 push-pr-head "pool/js-pkg#7"
 echo "--- a refusal prints no credential"
 case_ push-token-remote         2 push-pool    "a push to https://user:[REDACTED]@src.opensuse.org/pool/x.git"
 case_ push-token-query          2 push-unknown "x.git?access_token=[REDACTED] is named by a variable"

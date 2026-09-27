@@ -3068,5 +3068,47 @@
       "command": "osc ci -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "lfs-push-object-id": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git lfs push --object-id fork 57d10afdbccac6a6644a8aad265ca3ad49876960ad2a7f60cce1fcca58f4decd 9b2f4c1e0d7a6b5c3e8f1a2d4b6c8e0f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b"
+    },
+    "cwd": "@DEVEL@"
+  },
+  "lfs-push-all": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git lfs push --all origin"
+    },
+    "cwd": "@DEVEL@"
+  },
+  "push-force-lease-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit --amend --no-edit && git push --force-with-lease origin HEAD:refs/heads/update-1"
+    },
+    "cwd": "@DEVEL@"
+  },
+  "push-force-lease-fork": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --force-with-lease fork HEAD:refs/heads/update-1"
+    },
+    "cwd": "@DEVEL@"
+  },
+  "push-force-lease-pool-head": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --force-with-lease fork HEAD:refs/heads/leap-16.0-0123456789ab"
+    },
+    "cwd": "@DEVEL@"
+  },
+  "lfs-push-all-fork-pr-clone": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git lfs push --all fork"
+    },
+    "cwd": "@CLONE@"
   }
 }

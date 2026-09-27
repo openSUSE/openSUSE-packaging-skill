@@ -1,0 +1,5 @@
+[
+  {"number": 7, "state": "open", "base": {"ref": "leap-16.0"},
+   "head": {"ref": "leap-16.0-0123456789ab", "label": "leap-16.0-0123456789ab",
+            "repo": {"name": "js-pkg", "owner": {"login": "someone"}}}}
+]
