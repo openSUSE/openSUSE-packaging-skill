@@ -8,6 +8,10 @@
 #     .../pulls/N/merge) on pool/ or on no named repository, outside a
 #     "Wrong forms" section: agents never merge one, and check-osc.py sees
 #     only osc citations
+#   - a doc teaches a credential recipe outside a "Wrong forms" section: a read
+#     verb on an osc, tea, gh, netrc, cookie-jar or api-key file, a token piped
+#     out of `gh auth token`, a key on a command line, a concrete Authorization
+#     header or a password in a URL. Credentials stay inside the tools.
 # Exit 0 = clean; 1 = findings (file:line: message).
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom, not a broken if/then/else: pass and fail both return 0 (verified), so exactly
@@ -100,4 +104,56 @@ if [ -n "$hits" ]; then
   fail "a doc cites merging a pool PR outside a Wrong forms section (agents never merge one):"
   printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"
 else pass "no pool PR merge advice"; fi
+# Prints "<file>:<line>: <what>" for each credential recipe outside a Wrong forms
+# section. Slots (<token>, $VAR) and prose that only names a file pass.
+cred_lint() {
+  python3 - "$@" <<'PY'
+import re, sys
+FILE = r"(?:\.config/(?:osc|tea)\b|[/.]oscrc\b|gh/hosts\.yml|\.netrc\b|osc/cookiejar|/api-key\b(?!-))"
+RECIPES = [
+    (r"(?:\b(?:cat|less|more|head|tail|grep|rg|sed|awk|jq|yq|base64|source)\s|\b(?:open|safe_load)\()"
+     r"[^\n|;]*?" + FILE, "reads a credential file"),
+    (r"\$\(\s*gh\s+auth\s+token|\bgh\s+auth\s+token\s*[|>]", "pipes a token out of gh"),
+    (r"--api-?(?:key|secret)[ =](?![<$'\"`{\[])\S", "passes a key on the command line"),
+    (r"\b[Aa]uthorization\s*:\s*(?:[Tt]oken|[Bb]earer|[Bb]asic)\s+(?![<$`{\[])[\w+/=.-]{8,}",
+     "a concrete Authorization header"),
+    (r"://[^\s/:@<>`]+:(?![<$`{\[])[^\s/@<>`]+@", "a password in a URL"),
+]
+RECIPES = [(re.compile(p), what) for p, what in RECIPES]
+HEADING = re.compile(r"^(#{1,6})\s")
+WRONG = re.compile(r"^#{1,6}\s+wrong forms\b", re.I)
+FENCE = re.compile(r"^\s*(```|~~~)")
+for path in sys.argv[1:]:
+    wrong, fence = 0, False
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            h = None if fence else HEADING.match(line)
+            if FENCE.match(line):
+                fence = not fence
+            elif h:
+                if wrong and len(h.group(1)) <= wrong:
+                    wrong = 0
+                if WRONG.match(line):
+                    wrong = len(h.group(1))
+            if wrong:
+                continue
+            for rx, what in RECIPES:
+                if rx.search(line):
+                    print(f"{path}:{n}: {what}")
+                    break
+PY
+}
+probe="$HERE/fixtures/doc-lint/credential-recipes.md"
+want=$(grep -n -- '<!-- flag -->' "$probe" | cut -d: -f1 | paste -sd' ')
+got=$(cred_lint "$probe" | cut -d: -f2 | paste -sd' ')
+[ -n "$want" ] && [ "$got" = "$want" ] && pass "credential-recipe self-test (lines $want caught, the rest passed)" \
+  || fail "credential-recipe self-test: caught lines '${got}', want '${want}' — the check is broken, nothing below is trustworthy"
+hits=$(cred_lint "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md "$ROOT/scripts/README.md" \
+  "$HERE"/../*.md "$HERE"/../contrib/harness/*.md); rc=$?
+if [ $rc -ne 0 ]; then
+  fail "credential-recipe lint crashed (rc=$rc): no finding is trustworthy"
+elif [ -n "$hits" ]; then
+  fail "a doc teaches a credential recipe (credentials stay inside the tools):"
+  printf '%s\n' "$hits" | sed "s|$ROOT/||; s|$HERE/\.\./||; s/^/    /"
+else pass "no credential recipe in the docs"; fi
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
