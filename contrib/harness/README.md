@@ -332,9 +332,14 @@ through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-pushing to a branch that heads an open pool PR, writing a `target-gate.sh` stamp, running
-an emulated `osc build`, or filing a request against the scmsync'd
-`openSUSE:Backports:SLE-16.x` projects.
+merging any other PR with `tea` or `git-obs`, pushing to a branch that heads an open pool
+PR, writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
+against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
+`--nodevelproject` or a request message over 300 characters, or committing or writing
+through `osc api` into a `*:Update` or `*:Maintenance:*` project outside `home:`. A
+`-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not judged, and a refusal
+redacts the credentials it would echo (URL userinfo, `Authorization`/`Bearer` values,
+`token=`).
 
 | File | Goes to | Does |
 |---|---|---|
@@ -386,9 +391,9 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
    hash (`git hash-object --no-filters`) to its blob at `refs/remotes/origin/main` of that
    checkout (not `HEAD`). The scripts run their siblings, so one edited, added or dropped
    file untrusts them all, and so does a call that writes into `scripts/`. A script must
-   also be run by its path and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`
-   and `NO_COLOR`. A local edit or an unmerged commit is read like any other script,
-   which for `pool-pr.sh` means refused, until it is merged and fetched
+   also be run by its path and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`,
+   `NO_COLOR` and `CHANGES_AUTHOR`. A local edit or an unmerged commit is read like any
+   other script, which for `pool-pr.sh` means refused, until it is merged and fetched
    (`git -C <checkout> fetch origin`). Sourcing one, or feeding it on stdin, is refused:
    the scripts find their siblings from their own path. The guard finds the checkout at
    `~/.claude/skills/opensuse-packaging`, then `~/.agents/skills/opensuse-packaging`;
@@ -447,14 +452,15 @@ Safe: nothing is run, only judged.
 
 ```
 for owner in pool AI; do
-  printf '{"tool_name": "Bash", "cwd": "/", "tool_input": {"command": "true || tea pulls merge --repo %s/zzz 1"}}' "$owner" \
+  printf '{"tool_name": "Bash", "cwd": "/", "tool_input": {"command": "true || tea pulls create --repo %s/zzz --title t"}}' "$owner" \
     | python3 "$HOME/.claude/hooks/pr-guard.py"; echo "rc=$?"
 done
 ```
 
-`pool` prints `BLOCKED [merge-tea]` and `rc=2`; `AI` prints `rc=0`. Then, in each
-harness, ask the agent to run `true || tea pulls merge --repo pool/zzz 1`: the call must
-be refused with the guard's message. The `AI/zzz` variant must run, and so must
+`pool` prints `BLOCKED [create-tea]` and `rc=2`; `AI` prints `rc=0`. Then, in each
+harness, ask the agent to run `true || tea pulls merge --repo AI/zzz 1`: the call must
+be refused with the guard's message, as a merge is on any repository. The `pool/zzz`
+create must be refused too, the `AI/zzz` create must run, and so must
 `echo "tea pulls merge --repo pool/zzz 1"`, which only prints the words.
 
 ## How a refusal travels
@@ -512,3 +518,9 @@ be refused with the guard's message. The `AI/zzz` variant must run, and so must
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is.
 - The opencode plugin does not send `patch`/`apply_patch` tool calls to the guard.
+- A request message given by `-F FILE` or a substitution (`-m "$(cat FILE)"`) is not
+  measured, and a merge through the pulls API is refused only on a pool or unnamed
+  repository.
+- A maintenance or update project is seen only on an `osc commit` or `osc api` command
+  line, by its literal name or the checkout's `.osc/_project`; one held in a variable, or
+  program code running osc, is not.

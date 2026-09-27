@@ -2,10 +2,15 @@
 """pr-guard.py -- harness guard for pool/ pull requests on src.opensuse.org.
 
 Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
-update or merge a pool/ PR outside pool-pr.sh, push to a branch that heads an
-open pool PR, write a target-gate.sh stamp, run an emulated osc build, or file a
-request against the scmsync'd openSUSE:Backports:SLE-16.x projects. Its rules
-live in _pr_guard.py beside it, read only once a call matches the prefilter.
+update or merge a pool/ PR outside pool-pr.sh, merge any PR with tea or git-obs,
+push to a branch that heads an open pool PR, write a target-gate.sh stamp, run
+an emulated osc build, file a request against the scmsync'd
+openSUSE:Backports:SLE-16.x projects, file a submit request that overrides osc's
+devel-project check, file a request whose message is over 300 characters, or
+commit or write through the API into a *:Update or *:Maintenance:* project
+outside home:. A -h/--help call of tea, git-obs, git or osc is not judged, and
+a refusal redacts the credentials it would echo. Its rules live in _pr_guard.py
+beside it, read only once a call matches the prefilter.
 
 A command line is judged one parsed command at a time, so what a command only
 carries -- a commit message, a grep pattern, an echo -- is not read as a
