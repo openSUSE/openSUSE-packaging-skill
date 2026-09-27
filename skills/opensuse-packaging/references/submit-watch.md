@@ -112,6 +112,12 @@ Triage workflow for a remote-build failure:
 
 The `Release: 0` you set in the spec is **not** what shows up in the built RPM name. OBS appends a project-specific suffix during build: `<name>-<version>-<project>.<release-counter>.<rebuild-counter>.<arch>.rpm`. E.g. `stream-5.10-0.aarch64.rpm` locally becomes `stream-5.10-benchmark.8.1.aarch64.rpm` on the server. This is why the "always `Release: 0`" rule works — the server generates the real number and rebases it each commit. Don't try to set the release counter manually.
 
+### Watching the event stream instead of polling
+
+OBS publishes build and request lifecycle events to an AMQP message bus, and the same feed is exposed as Server-Sent Events at `https://rabbit.opensuse.org/cgi-bin/webevents.py` (rendered live at `https://rabbit.opensuse.org/`). Each event is one JSON object with a `topic` and a `body`; topics follow `<scope>.<application>.<object>.<action>` — e.g. `opensuse.obs.package.build_success`, `opensuse.obs.package.build_fail`, `opensuse.obs.request.state_change`, `opensuse.obs.request.review_changed`. The full topic list is in the OBS Admin Guide, "Message Bus for Event Notifications".
+
+When a watch is genuinely needed (the opt-in cases at the top of this section), filtering this stream for the project/package/request number replaces repeated `osc results` / `osc rq show` polling: one long-lived HTTP connection instead of one API round trip per check. The `body` carries the same fields the API would return (`project`, `package`, `repository`, `arch` for builds; `number`, `state`, `oldstate` for requests).
+
 ## Submit requests (`osc sr`, `osc rq`)
 
 A commit to a devel project (e.g. `benchmark/stream`) is **not** the same as a submission to an upstream distribution (e.g. `openSUSE:Factory`). They are two separate steps:
