@@ -4616,5 +4616,89 @@
       "command": "osc meta pkg openSUSE:Leap:15.6:Update x --ed"
     },
     "cwd": "@PLAIN@"
+  },
+  "request-api-osc-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST -f req.xml '/request?cmd=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-pct-value": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST -f req.xml '/request?cmd=cre%61te'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-pct-key": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST -f req.xml '/request?%63md=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-dot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST -f req.xml '/request/./?cmd=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-curl-pct": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -X POST -n --data-binary @req.xml 'https://api.opensuse.org//request?cmd=%63reate'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-osc-create-addrev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -A https://api.opensuse.org api -m POST --file req.xml '/request?addrevision=1&cmd=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-curl-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -X POST -n --data-binary @req.xml 'https://api.opensuse.org/request?cmd=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-python-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 - <<'EOF'\nimport urllib.request\nurllib.request.urlopen(urllib.request.Request('https://api.opensuse.org/request?cmd=create', open('req.xml', 'rb').read()))\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-var-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "U='/request?cmd=create'; osc api -X POST -f req.xml \"$U\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-changestate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1234567?cmd=changestate&newstate=revoked'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-api-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api '/request?view=collection&states=new,review&roles=creator&user=tester'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "request-sr-supersede": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -s 1234567 -m 'Update to 5.5.3'"
+    },
+    "cwd": "@PLAIN@"
   }
 }

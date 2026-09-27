@@ -336,16 +336,16 @@ merging any other src.opensuse.org PR the same ways (`gh` is not judged; an API 
 counts unless it provably only reads), pushing to a branch that heads an open pool PR,
 writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
 against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject` or one whose message has over 300 characters of prose (every line but a
-`- ` list item), a list line over 100 characters or over 1000 in all (read from `-m`,
-`-F`, stdin, a variable or an `echo`/`printf`/`cat` substitution; one it cannot read is
-refused), or writing into a `*:Update` or `*:Maintenance:*` project outside `home:`
-(commit, `osc api` (sources or builds), `branch`, `copypac`, `linkpac`, `aggregatepac`,
-`rdelete`, `undelete`, `rremove`, `setdevelproject`, `setlinkrev`, `detachbranch`,
-`linktobranch`, `lock`, `release`, `wipebinaries`, a `meta prj|pkg` write) or one it
-cannot place. A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not judged, and
-a refusal redacts the credentials it would echo (URL userinfo, `Authorization`/`Bearer`
-values, `token=`).
+`--nodevelproject`, a request through the API (`/request?cmd=create`) or one whose message
+has over 300 characters of prose (every line but a `- ` list item), a list line over 100
+characters or over 1000 in all (read from `-m`, `-F`, stdin, a variable or an
+`echo`/`printf`/`cat` substitution; one it cannot read is refused), or writing into a
+`*:Update` or `*:Maintenance:*` project outside `home:` (commit, `osc api` (sources or
+builds), `branch`, `copypac`, `linkpac`, `aggregatepac`, `rdelete`, `undelete`, `rremove`,
+`setdevelproject`, `setlinkrev`, `detachbranch`, `linktobranch`, `lock`, `release`,
+`wipebinaries`, a `meta prj|pkg` write) or one it cannot place. A `-h`/`--help` call of
+`tea`, `git-obs`, `git` or `osc` is not judged, and a refusal redacts the credentials it
+would echo (URL userinfo, `Authorization`/`Bearer` values, `token=`).
 
 | File | Goes to | Does |
 |---|---|---|

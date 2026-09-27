@@ -117,6 +117,9 @@ MERGE_URL = Rx(r"/pulls/[^/\s\"']+/merge(?![-\w])")
 DO_MERGE = Rx(
     r"(?i)[\"']Do[\"']\s*:|\bDo\s*=\s*[\"']"
 )  # Go reads JSON keys in any case
+# OBS's request creation, which osc sr and friends wrap with the devel-project
+# check and a message.
+REQUEST_CREATE = Rx(r"/request/?\?(?:[^\s\"'#]*&)?cmd=create(?![\w-])")
 # The API's pulls path, or one built from a variable. A web link to a PR
 # (src.opensuse.org/pool/x/pulls/3) quoted in a comment is not an endpoint.
 PULLS_REF = Rx(r"(?:repos/[^/\s\"'`]+/[^/\s\"'`]+|[})\"'`]|\$\w+)/pulls(?![-\w])")
@@ -418,6 +421,8 @@ MESSAGES = {
     "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
     "factory-auto declines a Factory request whose source is not the devel "
     "project. Submit from the devel project.",
+    "request-api": "{0}: file requests with osc (osc sr ... -s ID supersedes "
+    "exactly one), which checks the devel project and the message.",
     "maintenance": "{0}: no direct writes into maintenance/update projects — use "
     "osc mbranch + osc mr.",
     "maintenance-unknown": "cannot tell where {0} lands, so it is refused. Run it in "
@@ -1172,6 +1177,8 @@ def api_rules(text, ctx, cwd, write=False, reads=None):
     program text must show no sign of a write) -- or any write to pool (or
     unknown) pulls. URLs are judged normalised (norm_urls)."""
     text = norm_urls(text)
+    if REQUEST_CREATE.search(text):
+        block("request-api", "a request created through the API")
     if (
         DO_MERGE.search(text)
         or MERGE_URL.search(text)
@@ -2373,6 +2380,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     elif name == "git":
         git_command(run, ctx, here)
     elif name == "osc":
+        wide = " ".join([joined, *expansions(run[1:], ctx, here)])
+        if osc_sub(run)[0] == "api" and REQUEST_CREATE.search(norm_urls(wide)):
+            block("request-api", "a request created through the API")
         osc_rules(joined, " ".join(without_message(run)))
         request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
@@ -2574,6 +2584,8 @@ def check_write(path, content, ctx):
             and (pool_or_unknown(lines, ctx, ctx.cwd) or not code_reads(lines))
         ):
             block("merge-api", "a script merging a PR")
+        if REQUEST_CREATE.search(lines):
+            block("request-api", "a script creating a request through the API")
         if PULLS_REF.search(lines) and writes(lines):
             if pool_or_unknown(lines, ctx, ctx.cwd):
                 block("create-api", "a script writing to pool pulls")
