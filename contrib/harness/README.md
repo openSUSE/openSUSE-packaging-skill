@@ -332,14 +332,20 @@ through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-merging any other PR the same ways, pushing to a branch that heads an open pool PR,
+merging any other src.opensuse.org PR the same ways (`gh` is not judged; an API merge call
+counts unless it provably only reads), pushing to a branch that heads an open pool PR,
 writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
 against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject` or a request message over 300 characters, or committing or writing
-through `osc api` into a `*:Update` or `*:Maintenance:*` project outside `home:`. A
-`-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not judged, and a refusal
-redacts the credentials it would echo (URL userinfo, `Authorization`/`Bearer` values,
-`token=`).
+`--nodevelproject` or one whose message has over 300 characters of prose (every line but a
+`- ` list item), a list line over 100 characters or over 1000 in all (read from `-m`,
+`-F`, stdin, a variable or an `echo`/`printf`/`cat` substitution; one it cannot read is
+refused), or writing into a `*:Update` or `*:Maintenance:*` project outside `home:`
+(commit, `osc api` (sources or builds), `branch`, `copypac`, `linkpac`, `aggregatepac`,
+`rdelete`, `undelete`, `rremove`, `setdevelproject`, `setlinkrev`, `detachbranch`,
+`linktobranch`, `lock`, `release`, `wipebinaries`, a `meta prj|pkg` write) or one it
+cannot place. A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not judged, and
+a refusal redacts the credentials it would echo (URL userinfo, `Authorization`/`Bearer`
+values, `token=`).
 
 | File | Goes to | Does |
 |---|---|---|
@@ -480,8 +486,10 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A script run by bare name from `PATH` is not read, nor a program held in a variable
   the call does not set or made by a substitution (`$CMD`, `eval "$CMD"`,
   `bash -c "$(cat F)"`).
-- After `cd "$VAR"` or `cd "$(...)"` the working directory is unknown: a push, an
-  unnamed `tea` or `git-obs` call, or a script run by relative path is refused.
+- After a `cd` to a variable the call did not set, or to a `$(...)`, the working
+  directory is unknown (a loop's words, and values the call set, are followed): a push, an
+  unnamed `tea` or `git-obs` call, an `osc commit`, or a script run by relative path is
+  refused.
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
@@ -494,8 +502,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
   (`r.data = ...`).
 - Perl's LWP and HTTP::Tiny requests are not seen, and `ruby`, `bun`, `deno` and `php`
   programs are not read.
-- Commands run through `watch`, `flock`, `script` or `find -exec` are not unwrapped,
-  and words `xargs` reads from stdin are not seen (`echo B | xargs git push fork` is
+- Commands run through `flock` or `script` are not unwrapped, and words `xargs` reads
+  from stdin are not seen (`echo B | xargs git push fork` is
   judged as a push of the current branch).
 - A script whose shebang is `env -S` and whose name has no `.sh` is read as program
   code, so its shell pushes are not parsed.
@@ -509,17 +517,20 @@ create must be refused too, the `AI/zzz` create must run, and so must
   `rsync`, `ln`, `wget -O`, program code) are missed.
 - A wildcard refspec that renames (`refs/heads/a-*:refs/heads/b-*`) is judged by the
   local branch names.
-- A repository held in a program variable (`["tea", ..., "--repo", R]`) is judged by
-  the clone's remotes. An f-string is judged by its literal owner: `f"pool/{pkg}"` is
-  pool, `f"{o}/{pkg}"` is unknown and refused.
+- A PR create's repository held in a program variable (`["tea", ..., "--repo", R]`) is
+  judged by the clone's remotes. An f-string is judged by its literal owner:
+  `f"pool/{pkg}"` is pool, `f"{o}/{pkg}"` is unknown and refused. A merge is refused on
+  any repository.
 - A request body option (`--json`, `--data`, `--form`, `--upload-file`) counts only on
   a `curl`, `wget` or `tea api` line, or in the argument list that names the tool. One
   added to that list later (`cmd += ["--json", body]`) is not seen.
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is.
 - The opencode plugin does not send `patch`/`apply_patch` tool calls to the guard.
-- A request message given by `-F FILE` or a substitution (`-m "$(cat FILE)"`) is not
-  measured.
-- A maintenance or update project is seen only on an `osc commit` or `osc api` command
-  line, by its literal name or the checkout's `.osc/_project`; one held in a variable, or
-  program code running osc, is not.
+- A merge through the pulls API is refused whatever its host; `gh` is not judged, so
+  `gh pr merge` on a GitHub repository runs.
+- Request messages are measured on osc command lines only: not in program code running
+  osc, and not in PR descriptions (`tea`, `git-obs`).
+- The maintenance rule reads osc command lines only, not program code running osc, and
+  not `osc rebuild`, `restartbuild`, `abortbuild`, `copyprj`, `service remoterun` or
+  `meta prjconf`/`attribute`/`pattern`.

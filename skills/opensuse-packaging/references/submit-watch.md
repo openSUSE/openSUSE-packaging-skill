@@ -276,7 +276,7 @@ The XML tells you everything you need to triage a staging in one call: `<staged_
 osc service run source_validator >/var/tmp/sv.log 2>&1 && osc sr <target-project> -m "<short message>"
 ```
 
-**HARD RULE — an SR or PR message is 1–3 sentences, at most 300 characters:** what the request does, plus anything the reviewer needs to decide (a pairing, a dropped arch, what you want a named reviewer to look at). No internal work notes — no investigation log, test counts, tool output or session story — and no paste of the `.changes`: the entry carries the detail and the reviewer reads it in the request's diff. The cap is on the prose: a list the reviewer needs, such as the consumers a maintenance or Leap update must rebuild or sync, may follow it, one per line.
+**HARD RULE — an SR or PR message is 1–3 sentences, at most 300 characters:** what the request does, plus anything the reviewer needs to decide (a pairing, a dropped arch, what you want a named reviewer to look at). No internal work notes — no investigation log, test counts, tool output or session story — and no paste of the `.changes`: the entry carries the detail and the reviewer reads it in the request's diff. The cap is on the prose: a list the reviewer needs, such as the consumers a maintenance or Leap update must rebuild or sync, may follow it, one `- ` line each.
 
 If you skip `-m`, `osc sr` opens an editor seeded with the new `.changes` bullets.
 
