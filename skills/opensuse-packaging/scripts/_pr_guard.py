@@ -236,8 +236,8 @@ ROUTE = (
     "DIR is green and reviewed for that tree"
 )
 MESSAGES = {
-    "merge": "{0}: agents never merge a pool PR, not even their own. Watch it "
-    "instead: sr-status.py --pr pool/<pkg>#<n>.",
+    "merge": "{0}: agents never merge a PR, not even their own. Watch it "
+    "instead: sr-status.py --pr <owner>/<pkg>#<n>.",
     "create": "{0}: " + ROUTE + ".",
     "push-pr-head": "{0}; a push moves that PR to a tree nobody built. " + ROUTE + ".",
     "push-pool": "{0} opens or moves a pool PR; " + ROUTE + ".",
@@ -391,13 +391,13 @@ def code_lines(text):
 
 def tool_rules(ln, ctx, cwd):
     """tea and git-obs, on one command line or one line of a program."""
-    if TEA_MERGE.search(ln) and pool_or_unknown(ln, ctx, cwd, cmd=True):
-        block("merge-tea", "a tea PR merge on a pool (or unnamed) repository")
+    if TEA_MERGE.search(ln):
+        block("merge-tea", "a tea PR merge")
     m = GIT_OBS.search(ln)
     # A PR id or repository held in a variable names no owner.
     held = bool(m) and bool(VAR_WORD.search(ln[m.end() :]))
-    if m and m.group(1) == "merge" and (held or pool_or_unknown(ln, ctx, cwd, True)):
-        block("merge-git-obs", "a git-obs PR merge on a pool (or unnamed) repository")
+    if m and m.group(1) == "merge":
+        block("merge-git-obs", "a git-obs PR merge")
     if m and m.group(1) == "create":
         if not GIT_OBS_TARGET.search(ln) or pool_or_unknown(ln, ctx, cwd, True):
             block("create-git-obs", "a git-obs PR create towards pool")

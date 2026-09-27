@@ -2823,5 +2823,47 @@
       "command": "cd @CLONE@ && git checkout -q leap-16.0 && ./scripts/leap-sync.sh --dir @CLONE@ tesseract-ocr leap-16.1 2>&1 | tail -n 8"
     },
     "cwd": "@WORK@"
+  },
+  "merge-tea-own-fork": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls merge --repo someone/tesseract-ocr --style squash 1"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-control-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls checkout 2 --repo AI/mistral-vibe"
+    },
+    "cwd": "@CLONE@"
+  },
+  "list-tea-create-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import subprocess; subprocess.run([\"tea\", \"pr\", \"create\", \"--repo\", \"AI/mistral-vibe\", \"--title\", \"Update\"])'"
+    },
+    "cwd": "@OTHER@"
+  },
+  "list-tea-create-fstring-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import subprocess; pkg = \"x\"; subprocess.run([\"tea\", \"pr\", \"create\", \"--repo\", f\"AI/{pkg}\", \"--title\", \"Update\"])'"
+    },
+    "cwd": "@OTHER@"
+  },
+  "cwd-away-from-pool-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd @OTHER@ && tea pr create --head someone:update --base factory --title 'Update'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "gitobs-space-create-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr create --target AI/mistral-vibe:factory --title 'Update to 2.25.1'"
+    },
+    "cwd": "@CLONE@"
   }
 }
