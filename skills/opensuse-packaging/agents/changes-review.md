@@ -12,15 +12,16 @@ The mechanical gates run before you and are assumed green (spec-cleaner no-diff 
 
 **Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, so prefix every `scripts/…` and `references/…` path with that root.
 
-**Read three sections before you start — the changelog rules and the usage of the scripts you re-run — and no whole reference file:**
+**Read four sections before you start — the changelog rules, the usage of the scripts you re-run and how to call osc, tea and git-obs — and no whole reference file:**
 
 ```
 python3 <skill>/scripts/refsection.py changelog-rules.md "Changelog (`*.changes`)"
 python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
 python3 <skill>/scripts/refsection.py script-usage.md "Update and build"
+python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 ```
 
-The first is the rulebook for checklist items 4–8 (~26 KB); the other two are the flags and exit codes of the gate and build scripts (~2 KB). `refsection.py --list changelog-rules.md` prints its seven `###` sub-sections if you later want just one — "Format and layout", "Never alter a previous entry", "Name every added or removed patch literally", "CVEs and security bullets", "How much to write — upstream bumps vs packaging-only changes". **Read further only when a trigger fires:** a spec-idiom doubt → `specfile-guidelines.md` (the section for that spec part); `update-alternatives` left in a spec → `shlib-alternatives.md` "Alternatives"; a soname/shlib change → `shlib-alternatives.md` "Shared libraries"; a patch question → `patches.md` "Patches"; "would a reviewer really decline this?" → `decline-catalog.md` "What human Factory reviewers decline for"; a Leap `pool/` tree → `leap-slfo.md` "The pool PR gate — build, review, open, watch".
+The first is the rulebook for checklist items 4–8 (~28 KB); the next two are the flags and exit codes of the gate and build scripts (~2 KB); the last is how to reach OBS and src.opensuse.org without a raw API call (~2 KB). `refsection.py --list changelog-rules.md` prints its seven `###` sub-sections if you later want just one — "Format and layout", "Never alter a previous entry", "Name every added or removed patch literally", "CVEs and security bullets", "How much to write — upstream bumps vs packaging-only changes". **Read further only when a trigger fires:** a spec-idiom doubt → `specfile-guidelines.md` (the section for that spec part); `update-alternatives` left in a spec → `shlib-alternatives.md` "Alternatives"; a soname/shlib change → `shlib-alternatives.md` "Shared libraries"; a patch question → `patches.md` "Patches"; "would a reviewer really decline this?" → `decline-catalog.md` "What human Factory reviewers decline for"; a Leap `pool/` tree → `leap-slfo.md` "The pool PR gate — build, review, open, watch".
 
 **Re-running a gate yourself: never use `spec-cleaner -d`.** `-d` shells out to
 `vimdiff`, which has no TTY here, so it hangs forever and leaves a `.spec.swp` in

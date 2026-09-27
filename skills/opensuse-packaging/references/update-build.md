@@ -43,7 +43,7 @@
 | devel has target version? | Factory SR (devel→Factory) exists (new/review)? | Action |
 |---|---|---|
 | yes | yes | **STOP — nothing to do.** The update is already on its way. Report the SR id; do not repackage, do not file a competing SR. |
-| yes | **no** (stranded devel update) | **Don't repackage — just forward it:** confirm green (`osc results <devel> <pkg>`), then `osc sr <devel> <pkg> openSUSE:Factory`. One command, zero packaging. (See triage.md "stranded devel update", real cases openmopac/pspg.) |
+| yes | **no** (stranded devel update) | **Don't repackage — just forward it:** confirm green (`osc results <devel> <pkg>`), then `osc sr <devel> <pkg> openSUSE:Factory -m MSG`. One command, zero packaging. (See triage.md "stranded devel update", real cases openmopac/pspg.) |
 | yes, **and the target project already carries the same version** | — (none needed) | **STOP — nothing to do.** The update already landed; devel and Factory are in sync. This is *not* a stranded update — forwarding it files an **empty SR**. Distinguish it from the row above by comparing devel against the *target project*, not only against your intended version. |
 | no | — | Proceed with the normal Block 2 update below. |
 

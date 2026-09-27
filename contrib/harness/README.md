@@ -10,9 +10,9 @@ against the scmsync'd `openSUSE:Backports:SLE-16.x` projects.
 | File | Goes to | Does |
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
-| `claude-settings-snippet.json` | merged into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`, plus deny rules that keep the agent from editing the hook and harness config |
+| `claude-settings-snippet.json` | merged into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`, plus deny rules: the Edit and Write tools stay off the hook and harness config, the Read tool off the osc and tea credential files, and a `sudo chroot …` command line is refused. Shell reads and curl calls are not covered — the opencode snippet's patterns are, and pr-guard judges only pool PR traffic |
 | `opencode-pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
-| `opencode-permission-snippet.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny pool merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
+| `opencode-permission-snippet.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges on src.opensuse.org (pool or not; `gh` is not matched), ask on PR creates, each `git-obs` pattern also spelled `git obs`; deny credential-file access and curl to the OBS and Gitea APIs (the skill's `references/osc-usage.md` "Tool discipline"), `--nodevelproject` requests and `sudo chroot` |
 
 Both harnesses run one **pinned copy** of the guard. It is not updated with the skill:
 the guard polices the skill's own scripts, so a change to it is a decision, not a pull.
@@ -151,8 +151,8 @@ be refused with the guard's message. The `AI/zzz` variant must run, and so must
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
-- The deny rules stop the Edit and Write tools, not a shell command that edits the same
-  files.
+- The Claude deny rules stop the Edit, Write and Read tools, not a shell command that
+  edits or reads the same files.
 - A push through a helper is not seen: a Python `def git(*a)`, a shell function
   `g() { git "$@"; }`, `git -c alias.x=push x`.
 - A pulls URL assembled without a literal `/pulls` (`base + 'pulls'`, `urljoin`,

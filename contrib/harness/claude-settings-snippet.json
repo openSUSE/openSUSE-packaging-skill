@@ -20,7 +20,12 @@
       "Edit(~/.claude/hooks/**)",
       "Write(~/.claude/hooks/**)",
       "Edit(~/.config/opencode/**)",
-      "Write(~/.config/opencode/**)"
+      "Write(~/.config/opencode/**)",
+      "Read(~/.config/tea/**)",
+      "Read(~/.config/osc/**)",
+      "Read(~/.local/state/osc/**)",
+      "Read(~/.oscrc)",
+      "Bash(sudo chroot:*)"
     ]
   }
 }

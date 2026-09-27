@@ -8,14 +8,19 @@
     "bash": {
       "*": "allow",
 
-      // Merging a pool PR is never an agent's job.
-      "tea pr merge *pool/*": "deny",
-      "tea pr m *pool/*": "deny",
-      "tea pulls merge *pool/*": "deny",
-      "tea pulls m *pool/*": "deny",
-      "tea pull merge *pool/*": "deny",
-      "git-obs *pr merge *pool/*": "deny",
-      "git obs *pr merge *pool/*": "deny",
+      // Merging a PR on src.opensuse.org is never an agent's job, pool or
+      // not. gh is not matched: GitHub merges stay the maintainer's call there.
+      "tea pr merge *": "deny",
+      "tea pr m *": "deny",
+      "tea pulls merge *": "deny",
+      "tea pulls m *": "deny",
+      "tea pull merge *": "deny",
+      "tea api */pulls/*/merge*": "deny",
+      "git-obs *pr merge*": "deny",
+      "git obs *pr merge*": "deny",
+      "git-obs *api*/pulls/*/merge*": "deny",
+      "git obs *api*/pulls/*/merge*": "deny",
+      "*src.opensuse.org*/pulls/*/merge*": "deny",
       "*repos/pool/*/pulls/*/merge*": "deny",
 
       // Pool PRs are opened by pool-pr.sh; a direct create gets a human look.
@@ -28,7 +33,44 @@
       "git-obs *pr forward*": "ask",
       "git obs *pr forward*": "ask",
       "*-X POST*repos/pool/*/pulls*": "ask",
-      "*repos/pool/*/pulls*-X POST*": "ask"
+      "*repos/pool/*/pulls*-X POST*": "ask",
+
+      // Tool discipline (references/osc-usage.md "Tool discipline"): the
+      // credentials stay inside osc/tea/git-obs, and OBS and the Gitea API are
+      // reached only through them.
+      "*tea/config.yml*": "deny",
+      "*oscrc*": "deny",
+      "*.config/osc/*": "deny",
+      "*osc/cookiejar*": "deny",
+      "*api-key*": "deny",
+      "*askpass*": "deny",
+      "*Authorization:*": "deny",
+      "curl *api.opensuse.org*": "deny",
+      "curl *build.opensuse.org*": "deny",
+      "curl *src.opensuse.org/api*": "deny",
+
+      // A Factory request comes from the registered devel project.
+      "osc sr *--nodevelproject*": "deny",
+      "osc submitreq *--nodevelproject*": "deny",
+      "osc submitrequest *--nodevelproject*": "deny",
+      "osc submitpac *--nodevelproject*": "deny",
+      "osc creq *--nodevelproject*": "deny",
+      "osc createrequest *--nodevelproject*": "deny",
+
+      // Build roots are entered with osc chroot.
+      "sudo chroot *": "deny"
+    },
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow",
+      "*/.config/tea/*": "deny",
+      "*/.config/osc/*": "deny",
+      "*/.local/state/osc/*": "deny",
+      "*oscrc*": "deny",
+      "*api-key*": "deny",
+      "/tmp/askpass*": "deny"
     }
   }
 }

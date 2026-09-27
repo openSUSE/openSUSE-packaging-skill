@@ -6,7 +6,7 @@ openSUSE is migrating package sources from classic OBS `osc` checkouts to **Git 
 
 ## Repo topology on src.opensuse.org
 
-- `pool/<pkg>` — the canonical package repo (the source of truth, shared across products). Marked **`source`** in `tea repo search`. Default branch is usually **`factory`**. **Do NOT target PRs here.**
+- `pool/<pkg>` — the canonical package repo (the source of truth, shared across products). Marked **`source`** in `tea repos search --login <login>`. Default branch is usually **`factory`**. **Do NOT target PRs here.**
 - `<devel-project>/<pkg>` (e.g. `devel-factory/hwdata`, `network:messaging:xmpp/libstrophe`) — the devel-project repo, a **`fork`** of pool in Gitea's fork network. Default branch is usually **`main`**. **This is the PR target for package changes.**
 - `<youruser>/<pkg>` — your personal fork.
 
@@ -26,7 +26,7 @@ $ osc api /source/devel:languages:perl/perl-Mojolicious/_meta
 </package>
 ```
 
-Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs file maintainership migrate` converts the legacy format). Consequences, all of them silent:
+Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format). Consequences, all of them silent:
 
 - `osc api "/search/package?match=person[@userid='<u>' and @role='maintainer']"` — **returns nothing** for it.
 - `osc api "/search/owner?project=<prj>&filter=maintainer&user=<u>"` — returns only the *project-level* entry, no `package=` rows.
@@ -66,8 +66,21 @@ Related osc-side git support worth knowing: `osc maintained` also lists maintain
 
 - **osc ≥ 1.15.0** is required for `osc fork` (earlier versions have fork bugs). `osc build` and `osc sr` still work as documented elsewhere in this skill.
 - **`git-lfs` is mandatory** — source tarballs are stored in LFS, configured by the repo's `.gitattributes` (`*.gz *.xz *.zst *.bz2 *.tar … filter=lfs`). After `git add`-ing a tarball, confirm it's a pointer with `git cat-file -p :<tarball>` (should print `version https://git-lfs.github.com/spec/v1` + oid + size), **not** the raw binary. The working-tree file stays the real tarball, so `osc build` still sees real sources.
-- **CLI clients**: `osc` (forking + building + Factory SRs), `tea` (Gitea CLI — logins, fork, PR), and `git-obs` (bundled with osc; PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed.
+- **CLI clients**: `osc` (forking + building + Factory SRs), `tea` (Gitea CLI — logins, fork, PR), and `git-obs` (bundled with osc; PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed. No curl against the API and no token handling: `references/osc-usage.md` "Tool discipline".
 - **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`.
+
+## Gitea CLI — tea 0.15.1 cheat sheet
+
+Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea logins list` (it also shows your user name on each forge).
+
+- **`--login` and `--repo` belong to each subcommand**, not to `tea` (`tea --login …` is a usage error). Without `--login`, tea takes the login matching the checkout's remote, else its default one; on the wrong instance a lookup fails with *"The target couldn't be found"*, which reads like a missing repo. Pass both, long forms: in `tea pulls edit`, `-r` also means `--add-reviewers`.
+- Fork: `tea repos fork --login <login> --repo <owner>/<pkg>` (`--owner <org>` forks into an organisation).
+- Open a PR: `tea pulls create --login <login> --repo <owner>/<pkg> --head <you>:<branch> --base main --title "<title>" --description "<text>"`.
+- Read a PR with its comments: `tea pulls --comments --login <login> --repo <owner>/<pkg> <n>`.
+- Edit its title or description: `tea pulls edit --login <login> --repo <owner>/<pkg> --title "<title>" --description "<text>" <n>`.
+- Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`; `tea comments list` with the same options reads them.
+- Reply inside a reviewer's thread: `tea pulls reply --login <login> --repo <owner>/<pkg> <n> <comment-id> "<text>"`, the id from `tea pulls review-comments`; resolving is in "Responding to a PR review" below.
+- Anything else: `git-obs -G src.opensuse.org api [-X METHOD] [--data JSON] /repos/<owner>/<pkg>/…` — the path is relative to `/api/v1`, and an HTTP error exits non-zero. `-G` picks the login by its name or by the forge's host name; without it git-obs takes the default login. Not `tea api`: it exits 0 on a 404, so a failed lookup reads as success.
 
 ## Command mapping (old osc → git workflow)
 
@@ -86,7 +99,7 @@ Related osc-side git support worth knowing: `osc maintained` also lists maintain
 Two ways, and the difference matters:
 
 - **`osc fork <devel-project> <pkg>`** (recommended) — creates **both** the Gitea fork (`<youruser>/<pkg>`) **and** an OBS project branch (`home:<you>:branches:<devel-project>`) wired to build your fork via scmsync. Use this when you want OBS to build your changes before/without a PR.
-- **`tea repo fork --repo <owner>/<pkg>`** (or `git-obs repo fork`) — Gitea-only fork, **no** OBS build branch. Sufficient when you'll rely on local `osc build` plus the post-PR autogits bot build (below). Lighter weight; no OBS home project left behind to clean up.
+- **`tea repos fork --login <login> --repo <owner>/<pkg>`** (or `git-obs -G src.opensuse.org repo fork <owner>/<pkg>`) — Gitea-only fork, **no** OBS build branch. Sufficient when you'll rely on local `osc build` plus the post-PR autogits bot build (below). Lighter weight; no OBS home project left behind to clean up.
 
 ## Local build in a git checkout — the gotchas
 
@@ -102,31 +115,22 @@ Contributors send **pull requests on Gitea**, not OBS submit requests. **Target 
 
 ```
 # after git commit + git push to your fork:
-git-obs pr create --title "..." --description "..." --target-branch main
-# or use tea:  tea pr create --base main --head <youruser>:<branch> --repo <devel-project>/<pkg>
+git-obs -G src.opensuse.org pr create --title "..." --description "..." --target-branch main
+# or use tea:  tea pulls create --login <login> --repo <devel-project>/<pkg> --head <youruser>:<branch> --base main
 # or the Gitea web UI.
 ```
 
-`tea`/`git-obs` can choke on a fresh checkout with `core.repositoryformatversion does not support extension: objectformat` (a go-git limitation reading newer git repo configs). When that happens, **create the PR via the Gitea REST API** instead:
-
-```
-TOKEN=$(python3 -c "import yaml;c=yaml.safe_load(open('$HOME/.config/tea/config.yml'));print([l['token'] for l in c['logins'] if l['name']=='src.opensuse.org'][0])")
-curl -sS -X POST "https://src.opensuse.org/api/v1/repos/<devel-project>/<pkg>/pulls" \
-  -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-  -d '{"head":"<youruser>:<branch>","base":"main","title":"...","body":"..."}'
-```
-
-**Build the JSON payload in Python, not by interpolating the body into a `-d "{…\"body\":\"$BODY\"…}"` string.** A PR body almost always contains characters that break inline JSON — a literal `"quoted phrase"`, a backtick, a newline — and the failure is silent-ish: the branch is already pushed, so you just get `jsontext: invalid character '…'` and *no PR*. Use `json.dumps({...})` with `urllib` (it escapes everything), the same shape as the [bug-close snippet](bugzilla-cve-triage.md). (Real case: a body containing `"WARNING: Cannot open …"` broke the curl `-d`; rebuilding the payload with `json.dumps` fixed it.)
+If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `git-obs -G src.opensuse.org pr create`. Never fall back to curl with a token taken from the tea config; `git-obs -G src.opensuse.org api -X POST /repos/<devel-project>/<pkg>/pulls --data "$(python3 -c 'import json; print(json.dumps({"head": "<you>:<branch>", "base": "main", "title": "<title>", "body": open("body.txt").read()}))')"` covers what the CLIs lack. **Build that JSON with `json.dumps`, as here, never by pasting the text into a quoted string** — a literal `"`, a backtick or a newline breaks it after the branch is already pushed, and you get `invalid character '…'` and *no PR*.
 
 ## Verify a push/PR actually landed — don't trust a piped push
 
-**Never confirm `git push` through a pipe** (`git push -q 2>&1 | tail -1 && echo pushed`): the pipeline's exit status is the *last* stage's (`tail`, always 0), so a failed push reports success and the remote silently stays stale. Push **unpiped** and read the result: a real push prints `   <old>..<new>  <branch> -> <branch>` (or `* [new branch] …`); check `echo "exit=$?"`. (Real case: an entire session's commits to a GitHub skill repo *looked* pushed every time but never left the laptop — the remote sat on the pre-session commit. See [[verify-git-push-exit-code]].) For an important push, compare the remote HEAD afterwards via the API (`/commits?per_page=1`) against `git rev-parse HEAD`.
+**Never confirm `git push` through a pipe** (`git push -q 2>&1 | tail -1 && echo pushed`): the pipeline's exit status is the *last* stage's (`tail`, always 0), so a failed push reports success and the remote silently stays stale. Push **unpiped** and read the result: a real push prints `   <old>..<new>  <branch> -> <branch>` (or `* [new branch] …`); check `echo "exit=$?"`. (Real case: an entire session's commits to a GitHub skill repo *looked* pushed every time but never left the laptop — the remote sat on the pre-session commit. See [[verify-git-push-exit-code]].) For an important push, compare `git ls-remote <remote> refs/heads/<branch>` against `git rev-parse HEAD` afterwards.
 
-**Verify the LFS *object* uploaded, not just the pointer.** `git lfs push origin <branch>` is also commonly piped, and a missing LFS object only surfaces later as a bot/OBS build failure (*"Unable to find source for object …"*). Gitea's `…/raw/branch/<branch>/<tarball>` returns the **pointer** (~130 B) — that only proves the git content, not the object. Fetch the **`…/media/branch/<branch>/<tarball>`** endpoint (LFS-resolving) and confirm its byte count equals the pointer's declared `size`:
-```
-ptr=$(curl -s .../raw/branch/<branch>/<tarball>)         # has "size <N>"
-actual=$(curl -s .../media/branch/<branch>/<tarball> | wc -c)   # must equal <N>, and be >2 KB
-```
+**Verify the LFS *object*, not just the pointer:**
+- **`git push --no-verify` skips the hook that uploads LFS objects**, so only the pointer arrives: the reviewer sees a file "not uploaded to LFS" and OBS fails with *"Unable to find source for object …"*. After any such push of an LFS-tracked file, push exactly the objects of the pushed commit, unpiped, against the SSH remote: `git lfs push --object-id <remote> $(git lfs ls-files -l | awk '{print $1}')`. Not `--all`: it walks the whole history and dies on objects long pruned from old branches (`references/leap-slfo.md` "LFS gotchas"). A pointer-only push that is not your own PR head — someone else's branch, a shared one — is not yours to repair: tell its owner, or open a PR that carries the object.
+- **Prove it from a fresh clone of the branch** (under `/var/tmp`, not in the checkout): `git lfs ls-files` must mark the file `*` (full object), not `-` (pointer only), and `git lfs fsck` must pass. A `raw/` URL returns the pointer and proves nothing.
+- **Uploading LFS objects alone does not trigger the OBS sync, and force-pushing the same sha is a no-op.** To make OBS or the PR bot pick the objects up, amend the commit (a new sha) and `git push --force-with-lease` — only onto your own PR head branch (your fork's feature branch), never a shared one (`factory`, `leap-*`, `main`); never an empty commit, which stays in the package history. A Leap pool PR's head moves only through `scripts/pool-pr.sh`.
+- **Answer the reviewer inside their thread** (`tea pulls reply`, "Gitea CLI — tea 0.15.1 cheat sheet"), and apply the same fix to every sibling PR or SR carrying that file — both Leap branches, the Factory SR.
 
 What happens after the PR opens:
 - The **`autogits-devel` bot** automatically opens a second PR against the project's `_ObsPrj` repo.
@@ -162,12 +166,12 @@ blocking the merge even after you've pushed the fix.
 supported path**, and it wraps calls the plain REST surface doesn't expose:
 
 ```
-tea pulls review-comments <n> -r <org>/<pkg> -l src.opensuse.org   # id, path, line, body, reviewer, RESOLVER
-tea pulls reply   <n> <comment-id> "<text>"  -r <org>/<pkg> -l src.opensuse.org
-tea pulls resolve     <comment-id>           -r <org>/<pkg> -l src.opensuse.org   # also: unresolve
+tea pulls review-comments --repo <org>/<pkg> --login <login> <n>   # id, path, line, body, reviewer, RESOLVER
+tea pulls reply   --repo <org>/<pkg> --login <login> <n> <comment-id> "<text>"
+tea pulls resolve --repo <org>/<pkg> --login <login> <comment-id>   # also: unresolve
 ```
 
-- **Always pass `-r` and `-l` explicitly.** A package checkout that has both an
+- **Always pass `--repo` and `--login` explicitly.** A package checkout that has both an
   `origin` (base repo) and a `fork` remote gives `tea` two candidates and it can
   pick the wrong one; naming the slug and the login removes the guess.
 - **Verify** by re-running `review-comments` and confirming the `RESOLVER`
@@ -183,16 +187,15 @@ with `tea pulls reply` / `tea pulls resolve`.)
 **A reviewer reporting `smudge filter lfs failed` is not automatically your
 bug.** Gitea's LFS content store is shared across a repo and its forks, so a
 fork-PR's objects usually *are* fetchable from the base repo. Check before
-"fixing" anything — POST to the base repo's batch API and see whether the object
-resolves anonymously:
+"fixing" anything — fetch the PR head's objects from the base repo, anonymously,
+in a fresh clone:
 
 ```
-POST https://src.opensuse.org/<org>/<pkg>.git/info/lfs/objects/batch
-Accept/Content-Type: application/vnd.git-lfs+json
-{"operation":"download","transfers":["basic"],"objects":[{"oid":"<oid>","size":<bytes>}]}
+git clone --no-checkout https://src.opensuse.org/<org>/<pkg>.git /var/tmp/<dir> && cd /var/tmp/<dir>
+git fetch origin refs/pull/<n>/head && git lfs fetch origin FETCH_HEAD
 ```
-An object with a `download` action and no `error` key is present and public — the
-failure is then the reviewer's client, and the fix is theirs, not a repush.
+A clean `git lfs fetch` means the objects are present and public — the failure
+is then the reviewer's client, and the fix is theirs, not a repush.
 Note `git lfs push --dry-run <remote>` over **HTTPS** can't authenticate
 (`could not read Username`) and then lists *every* local object as "to push",
 which looks exactly like "the server has none" — run it against the **SSH**
@@ -205,14 +208,14 @@ The bot-built-it assumption above holds for **autogits-managed** devel repos. It
 Two-call tell:
 
 ```
-curl -s .../api/v1/repos/<org>/<pkg>/contents/.obs          # 404 → no integration
-curl -s .../api/v1/repos/<org>/<pkg>/commits/<sha>/statuses  # []  → nothing ever reported
+git-obs -G src.opensuse.org api /repos/<org>/<pkg>/contents/.obs           # 404 error → no integration
+git-obs -G src.opensuse.org api /repos/<org>/<pkg>/commits/<sha>/statuses   # []  → nothing ever reported
 ```
 
 Switching it on takes **three** pieces, and **only the first can live in the repo**:
 
 1. `.obs/workflows.yml` on the **target** branch (the path is overridable in the token config).
-2. An **OBS workflow token**, created by someone who may write to the target project: `osc token --create --operation workflow --scm-token <gitea-token>`.
+2. An **OBS workflow token**, created by someone who may write to the target project — the maintainer runs this, since `--scm-token` puts a Gitea token on the command line and an agent never handles one: `osc token --create --operation workflow --scm-token <gitea-token>`.
 3. A **webhook** on the Gitea repo pointing at that token's payload URL, subscribed to the Pull Request event — needs repo-admin rights.
 
 So a drive-by contributor can only ever *propose* the YAML; a maintainer must finish it. **Say that plainly when offering one** rather than implying the PR will start building on merge.
@@ -241,7 +244,7 @@ Routing AND mechanics live in `references/leap-slfo.md` (single home). One orien
 When a downstream patch is upstream-eligible (see the Patches section in `references/specfile-guidelines.md` for the `PATCH-FIX-UPSTREAM` tag format and the one-issue-one-PR rule), actually open the upstream PR/MR:
 
 - **Actually file the upstream PR/MR when the fix is a genuine upstream bug (e.g. a build-system defect every packager hits), then reference it.** Keep the patch **minimal and faithful** to the one real bug (don't bundle unrelated cleanups), and **verify the bug still exists on the upstream default/development branch** before opening it — sometimes part of your fix is already merged post-release (`gh api repos/<o>/<r>/contents/<path>?ref=<default-branch> --jq .content | base64 -d`), so narrow the patch to only what's still broken. Mechanics via the GitHub API (works without a local clone of a huge repo): `gh repo fork <o>/<r> --clone=false`; `gh repo sync <you>/<r> --branch <default>`; create a branch ref (`gh api -X POST repos/<you>/<r>/git/refs -f ref=refs/heads/<branch> -f sha=<HEAD>`); commit the edited file via `gh api -X PUT repos/<you>/<r>/contents/<path> -f message=… -f content=<base64> -f sha=<filesha> -f branch=<branch>`; `gh pr create --repo <o>/<r> --base <default> --head <you>:<branch>`. **DCO gotcha: the `Signed-off-by:` email must match the commit *author* email** (the API sets the author from your GitHub account's git email) — a mismatch fails the project's DCO check. If they differ, reset the branch ref to HEAD and re-commit with a matching sign-off. Then add the patch downstream as `# PATCH-FIX-UPSTREAM <file> gh#<o>/<r>#<PR> -- <reason>`. (Real case: Mbed-TLS/mbedtls#10777 — `install(FILES …)` → `install(PROGRAMS …)` so the libmbedcrypto compat shared object is installed executable; the DESTDIR half of the original bug was already fixed on `development`, so the MR was narrowed to just the executable-bit fix.)
-- **Non-GitHub upstreams: use the matching forge CLI/API.** **Codeberg/any Gitea** → `tea` (the same client used for `src.opensuse.org`): check `tea logins list`; if the upstream forge isn't there, the login needs a token *the user* generates (`write:repository`+`write:issue` scopes) — have them run `! tea logins add --name codeberg --url https://codeberg.org --token <TOKEN>` so the secret stays on their side. Then fork via the API (`curl -X POST -H "Authorization: token $TOK" .../repos/<o>/<r>/forks`), push the branch with the token via `GIT_ASKPASS` (a one-line script that `printf`s the token — **never** embed it in the remote URL or echo it), and open the PR via `POST .../repos/<o>/<r>/pulls` with `{"head":"<youruser>:<branch>","base":"<default>",…}`. **GitLab** → `glab`. Confirm your fork username from the API (it may differ from your OBS/codeberg display name). (Real case: dnkl/yambar#497 opened on codeberg via `tea`/API.)
+- **Non-GitHub upstreams: use the matching forge CLI.** **Codeberg/any Gitea** → `tea` (the same client used for `src.opensuse.org`): check `tea logins list`; if the upstream forge isn't there, *the user* adds it — `tea logins add` without arguments asks interactively (a token with `write:repository`+`write:issue` scopes), so the secret never passes through you. Then `tea repos fork --login <login> --repo <o>/<r>`, push the branch over SSH (the user's key registered on that forge), and `tea pulls create --login <login> --repo <o>/<r> --head <you>:<branch> --base <default>`. **GitLab** → `glab`. Take your fork's user name from `tea logins list` (it may differ from your OBS/codeberg display name). (Real case: dnkl/yambar#497 opened on codeberg via `tea`.)
 
 ## AGit workflow (no fork)
 

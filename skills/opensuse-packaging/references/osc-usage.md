@@ -4,6 +4,19 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 **Where checkouts live:** one osc working area, with projects as subdirectories (`<area>/<prj>/<pkg>`). Run `osc co` from the area itself, never from inside a `<prj>/` checkout (that nests one), and never check out into `/tmp` or a scratchpad — the build, the gates and the commit all run from the checkout, and a throwaway location loses them. → `references/update-build.md` "Avoid full-project checkouts"
 
+## Tool discipline
+
+**HARD RULE — every service through its own client.** A hand-rolled HTTP call skips the client's auth and error handling and every check this skill documents.
+
+- **OBS: `osc`** — a subcommand from this page, else `osc api PATH` (it returns XML, not JSON). Never curl, wget or urllib `api.opensuse.org` or `build.opensuse.org`.
+- **src.opensuse.org: the bundled scripts, `tea` or `git-obs`**, and `git-obs -G src.opensuse.org api` when none of them fits — never curl or urllib its API, and never `tea api` for a lookup: it exits 0 on an HTTP 404. Name the forge on every call — `git-obs -G src.opensuse.org`, `tea … --login <login>` — or the tool takes its default login, possibly another forge's, and that forge's 404 reads as "not there". Push over SSH. Forms: `references/git-workflow.md` "Gitea CLI — tea 0.15.1 cheat sheet".
+- **Credentials stay inside the tools.** Never read an `oscrc`, `~/.config/osc/`, osc's cookie jar (`~/.local/state/osc/cookiejar`), `~/.config/tea/config.yml` or an API-key file, and never put a token in a URL, a header or argv — no `Authorization:` header, no `GIT_ASKPASS` script; the CLIs read their own config (`references/token-auth.md` "Agent rules"). A step that seems to need the raw token needs another tool.
+- **Non-interactive forms only** — without a TTY a prompt hangs or takes its default:
+  - `osc ci -m MSG`, never a bare `osc ci` (it opens an editor);
+  - `osc sr … -s ID` names the one request to supersede; never `--yes`, which supersedes every open request from the same source, other people's included (`references/submit-watch.md` "Triaging your declined submit requests");
+  - a long job runs in the background as `CMD </dev/null >LOG 2>&1 &`, so a prompt fails instead of waiting;
+  - find a running build with `pgrep -f '[o]sc build'`: the brackets keep the pattern from matching the shell that runs it.
+
 ## Package and checkout
 
 - `osc meta pkg PRJ PKG -F meta.xml` — **creates a new package** (or replaces its meta); write `meta.xml` first (`<package name="PKG" project="PRJ"><title/><description/></package>`, plus `<person>`/`<url>` as needed). `osc meta pkg PRJ PKG` alone prints it. `-e` opens an editor: interactive only.
@@ -44,7 +57,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 ## Requests
 
-- `osc sr SRC_PRJ SRC_PKG DST_PRJ [DST_PKG] -m MSG` (submitrequest) — file a submit request; `-m "$(cat FILE)"` for a long message; `-s ID` / `--supersede ID` replaces an older one; `--yes` skips the prompt. From a checkout, `osc sr DST_PRJ -m MSG`.
+- `osc sr SRC_PRJ SRC_PKG DST_PRJ [DST_PKG] -m MSG` (submitrequest) — file a submit request; `-m "$(cat FILE)"` for shell safety (quotes, `$` and backticks in the text); `-s ID` / `--supersede ID` replaces exactly that one; never `--yes` ("Tool discipline" above). From a checkout, `osc sr DST_PRJ -m MSG`.
 - `osc creq -a change_devel PRJ PKG DEVEL_PRJ [DEVEL_PKG] -m MSG` (createrequest) · `osc changedevelrequest PRJ PKG DEVEL_PRJ -m MSG` — change a package's devel project.
 - `osc deletereq PRJ PKG -m MSG` (deleterequest) — request deletion.
 - `osc mr [SRC_PRJ [PKGS RELEASE_PRJ]] -m MSG` (maintenancerequest) — maintenance incident request.
