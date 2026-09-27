@@ -111,7 +111,7 @@ Verified `.changes` prepend (separator-count + insertion-only checks; restores o
 
 ## `changes-lint.sh`
 
-Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines.
+Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines. Also flags a bullet that names a CVE id as not fixed (`not (yet) fixed`, `unpatched`, `does not address`, `tracked separately`, `remains open` and kin) unless the bullet states that fix (`Fix CVE-…`, `CVE-…: fixed`, a patch named for the id): any CVE id in `.changes` reads as fixed by that update.
 
 ## `changes-patches.sh`
 

@@ -30,6 +30,13 @@
 #       a real decline: "modify the changelog entry to contain more
 #       details"); the format checks above pass on such an entry, so this
 #       is the gate that catches it
+#     - no bullet ('-', '*' or '+', continuation lines included) names a
+#       CVE id as not fixed — 'not (yet) fixed/addressed', 'unfixed',
+#       'unpatched', 'still vulnerable/affected', 'does/did not fix/address',
+#       'tracked separately', 'remains open/unfixed/vulnerable' — unless it
+#       states that this update fixes that id: reviewers read any CVE id in
+#       .changes as fixed here (references/changelog-rules.md "CVEs and
+#       security bullets")
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
 #         3 = a file is unreadable (wins over 1: the other files are still
 #         linted and printed, but the run is incomplete).
@@ -106,6 +113,26 @@ for i, l in enumerate(lines[:limit], 1):
 # entry-level content check: reject a bare 'Update to <version>' with no summary
 UPD = re.compile(r"^-\s*update to\b", re.I)
 NOCHG = re.compile(r"no (?:user[- ]?visible|consumer[- ]?relevant|visible) change", re.I)
+CVE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.I)
+UNFIXED = re.compile(
+    r"\bnot\s+(?:yet\s+)?(?:fixed|addressed|patched)\b|\bunfixed\b|\bunpatched\b"
+    r"|\bstill\s+(?:vulnerable|affected)\b|\btracked\s+separately\b"
+    r"|\b(?:does|did|do)(?:\s+not|n['’]t)\s+(?:yet\s+)?(?:fix|address)\b"
+    r"|\b(?:is|are|was|were)n['’]t\s+(?:yet\s+)?(?:fixed|addressed|patched)\b"
+    r"|\bremains?\s+(?:open|unfixed|unpatched|vulnerable)\b", re.I)
+# "Fix CVE-1 and CVE-2" / "CVE-1: fixed" state a fix; "did not fix CVE-1" does not
+FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+){0,3}?\s+\(?"
+                   r"(?P<ids>CVE-\d{4}-\d{4,}(?:\)?(?:\s*,\s*|\s+and\s+)\(?CVE-\d{4}-\d{4,})*)", re.I)
+FIXED = re.compile(r"(?P<id>CVE-\d{4}-\d{4,})\)?:?\s+(?:is\s+|was\s+|now\s+)?(?:fixed|addressed)\b", re.I)
+NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
+PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
+def stated_fixed(t):
+    ids = {m.group("id").upper() for m in FIXED.finditer(t)}
+    ids.update(i.upper() for i in PATCHED.findall(t))
+    for m in FIXES.finditer(t):
+        if not NEGATED.search(t[:m.start()]):
+            ids.update(i.upper() for i in CVE.findall(m.group("ids")))
+    return ids
 ncheck = len(seps) if nent == 0 else min(nent, len(seps))
 for k in range(ncheck):
     hdr0 = seps[k]                      # 0-indexed entry header line
@@ -123,6 +150,18 @@ for k in range(ncheck):
                     "bare 'Update to <version>' with no summary of upstream "
                     "changes — add substantive bullets, or state "
                     "'* No user-visible changes'"))
+    bullets = []                        # (first line no, text joined over continuations)
+    for n, t in body:
+        if t.strip().startswith(("-", "*", "+")) or not bullets:
+            bullets.append((n, t.strip()))
+        else:
+            bullets[-1] = (bullets[-1][0], bullets[-1][1] + " " + t.strip())
+    for n, t in bullets:
+        ids = {i.upper() for i in CVE.findall(t)}
+        if ids and UNFIXED.search(t) and ids - stated_fixed(t):
+            bad.append((n, "bullet names a CVE id as not fixed — if this update fixes it, "
+                           "say so without the not-fixed phrase; if it does not, leave the "
+                           "id out (any CVE id in .changes reads as fixed here)"))
 for i, msg in sorted(set(bad)):
     print(f"{f}:{i}: {msg}")
 sys.exit(1 if bad else 0)
