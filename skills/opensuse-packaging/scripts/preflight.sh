@@ -156,8 +156,8 @@ for r in root.findall("request"):
     sname = st.get("name") if st is not None else "?"
     spkg = s.get("package") if s is not None else "?"
     tprj = t.get("project") if t is not None else "?"
-    rid = r.get("id")
-    print(f"SR {rid} [{sname}] {sp}/{spkg} -> {tprj}")
+    rid = r.get("id"); who = r.get("creator") or "?"
+    print(f"SR {rid} [{sname}] {sp}/{spkg} -> {tprj} by {who}")
 ' "$@"
 }
 
@@ -171,10 +171,13 @@ oapi "/request?view=collection&types=submit&states=new,review&project=$target&pa
   || fail "could not query $target SRs for $pkg"
 outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (outgoing)"
 
-# A DECLINED request is terminal but NOT gone: `osc sr` still refuses with
-# "already open: <id>" until it is revoked or superseded. Querying only
-# new,review reports "outgoing SRs: none" and the submit then fails at the end
-# of the work (picsart-gen-ai 2026-09-04, stale declined 1375013).
+# A DECLINED request is terminal but NOT gone: `osc sr` still lists it as
+# "already open" and prompts to supersede it (y/n/c), which an unattended run
+# cannot answer. Querying only new,review reports "outgoing SRs: none" and the
+# submit then fails at the end of the work (picsart-gen-ai 2026-09-04, stale
+# declined 1375013). The prompt covers every open request from the same source,
+# anyone's, and --yes answers it for all of them: supersede only your own, by
+# id with -s; someone else's is theirs to revoke.
 oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$pkg" \
   || fail "could not query declined $target SRs for $pkg"
 declined="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (declined)"
@@ -183,7 +186,18 @@ declined="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable
                    || echo "incoming SRs:   none"
 [ -n "$outgoing" ] && { echo "outgoing devel->$target SR(s):"; printf '%s\n' "$outgoing" | sed 's/^/    /'; } \
                    || echo "outgoing SRs:   none"
-[ -n "$declined" ] && { echo "DECLINED $target SR(s) - not in flight, but \`osc sr\` will refuse until superseded:"; printf '%s\n' "$declined" | sed 's/^/    /'; echo "    -> submit with: osc sr ... --supersede <id> --yes"; }
+own=""
+if [ -n "$declined" ]; then
+  echo "DECLINED $target SR(s) - not in flight, but \`osc sr\` lists them as open and prompts to supersede them:"
+  printf '%s\n' "$declined" | sed 's/^/    /'
+  if [ -z "$user" ]; then
+    echo "    -> could not tell which are yours (\`osc whois\` failed): pass --user"
+  else
+    own="$(printf '%s\n' "$declined" | awk -v u="$user" '$NF == u {print $2}' | sort -n | tail -1)"
+    [ -n "$own" ] && echo "    -> $own is yours: file with osc sr ... -s $own  (never --yes: it supersedes every open request from this source)"
+    printf '%s\n' "$declined" | awk -v u="$user" '$NF != u {print "    -> " $2 " is by " $NF ", not yours to supersede: ask them to revoke it, or leave it"}'
+  fi
+fi
 
 # ---- 5. Gitea leg (MANDATORY for scmsync devel projects) ---------------------
 prs=""
@@ -243,7 +257,10 @@ if [ "$ahead" = 2 ]; then
   exit 3
 fi
 if [ "$ahead" = 1 ]; then
-  echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}), run: osc sr $devel $pkg $target"
+  # -s and -m keep it from prompting; only someone else's declined SR still can
+  stuck=""; [ -z "$own" ] && [ -n "$declined" ] \
+    && stuck=" — declined $(printf '%s\n' "$declined" | awk '{print $2}' | tr '\n' ' ' | sed 's/ $//') still makes osc sr prompt (see above)"
+  echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}), run: osc sr $devel $pkg $target${own:+ -s $own} -m \"<short message>\"$stuck"
   exit 4
 fi
 if [ "$newpkg" = 1 ]; then
