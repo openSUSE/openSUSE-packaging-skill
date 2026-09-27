@@ -22,13 +22,15 @@ Usage:
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
-The PR leg reads src.opensuse.org through `git-obs api`, which keeps its own
-login (needs a default one: `git-obs login add`, then `git-obs login update
-<name> --set-as-default`); if that fails it warns and falls back to the
-OBS-only table, and the header says the PRs are UNKNOWN. Two sub-legs, both
-always run: PRs you created, and PRs awaiting your review. `--no-prs` skips
-both. Every osc / git-obs call times out after 60s and then counts as a failed
-lookup (a network failure for --pr), never as an empty answer.
+The PR leg reads src.opensuse.org through `git-obs -G src.opensuse.org api`.
+git-obs reads its login itself (shared with tea by default); this script never
+reads it. -G picks the login named src.opensuse.org, or the only one for that
+host (`git-obs login add`), so a default login for another forge is never
+used. If that fails it warns and falls back to the OBS-only table, and the
+header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
+created, and PRs awaiting your review. `--no-prs` skips both. Every osc /
+git-obs call times out after 60s and then counts as a failed lookup (a network
+failure for --pr), never as an empty answer.
 
 A declined SR that a later accepted one for the same package and target
 replaced is annotated with the revoke that clears it and stays at the top:
@@ -194,10 +196,11 @@ def human_comment(req_id, state_el):
 
 def gitea_get(path, errors=None):
     """`git-obs api <path>` — strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (missing/non-default login,
+    parses JSON. Returns None on any failure (no src.opensuse.org login,
     network, HTTP error, bad JSON), with its text appended to `errors`, so
     the caller can emit a FETCH FAILED row."""
-    r = run(["git-obs", "-q", "api", path])
+    # -G: the default login may belong to another forge
+    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
         if errors is not None:

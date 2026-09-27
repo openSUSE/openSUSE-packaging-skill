@@ -42,8 +42,9 @@ EOF
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
 echo "git-obs $*" >> "$FIX/calls"
-[ "$1 $2" = "-q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-exec serve "$FIX/gitea$(printf %s "$3" | tr '?&=' '___')"
+# Only the src.opensuse.org login may answer: the default one can be another forge.
+[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
+exec serve "$FIX/gitea$(printf %s "$5" | tr '?&=' '___')"
 EOF
 chmod +x "$work/bin/"*
 

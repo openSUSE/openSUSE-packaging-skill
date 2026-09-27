@@ -21,12 +21,14 @@ Maintainership (A/B) = OBS `_meta` person search UNION `osc maintainer -U
 `/search/request` call regardless of package count (expect a multi-hundred-KB
 response). Bucket C: one issues/search + one PR-detail call per candidate.
 
-Gitea (bucket C) is read through `git-obs api`, which keeps its own login
-(needs a default one — `git-obs login add`, then `git-obs login update <name>
---set-as-default`). A failure skips bucket C with a stderr warning; A/B still
-report, and the output says the src.opensuse.org PRs are UNKNOWN. `--no-prs`
-skips bucket C outright. Every osc / git-obs call times out after 60s and then counts as a
-failed query, never as an empty answer.
+Gitea (bucket C) is read through `git-obs -G src.opensuse.org api`. git-obs
+reads its login itself (shared with tea by default); this script never reads
+it. -G picks the login named src.opensuse.org, or the only one for that host
+(`git-obs login add`), so a default login for another forge is never used. A
+failure skips bucket C with a stderr warning; A/B still report, and the output
+says the src.opensuse.org PRs are UNKNOWN. `--no-prs` skips bucket C outright.
+Every osc / git-obs call times out after 60s and then counts as a failed
+query, never as an empty answer.
 
 Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
                              [--verbose] [--no-prs]
@@ -252,9 +254,10 @@ def fetch_incoming_srs(user, verbose):
 
 def gitea_get(path):
     """`git-obs api <path>` -- strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (missing/non-default login,
+    parses JSON. Returns None on any failure (no src.opensuse.org login,
     network, HTTP error, bad JSON) so the caller can skip bucket C cleanly."""
-    r = run(["git-obs", "-q", "api", path])
+    # -G: the default login may belong to another forge
+    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
         return None

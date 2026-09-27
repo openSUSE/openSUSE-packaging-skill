@@ -51,7 +51,7 @@ EXIT_LINE = re.compile(r"^exit (\d+)\b")
 # Flags of OTHER commands a script's --help quotes, not its own.
 FOREIGN = {
     "gpg-verify.sh": {"--keyring", "--verify"},
-    "incoming-requests.py": {"--incoming", "--set-as-default"},
+    "incoming-requests.py": {"--incoming"},
     "my-requests.sh": {"--brief", "--no-prs"},
     "scm-snapshot.sh": {"--outdir"},
     "soname-check.sh": {"--provides"},
