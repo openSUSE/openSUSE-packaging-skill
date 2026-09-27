@@ -181,6 +181,9 @@ OSC_NODEVEL = Rx(
 # home: is the user's own branch, whatever its name ends in.
 MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
 SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
+# POST cmds that write nothing into the project named: osc diffs, lists links
+# and branches (into home:, unless target_project says otherwise) by them.
+READ_CMDS = {"diff", "showlinked", "branch"}
 OSC_GLOBAL = ("-A", "--apiurl", "--config")  # osc's global options with a value
 REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
 REQUESTS |= {"mr", "maintenancerequest"}
@@ -517,9 +520,20 @@ def osc_writes(run, ctx, cwd):
         if method.upper() in ("GET", "HEAD"):
             return
         for a in pos:
-            for m in SOURCE_PRJ.finditer(a):
-                if MAINT_PRJ.fullmatch(m.group(1)):
-                    block("maintenance-api", f"an osc api {method} into {m.group(1)}")
+            for prj in filter(MAINT_PRJ.fullmatch, api_targets(method, a)):
+                block("maintenance-api", f"an osc api {method} into {prj}")
+
+
+def api_targets(method, url):
+    """The projects an osc api write to url writes into."""
+    import urllib.parse
+
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qs(parts.query)
+    cmds = query.get("cmd", [])
+    if method.upper() == "POST" and cmds and set(cmds) <= READ_CMDS:
+        return query.get("target_project", []) if "branch" in cmds else []
+    return [m.group(1) for m in SOURCE_PRJ.finditer(parts.path)]
 
 
 def call_args(text, i):

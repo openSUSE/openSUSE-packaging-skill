@@ -3174,5 +3174,75 @@
       "command": "tea api repos/AI/mistral-vibe/pulls/3"
     },
     "cwd": "@CLONE@"
+  },
+  "osc-api-post-diff-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Backports:SLE-15-SP7:Update/x?cmd=diff&oproject=openSUSE:Factory&opackage=x&unified=1'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-branch-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Backports:SLE-15-SP7:Update/x?cmd=branch'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-showlinked-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -m POST 'https://api.opensuse.org/source/openSUSE:Leap:15.6:Update/x?cmd=showlinked'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-branch-into-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Factory/x?cmd=branch&target_project=openSUSE:Leap:15.6:Update'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-commitfilelist-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Leap:15.6:Update/x?cmd=commitfilelist' -f filelist.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-copy-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Leap:15.6:Update/x?cmd=copy&oproject=openSUSE:Factory&opackage=x'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-no-cmd-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST /source/openSUSE:Leap:15.6:Update/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-diff-then-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/source/openSUSE:Leap:15.6:Update/x?cmd=diff&cmd=commit'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-put-diff-query": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT '/source/openSUSE:Leap:15.6:Update/x/_meta?cmd=diff' -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-delete-branch-query": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE '/source/openSUSE:Leap:15.6:Update/x?cmd=branch'"
+    },
+    "cwd": "@PLAIN@"
   }
 }

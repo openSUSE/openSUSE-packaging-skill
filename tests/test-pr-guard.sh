@@ -695,6 +695,18 @@ case_ osc-ci-home-update-branch  0 - ""
 case_ osc-ci-devel               0 - ""
 case_ osc-api-get-update         0 - ""
 case_ osc-api-put-home-branch    0 - ""
+# A POST that only reads (diff, showlinked) or branches out of the project writes
+# nothing into it; any other cmd, none, a branch into it, PUT or DELETE does.
+case_ osc-api-post-diff-update       0 - ""
+case_ osc-api-post-branch-update     0 - ""
+case_ osc-api-post-showlinked-update 0 - ""
+case_ osc-api-post-branch-into-update    2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
+case_ osc-api-post-commitfilelist-update 2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
+case_ osc-api-post-copy-update       2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
+case_ osc-api-post-no-cmd-update     2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
+case_ osc-api-post-diff-then-commit  2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
+case_ osc-api-put-diff-query         2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
+case_ osc-api-delete-branch-query    2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
 # A request message is 1-3 sentences: over 300 characters it is refused.
 case_ osc-sr-long-message        2 request-message "an osc sr message of 380 characters"
 case_ osc-sr-message-301         2 request-message "an osc submitreq message of 301 characters"
