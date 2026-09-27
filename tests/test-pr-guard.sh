@@ -628,6 +628,18 @@ case_ osc-sr-factory      0 - ""
 case_ osc-sr-message-backports 0 - ""
 case_ osc-sr-message-eq   0 - ""
 
+echo "--- a help invocation of a guarded tool does nothing"
+case_ help-tea-create           0 - ""
+case_ help-tea-merge-h          0 - ""
+case_ help-git-obs-merge        0 - ""
+case_ help-git-obs-space-create 0 - ""
+case_ help-git-push             0 - ""
+case_ help-osc-build            0 - ""
+# ... unless it is an option's value or an operand, and a script is read whatever its arguments.
+case_ help-as-option-value      2 create-tea   "tea PR create"
+case_ help-after-dashdash       2 push-pr-head "pool/tesseract-ocr#3"
+case_ help-script-still-read    2 create-api   "a write to pool pulls"
+
 echo "--- plumbing: fail closed only after a match"
 case_ nothing-guarded     0 - ""
 case_ nul-in-remote       2 undecided "embedded null byte"

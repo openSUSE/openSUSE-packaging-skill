@@ -2732,5 +2732,68 @@
       "command": "export CHANGES_AUTHOR='Test User <user@example.com>'; bash @SKILL@/scripts/changes-prepend.sh x.changes < notes.txt"
     },
     "cwd": "@CLONE@"
+  },
+  "help-tea-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --help"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-tea-merge-h": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pr merge -h"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-git-obs-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr merge --help"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-git-obs-space-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr create --help"
+    },
+    "cwd": "@OTHER@"
+  },
+  "help-git-push": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push --help"
+    },
+    "cwd": "@ONPR@"
+  },
+  "help-osc-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc build standard x86_64 --help"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-as-option-value": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --repo pool/tesseract-ocr --title --help"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-after-dashdash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push fork -- tess-88053-16.0 --help"
+    },
+    "cwd": "@CLONE@"
+  },
+  "help-script-still-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/open-pr.sh --help"
+    },
+    "cwd": "@CLONE@"
   }
 }

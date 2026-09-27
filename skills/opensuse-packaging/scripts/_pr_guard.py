@@ -1349,6 +1349,18 @@ def guess(run, ctx, cwd):
         git_command(["git", *rest], ctx, cwd)
 
 
+def asks_help(args):
+    """Whether a tool's arguments ask for its help, which acts on nothing: -h
+    or --help before any "--", and not the value of the option before it."""
+    for i, a in enumerate(args):
+        if a == "--":
+            return False
+        prev = args[i - 1] if i else ""
+        if a in ("-h", "--help") and (not prev.startswith("-") or "=" in prev):
+            return True
+    return False
+
+
 def parse_opts(args, valued, long_valued=()):
     """(options as (flag, value), operands) of a getopt-style argument list;
     valued: the short options that take a value, long_valued the long ones."""
@@ -1594,6 +1606,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
             scan_file(run[0], "auto", ctx, here, depth, env, run=True)
         else:
             guess(run, ctx, here)
+    elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
+        pass
     elif name == "tea":
         tool_rules(joined, ctx, here)
     elif name == "git-obs":
