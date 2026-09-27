@@ -3110,5 +3110,69 @@
       "command": "git lfs push --all fork"
     },
     "cwd": "@CLONE@"
+  },
+  "merge-curl-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -X POST -H \"Authorization: token $TOK\" -H 'Content-Type: application/json' https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge -d '{\"Do\": \"merge\"}'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-api-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api -X POST /repos/AI/mistral-vibe/pulls/3/merge --data '{\"Do\": \"squash\"}'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-space-api-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs api -X POST /repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-tea-api-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -X POST repos/AI/mistral-vibe/pulls/3/merge -f Do=merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-tea-api-pool": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -X POST repos/pool/gitoxide/pulls/5/merge -f Do=merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-do-payload-ai-clone": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 - <<'EOF'\nimport json, urllib.request\nurl = '/'.join([API, 'repos', 'AI', 'other-pkg', 'pulls', '5', 'merge'])\nurllib.request.urlopen(urllib.request.Request(url, json.dumps({\"Do\": \"merge\"}).encode()))\nEOF"
+    },
+    "cwd": "@OTHER@"
+  },
+  "write-merge-script-ai": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "@WORK@/land-ai.py",
+      "content": "import json, urllib.request\nreq = urllib.request.Request(\n    'https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge',\n    data=json.dumps({'Do': 'merge'}).encode())\nurllib.request.urlopen(req)\n"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-api-control-get-pr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3 | jq -r .merged"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-api-control-tea-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api repos/AI/mistral-vibe/pulls/3"
+    },
+    "cwd": "@CLONE@"
   }
 }

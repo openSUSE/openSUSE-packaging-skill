@@ -425,6 +425,8 @@ def tool_rules(ln, ctx, cwd):
             block("create-git-obs", "a git-obs PR forward on pool")
     if TEA_CREATE.search(ln) and pool_or_unknown(ln, ctx, cwd, cmd=True):
         block("create-tea", "a tea PR create on a pool (or unnamed) repository")
+    if TEA_API.search(ln) and MERGE_URL.search(ln):
+        block("merge-api", "an API merge of a PR")
     if TEA_API.search(ln) and "pulls" in ln and TEA_WRITE.search(ln):
         if pool_or_unknown(ln, ctx, cwd, cmd=True):
             block("create-tea-api", "a tea api write to pool pulls")
@@ -610,10 +612,10 @@ def httpie_writes(run):
 
 
 def api_rules(text, ctx, cwd, write=False):
-    """The pulls API: a merge, or any write, on a pool (or unknown) repository."""
+    """The pulls API: a merge on any repository, or any write on a pool (or
+    unknown) one."""
     if MERGE_URL.search(text) or DO_MERGE.search(text):
-        if pool_or_unknown(text, ctx, cwd):
-            block("merge-api", "an API merge of a pool (or unnamed) PR")
+        block("merge-api", "an API merge of a PR")
     if PULLS_REF.search(text) and (write or writes(text)):
         if pool_or_unknown(text, ctx, cwd):
             block("create-api", "a write to pool pulls")
@@ -1778,16 +1780,13 @@ def check_write(path, content, ctx):
     # Docs quote the wrong forms on purpose; scripts are where a POST hides.
     if not path.lower().endswith(DOCS):
         lines = "\n".join(code_lines(content))
-        for rx, rule, what in (
-            (TEA_MERGE, "merge-tea", "a tea PR merge"),
-            (TEA_CREATE, "create-tea", "a tea PR create"),
-        ):
-            for ln in lines.split("\n"):
-                if rx.search(ln) and pool_or_unknown(ln, ctx, ctx.cwd, cmd=True):
-                    block(rule, f"a script running {what} on pool")
+        for ln in lines.split("\n"):
+            if TEA_MERGE.search(ln):
+                block("merge-tea", "a script running a tea PR merge")
+            if TEA_CREATE.search(ln) and pool_or_unknown(ln, ctx, ctx.cwd, cmd=True):
+                block("create-tea", "a script running a tea PR create on pool")
         if MERGE_URL.search(lines) or DO_MERGE.search(lines):
-            if pool_or_unknown(lines, ctx, ctx.cwd):
-                block("merge-api", "a script merging a pool (or unnamed) PR")
+            block("merge-api", "a script merging a PR")
         if PULLS_REF.search(lines) and writes(lines):
             if pool_or_unknown(lines, ctx, ctx.cwd):
                 block("create-api", "a script writing to pool pulls")

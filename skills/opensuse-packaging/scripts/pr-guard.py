@@ -2,7 +2,7 @@
 """pr-guard.py -- harness guard for pool/ pull requests on src.opensuse.org.
 
 Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
-update or merge a pool/ PR outside pool-pr.sh, merge any PR with tea or git-obs,
+update or merge a pool/ PR outside pool-pr.sh, merge any PR (tea, git-obs, API),
 push to a branch that heads an open pool PR, write a target-gate.sh stamp, run
 an emulated osc build, file a request against the scmsync'd
 openSUSE:Backports:SLE-16.x projects, file a submit request that overrides osc's

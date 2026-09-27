@@ -332,8 +332,8 @@ through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-merging any other PR with `tea` or `git-obs`, pushing to a branch that heads an open pool
-PR, writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
+merging any other PR the same ways, pushing to a branch that heads an open pool PR,
+writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
 against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
 `--nodevelproject` or a request message over 300 characters, or committing or writing
 through `osc api` into a `*:Update` or `*:Maintenance:*` project outside `home:`. A
@@ -519,8 +519,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   itself (`--work-tree`, `--output`) is not seen; a redirection is.
 - The opencode plugin does not send `patch`/`apply_patch` tool calls to the guard.
 - A request message given by `-F FILE` or a substitution (`-m "$(cat FILE)"`) is not
-  measured, and a merge through the pulls API is refused only on a pool or unnamed
-  repository.
+  measured.
 - A maintenance or update project is seen only on an `osc commit` or `osc api` command
   line, by its literal name or the checkout's `.osc/_project`; one held in a variable, or
   program code running osc, is not.
