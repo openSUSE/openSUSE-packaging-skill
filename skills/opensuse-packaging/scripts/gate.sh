@@ -1,7 +1,7 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: source_validator, changes-lint.sh,
-# changes-guard.sh and changes-patches.sh, each run unpiped with its exit code
-# read directly, then one VERDICT line. Four separate calls cost four provider
+# changes-guard.sh, changes-patches.sh and a one-Legal-Review-Notice-per-License
+# check, each run unpiped with its exit code read directly, then one VERDICT line. Four separate calls cost four provider
 # steps and four result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
 # still follows — it is a judgement, not a check, and stays outside this script.
@@ -84,6 +84,19 @@ if [ -n "$buildlog" ]; then
   { grep -m1 'VERDICT' "$log/build-summary.txt"; grep -A1 '^### rpmlint' "$log/build-summary.txt" | tail -1; } > "$log/build-summary.short.txt"
   show build-summary $rc "$log/build-summary.short.txt"
 fi
+
+# One itemised # Legal-Review-Notice: per License: tag; several read as
+# separate claims to the legal reviewer.
+: > "$log/spec-notices.txt"; rc=0
+for s in "${specs[@]}"; do
+  [ -e "$s" ] || continue
+  n=$(grep -c '^#[[:space:]]*Legal-Review-Notice:' "$s"); l=$(grep -ci '^License:' "$s")
+  if [ "$n" -gt 1 ] && [ "$n" -gt "$l" ]; then
+    echo "$s: $n Legal-Review-Notice blocks for $l License: tag(s) — merge them into one itemised block above the tag" >> "$log/spec-notices.txt"; rc=1
+  fi
+done
+[ $rc -eq 0 ] && echo "OK: at most one Legal-Review-Notice per License: tag" >> "$log/spec-notices.txt"
+show spec-notices $rc "$log/spec-notices.txt"
 
 if [ ${#red[@]} -eq 0 ]; then
   echo "VERDICT: GREEN — all gates passed (full output: $log/)"; exit 0

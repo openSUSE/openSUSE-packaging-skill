@@ -118,5 +118,24 @@ grep -qF "## changes-patches: rc=1" <<<"$out" && grep -qF "p.changes: 2 new entr
   && pass "fork-PR clone, --git-base origin/$br: compared against the target" \
   || { fail "fork-PR clone with --git-base"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# One # Legal-Review-Notice: block per License: tag. Three notices over one
+# tag read to the legal reviewer as three separate claims.
+mkdir -p "$work/notices"
+printf 'Name: p\n# Legal-Review-Notice: relicensed to GPL-3.0.\n# Legal-Review-Notice: bundled MIT headers.\n# Legal-Review-Notice: submodules not shipped.\nLicense: GPL-3.0-only\n' > "$work/notices/p.spec"
+out="$(bash "$GATE" "$work/notices" 2>&1)"
+grep -qF "## spec-notices: rc=1" <<<"$out" && grep -qF "p.spec: 3 Legal-Review-Notice blocks for 1 License: tag" <<<"$out" \
+  && pass "three notices over one License tag: red" \
+  || { fail "three notices over one License tag"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/notice-one"
+printf 'Name: p\n# Legal-Review-Notice: relicensed to GPL-3.0; bundled MIT\n# headers; submodules not shipped.\nLicense: GPL-3.0-only\n' > "$work/notice-one/p.spec"
+out="$(bash "$GATE" "$work/notice-one" 2>&1)"
+grep -qF "## spec-notices: rc=0" <<<"$out" && pass "one itemised notice: green" \
+  || { fail "one itemised notice"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/notice-sub"
+printf 'Name: p\n# Legal-Review-Notice: a\nLicense: MIT\n%%package data\n# Legal-Review-Notice: b\nLicense: CC-BY-4.0\n' > "$work/notice-sub/p.spec"
+out="$(bash "$GATE" "$work/notice-sub" 2>&1)"
+grep -qF "## spec-notices: rc=0" <<<"$out" && pass "one notice per subpackage License tag: green" \
+  || { fail "one notice per subpackage License tag"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

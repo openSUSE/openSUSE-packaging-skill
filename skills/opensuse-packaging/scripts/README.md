@@ -217,8 +217,8 @@ the mechanics byte-compatible so fixes port both ways.
 ## gate.sh
 
 The commit/SR gate chain as ONE tool call: source_validator, changes-lint.sh,
-changes-guard.sh and changes-patches.sh, each run unpiped with its exit code
-read directly, then one VERDICT line. Four separate calls cost four provider
+changes-guard.sh, changes-patches.sh and a one-Legal-Review-Notice-per-License
+check, each run unpiped with its exit code read directly, then one VERDICT line. Four separate calls cost four provider
 steps and four result blocks that ride along in context for the rest of the
 session; this costs one. The adversarial change review (agents/changes-review.md)
 still follows — it is a judgement, not a check, and stays outside this script.
