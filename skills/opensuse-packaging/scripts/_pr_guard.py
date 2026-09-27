@@ -182,6 +182,8 @@ OSC_NODEVEL = Rx(
 MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
 SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
 OSC_GLOBAL = ("-A", "--apiurl", "--config")  # osc's global options with a value
+REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
+REQUESTS |= {"mr", "maintenancerequest"}
 
 HEREDOC = Rx(r"(?<!<)<<(-?)[ \t]*(?:\\([A-Za-z_][\w.-]*)|([\"']?)([A-Za-z_][\w.-]*)\3)")
 SH_SHEBANG = Rx(r"#!\s*\S*/(?:env\s+)?(?:ba|z|da|k)?sh\b")
@@ -267,6 +269,7 @@ MESSAGES = {
     "project. Submit from the devel project.",
     "maintenance": "{0}: maintenance and update projects take no direct writes. "
     "Branch with osc mbranch, commit there, and file osc mr.",
+    "request-message": "{0}: keep it to 1-3 sentences; details belong in .changes.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -444,18 +447,32 @@ def osc_rules(seg, request=None):
         block("nodevelproject", "an osc request with --nodevelproject")
 
 
-def without_message(run):
-    """An osc argv without the value of -m/--message."""
-    out, i = [], 0
+def split_message(run):
+    """An osc argv without the values of -m/--message, and those values."""
+    out, msgs, i = [], [], 0
     while i < len(run):
         a = run[i]
         if a in ("-m", "--message"):
+            msgs += run[i + 1 : i + 2]
             i += 2
             continue
-        if not (a.startswith("--message=") or a.startswith("-m") and len(a) > 2):
+        if a.startswith("--message="):
+            msgs.append(a[len("--message=") :])
+        elif a.startswith("-m") and len(a) > 2:
+            msgs.append(a[2:])
+        else:
             out.append(a)
         i += 1
-    return out
+    return out, msgs
+
+
+def request_message(run, msgs):
+    """A request message past 1-3 sentences. -m of other subcommands is a
+    commit message, or osc api's method."""
+    sub = osc_sub(run)[0]
+    for msg in msgs if sub in REQUESTS else ():
+        if len(msg) > 300:
+            block("request-message", f"an osc {sub} message of {len(msg)} characters")
 
 
 def osc_project(path):
@@ -470,12 +487,17 @@ def osc_project(path):
         return path.split(os.sep)
 
 
-def osc_writes(run, ctx, cwd):
-    """osc commit and osc api writes into a maintenance or update project."""
+def osc_sub(run):
+    """(subcommand, its arguments) of an osc argv."""
     i = 1
     while i < len(run) and run[i].startswith("-"):
         i += 2 if run[i] in OSC_GLOBAL else 1
-    sub, args = (run[i], run[i + 1 :]) if i < len(run) else (None, [])
+    return (run[i], run[i + 1 :]) if i < len(run) else (None, [])
+
+
+def osc_writes(run, ctx, cwd):
+    """osc commit and osc api writes into a maintenance or update project."""
+    sub, args = osc_sub(run)
     if sub in ("ci", "commit", "checkin"):
         pos = parse_opts(args, "mFA", ("--message", "--file", *OSC_GLOBAL[1:]))[1]
         for raw in pos or ["."]:
@@ -1675,7 +1697,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
     elif name == "git":
         git_command(run, ctx, here)
     elif name == "osc":
-        osc_rules(joined, " ".join(without_message(run)))
+        rest, msgs = split_message(run)
+        osc_rules(joined, " ".join(rest))
+        request_message(run, msgs)
         osc_writes(run, ctx, here)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.

@@ -3019,5 +3019,54 @@
       "command": "osc api -X PUT /source/home:tester:branches:openSUSE:Leap:15.6:Update/x/_meta -f meta.xml"
     },
     "cwd": "@PLAIN@"
+  },
+  "osc-sr-long-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-message-301": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitreq -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream and raised the leptonica BuildRequires floor to 1.85.0. Split out the training tools. Built green on aarch64 and x86_64, all tests pass.' devel:tools tesseract-ocr openSUSE:Factory"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-mr-long-message-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc mr home:tester:branches:OBS_Maintained:x x.openSUSE_Backports_SLE-15-SP7_Update openSUSE:Backports:SLE-15-SP7:Update --message='Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-creq-long-message-attached": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit devel:tools tesseract-ocr openSUSE:Factory '-mUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-message-200": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased one patch and dropped two that were merged upstream. Built green on aarch64 and x86_64, rpmlint clean.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-message-300": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream and raised the leptonica BuildRequires floor to 1.85.0. Split out the training tools. Built green on aarch64 and x86_64, all tests pass'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-ci-long-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }
