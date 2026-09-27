@@ -1,8 +1,8 @@
 #!/bin/bash
 # test-sr-status.sh — proves sr-status.py reads a pool PR's build from OBS, not
 # from the staging bot's last comment. Offline: fake `osc` and `git-obs` on PATH
-# serve fixtures from a per-case tree, and an empty HOME has no tea token (one
-# case adds one), so every src.opensuse.org read goes through git-obs. The fixtures replay
+# serve fixtures from a per-case tree; every src.opensuse.org read goes through
+# git-obs (one case plants a tea token to prove it is never read). The fixtures replay
 # pool/tesseract-ocr #3 (built d09d8d0, head 760972c, pinned by a hand-made
 # products PR) and #4 (built at the head by the bot's branch). Every case
 # mutates one thing and expects the exit code plus the line that names it.
@@ -284,16 +284,19 @@ http-429|Server returned an error: HTTP Error 429: Too Many Requests
 EOF
 case_ network-git-obs-5xx 6 "could not read pool/tesseract-ocr#4 (network failure)" \
   "put \$G/pool/tesseract-ocr/pulls/4 '@ERR *** Error: 503 Service Unavailable'" --pr 'pool/tesseract-ocr#4'
-# With a tea token the direct fetch runs first; its failure counts too, so an
-# unreachable forge is not "lookup failed" when git-obs has no login. yaml.py
-# stands in for pyyaml (JSON is YAML); the proxy refuses on the loopback.
+# src.opensuse.org is read through git-obs only, which keeps its own login: a
+# tea token on disk is never loaded. yaml.py stands in for pyyaml (JSON is
+# YAML) and leaves a mark when anything parses the tea config; the proxy
+# refuses on the loopback, so a direct fetch would show as a warning too.
 mkdir -p "$work/pylib"
-printf 'import json\n\n\ndef safe_load(f):\n    return json.load(f)\n' > "$work/pylib/yaml.py"
+printf 'import json\nimport os\n\n\ndef safe_load(f):\n    open(os.environ["FIX"] + "/tea-read", "w").close()\n    return json.load(f)\n' > "$work/pylib/yaml.py"
 XENV=(PYTHONPATH="$work/pylib" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 no_proxy= NO_PROXY=)
-case_ direct-fetch-network 6 "could not read pool/tesseract-ocr#4 (network failure)" \
-  "put home/.config/tea/config.yml '{\"logins\": [{\"name\": \"src.opensuse.org\", \"token\": \"t\"}]}' &&
-   put \$G/pool/tesseract-ocr/pulls/4 '@ERR *** Error: no default login configured'" --pr 'pool/tesseract-ocr#4'
+case_ tea-token-ignored 0 "VERDICT: GREEN at the PR head" \
+  "put home/.config/tea/config.yml '{\"logins\": [{\"name\": \"src.opensuse.org\", \"token\": \"t\"}]}'" \
+  --pr 'pool/tesseract-ocr#4'
 XENV=()
+[ ! -e "$work/tea-token-ignored/tea-read" ] && ! grep -qF "direct src.opensuse.org fetch" <<<"$LAST" \
+  && pass "tea-token-ignored: the tea config is never read" || fail "tea-token-ignored: the tea config was read: $LAST"
 case_ results-missing 2 "could not read the $P4 results (lookup failed)" \
   "rm \$B/obs/results/$P4/tesseract-ocr" --pr 'pool/tesseract-ocr#4'
 case_ results-unparsable 2 "could not read the $P4 results (lookup failed)" \

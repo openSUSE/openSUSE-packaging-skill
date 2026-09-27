@@ -21,11 +21,10 @@ Maintainership (A/B) = OBS `_meta` person search UNION `osc maintainer -U
 `/search/request` call regardless of package count (expect a multi-hundred-KB
 response). Bucket C: one issues/search + one PR-detail call per candidate.
 
-Gitea auth (bucket C): tea token+urllib first (~/.config/tea/config.yml, no
-subprocess); falls back to `git-obs api` if no token/pyyaml (needs a default
-login — `git-obs login add`, then `git-obs login update <name>
---set-as-default`). Both failing skips bucket C with a stderr warning; A/B
-still report. `--no-prs` skips bucket C outright.
+Gitea (bucket C) is read through `git-obs api`, which keeps its own login
+(needs a default one — `git-obs login add`, then `git-obs login update <name>
+--set-as-default`). A failure skips bucket C with a stderr warning; A/B still
+report. `--no-prs` skips bucket C outright.
 
 Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
                              [--verbose] [--no-prs]
@@ -42,12 +41,7 @@ import sys
 import argparse
 import subprocess
 import json
-import urllib.request
-import urllib.error
-import os
 import xml.etree.ElementTree as ET
-
-GITEA = "https://src.opensuse.org/api/v1"
 
 
 def osc_api(path):
@@ -233,41 +227,13 @@ def fetch_incoming_srs(user, verbose):
 
 
 # ---------- Gitea (src.opensuse.org) PR leg -- bucket C ----------
-# Primary: direct token+urllib. Fallback: `git-obs api` (own auth, no pyyaml).
+# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
 
 
-def tea_login():
-    """Token + username from ~/.config/tea/config.yml (same loader pattern as
-    leap-sync.sh / sr-status.py). Returns (token, user) or (None, None)."""
-    try:
-        import yaml
-
-        c = yaml.safe_load(open(os.path.expanduser("~/.config/tea/config.yml")))
-        for login in c.get("logins", []):
-            if login.get("name") == "src.opensuse.org":
-                return login.get("token"), login.get("user")
-    except Exception as e:
-        sys.stderr.write(
-            f"WARNING: no usable tea login ({e.__class__.__name__}: {e})\n"
-        )
-    return None, None
-
-
-_TEA_TOKEN, _TEA_USER = tea_login()
-
-
-def _gitea_get_urllib(path, tok):
-    req = urllib.request.Request(
-        GITEA + path, headers={"Authorization": f"token {tok}"}
-    )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode())
-
-
-def _gitea_get_git_obs(path):
-    """Fallback: `git-obs api <path>` -- strips the leading 'Response:' banner
-    line and parses JSON. Returns None on any failure (missing/non-default
-    login, network, bad JSON) so the caller can skip bucket C cleanly."""
+def gitea_get(path):
+    """`git-obs api <path>` -- strips the leading 'Response:' banner line and
+    parses JSON. Returns None on any failure (missing/non-default login,
+    network, HTTP error, bad JSON) so the caller can skip bucket C cleanly."""
     r = subprocess.run(["git-obs", "-q", "api", path], capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
@@ -282,20 +248,6 @@ def _gitea_get_git_obs(path):
             f"WARNING: git-obs api {path} returned unparsable output ({e})\n"
         )
         return None
-
-
-def gitea_get(path):
-    """Direct token+urllib first; falls back to `git-obs api` if there's no
-    usable tea token or the direct call fails. Returns None if both fail."""
-    if _TEA_TOKEN:
-        try:
-            return _gitea_get_urllib(path, _TEA_TOKEN)
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            sys.stderr.write(
-                f"WARNING: direct src.opensuse.org fetch failed ({e}) "
-                f"-- falling back to git-obs\n"
-            )
-    return _gitea_get_git_obs(path)
 
 
 def fetch_review_prs(user, verbose):

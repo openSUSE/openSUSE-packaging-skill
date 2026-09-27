@@ -22,11 +22,10 @@ Usage:
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
-The PR leg needs a src.opensuse.org login; if unavailable it warns and falls
-back to the OBS-only table. Direct token+urllib (~/.config/tea/config.yml) is
-tried first; falls back to `git-obs api` if no pyyaml/token (needs a default
-login: `git-obs login add`, then `git-obs login update <name>
---set-as-default`). Two sub-legs, both always run: PRs you created, and PRs
+The PR leg reads src.opensuse.org through `git-obs api`, which keeps its own
+login (needs a default one: `git-obs login add`, then `git-obs login update
+<name> --set-as-default`); if that fails it warns and falls back to the
+OBS-only table. Two sub-legs, both always run: PRs you created, and PRs
 awaiting your review. `--no-prs` skips both.
 
 An open pool/ PR's build is read from OBS, not from the staging bot's last
@@ -41,15 +40,11 @@ import argparse
 import subprocess
 import json
 import re
-import urllib.request
-import urllib.error
 import os
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # escape/Unicode-smuggling filter for third-party text
-
-GITEA = "https://src.opensuse.org/api/v1"
 
 
 def api(path, hard=True, errors=None):
@@ -168,41 +163,14 @@ def human_comment(req_id, state_el):
 
 
 # ---------- Gitea (src.opensuse.org) PR leg ----------
-# Primary: direct token+urllib. Fallback: `git-obs api` (own auth, no pyyaml).
+# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
 
 
-def tea_login():
-    """Token + username from ~/.config/tea/config.yml (same loader pattern as
-    leap-sync.sh). Returns (token, user) or (None, None)."""
-    try:
-        import yaml
-
-        c = yaml.safe_load(open(os.path.expanduser("~/.config/tea/config.yml")))
-        for login in c.get("logins", []):
-            if login.get("name") == "src.opensuse.org":
-                return login.get("token"), login.get("user")
-    except Exception as e:
-        sys.stderr.write(
-            f"WARNING: no usable tea login ({e.__class__.__name__}: {e})\n"
-        )
-    return None, None
-
-
-_TEA_TOKEN, _TEA_USER = tea_login()
-
-
-def _gitea_get_urllib(path, tok):
-    req = urllib.request.Request(
-        GITEA + path, headers={"Authorization": f"token {tok}"}
-    )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode())
-
-
-def _gitea_get_git_obs(path, errors=None):
-    """Fallback: `git-obs api <path>` — strips the leading 'Response:' banner
-    line and parses JSON. Returns None on any failure (missing/non-default
-    login, network, bad JSON) so the caller can emit a FETCH FAILED row."""
+def gitea_get(path, errors=None):
+    """`git-obs api <path>` — strips the leading 'Response:' banner line and
+    parses JSON. Returns None on any failure (missing/non-default login,
+    network, HTTP error, bad JSON), with its text appended to `errors`, so
+    the caller can emit a FETCH FAILED row."""
     r = subprocess.run(["git-obs", "-q", "api", path], capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
@@ -221,23 +189,6 @@ def _gitea_get_git_obs(path, errors=None):
         if errors is not None:
             errors.append(f"unparsable output ({e})")
         return None
-
-
-def gitea_get(path, errors=None):
-    """Direct token+urllib first; falls back to `git-obs api` if there's no
-    usable tea token or the direct call fails. Returns None if both fail,
-    with each failure's text appended to `errors`."""
-    if _TEA_TOKEN:
-        try:
-            return _gitea_get_urllib(path, _TEA_TOKEN)
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            sys.stderr.write(
-                f"WARNING: direct src.opensuse.org fetch failed ({e}) "
-                f"— falling back to git-obs\n"
-            )
-            if errors is not None:
-                errors.append(str(e))
-    return _gitea_get_git_obs(path, errors)
 
 
 def human_line(cmts):
