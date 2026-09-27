@@ -404,6 +404,60 @@
       "osc",
       "api",
       "/person/x/token"
+    ],
+    [
+      "forbidden",
+      "osc",
+      "-Hq",
+      "ls"
+    ],
+    [
+      "forbidden",
+      "osc",
+      "-Hv",
+      "ls"
+    ],
+    [
+      "forbidden",
+      "osc",
+      "-qvH",
+      "ls"
+    ],
+    [
+      "forbidden",
+      "osc",
+      "-vqH",
+      "ls"
+    ],
+    [
+      "forbidden",
+      "secret-tool",
+      "lookup",
+      "service",
+      "gh"
+    ],
+    [
+      "forbidden",
+      "secret-tool",
+      "search",
+      "--all",
+      "service",
+      "gh"
+    ],
+    [
+      "none",
+      "secret-tool",
+      "store",
+      "--label",
+      "x",
+      "service",
+      "y"
+    ],
+    [
+      "none",
+      "osc",
+      "-dH",
+      "ls"
     ]
   ]
 }

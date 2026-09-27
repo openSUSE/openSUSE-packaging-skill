@@ -35,7 +35,8 @@ Every snippet denies, as far as its harness can express it:
 - the credential files `~/.config/osc/`, `~/.oscrc`, `~/.config/tea/`,
   `~/.config/gh/hosts.yml`, `~/.netrc` and `~/.git-credentials`, osc's cookie jar
   (`~/.local/state/osc/`) and the bugzilla MCP key (`~/.config/mcp-bugzilla/`), to the
-  read tool and on a command line;
+  read tool and on a command line, where all of `~/.config/gh/` counts (not
+  `~/.config/ghostty`);
 - what prints a secret:
   - gh: `gh auth token`, `gh auth status` as a whole (`-t` also hides in `-at`) and `gh
     auth git-credential`;
@@ -43,18 +44,20 @@ Every snippet denies, as far as its harness can express it:
     login gitcredentials-helper`;
   - tea: `tea login helper`, its alias `git-credential`, and `tea login edit`/`e`, also
     spelled `logins`;
-  - osc: `osc config --dump-...` (plain `--dump` hides the passwords and stays allowed),
+  - osc: `osc config --dump-...` (plain `--dump` hides the passwords and stays allowed;
+    `--dump-` counts only on an osc command line, so `curl --dump-header` runs),
     `osc config <apiurl> pass`/`passx`, `osc token` as a whole (it lists and creates
     tokens with their secrets; `--delete` and `--trigger` go with it), `osc api` on
-    `/person/<login>/token`, and HTTP debugging: `-H`, `-qH` and `-vH` (the Gemini CLI
-    rules and the Kimi hook take any short-option cluster ending in `H`),
+    `/person/<login>/token`, and HTTP debugging: `-H` alone or in a short-option cluster
+    (`-qH`, `-Hq`, `-qvH`; which clusters each harness takes is under Limits),
     `--http-d...`, `--http-f...`, and `http_debug`/`http_full_debug` as an environment
     variable, `--setopt` or config key;
   - git: `git credential fill`, and `git credential-<helper> get` or
     `git-credential-<helper> get`;
-  - an `Authorization:` header passed with `-H` or `--header` (matched as
-    `uthorization`, so either case), `--apikey`, `--apisecret`, and a password in a URL
-    (`scheme://<user>:<password>@`);
+  - the desktop keyring, which holds gh's token: `secret-tool lookup` and `search`;
+  - an `Authorization:` header passed with `-H` (also in a cluster, as in `curl -sH`) or
+    `--header` (matched as `uthorization`, so either case), `--apikey`, `--apisecret`,
+    and a password in a URL (`scheme://<user>:<password>@`);
 - handing git a credential by hand (`GIT_ASKPASS=`, `SSH_ASKPASS=`, `core.askPass`), and
   `curl` to `api.opensuse.org`, `build.opensuse.org` or `src.opensuse.org/api`;
 - merging a PR on src.opensuse.org, pool or not, with `tea`, `git-obs` or `git obs` or
@@ -73,7 +76,10 @@ every path it claims for its read tool, has the command globs of Claude Code, gr
 opencode refuse its probes and leave packaging commands alone, runs the Gemini CLI rules
 and the Kimi hook against probes and against 64 KB of pathological input, and, where
 codex and kimi are installed, has `codex execpolicy check` and `kimi doctor config` judge
-theirs.
+theirs. One shared list of commands to refuse and to let through goes through the globs,
+the Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
+alternative and every Kimi rule and credential path must be the only one to refuse
+some probe, so deleting any of them turns the suite red.
 
 These are pattern lists, and no pattern list is complete. Limits every harness shares:
 
@@ -89,8 +95,15 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
   `osc sr *--nodevelproject*` rules miss it, the Kimi hook and the Gemini CLI rule take
   `--nod`. The Codex rules list every prefix of the HTTP-debug and `--dump-full` options;
   Antigravity lists only the full names.
-- A short-option cluster other than `-qH` and `-vH` (`-dH`, `-qvH`) passes the Claude
-  Code, grok, opencode, Codex and Antigravity rules.
+- osc HTTP-debug clusters: the Gemini CLI rules and the Kimi hook take any short-option
+  cluster that holds `H`. The Claude Code, grok and opencode globs take a word starting
+  `-H` anywhere, and a cluster ending in `H` when osc's first word is an option (`osc
+  -qvH ls`, `osc -A URL -qvH ls`); `osc ls -qvH` passes them. The same glob also
+  refuses a message after a global option that holds a word ending in `H` (`osc -A URL
+  vc -m 'Update to OpenSSH 9.9'`). The Codex and Antigravity prefixes list `-H`, `-qH`,
+  `-vH`, `-Hq`, `-Hv`, `-qvH` and `-vqH` right after `osc`.
+- Only the Kimi hook joins a backslash-continued line (`gh auth \` then `token` on the
+  next line), as Bash does; the other harnesses see two words apart.
 - The API hosts are matched on `curl` only; the Kimi hook also takes `wget`; none takes
   httpie's `http` or a header given another way (a config file, httpie's `Name:value`).
 - `osc api /person/<login>/token` and `git credential-<helper> get` are beyond the Codex
@@ -105,9 +118,9 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
 - The Kimi hook splits a command at every `&` outside quotes, `2>&1` included, and reads
   `$'...'` as a plain single-quoted word; either can put a rule's parts in different
   simple commands.
-- Secrets outside files are not covered: the desktop keyring (`secret-tool lookup`, gh's
-  token when gh stores it there, reached over D-Bus), SSH private keys under `~/.ssh`, an
-  agent socket, or a credential helper not named above.
+- Secrets outside files are covered only as far as `secret-tool lookup` and `search`: any
+  other keyring reader over D-Bus, SSH private keys under `~/.ssh`, an agent socket, or a
+  credential helper not named above is not.
 - The skill's own gate scripts, `pool-pr.sh`, `target-gate.sh` and `leap-sync.sh`, still
   read the tea token from `~/.config/tea/config.yml` themselves and hand it to git
   through an askpass script until their migration lands. A snippet that stops the agent's
@@ -117,7 +130,7 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
 ### Claude Code
 
 Checked on 2.1.283 in a throw-away home: `claude doctor`, which names every malformed
-rule (tried with a planted one), reports none of the 87. Matching was measured by the
+rule (tried with a planted one), reports none of the 90. Matching was measured by the
 openQA skill on the same version, in print mode: a `Read(...)` rule stops the Read tool
 but **not** `cat` of the same file, and a `Bash(*...*)` rule stops the command. So every
 path has both.
@@ -134,7 +147,7 @@ path has both.
 ### opencode
 
 Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
-D-Bus disabled. `opencode debug config` loads all 100 rules (5 `external_directory`, 84
+D-Bus disabled. `opencode debug config` loads all 103 rules (5 `external_directory`, 87
 `bash`, 11 `read`). `opencode debug agent build --tool read` refuses every credential path
 of the set from a git worktree, from outside git and with the home directory as the
 worktree, with the `read` rules alone as well, and reads an openssh-askpass spec; `--tool
@@ -164,7 +177,7 @@ of the tea config directory from a project.
 
 ### grok
 
-Checked on 1.0.32: `grok inspect --json` loads all 85 rules with none skipped. An unknown
+Checked on 1.0.32: `grok inspect --json` loads all 88 rules with none skipped. An unknown
 rule is dropped silently (a planted `Frob(x)` counted 0), so compare the count after
 merging. Matching was not run here (it needs a model call); the openQA skill measured it:
 a deny beats every allow and ask and holds under always-approve, command globs match the
@@ -173,7 +186,7 @@ whole command and each segment, and `*` crosses spaces and `/`.
 - A leading `~/` is literal text, so home paths use `**/`, and `X/**` does not match `X`,
   so a directory is listed both ways.
 - grok also reads `~/.claude/settings.json`: with the Claude snippet merged it loads those
-  87 rules too (172), whose `Read(~/...)` rules do not match in grok. It lists the guard's
+  90 rules too (178), whose `Read(~/...)` rules do not match in grok. It lists the guard's
   PreToolUse hook as enabled once `claude/pr-guard-hook.json` is merged; whether grok
   hands the guard an event it can judge is not verified, so do not count on the guard in
   grok.
@@ -199,15 +212,20 @@ for all future sessions" answers; only the admin tier outranks it.
 - The CLI runs the rules in-process, so a slow regex hangs it. A gap between two parts
   inside a floating gap backtracked cubically: the first version's `osc config ... pass`
   rule never finished on a 64 KB command. A rule of several parts is now a row of
-  lookaheads anchored at the command's start, one lazy scan each, which finishes in
-  0.07 s at worst; its parts may come in any order.
+  lookaheads tried at the start of each simple command and stopped at the next `;`, `&`
+  or `|`, one lazy scan each; the slowest rule takes under 0.2 s on the suite's
+  pathological input. The parts may come in any order within one simple command, so
+  `osc ls && grep -H x` runs.
+- A regex cannot track quotes, so a quoted `;`, `&` or `|` ends a row's scan like a real
+  one: `osc sr -m "fix; see bug" --nodevelproject` passes (the suite checks that it
+  does), and so does a backslash-continued line.
 - Pool PR creation is not gated: the guard is not wired for Gemini.
 
 ### Antigravity CLI (`agy`)
 
 Written from the permissions documentation of antigravity.google, as the openQA skill's
 was. On 1.2.5, in a throw-away home, `agy --log-file F agents` logs "CLI settings
-initialized" with all 51 deny entries; it logs any string, so that shows the file is read,
+initialized" with all 57 deny entries; it logs any string, so that shows the file is read,
 not that each rule is valid. Check `/permissions`, Global, deny after merging.
 
 - Targets are absolute: replace `/home/USER` with your home directory.
@@ -230,7 +248,7 @@ not that each rule is valid. Check `/permissions`, Global, deny after merging.
 ### Codex CLI
 
 Checked on 0.154.0 in a throw-away home under `env -i` with D-Bus disabled: `codex
-execpolicy check --resolve-host-executables` decides all 64 probes as intended, gaps
+execpolicy check --resolve-host-executables` decides all 72 probes as intended, gaps
 included, and exits 1 with "failed to parse policy" on a failing `match` example or a
 syntax error (both tried). `codex sandbox -P <profile> -C <dir> -- <command>` gives the
 sandbox's verdict on dummy files and a dummy osc config. The profile names match the
@@ -294,12 +312,13 @@ Kimi 0.42.0 parses `[permission]` rules but does not enforce them, so the snippe
 PreToolUse hook. Checked on 0.42.0 in a throw-away home under `env -i`: `kimi doctor
 config` accepts the entry and rejects an unknown key or event name (both tried), but does
 not compile the matcher, so `tests/test-harness.sh` does, and checks it selects Bash,
-Read, Grep, Write and MCP tools. The suite feeds the hook 147 events on stdin: it refuses
-the set, including a `;` inside a quoted message, a continued line, a relative path
-resolved against an ACP session's `workDir`, the process directory or the Bash call's own
-`cwd`, a Grep over the home directory and a Write to its own config, refuses input that is
-not JSON, and lets ordinary calls and the openssh-askpass and git-credential-* packages
-through.
+Read, Grep, Write and MCP tools. The suite feeds the hook 277 events on stdin: it refuses
+the set, including a `;` inside a quoted message, a continued line, `$(osc token)`, an
+abbreviated `--api` before `token`, an MCP search scoped to the home directory, a
+relative path resolved against an ACP session's `workDir`, the process directory or the
+Bash call's own `cwd`, a Grep over the home directory and a Write to its own config,
+refuses input that is not JSON, and lets ordinary calls and the openssh-askpass and
+git-credential-* packages through.
 
 - One invalid `[[hooks]]` entry anywhere makes Kimi ignore every hook, with only a warning
   on stderr, and a matcher that does not compile skips its hook silently: run `kimi doctor
@@ -309,12 +328,14 @@ through.
 - It fails open when `python3` is missing, on the 10 s timeout and on a kill: Kimi runs
   the call. Errors inside the hook, bad input and a missing script refuse it. A command
   is cut into simple commands at `;`, `&`, `|` and newlines outside quotes, in one pass,
-  with continued lines joined first. Only the rules whose parts all occur somewhere are
-  then tried on each simple command; osc's subcommand is found by walking its words past
-  at most sixteen global options, not by a regex; and a text over 64 KB is refused
-  unread. The suite times every regex part on 64 KB of pathological input (the slowest
-  takes 0.02 s) and the hook on its worst cases (every multi-part rule a candidate across
-  28,000 simple commands: 0.4 s), so a long command cannot outrun the timeout. Earlier
+  after a backslash-newline is deleted, as Bash does. A rule is tried only if all its
+  parts occur somewhere, and then only on the simple commands that hold its first part;
+  osc's subcommand is found by walking the words of every osc call (split at blanks,
+  backquotes, `$`, parentheses and braces) past at most sixteen global options, an
+  abbreviated `--apiurl`, `--config` or `--setopt` taking its value, not by a regex; and a
+  text over 64 KB is refused unread. The suite times every regex part on 64 KB of
+  pathological input (the slowest takes 0.02 s) and the hook on its worst cases, the
+  slowest about 0.35 s, so a long command cannot outrun the timeout. Earlier
   versions took 16 s on 63 KB of `osc sr tea pr`, 10 s or more on `-H` and a run of
   spaces or on `git-credential-` repeated, and over 30 s on a run of osc global options.
 - Kimi runs a hook in its own process directory, which an ACP or web session need not
@@ -326,7 +347,9 @@ through.
   `python3 -c` or a script written first and run later get past it. It errs the other way
   too: a Grep rooted at the home directory, `~/.config`, `~/.local` or `/` is refused, and
   `tea` or `git obs` with `pr` and the word `merge` anywhere in one command.
-- MCP arguments are checked only under keys that look like a path, URL or command.
+- MCP arguments are checked only under keys that look like a path, URL or command; one
+  under a path, directory, root or scope key is also refused when the credentials lie
+  below it.
 
 ## The pool PR guard
 

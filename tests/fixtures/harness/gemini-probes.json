@@ -1,5 +1,5 @@
 {
-  "_comment": "Probes for the Gemini CLI rules in tests/test-harness.sh. Kept out of the suite: pr-guard reads the suite and refuses the merge commands. Text only: tests/test-harness.sh never runs a command.",
+  "_comment": "Probes for the Gemini CLI rules in tests/test-harness.sh. Kept out of the suite: pr-guard reads the suite and refuses the merge commands. Text only: tests/test-harness.sh never runs a command. shell_missed holds what the rules knowingly let through: a quoted ; & or | ends a rule's scan like a real one.",
   "files_refused": [
     ".config/osc/oscrc",
     ".oscrc",
@@ -82,7 +82,6 @@
     "git credential-oauth get",
     "wget --header='Authorization: Bearer x' https://example.org",
     "git clone https://bob:pw@src.opensuse.org/pool/x",
-    "osc sr -m \"fix; see bug\" --nodevelproject",
     "curl -H'Authorization: token x' https://example.org",
     "git credential-store get",
     "osc -A https://api.opensuse.org token",
@@ -90,7 +89,15 @@
     "osc -A https://api.opensuse.org config https://api.opensuse.org pass",
     "osc -qH ls",
     "osc -vH ls",
-    "osc api /person/x/token"
+    "osc api /person/x/token",
+    "echo $(osc token)",
+    "(osc token)",
+    "osc --api obs token",
+    "osc \"token\"",
+    "osc ls && osc token",
+    "osc -A x config y pass",
+    "osc ls -qvH",
+    "osc -A https://x -qvH ls"
   ],
   "shell_allowed": [
     "osc build openSUSE_Tumbleweed x86_64 openssh-askpass-gnome.spec",
@@ -122,6 +129,19 @@
     "osc sr -m 'update config, pass tests'",
     "cd git-credential-oauth && osc getbinaries openSUSE_Tumbleweed x86_64",
     "cd perl-HTTP-Tiny && grep -rn Authorization lib",
-    "grep -H Authorization src/"
+    "grep -H Authorization src/",
+    "osc ls && grep -H x file",
+    "tea pr list && git log --grep merge",
+    "osc ls; echo /person/x/token",
+    "osc ls && echo sr --nodevelproject",
+    "tea pr list; echo logins e",
+    "osc ls && echo token",
+    "git obs pr list; echo merge",
+    "curl https://example.org; echo api.opensuse.org",
+    "git obs pr list; echo login list",
+    "osc -A https://api.suse.de vc -m 'Update to OpenSSH 9.9'"
+  ],
+  "shell_missed": [
+    "osc sr -m \"fix; see bug\" --nodevelproject"
   ]
 }

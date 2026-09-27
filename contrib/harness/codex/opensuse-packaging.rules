@@ -49,12 +49,14 @@ prefix_rule(pattern = ["tea", ["login", "logins"], ["helper", "git-credential", 
             decision = "forbidden", justification = "prints the Gitea token")
 prefix_rule(pattern = ["osc", "config", DUMP_FULL], decision = "forbidden",
             justification = "prints the osc credentials")
-prefix_rule(pattern = ["osc", ["-H", "-qH", "-vH"] + HTTP_DEBUG], decision = "forbidden",
+prefix_rule(pattern = ["osc", ["-H", "-qH", "-vH", "-Hq", "-Hv", "-qvH", "-vqH"] + HTTP_DEBUG], decision = "forbidden",
             justification = "prints request headers, the OBS credentials among them")
 prefix_rule(pattern = ["osc", "token"], decision = "forbidden",
             justification = "lists or creates OBS tokens with their secrets")
 prefix_rule(pattern = ["git", "credential", "fill"], decision = "forbidden",
             justification = "prints a stored git credential")
+prefix_rule(pattern = ["secret-tool", ["lookup", "search"]], decision = "forbidden",
+            justification = "prints a secret from the desktop keyring, gh's token among them")
 prefix_rule(pattern = [["git-credential-libsecret", "git-credential-store", "git-credential-cache",
                         "git-credential-oauth", "git-credential-keepassxc"], "get"],
             decision = "forbidden", justification = "prints a stored git credential")

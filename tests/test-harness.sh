@@ -7,9 +7,13 @@
 # names every read path the README claims; every git-obs rule has its "git obs"
 # twin. The Claude Code, grok and opencode command globs go through an fnmatch
 # stand-in for their matchers: they must catch the refuse probes and leave real
-# packaging work alone. The Gemini CLI regexes, which nothing here can run, go
-# through a port of its loader: the ReDoS rule, the '"command":"' prefix, the
-# probes, and 64 kB of pathological input, which each rule must scan in under 1 s.
+# packaging work alone. One shared list of commands goes through the globs, the
+# Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
+# alternative and every Kimi rule, path and osc walk must be the only one to refuse
+# some probe, so deleting any of them fails the suite. The Gemini CLI regexes,
+# which nothing here can run, go through a port of its loader: the ReDoS rule, the
+# '"command":"' prefix, the probes, and 64 kB of pathological input, which each rule
+# must scan in under 1 s.
 # The Kimi hook is fed events on stdin and must refuse, let through, fail closed on
 # bad input and stay under 1 s on its worst cases. Where codex and kimi are
 # installed, `codex execpolicy check` decides the Codex probes and `kimi doctor
@@ -60,13 +64,17 @@ COMMANDS = ["gh auth token", "gh auth status", "gh auth git-credential",
             "login list", "gitcredentials-helper", "login helper", "logins helper",
             "login git-credential", "logins git-credential", "tea login e", "tea logins e",
             "--dump-", "--http-d", "--http-f", "http_debug", "http_full_debug", "HTTP_DEBUG",
-            "HTTP_FULL_DEBUG", "osc -H", "osc -qH", "osc -vH", "osc token", "osc config * pass",
-            "osc *api*/person/*/token", "credential fill",
-            "git-credential-* get", "git credential-* get"]
+            "HTTP_FULL_DEBUG", "osc -H", "osc token", "osc config * pass",
+            "osc *api*/person/*/token", "credential fill", "secret-tool lookup", "secret-tool search",
+            "git-credential-* get", "git credential-* get", ".config/gh/", "-*H *uthorization",
+            "osc *--dump-", "osc -*H"]
 EXTRAS = ["api.opensuse.org", "build.opensuse.org", "src.opensuse.org/api", "--nodevelproject",
           "sudo chroot", "pr merge", "osc/cookiejar", "mcp-bugzilla",
           "GIT_ASKPASS=", "SSH_ASKPASS=", "core.askPass"]
 GLOBS = fixture("glob-probes.json")
+SHARED = fixture("shared-probes.json")
+REFUSE = SHARED["refuse"] + GLOBS["refuse"]
+PASS = SHARED["pass"] + GLOBS["allow"]
 CAUGHT = {}
 
 
@@ -82,17 +90,32 @@ def twins(rules, name):
 
 def glob_verdicts(name, decide):
     # fnmatch's "*" crosses spaces and "/", as these matchers' does; the CLIs decide for real.
-    miss = [c for c in GLOBS["refuse"] if decide(c) != "deny"]
-    check(not miss, f"{name}: command globs refuse all {len(GLOBS['refuse'])} probes" + (f" -- not {miss}" if miss else ""))
-    hit = [c for c in GLOBS["allow"] if decide(c) == "deny"]
-    check(not hit, f"{name}: command globs leave all {len(GLOBS['allow'])} ordinary commands alone" + (f" -- refuse {hit}" if hit else ""))
+    miss = [c for c in REFUSE if decide(c) != "deny"]
+    check(not miss, f"{name}: command globs refuse all {len(REFUSE)} probes" + (f" -- not {miss}" if miss else ""))
+    hit = [c for c in PASS if decide(c) == "deny"]
+    check(not hit, f"{name}: command globs leave all {len(PASS)} ordinary commands alone" + (f" -- refuse {hit}" if hit else ""))
+
+
+def glob_hit(cmd, p):
+    # A trailing ":*" is the legacy prefix syntax: what precedes it is a literal prefix.
+    return cmd.startswith(p[:-2]) if p.endswith(":*") else fnmatch.fnmatchcase(cmd, p)
 
 
 def any_glob(patterns):
-    # A trailing ":*" is the legacy prefix syntax: what precedes it is a literal prefix.
-    def hit(cmd, p):
-        return cmd.startswith(p[:-2]) if p.endswith(":*") else fnmatch.fnmatchcase(cmd, p)
-    return lambda cmd: "deny" if any(hit(cmd, p) for p in patterns) else "allow"
+    return lambda cmd: "deny" if any(glob_hit(cmd, p) for p in patterns) else "allow"
+
+
+def load_bearing(name, rules, refused_without):
+    # Deleting any rule must turn a probe red: each one is the only rule refusing some probe.
+    refused = [c for c in REFUSE if refused_without(None, c)]
+    idle = [r for r in rules if all(refused_without(r, c) for c in refused)]
+    check(not idle, f"{name}: every rule is the only one to refuse some probe" + (f" -- not {idle}" if idle else ""))
+
+
+def sole(rules):
+    def refused_without(skip, cmd):
+        return any(glob_hit(cmd, p) for p in rules if p != skip)
+    return refused_without
 
 
 def no_legacy(rules, name):
@@ -111,6 +134,7 @@ covers([r for r in deny if r.startswith("Read(")], READ_PATHS, "Read", "claude")
 covers(bash_rules(deny), PATHS + COMMANDS + EXTRAS, "Bash", "claude")
 twins(deny, "claude")
 glob_verdicts("claude", any_glob(bash_rules(deny)))
+load_bearing("claude", bash_rules(deny), sole(bash_rules(deny)))
 CLAUDE = any_glob(bash_rules(deny))
 no_legacy(bash_rules(deny), "claude")
 check("hooks" not in load("claude/settings.json"), "claude: the deny snippet carries no hook")
@@ -138,6 +162,17 @@ def last_match(cmd):
 
 
 glob_verdicts("opencode", last_match)
+
+
+def opencode_without(skip, cmd):
+    verdict = "allow"
+    for pat, action in perm["bash"].items():
+        if pat != skip and fnmatch.fnmatchcase(cmd, pat):
+            verdict = action
+    return verdict == "deny"
+
+
+load_bearing("opencode", [p for p, a in perm["bash"].items() if a == "deny"], opencode_without)
 no_legacy(list(perm["bash"]), "opencode")
 
 if tomllib is None:
@@ -153,22 +188,66 @@ else:
     check(not lone, "grok: each X/** rule also denies X" + (f" -- {lone}" if lone else ""))
     twins(deny, "grok")
     glob_verdicts("grok", any_glob(bash_rules(deny)))
+    load_bearing("grok", bash_rules(deny), sole(bash_rules(deny)))
     GROK = any_glob(bash_rules(deny))
     no_legacy(bash_rules(deny), "grok")
 
     # Gemini CLI, packages/core/src/policy: buildArgsPatterns() and isSafeRegExp().
     nested = re.compile(r"\([^)]*[*+?{].*\)[*+?{]")
-    rules = []
+    rules, shell = [], []
     for r in load("gemini/opensuse-packaging.toml")["rule"]:
         names = r["toolName"] if isinstance(r["toolName"], list) else [r["toolName"]]
         src = r["argsPattern"] if "argsPattern" in r else '"command":"' + r["commandRegex"]
         check(len(src) <= 2048 and not nested.search(src), f"gemini: loader accepts {src[:50]}...")
         check(r["decision"] == "deny" and r["priority"] == 999, f"gemini: deny at priority 999: {src[:40]}...")
         rules.append((names, re.compile(src)))
+        if "commandRegex" in r:
+            shell.append(r["commandRegex"])
 
     def refused(tool, args):
         text = json.dumps(args, separators=(",", ":"), ensure_ascii=False)
         return any(tool in names and rx.search(text) for names, rx in rules)
+
+    def alternatives(group):
+        """The top-level alternatives of "(?:A|B|...)"."""
+        out, depth, start, i, cls = [], 0, 3, 0, False
+        while i < len(group):
+            c = group[i]
+            if c == "\\":
+                i += 2
+                continue
+            if cls:
+                cls = c != "]"
+            elif c == "[":
+                cls = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    out.append(group[start:i])
+            elif c == "|" and depth == 1:
+                out.append(group[start:i])
+                start = i + 1
+            i += 1
+        return out
+
+    # Every shell rule is one "(?:...)" of alternatives; each alternative must be the
+    # only one to refuse some probe, so deleting any of them turns this red.
+    parts = [(k, a) for k, src in enumerate(shell) for a in alternatives(src)]
+    check(all(src.startswith("(?:") and src.endswith(")") for src in shell) and parts,
+          "gemini: every shell rule is a flat (?:...) of alternatives")
+    compiled = [re.compile('"command":"(?:' + a + ")") for _, a in parts]
+    gem_refuse = SHARED["refuse"] + fixture("gemini-probes.json")["shell_refused"]
+
+    def gem_hits(cmd):
+        text = json.dumps({"command": cmd}, separators=(",", ":"), ensure_ascii=False)
+        return [i for i, rx in enumerate(compiled) if rx.search(text)]
+
+    hits = {cmd: gem_hits(cmd) for cmd in gem_refuse}
+    idle = [parts[i][1][:60] for i in range(len(parts)) if not any(h == [i] for h in hits.values())]
+    check(not idle, f"gemini: each of {len(parts)} alternatives is the only one to refuse some probe"
+          + (f" -- not {idle}" if idle else ""))
 
     home = "/home/user"
     probes = fixture("gemini-probes.json")
@@ -177,10 +256,12 @@ else:
     for path in probes["files_allowed"]:
         check(not refused("read_file", {"file_path": f"{home}/{path}"}), f"gemini: read_file allows ~/{path}")
     check(refused("glob", {"pattern": "*", "dir_path": f"{home}/.config/tea"}), "gemini: glob refuses ~/.config/tea")
-    for cmd in probes["shell_refused"]:
+    for cmd in SHARED["refuse"] + probes["shell_refused"]:
         check(refused("run_shell_command", {"command": cmd}), f"gemini: refuses {cmd}")
-    for cmd in probes["shell_allowed"]:
+    for cmd in SHARED["pass"] + probes["shell_allowed"]:
         check(not refused("run_shell_command", {"command": cmd}), f"gemini: allows {cmd}")
+    for cmd in probes["shell_missed"]:
+        check(not refused("run_shell_command", {"command": cmd}), f"gemini: misses, as the README says, {cmd}")
     # The CLI evaluates the rules in-process: a regex that backtracks through nested gaps
     # hangs it on a long command. Each rule runs in a child, which a timeout can stop.
     scan = """
@@ -294,6 +375,8 @@ def bash_event(cmd):
 
 
 events = fixture("kimi-probes.json")
+events["refuse"] = SHARED["refuse"] + events["refuse"]
+events["allow"] = SHARED["pass"] + events["allow"]
 for want, name in ((2, "refuse"), (0, "allow")):
     for ev in events[name]:
         if isinstance(ev, str):
@@ -304,6 +387,42 @@ for want, name in ((2, "refuse"), (0, "allow")):
         what = ev["tool_input"].get("command") or json.dumps(ev["tool_input"])
         check(r.returncode == want, f"kimi hook: {name}s {ev['tool_name']} {what}"
               + ("" if r.returncode == want else f" (exit {r.returncode})"))
+# Deleting any of the hook's rules, any credential path, or its osc walk must let some
+# probe through. A child imports the hook and asks refused() with each one removed.
+mutate = """
+import importlib.util, json, re, sys
+spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+probes = json.loads(sys.argv[2])
+rules, paths, walk = list(hook.RULES), list(hook.PATHS), hook.osc_calls
+def refused():
+    return [c for c in probes if hook.refused(c)]
+base = refused()
+idle = []
+for i in range(len(rules)):
+    hook.RULES = rules[:i] + rules[i + 1:]
+    if refused() == base:
+        idle.append("rule " + " & ".join(p.pattern for p in rules[i])[:60])
+hook.RULES = rules
+for i in range(len(paths)):
+    hook.PATH_RE = re.compile("|".join(paths[:i] + paths[i + 1:]), re.IGNORECASE)
+    if refused() == base:
+        idle.append("path " + paths[i][:60])
+hook.PATH_RE = re.compile("|".join(paths), re.IGNORECASE)
+hook.osc_calls = lambda segment: iter(())
+if refused() == base:
+    idle.append("the osc walk")
+print(json.dumps({"base": len(base), "idle": idle}))
+"""
+strings = [e for e in events["refuse"] if isinstance(e, str)]
+try:
+    out = json.loads(subprocess.run([sys.executable, "-c", mutate, hook, json.dumps(strings)], capture_output=True,
+                                    text=True, timeout=120, env=bare_env(fake)).stdout)
+except (subprocess.TimeoutExpired, ValueError):
+    out = {"base": 0, "idle": ["the check did not run"]}
+check(not out["idle"], f"kimi hook: every rule, path and the osc walk is the only one to refuse some probe"
+      + (f" -- not {out['idle']}" if out["idle"] else ""))
 r = run_hook("not json")
 check(r.returncode == 2, "kimi hook: input that is not JSON fails closed")
 r = run_hook(bash_event("gh auth token"))
@@ -315,6 +434,7 @@ worst = {"parts": ";".join(fixture("slow-units.json")["kimi_parts"]) + ";a" * 28
          "separators": ";" * 65000, "one-char segments": "a;" * 32500,
          "osc sr tea pr": "osc sr tea pr " * 4600, "-H and spaces": "-H" + " " * 64000 + "x",
          "git-credential-": "git-credential-" * 4300, "osc global options": "osc -A " * 9200,
+         "first parts everywhere": "osc;tea;git obs;curl;sudo;" * 2500 + ";".join(fixture("slow-units.json")["kimi_parts"]),
          "over the cap": "osc sr tea pr " * 5000}
 for name, text in worst.items():
     want = 2 if len(text) > 64 * 1024 else 0

@@ -85,6 +85,19 @@
     "osc -qH ls",
     "osc -vH ls",
     "osc api /person/x/token",
+    "gh auth \\\ntoken",
+    "git credential \\\nfill",
+    "cat ~/.net\\\nrc",
+    "echo $(osc token)",
+    "(osc token)",
+    "osc --api obs token",
+    "osc --a obs token",
+    "osc --setopt x=y token",
+    "echo `osc token`",
+    "osc ls && osc token",
+    "osc ls -qvH",
+    "osc -A https://x -qvH ls",
+    "osc -dH ls",
     {
       "tool_name": "Bash",
       "tool_input": {
@@ -211,6 +224,33 @@
       },
       "cwd": "/var/tmp",
       "session_id": "acp-2"
+    },
+    {
+      "tool_name": "mcp__fs__search",
+      "tool_input": {
+        "path": "~",
+        "pattern": "oauth_token"
+      }
+    },
+    {
+      "tool_name": "mcp__fs__search",
+      "tool_input": {
+        "root": "@HOME@/.config",
+        "pattern": "x"
+      }
+    },
+    {
+      "tool_name": "mcp__shell__run",
+      "tool_input": {
+        "command": "gh auth \\\ntoken"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "cat te\\\na/config.yml"
+      },
+      "cwd": "@HOME@/.config"
     }
   ],
   "allow": [
@@ -249,6 +289,13 @@
     "cd git-credential-oauth && osc getbinaries openSUSE_Tumbleweed x86_64",
     "cd perl-HTTP-Tiny && grep -rn Authorization lib",
     "grep -H Authorization src/",
+    "osc ls && grep -H x file",
+    "tea pr list && git log --grep merge",
+    "osc ls; echo /person/x/token",
+    "osc ls && echo sr --nodevelproject",
+    "tea pr list; echo logins e",
+    "osc ls && echo token",
+    "osc -A https://api.suse.de vc -m 'Update to OpenSSH 9.9'",
     {
       "tool_name": "Read",
       "tool_input": {
@@ -305,6 +352,13 @@
       "tool_input": {
         "command": "ls",
         "cwd": "~/.config"
+      }
+    },
+    {
+      "tool_name": "mcp__fs__search",
+      "tool_input": {
+        "path": "@HOME@/work",
+        "pattern": "x"
       }
     }
   ]
