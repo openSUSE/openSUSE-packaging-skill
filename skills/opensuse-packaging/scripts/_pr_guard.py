@@ -235,7 +235,19 @@ SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
 # POST cmds that write nothing into the project named: osc diffs, lists links
 # and branches (into home:, unless target_project says otherwise) by them.
 READ_CMDS = {"diff", "showlinked", "branch"}
-OSC_GLOBAL = ("-A", "--apiurl", "--config")  # osc's global options with a value
+# osc 1.27.3's long options: global ones, and those of the subcommands whose
+# operands the guard reads (with the short ones that take a value) -- the ones
+# that take a value, then ";" and the rest; argparse takes any unique prefix.
+OSC_GLOBAL = "apiurl config setopt; debug debugger help http-debug http-full-debug "
+OSC_GLOBAL += "no-keyring no-pager post-mortem quiet traceback verbose"
+OSC_OPTS = {
+    "commit": (
+        "mF",
+        "message file; no-message force skip-local-service-run noservice no-service",
+    ),
+    "api": ("XmdTfa", "method data file add-header; edit"),
+}
+OSC_ALIAS = {"ci": "commit", "checkin": "commit"}
 REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
 REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
 REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
@@ -345,6 +357,8 @@ MESSAGES = {
     "project. Submit from the devel project.",
     "maintenance": "{0}: maintenance and update projects take no direct writes. "
     "Branch with osc mbranch, commit there, and file osc mr.",
+    "maintenance-unknown": "cannot tell where {0} lands, so it is refused. Run it in "
+    "the checkout, or name the checkout or the project literally.",
     "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
     'a list may follow as "- " lines of ≤100 characters, 1000 in all.',
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
@@ -703,60 +717,125 @@ def piped(out, ctx, cwd):
     return [text]
 
 
-def osc_project(path):
-    """The projects an osc checkout path (a checkout, or a file in one) may
-    commit to: its .osc/_project, else, for a checkout this call makes, the
-    path's own components."""
-    d = path if os.path.isdir(path) else os.path.dirname(path)
-    try:
-        with open(os.path.join(d, ".osc", "_project"), encoding="utf-8") as fh:
-            return [fh.read().strip()]
-    except OSError:
-        return path.split(os.sep)
+def osc_projects(raw, what, ctx, cwd):
+    """The projects an osc checkout path (a checkout, or a file in one) names
+    in its .osc/_project -- in each directory a loop's cd may leave. Refused
+    when a path cannot be placed, or holds no .osc/_project (one the call
+    checks out itself, or no checkout): unless its own components name a
+    maintenance project, it is unknown."""
+    dirs = cwd.dirs if isinstance(cwd, Dirs) else [cwd]
+    got = [locate(raw, ctx, d) for d in dirs]
+    why = next((w for p, w in got if p is None), False)
+    if why is not False:
+        block(
+            "maintenance-unknown", f"{what} {shown(raw)}" + (f" ({why})" if why else "")
+        )
+    prjs = []
+    for path in (p for paths, _ in got for p in paths):
+        d = path if os.path.isdir(path) else os.path.dirname(path)
+        try:
+            with open(os.path.join(d, ".osc", "_project"), encoding="utf-8") as fh:
+                prjs.append(fh.read().strip())
+        except OSError:
+            prjs += list(filter(MAINT_PRJ.fullmatch, path.split(os.sep)))[:1] or [None]
+    if None in prjs and not any(p and MAINT_PRJ.fullmatch(p) for p in prjs):
+        block(
+            "maintenance-unknown",
+            f"{what} {shown(raw)} (no .osc/_project there: check out in one call, "
+            "commit in the next)",
+        )
+    return prjs
+
+
+def long_names(spec):
+    """(long options that take a value, all long options) of an OSC_* spec."""
+    valued, _, flags = spec.partition(";")
+    valued = ["--" + o for o in valued.split()]
+    return valued, valued + ["--" + o for o in flags.split()]
 
 
 def osc_sub(run):
     """(subcommand, its arguments) of an osc argv."""
+    valued, names = long_names(OSC_GLOBAL)
     i = 1
     while i < len(run) and run[i].startswith("-"):
-        i += 2 if run[i] in OSC_GLOBAL else 1
+        i += 2 if long_prefix(run[i], names) in ("-A", *valued) else 1
     return (run[i], run[i + 1 :]) if i < len(run) else (None, [])
 
 
+def osc_args(sub, args):
+    """(options as (flag, value), operands) of the arguments of an OSC_OPTS
+    subcommand, which may carry osc's global options too."""
+    short, spec = OSC_OPTS[sub]
+    valued, names = long_names(spec)
+    gvalued, gnames = long_names(OSC_GLOBAL)
+    args = [long_prefix(a, names + gnames) for a in args]
+    return parse_opts(args, short + "A", valued + gvalued)
+
+
+def shown(word):
+    return SUB_WORD.sub("$(...)", word)
+
+
 def osc_writes(run, ctx, cwd):
-    """osc commit and osc api writes into a maintenance or update project."""
+    """osc commit and osc api writes into a maintenance or update project, or
+    into one the guard cannot place."""
     sub, args = osc_sub(run)
-    if sub in ("ci", "commit", "checkin"):
-        pos = parse_opts(args, "mFA", ("--message", "--file", *OSC_GLOBAL[1:]))[1]
+    sub = OSC_ALIAS.get(sub, sub)
+    if sub not in OSC_OPTS:
+        return
+    opts, pos = osc_args(sub, args)
+    if sub == "commit":
         for raw in pos or ["."]:
-            for path in locate(raw, ctx, cwd)[0] or ():
-                for prj in filter(MAINT_PRJ.fullmatch, osc_project(path)):
+            for prj in osc_projects(raw, "osc commit", ctx, cwd):
+                if prj and MAINT_PRJ.fullmatch(prj):
                     block("maintenance-commit", f"an osc commit into {prj}")
-    elif sub == "api":
-        valued = ("--method", "--data", "--file", "--add-header", *OSC_GLOBAL[1:])
-        opts, pos = parse_opts(args, "XmdTfaA", valued)
-        keys = {k for k, _ in opts}
-        method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
-        # As osc: a file uploads by PUT, and --edit PUTs what it fetched.
-        if method == "GET" and keys & {"-T", "-f", "--file"} or keys & {"-e", "--edit"}:
-            method = "PUT"
-        if method.upper() in ("GET", "HEAD"):
-            return
-        for a in pos:
-            for prj in filter(MAINT_PRJ.fullmatch, api_targets(method, a)):
-                block("maintenance-api", f"an osc api {method} into {prj}")
+        return
+    keys = {k for k, _ in opts}
+    method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
+    # As osc: a file uploads by PUT, and --edit PUTs what it fetched.
+    if method == "GET" and keys & {"-T", "-f", "--file"} or keys & {"-e", "--edit"}:
+        method = "PUT"
+    if method.upper() in ("GET", "HEAD"):
+        return
+    for a in pos:
+        urls = substitute(a, ctx, cwd)
+        if urls is None and api_segment(a) is None:
+            block("maintenance-unknown", f"osc api {method} {shown(a)}")
+        for url in urls or [a]:
+            for prj in api_targets(method, url):
+                if VARIABLE.search(prj):
+                    block("maintenance-unknown", f"osc api {method} {shown(a)}")
+                if MAINT_PRJ.fullmatch(prj):
+                    block("maintenance-api", f"an osc api {method} into {prj}")
+
+
+def api_segment(url):
+    """The first path segment of an API URL (or path), when the text before
+    the first $ or backtick spells it out whole; else None."""
+    head = re.split(r"[$`]", url)[0]
+    if "://" in head:
+        head = head.split("://", 1)[1].partition("/")[2] if "/" in head[8:] else ""
+    parts = re.sub(r"/+", "/", head).lstrip("/").split("/")
+    return parts[0] if len(parts) > 1 else None
 
 
 def api_targets(method, url):
     """The projects an osc api write to url writes into."""
+    import posixpath
     import urllib.parse
 
-    parts = urllib.parse.urlsplit(url)
-    query = urllib.parse.parse_qs(parts.query)
+    if "://" in url:
+        parts = urllib.parse.urlsplit(url)
+        path, query = parts.path, parts.query
+    else:  # a path, which may start with // (osc prefixes the API URL)
+        path, _, query = url.partition("#")[0].partition("?")
+    path = posixpath.normpath(re.sub(r"/+", "/", urllib.parse.unquote(path)) or "/")
+    query = urllib.parse.parse_qs(query)
     cmds = query.get("cmd", [])
     if method.upper() == "POST" and cmds and set(cmds) <= READ_CMDS:
         return query.get("target_project", []) if "branch" in cmds else []
-    return [m.group(1) for m in SOURCE_PRJ.finditer(parts.path)]
+    return [m.group(1) for m in SOURCE_PRJ.finditer(path)]
 
 
 def call_args(text, i):
@@ -2047,10 +2126,30 @@ def reads_only(name, run, ctx, cwd):
 STAMP_CWD = "/unresolved.git/target-gate"
 
 
+class Dirs(str):
+    """The working directory after a cd to each word of a loop: dirs holds
+    them, and the string itself names no directory, so a rule that reads it as
+    a path finds nothing there and refuses."""
+
+    def __new__(cls, dirs):
+        self = super().__new__(cls, "/(one of several directories)")
+        self.dirs = dirs
+        return self
+
+
 def enter(target, ctx, cwd):
-    """The directory cd/pushd/env -C moves to, or STAMP_CWD when only the
-    shell can place it and it names the stamp directory."""
+    """The directory cd/pushd/env -C moves to -- expanded from what the call
+    set, Dirs for several -- or STAMP_CWD when only the shell can place it and
+    it names the stamp directory."""
     new = resolve(target, cwd)[0]
+    if new is None and not isinstance(cwd, Dirs):
+        places = []
+        for w in substitute(target, ctx, cwd) or ():
+            places += locate(w, ctx, cwd)[0] or [None]  # a glob as the shell expands it
+        if places and None not in places:
+            if any(stamp_word(p, ctx, cwd, path=True) for p in places):
+                return STAMP_CWD
+            new = places[0] if len(set(places)) == 1 else Dirs(sorted(set(places)))
     if new is None and stamp_word(target, ctx, cwd):
         return STAMP_CWD
     return new
@@ -2180,6 +2279,49 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     return cwd, out
 
 
+def loop_assignments(items, lits):
+    """{index of a loop's first command: the assignments its body makes, as
+    (word, literal-aware word)}: a variable a loop assigns holds each of its
+    values at every point of the loop, the next iteration's included."""
+    starts, out = [], {}
+    for k, item in enumerate(items):
+        if len(item) != 2 or not item[0]:
+            continue
+        if item[0][0] in ("for", "while", "until", "select"):
+            starts.append(k)
+        elif item[0][0] == "done" and starts:
+            start = starts.pop()
+            found = out.setdefault(start, [])
+            for j in range(start, k):
+                if len(items[j]) != 2 or not items[j][0]:
+                    continue
+                argv, largv = items[j][0], (lits[j] or (None, None))[0]
+                run = unwrap(argv)[0]
+                name = os.path.basename(run[0]) if run else ""
+                words = argv[: len(argv) - len(run)] if run else argv
+                if name in DECLARE:
+                    words = [*words, *run[1:]]
+                lwords = largv and largv[: len(words)] if name not in DECLARE else None
+                for n, w in enumerate(words):
+                    if ASSIGN.match(w):
+                        found.append((w, lwords[n] if lwords else None))
+                for v in shell_assigned(name, run[1:]):
+                    found.append((v + "+=", None))  # unknown
+    return out
+
+
+def widen(word, lword, ctx):
+    """Give a variable a loop assigns every value it takes there too; one this
+    call did not set before, or appended to, becomes unknown."""
+    k, v = word.split("=", 1)
+    known = ctx.values.get(k.rstrip("+"))
+    if k.endswith("+") or not known:
+        ctx.values[k.rstrip("+")] = ctx.lit_values[k.rstrip("+")] = []
+        return
+    ctx.values[k] = known + [v]
+    ctx.lit_values[k] = (ctx.lit_values.get(k) or []) + [lword]
+
+
 def shell_pass(text, ctx, cwd, depth):
     """Walk the simple commands of shell text, following cd, subshells, and
     pipes into a shell or interpreter. Returns what it writes to stdout, as
@@ -2204,7 +2346,10 @@ def shell_pass(text, ctx, cwd, depth):
         lits = [None] * len(items)  # a literal $'...' split otherwise: all unknown
     stack, out, piped, case, pattern = [], None, None, 0, False
     writers, lpiped = [], None
-    for item, litem in zip(items, lits):
+    loops = loop_assignments(items, lits)
+    for k, (item, litem) in enumerate(zip(items, lits)):
+        for word, lword in loops.get(k, ()):
+            widen(word, lword, ctx)
         head = [w for w in item[0] if w not in KEYWORDS][:1] if len(item) == 2 else []
         # A case clause's patterns, up to its ")", are words, not commands.
         if pattern:

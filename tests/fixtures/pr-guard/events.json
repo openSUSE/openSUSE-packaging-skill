@@ -3987,5 +3987,235 @@
       "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$(git log -1 --format=%B)\""
     },
     "cwd": "@CLONE@"
+  },
+  "osc-ci-cwd-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd \"$(mktemp -d)\" && osc co openSUSE:Leap:15.6:Update x && cd * && osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-read-stale": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=@OSC@/devel/x; read -r D < dirs.txt; cd \"$D\" && osc ci -m 'Fix'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-reassign": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=@OSC@/devel/x; for p in a b; do (cd \"$D\" && osc ci -m 'Fix'); D=@OSC@/upd/x; done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-outer-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for p in a b; do (cd \"$D\" && osc ci -m 'Fix'); D=@OSC@/devel/x; done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-glob-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd @OSC@/devel && for d in */; do (cd \"$d\" && osc ci -m 'Rebuild'); done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-glob-all": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd @OSC@ && for d in */x; do (cd \"$d\" && osc ci -m 'Rebuild'); done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-var-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT \"$URL\" -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-subst-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST \"$(cat url.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-host-var-path": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE \"https://api.opensuse.org/$P\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-double-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT //source//openSUSE:Leap:15.6:Update//x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-dot-segment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/./openSUSE:Leap:15.6:Update/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-dotdot-segment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/home:tester/../openSUSE:Leap:15.6:Update/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-co-output-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co -o @WORK@/co-x openSUSE:Leap:15.6:Update x && cd @WORK@/co-x && osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-co-current-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co -c openSUSE:Leap:15.6:Update x && cd x && osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-not-a-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for d in @OSC@/devel/x @OSC@/branch/x; do (cd \"$d\" && osc ci -m 'Rebuild'); done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-loop-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for d in @OSC@/devel/x @OSC@/upd/x; do (cd \"$d\" && osc ci -m 'Rebuild'); done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-var-cd-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=@OSC@/devel/x; cd \"$D\" && osc ci -m 'Update to 1.2.0'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "push-loop-dirs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for d in @CLONE@ @OTHER@; do (cd \"$d\" && git push fork HEAD); done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-no-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234'"
+    }
+  },
+  "osc-ci-subst-operand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234' \"$(ls -d */x | head -n 1)\""
+    },
+    "cwd": "@OSC@"
+  },
+  "osc-ci-loop-subst": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for d in $(cat checkouts.txt); do osc ci -m 'Fix CVE-2026-1234' \"$d\"; done"
+    },
+    "cwd": "@OSC@"
+  },
+  "osc-api-var-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT \"/source/$PRJ/x/_meta\" -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-var-branch-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST \"/source/openSUSE:Factory/x?cmd=branch&target_project=$T\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-quoted-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/openSUSE%3ALeap%3A15.6%3AUpdate/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-meth-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api --meth DELETE /source/openSUSE:Leap:15.6:Update/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-api-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --api https://api.opensuse.org ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-ci-conf-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --conf /var/tmp/oscrc commit -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-ci-setopt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --setopt build_jobs=4 ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-api-var-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api \"/source/$PRJ/x/_meta\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-var-request": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST \"/request/$ID?cmd=changestate&newstate=revoked\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-quoted-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/home%3Atester%3Abranches%3AopenSUSE%3ALeap%3A15.6%3AUpdate/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-var-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=@OSC@/devel/x; osc ci -m 'Update to 1.2.0' \"$D\""
+    },
+    "cwd": "@PLAIN@"
   }
 }
