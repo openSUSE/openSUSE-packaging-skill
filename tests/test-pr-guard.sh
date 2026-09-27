@@ -751,6 +751,11 @@ mkdir -p "$work/raises" && cp "$GUARD" "$work/raises/"
 out="$(ev merge-gitoxide | python3 "$work/raises/pr-guard.py" 2>&1)"; got=$?
 [ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && grep -qF "user:[REDACTED]@" <<<"$out" && ! grep -qF tok3n <<<"$out" \
   && pass "a failure's text is redacted (rc=2)" || fail "a failure's text is not redacted: rc=$got $out"
+# ... and a redaction that fails still refuses, without the text it could not redact.
+printf '\n\ndef redact(text):\n    raise RuntimeError("no redaction")\n' >> "$work/raises/_pr_guard.py"
+out="$(ev merge-gitoxide | python3 "$work/raises/pr-guard.py" 2>&1)"; got=$?
+[ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && ! grep -qF tok3n <<<"$out" \
+  && pass "a failed redaction still refuses (rc=2)" || fail "a failed redaction: rc=$got $out"
 out="$(python3 "$GUARD" --help)"; got=$?
 [ "$got" = 0 ] && grep -q '^Exit: 0 = allowed' <<<"$out" && pass "--help (rc=0)" || fail "--help: rc=$got"
 python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?

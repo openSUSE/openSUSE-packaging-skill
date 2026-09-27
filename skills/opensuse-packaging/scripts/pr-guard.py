@@ -114,11 +114,12 @@ def main(argv):
         mod = rules()
         why = mod["judge"](ev)
     except Exception as e:  # fail closed: the call matched a guarded pattern
-        why = (
-            f"pr-guard: BLOCKED [undecided] a guarded pattern matched but the guard "
-            f"failed ({type(e).__name__}: {e}), so the call is refused."
-        )
-        why = mod.get("redact", str)(why)
+        why = "pr-guard: BLOCKED [undecided] a guarded pattern matched but the guard "
+        try:
+            why += mod.get("redact", str)(f"failed ({type(e).__name__}: {e}), ")
+        except Exception:
+            why += "failed, "
+        why += "so the call is refused."
     if why:
         sys.stderr.write(why + "\n")
         return 2
