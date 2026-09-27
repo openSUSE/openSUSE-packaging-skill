@@ -224,12 +224,14 @@ session; this costs one. The adversarial change review (agents/changes-review.md
 still follows — it is a judgement, not a check, and stays outside this script.
 
 Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
-               [--build-log FILE] [--full]
+               [--git-base REF] [--build-log FILE] [--full]
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
                changes-patches, default 1)
   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
   --target     SR target for changes-patches (default: link origin, else Factory)
+  --git-base   git checkout: the target's ref for changes-patches (a fork PR's
+               upstream is the pushed fork branch, which compares clean)
   --build-log  also run build-summary.sh on this osc build log (verdict only)
   --full       print every gate's complete output (default: last 12 lines each;
                full output is always saved under $TMPDIR/gate-<pkg>/)

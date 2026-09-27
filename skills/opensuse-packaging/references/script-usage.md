@@ -22,7 +22,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 ## Changelog and gates
 
-- `gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]] [--build-log FILE] [--full]` — exit 0 green · 1 red · 2 usage or not a package checkout (no `*.spec`, no `.osc/_package`)
+- `gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]] [--git-base REF] [--build-log FILE] [--full]` — exit 0 green · 1 red · 2 usage or not a package checkout (no `*.spec`, no `.osc/_package`)
 - `changes-prepend.sh <name>.changes [--author 'Name <email>']` — bullets on stdin; author falls back to `$CHANGES_AUTHOR`, then git `user.name`/`user.email`; exit 0 verified · 1 verification failed (restored) · 2 usage or no author · 3 refused: the file already differs from its committed version (edit the top entry instead)
 - `changes-lint.sh [--entries N | --all] <file>.changes [...]` — N ≥ 1, `--all` for every entry; exit 0 clean · 1 findings · 2 usage · 3 unreadable file (wins over 1)
 - `changes-guard.sh [--base FILE] [--amend-top AUTHOR] <pkg>.changes [...]` — exit 0 insertion-only · 1 prior entry changed · 2 usage · 3 unreadable input (wins over 1)

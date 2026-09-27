@@ -7,12 +7,14 @@
 # still follows — it is a judgement, not a check, and stays outside this script.
 #
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
-#                [--build-log FILE] [--full]
+#                [--git-base REF] [--build-log FILE] [--full]
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
 #   --target     SR target for changes-patches (default: link origin, else Factory)
+#   --git-base   git checkout: the target's ref for changes-patches (a fork PR's
+#                upstream is the pushed fork branch, which compares clean)
 #   --build-log  also run build-summary.sh on this osc build log (verdict only)
 #   --full       print every gate's complete output (default: last 12 lines each;
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
@@ -20,15 +22,16 @@
 #       or DIR is not a package checkout (no *.spec, no .osc/_package).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-dir=.; entries=1; amend=""; target=""; buildlog=""; full=0
+dir=.; entries=1; amend=""; target=""; gitbase=""; buildlog=""; full=0
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--target|--build-log) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--target|--git-base|--build-log) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "gate.sh: --entries takes a positive integer, got '$2'" >&2; exit 2; }
                entries=$2; shift 2 ;;
     --amend-top) amend=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;
+    --git-base) gitbase=$2; shift 2 ;;
     --build-log) buildlog=$2; shift 2 ;;
     --full) full=1; shift ;;
     -*) echo "gate.sh: unknown option $1" >&2; exit 2 ;;
@@ -71,8 +74,9 @@ else
   echo "## changes-lint / changes-guard: no *.changes in $(pwd)"; red+=(changes)
 fi
 
-if [ -n "$target" ]; then "$HERE/changes-patches.sh" . --target "$target" --entries "$entries" > "$log/changes-patches.txt" 2>&1; rc=$?
-else "$HERE/changes-patches.sh" . --entries "$entries" > "$log/changes-patches.txt" 2>&1; rc=$?; fi
+cp_args=(. --entries "$entries"); [ -n "$target" ] && cp_args+=(--target "$target")
+[ -n "$gitbase" ] && cp_args+=(--git-base "$gitbase")
+"$HERE/changes-patches.sh" "${cp_args[@]}" > "$log/changes-patches.txt" 2>&1; rc=$?
 show changes-patches $rc "$log/changes-patches.txt"
 
 if [ -n "$buildlog" ]; then

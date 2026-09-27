@@ -101,5 +101,22 @@ grep -qF "foo.changes: 3 new entries vs openSUSE:Factory/foo" <<<"$out" \
   && pass "non-link checkout, explicit --target: counted against the target" \
   || { fail "non-link checkout, explicit --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# A fork-PR clone tracks the pushed fork branch, which already holds the
+# change, so changes-patches compares clean against it; --git-base names the
+# target's branch instead and gate.sh must pass it on. The fork's tracking
+# ref is set directly: nothing is pushed, and pr-guard reads this suite.
+{ g clone -q "$work/seed" "$work/forkpr" && br=$(git -C "$work/forkpr" rev-parse --abbrev-ref HEAD) \
+  && cp "$work/clone/p.changes" "$work/forkpr/p.changes" && g -C "$work/forkpr" commit -qam two \
+  && git -C "$work/forkpr" remote add fork "$work/fork.git" \
+  && git -C "$work/forkpr" update-ref "refs/remotes/fork/$br" HEAD \
+  && git -C "$work/forkpr" branch -q -u "fork/$br"; } || fail "could not build the fork-PR fixture"
+out="$(bash "$GATE" "$work/forkpr" 2>&1)"
+grep -qF "## changes-patches: rc=0" <<<"$out" && pass "fork-PR clone: its own upstream compares clean" \
+  || { fail "fork-PR clone without --git-base"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(bash "$GATE" "$work/forkpr" --git-base "origin/$br" 2>&1)"
+grep -qF "## changes-patches: rc=1" <<<"$out" && grep -qF "p.changes: 2 new entries vs origin/$br" <<<"$out" \
+  && pass "fork-PR clone, --git-base origin/$br: compared against the target" \
+  || { fail "fork-PR clone with --git-base"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
