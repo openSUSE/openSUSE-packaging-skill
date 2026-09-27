@@ -94,6 +94,8 @@ chmod +x "$W/open-pr.sh"
 printf '#!/bin/bash\nbash %s/open-pr.sh\n' "$W" > "$W/outer.sh"
 # Harmless now; the calls that run them rewrite them first.
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
+# A short long.txt where a message substitution that changes directory must not look.
+printf 'Short.\n' > "$W/long.txt"
 # The harmless scripts of a sweep loop, 64 of them.
 mkdir -p "$W/sweep" && for i in $(seq -w 1 64); do printf 'echo %s\n' "$i" > "$W/sweep/p$i.sh"; done
 # A local script named like the gate, which copies its arguments.
@@ -124,7 +126,7 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
     WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
-    DEVEL="$work/devel"
+    DEVEL="$work/devel" MSGS="$FX/messages"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -767,13 +769,82 @@ case_ osc-api-post-diff-then-commit  2 maintenance-api "an osc api POST into ope
 case_ osc-api-put-diff-query         2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
 case_ osc-api-delete-branch-query    2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
 # A request message is 1-3 sentences: over 300 characters it is refused.
-case_ osc-sr-long-message        2 request-message "an osc sr message of 380 characters"
-case_ osc-sr-message-301         2 request-message "an osc submitreq message of 301 characters"
-case_ osc-mr-long-message-eq     2 request-message "an osc mr message of 380 characters"
-case_ osc-creq-long-message-attached 2 request-message "an osc creq message of 380 characters"
+case_ osc-sr-long-message        2 request-message "an osc sr message with 380 characters of prose"
+case_ osc-sr-message-301         2 request-message "an osc submitreq message with 301 characters of prose"
+case_ osc-mr-long-message-eq     2 request-message "an osc mr message with 380 characters of prose"
+case_ osc-creq-long-message-attached 2 request-message "an osc creq message with 380 characters of prose"
 case_ osc-sr-message-200         0 - ""
 case_ osc-sr-message-300         0 - ""
 case_ osc-ci-long-message        0 - ""
+# ... wherever the message comes from: a substitution, a file, stdin, a variable,
+# a --message prefix. Only the prose counts, the text before a "- "/"* " list.
+case_ msg-subst-cat-long         2 request-message "an osc sr message with 380 characters of prose"
+# read, printf -v, declare -n and mapfile leave a value only the shell knows; a
+# substitution's files are placed where its own cd leaves it; printf widths,
+# reused formats and brace expansion are unknown; a loop's many spellings are
+# measured by their longest.
+case_ msg-read-stale             2 request-message-unknown "\$MSG"
+case_ msg-printf-v-stale         2 request-message-unknown "\$MSG"
+case_ msg-declare-n              2 request-message-unknown "\$MSG"
+case_ msg-mapfile                2 request-message-unknown "\$MSG"
+case_ msg-subst-cd               2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-subst-cd-unknown       2 request-message-unknown "a command substitution"
+case_ msg-loop-70-short          0 - ""
+case_ msg-loop-70-long           2 request-message-unknown "\$p: \$L"
+case_ msg-printf-width           2 request-message-unknown "a command substitution"
+case_ msg-printf-reuse           2 request-message-unknown "a command substitution"
+case_ msg-echo-brace             2 request-message-unknown "a command substitution"
+# Text is resolved like a -m word: stdin, here-strings, echo/printf of variables,
+# expanding heredocs, += and every writer of a substitution; unknown is refused.
+case_ msg-herestring-var-long    2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-echo-var-pipe-long     2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-printf-subst-long      2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-heredoc-expanding-long 2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-plus-equals-long       2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-subst-two-writers-long 2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-echo-unset-pipe        2 request-message-unknown "stdin"
+case_ msg-heredoc-expanding-unset 2 request-message-unknown "stdin"
+# Every line but a "- " item is prose, wherever it sits; an item is at most 100
+# characters, the message 1000.
+case_ msg-changes-bullets        2 request-message "characters of prose"
+case_ msg-changes-entries        2 request-message "characters of prose"
+case_ msg-prose-after-list       2 request-message "an osc sr message with 306 characters of prose"
+case_ msg-long-list-line         2 request-message "an osc sr message with a 132-character list line"
+case_ msg-list-over-1000         2 request-message "an osc sr message of 1144 characters"
+case_ msg-star-list              2 request-message "an osc sr message with 520 characters of prose"
+# Single quotes, $'...' and \$ are literal; $(<FILE) reads FILE.
+case_ msg-single-quoted-dollar   0 - ""
+case_ msg-ansi-c-quoted          0 - ""
+case_ msg-escaped-dollar         0 - ""
+case_ msg-double-quoted-unset    2 request-message-unknown "Fix \$UNSET handling"
+case_ msg-heredoc-quoted-dollar  0 - ""
+case_ msg-subst-redirect-long    2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-subst-redirect-short   0 - ""
+case_ msg-subst-cat-short        0 - ""
+case_ msg-subst-heredoc-long     2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-subst-heredoc-short    0 - ""
+case_ msg-file-long              2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-file-short             0 - ""
+case_ msg-file-stdin-long        2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-file-stdin-short       0 - ""
+case_ msg-var-long               2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-var-short              0 - ""
+case_ msg-var-subst-long         2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-prefix-eq-long         2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-prefix-space-long      2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-prefix-short           0 - ""
+case_ msg-prose-then-list        0 - ""
+case_ msg-inline-prose-then-list 0 - ""
+case_ msg-long-prose-then-list   2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-deletereq-long         2 request-message "an osc deletereq message with 380 characters of prose"
+case_ msg-changedevel-long       2 request-message "an osc changedevelrequest message with 380 characters of prose"
+case_ msg-dr-short               0 - ""
+# A message it cannot read now is refused.
+case_ msg-var-unset              2 request-message-unknown "Pass the message inline or from a readable file"
+case_ msg-file-missing           2 request-message-unknown "/nonexistent/message.txt"
+case_ msg-file-written           2 request-message-unknown "msg-new.txt"
+case_ msg-stdin-unknown          2 request-message-unknown "stdin"
+case_ msg-subst-unknown          2 request-message-unknown "a command substitution"
 
 echo "--- a help invocation of a guarded tool does nothing"
 case_ help-tea-create           0 - ""

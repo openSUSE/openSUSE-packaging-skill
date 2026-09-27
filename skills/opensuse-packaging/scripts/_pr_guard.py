@@ -237,7 +237,29 @@ SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
 READ_CMDS = {"diff", "showlinked", "branch"}
 OSC_GLOBAL = ("-A", "--apiurl", "--config")  # osc's global options with a value
 REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
-REQUESTS |= {"mr", "maintenancerequest"}
+REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
+REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
+# Their long options that take a value (osc 1.27.3), and the -F files that
+# are stdin.
+REQUEST_VALUED = tuple(
+    "--" + o
+    for o in "message file revision supersede action attribute release-project "
+    "incident incident-project repository accept-in-hours apiurl config setopt".split()
+)
+STDIN = ("-", "/dev/stdin")
+# printf's conversions (with any flags, width or precision), and a brace
+# expansion echo or printf would print expanded.
+PRINTF_CONV = Rx(r"%(?!%)([-+ #0]*)([0-9*]*(?:\.[0-9*]*)?)[a-zA-Z]")
+BRACES = Rx(r"\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")
+# A $ or backtick the shell takes literally (single quotes, $'...', a
+# backslash), as the literal-aware text of substitutions(lit=True) spells it.
+LIT_CHARS = {"$": "\x02", "`": "\x03"}
+UNLITERAL = str.maketrans({v: k for k, v in LIT_CHARS.items()})
+ANSI_C = Rx(r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)")
+ANSI_ESC = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f"}
+ANSI_ESC.update({"v": "\v", "e": "\x1b", "E": "\x1b"})
+# The word a command substitution leaves, naming its output in ctx.subs.
+SUB_WORD = Rx(r"\$__sub(\d+)")
 
 HEREDOC = Rx(r"(?<!<)<<(-?)[ \t]*(?:\\([A-Za-z_][\w.-]*)|([\"']?)([A-Za-z_][\w.-]*)\3)")
 SH_SHEBANG = Rx(r"#!\s*\S*/(?:env\s+)?(?:ba|z|da|k)?sh\b")
@@ -323,7 +345,10 @@ MESSAGES = {
     "project. Submit from the devel project.",
     "maintenance": "{0}: maintenance and update projects take no direct writes. "
     "Branch with osc mbranch, commit there, and file osc mr.",
-    "request-message": "{0}: keep it to 1-3 sentences; details belong in .changes.",
+    "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
+    'a list may follow as "- " lines of ≤100 characters, 1000 in all.',
+    "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
+    "message inline or from a readable file.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -398,6 +423,8 @@ class Ctx:
         self.exported = []
         self.values = {}
         self.written = set()
+        self.lit_values = {}  # the values, as literal-aware text
+        self.subs = []  # what each command substitution writes, as literal-aware text
 
 
 def git(cwd, gargs, *args):
@@ -534,32 +561,146 @@ def long_prefix(a, names):
     return hits[0] + eq + v if len(hits) == 1 else a
 
 
-def split_message(run):
-    """An osc argv without the values of -m/--message, and those values."""
-    out, msgs, i = [], [], 0
+def without_message(run):
+    """An osc argv without the value of -m/--message."""
+    out, i = [], 0
     while i < len(run):
-        a = run[i]
+        a = long_prefix(run[i], ("--message",))
         if a in ("-m", "--message"):
-            msgs += run[i + 1 : i + 2]
             i += 2
             continue
-        if a.startswith("--message="):
-            msgs.append(a[len("--message=") :])
-        elif a.startswith("-m") and len(a) > 2:
-            msgs.append(a[2:])
-        else:
+        if not (a.startswith("--message=") or a.startswith("-m") and len(a) > 2):
             out.append(a)
         i += 1
-    return out, msgs
+    return out
 
 
-def request_message(run, msgs):
-    """A request message past 1-3 sentences. -m of other subcommands is a
-    commit message, or osc api's method."""
-    sub = osc_sub(run)[0]
-    for msg in msgs if sub in REQUESTS else ():
-        if len(msg) > 300:
-            block("request-message", f"an osc {sub} message of {len(msg)} characters")
+def request_message(run, lit, ctx, cwd):
+    """A request message too long for its reviewers, or one that cannot be
+    read now. lit: the argv as literal-aware text and the stdin of the call.
+    -m of other subcommands is a commit message, or osc api's method."""
+    sub, args = osc_sub(run)
+    if sub not in REQUESTS:
+        return
+    largv, lstdin = lit or (None, None)
+    if largv is not None and len(largv) >= len(args):
+        args = largv[len(largv) - len(args) :]
+    else:  # no literal-aware text: any $ or backtick is unknown
+        args = [literal(a) if not VARIABLE.search(a) else a for a in args]
+    args = [long_prefix(a, ("--message", "--file")) for a in args]
+    for flag, word in parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]:
+        if flag not in ("-m", "--message", "-F", "--file"):
+            continue
+        is_file = flag in ("-F", "--file")
+        texts = [word]
+        if is_file:
+            names = lit_texts(word, ctx, cwd) or [None]
+            outs = [lstdin if f in STDIN else f and ("files", [f]) for f in names]
+            texts = [t for o in outs for t in piped(o, ctx, cwd) or [None]]
+        texts = [lit_texts(t, ctx, cwd) if t is not None else None for t in texts]
+        texts = None if None in texts else [t for ts in texts for t in ts]
+        if texts is None and not is_file:  # too many spellings: fine if all short
+            top = lit_texts(word, ctx, cwd, longest=True)
+            texts = top if top and len(top[0].strip()) <= 100 else None
+        if texts is None:
+            what = "a command substitution" if SUB_WORD.search(word) else word
+            what = ("stdin" if word in STDIN else f"-F {word}") if is_file else what
+            what = what.translate(UNLITERAL)
+            block("request-message-unknown", f"the osc {sub} message ({what})")
+        for fault in filter(None, map(message_fault, texts)):
+            block("request-message", f"an osc {sub} message {fault}")
+
+
+def message_fault(text):
+    """Why a request message is too long for its reviewers, or None: over 300
+    characters of prose (every line that is not a "- " list item, wherever it
+    sits), a list item over 100, or over 1000 characters in all."""
+    lines = text.strip().split("\n")
+    prose = "\n".join(ln for ln in lines if not ln.startswith("- ")).strip()
+    if len(prose) > 300:
+        return f"with {len(prose)} characters of prose"
+    item = max((len(ln) for ln in lines if ln.startswith("- ")), default=0)
+    if item > 100:
+        return f"with a {item}-character list line"
+    if len(text.strip()) > 1000:
+        return f"of {len(text.strip())} characters"
+    return None
+
+
+def literal(text):
+    """text with every $ and backtick literal."""
+    return text.translate(str.maketrans(LIT_CHARS))
+
+
+def lit_texts(text, ctx, cwd, seen=frozenset(), longest=False):
+    """Every text a literal-aware word or text stands for, its $NAME, ${NAME}
+    and command substitutions expanded from what this call set; None when
+    anything it expands is not known, or past 64 spellings. longest: only
+    the longest spelling."""
+    m = VAR_REF.search(text)
+    if not m or VARIABLE.search(text[: m.start()]):
+        return None if VARIABLE.search(text) else [text.translate(UNLITERAL)]
+    name = m.group(1) or m.group(2)
+    sub = re.fullmatch(r"__sub(\d+)", name)
+    if name in seen:
+        return None
+    if sub and int(sub.group(1)) < len(ctx.subs):
+        vals = sub_texts(ctx.subs[int(sub.group(1))], ctx, cwd)
+    elif name in ctx.lit_values:
+        vals = ctx.lit_values[name]
+    elif name in ("PWD", "TMPDIR", "HOME"):
+        vals = substitute("$" + name, ctx, cwd)
+        vals = vals and [literal(v) for v in vals]
+    else:
+        vals = None
+    tails = lit_texts(text[m.end() :], ctx, cwd, seen, longest)
+    if not vals or None in vals or tails is None:
+        return None
+    out = []
+    for v in vals:
+        heads = lit_texts(v, ctx, cwd, seen | {name}, longest)
+        if heads is None:
+            return None
+        out += [
+            text[: m.start()].translate(UNLITERAL) + h + t for h in heads for t in tails
+        ]
+    if longest:
+        return [max(out, key=len)]
+    return out if len(out) <= 64 else None
+
+
+def sub_texts(writers, ctx, cwd):
+    """The literal-aware texts a command substitution's writers put out,
+    joined in order; None when one of them cannot be read now."""
+    texts = [""]
+    for out in writers or ():
+        got = piped(out, ctx, cwd)
+        if got is None or len(texts) * len(got) > 64:
+            return None
+        texts = [t + g for t in texts for g in got]
+    return [t.rstrip("\n") for t in texts] if writers else None
+
+
+def piped(out, ctx, cwd):
+    """The literal-aware texts a command writes to a pipe (what output() says
+    it writes), read now; None when they cannot be."""
+    how, what = out or (None, None)
+    if how == "text":
+        return [what]
+    if how != "files":
+        return None
+    text = ""
+    for raw in what:
+        for path in locate(raw, ctx, cwd)[0] or [None]:
+            real = path and os.path.realpath(path)
+            if not real or written(real, ctx) or real.startswith(("/dev/", "/proc/")):
+                return None
+            try:
+                with open(real, "rb") as fh:
+                    text += literal(fh.read(MAX_BYTES).decode("utf-8", "replace"))
+            except OSError:
+                return None
+    return [text]
 
 
 def osc_project(path):
@@ -962,20 +1103,33 @@ def strip_comments(text):
     return "".join(out)
 
 
-def substitutions(text, quotes=True):
+def substitutions(text, quotes=True, base=0, lit=False):
     """(text with each $(...), `...`, <(...) and >(...) replaced by a word only
     the shell can expand, their bodies). They run even inside double quotes,
     where the tokenizer sees one word; quotes=False reads an expanding heredoc
-    body, where quote characters are literal."""
+    body, where quote characters are literal. The word of a $(...) or `...`
+    is $__subN, N its body's index counted from base. lit: the literal-aware
+    text, where a $ or backtick the shell takes literally -- single-quoted,
+    backslashed, or in a decoded $'...' -- is spelled as in LIT_CHARS."""
     out, bodies, q, i, n = [], [], None, 0, len(text)
     while i < n:
         c = text[i]
         if c == "\\" and q != "'":
-            out.append(text[i : i + 2])
+            esc = text[i + 1 : i + 2]
+            out.append(LIT_CHARS[esc] if lit and esc in LIT_CHARS else text[i : i + 2])
             i += 2
+            continue
+        if lit and not q and text.startswith("$'", i):
+            j = i + 2
+            while j < n and text[j] != "'":
+                j += 2 if text[j] == "\\" else 1
+            word = literal(ansi_c(text[i + 2 : j]))
+            out.append("'" + word.replace("'", "'\\''") + "'")
+            i = j + 1
             continue
         if q == "'":
             q = None if c == "'" else q
+            c = LIT_CHARS.get(c, c) if lit else c
         elif quotes and c == "'" and q is None:
             q = c
         elif quotes and c == '"':
@@ -984,8 +1138,8 @@ def substitutions(text, quotes=True):
             j = i + 1
             while j < n and text[j] != "`":
                 j += 2 if text[j] == "\\" else 1
+            out.append(f"$__sub{base + len(bodies)}")
             bodies.append(text[i + 1 : j])
-            out.append("$__sub")
             i = j + 1
             continue
         elif text.startswith("$(", i) or (not q and text.startswith(("<(", ">("), i)):
@@ -995,14 +1149,32 @@ def substitutions(text, quotes=True):
                 if depth == 0:
                     break
                 j += 1
-            if not text.startswith("$((", i):  # $((...)) is arithmetic
+            if text.startswith("$((", i):  # $((...)) is arithmetic
+                out.append("$__sub")
+            else:
+                out.append(
+                    f"$__sub{base + len(bodies)}" if c == "$" else " /dev/fd/63 "
+                )
                 bodies.append(text[i + 2 : j])
-            out.append("$__sub" if c == "$" else " /dev/fd/63 ")
             i = j + 1
             continue
         out.append(c)
         i += 1
     return "".join(out), bodies
+
+
+def ansi_c(text):
+    """The text of a $'...' word, its backslash escapes decoded."""
+
+    def one(m):
+        e = m.group(1)
+        if e[0] in "xuU":
+            return chr(int(e[1:], 16))
+        if e[0] in "01234567":
+            return chr(int(e, 8))
+        return ANSI_ESC.get(e, e)
+
+    return ANSI_C.sub(one, text)
 
 
 def tokenize(text):
@@ -1258,6 +1430,43 @@ def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
     api_rules("\n".join(code_lines(text)), ctx, cwd)
     if depth < MAX_DEPTH:
         shell_pass(text, ctx, cwd, depth + 1)
+
+
+def shell_assigned(name, args):
+    """The variables a command gives values only the shell knows: read,
+    mapfile/readarray, printf -v, getopts, unset, and declare -n (a name that
+    refers to another)."""
+    if name == "read":
+        opts, pos = parse_opts(args, "adinNptu")
+        return [v for k, v in opts if k == "-a"] + (pos or ["REPLY"])
+    if name in ("mapfile", "readarray"):
+        return (parse_opts(args, "dnOsuCc")[1] or ["MAPFILE"])[:1]
+    if name == "printf" and args[:1] == ["-v"]:
+        return args[1:2]
+    if name == "getopts":
+        return args[1:2]
+    if name == "unset":
+        return [a for a in args if a[:1] != "-"]
+    if name in DECLARE:
+        opts, pos = parse_opts(args, "")
+        if any(k == "-n" for k, _ in opts):
+            return [a.split("=", 1)[0] for a in pos]
+    return []
+
+
+def assign(word, lword, ctx):
+    """Remember what NAME=VALUE (or NAME+=VALUE, which appends to every value
+    the name holds) gives NAME, as written and as literal-aware text; its name."""
+    k, v = word.split("=", 1)
+    lv = lword.split("=", 1)[1] if lword and "=" in lword else None
+    k, append = k.rstrip("+"), k.endswith("+")
+    for store, val in ((ctx.values, v), (ctx.lit_values, lv)):
+        if append:
+            old = store.get(k) or ["${%s}" % k]  # the value from outside the call
+            store[k] = [None if o is None or val is None else o + val for o in old]
+        else:
+            store.setdefault(k, []).append(val)
+    return k
 
 
 def unwrap(argv):
@@ -1865,9 +2074,9 @@ def touches_stamp(name, run, outs, ctx, cwd):
     )
 
 
-def one_command(argv, redirs, stdin, ctx, cwd, depth):
+def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     """Check one simple command: (the working directory after it, what it
-    writes to a pipe)."""
+    writes to a pipe). lit: its argv and stdin as literal-aware text."""
     outs = [
         t
         for op, t in redirs
@@ -1881,11 +2090,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.
-        for a in filter(ASSIGN.match, argv):
-            k, v = a.split("=", 1)
-            k = k.rstrip("+")
-            ctx.values.setdefault(k, []).append(v)
-            if k not in CLEAN_ENV and (k in os.environ or SENSITIVE.fullmatch(k)):
+        for a, la in zip(argv, lit[0] or [None] * len(argv)):
+            k = assign(a, la, ctx) if ASSIGN.match(a) else None
+            if k and k not in CLEAN_ENV and (k in os.environ or SENSITIVE.fullmatch(k)):
                 ctx.exported.append(k)
         return cwd, None
     here = cwd if chdir is None else enter(chdir, ctx, cwd)
@@ -1893,6 +2100,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
         shell_pass(shell, ctx, here, depth)
         return cwd, ("unknown", "a wrapper")
     name = os.path.basename(run[0])
+    for k in shell_assigned(name, run[1:]):
+        ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
     out = ("unknown", name)
     joined = " ".join(run)
     if name in ("cd", "pushd"):
@@ -1901,18 +2110,25 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
         return new, None
     if name == "popd":
         return None, None
+    lrun = (
+        lit[0][len(argv) - len(run) :] if lit[0] and len(lit[0]) == len(argv) else None
+    )
     if name == "for":
         if run[2:3] == ["in"]:
             ctx.values.setdefault(run[1], []).extend(run[3:])
+            words = lrun[3:] if lrun else [None] * len(run[3:])
+            ctx.lit_values.setdefault(run[1], []).extend(words)
         return cwd, None
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
     note_writes(name, run[1:], ctx, here)
     if name in DECLARE or name == "set":
         note_env(run, ctx)
-        for a in filter(ASSIGN.match, run[1:] if name in DECLARE else ()):
-            k, v = a.split("=", 1)
-            ctx.values.setdefault(k.rstrip("+"), []).append(v)
+        for k, a in enumerate(run[1:] if name in DECLARE else (), 1):
+            if ASSIGN.match(a) and "-n" not in {
+                o for o, _ in parse_opts(run[1:], "")[0]
+            }:
+                assign(a, lrun[k] if lrun else None, ctx)
     elif VARIABLE.search(name):
         # A path held in a variable is read; a command name, judged as a tool.
         held = substitute(run[0], ctx, here)
@@ -1933,9 +2149,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
     elif name == "git":
         git_command(run, ctx, here)
     elif name == "osc":
-        rest, msgs = split_message(run)
-        osc_rules(joined, " ".join(rest))
-        request_message(run, msgs)
+        osc_rules(joined, " ".join(without_message(run)))
+        request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
@@ -1967,18 +2182,29 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
 
 def shell_pass(text, ctx, cwd, depth):
     """Walk the simple commands of shell text, following cd, subshells, and
-    pipes into a shell or interpreter."""
+    pipes into a shell or interpreter. Returns what it writes to stdout, as
+    literal-aware text: one output() per writer, in order."""
     first = len(ctx.docs)
     body = split_heredocs(text, ctx)
     for doc, expands in ctx.docs[first:]:
         if expands:
             for inner in substitutions(doc, quotes=False)[1]:
                 shell_pass(inner, ctx, cwd, depth)
-    body, inners = substitutions(strip_comments(body.replace("\\\n", " ")))
-    for inner in inners:
-        shell_pass(inner, ctx, cwd, depth)
+    base = len(ctx.subs)
+    body = strip_comments(body.replace("\\\n", " "))
+    lit = substitutions(body, base=base, lit=True)[0]
+    body, inners = substitutions(body, base=base)
+    ctx.subs += [None] * len(inners)
+    for k, inner in enumerate(inners):
+        ctx.subs[base + k] = shell_pass(inner, ctx, cwd, depth)
+    items = list(commands(arrays(tokenize(body))))
+    lits = list(commands(arrays(tokenize(lit))))
+    shape = [len(i) == 2 and (len(i[0]), len(i[1])) or i for i in items]
+    if shape != [len(i) == 2 and (len(i[0]), len(i[1])) or i for i in lits]:
+        lits = [None] * len(items)  # a literal $'...' split otherwise: all unknown
     stack, out, piped, case, pattern = [], None, None, 0, False
-    for item in commands(arrays(tokenize(body))):
+    writers, lpiped = [], None
+    for item, litem in zip(items, lits):
         head = [w for w in item[0] if w not in KEYWORDS][:1] if len(item) == 2 else []
         # A case clause's patterns, up to its ")", are words, not commands.
         if pattern:
@@ -1992,22 +2218,72 @@ def shell_pass(text, ctx, cwd, depth):
             pattern = case > 0
         elif item == "|":
             piped = out
+            lpiped = writers.pop() if writers else None
         elif item == "(":
             stack.append(cwd)
         elif item == ")":
             cwd = stack.pop() if stack else cwd
             out = ("unknown", "a subshell")
+            writers.append(out)
         else:
             argv, redirs = item
+            largv, lredirs = litem or (None, None)
             stdin, piped = piped, None
-            for op, word in redirs:
+            lstdin, lpiped = lpiped, None
+            for k, (op, word) in enumerate(redirs):
+                lword = lredirs[k][1] if lredirs else None
                 if op == "<<" and word[:1] == "\x01" and word[1:].isdigit():
-                    stdin = ("text", ctx.docs[int(word[1:])][0])
+                    doc, expands = ctx.docs[int(word[1:])]
+                    stdin, lstdin = (
+                        ("text", doc),
+                        ("text", doc if expands else literal(doc)),
+                    )
                 elif op == "<<<":
-                    stdin = ("text", word)
+                    stdin, lstdin = ("text", word), lword and ("text", lword)
                 elif op == "<":
-                    stdin = ("files", [word])
-            cwd, out = one_command(argv, redirs, stdin, ctx, cwd, depth)
+                    stdin = lstdin = ("files", [word])
+            lit = (largv, lstdin)
+            before = cwd
+            cwd, out = one_command(argv, redirs, stdin, ctx, cwd, depth, lit)
+            writers.append(placed(lit_output(argv, redirs, out, lit), ctx, before))
+    return [w for w in writers if w is not None]
+
+
+def placed(out, ctx, cwd):
+    """out with the files it names placed where the writer ran: cwd."""
+    if not out or out[0] != "files":
+        return out
+    paths = [locate(raw, ctx, cwd)[0] for raw in out[1]]
+    if None in paths:
+        return ("unknown", "a file where only the shell can place it")
+    return ("files", [p for ps in paths for p in ps])
+
+
+def lit_output(argv, redirs, out, lit):
+    """What a command writes to stdout (out, as output() says), as
+    literal-aware text: echo, printf and cat from their literal-aware words,
+    a bare < FILE, as in $(<FILE), its file; None for nothing."""
+    largv, lstdin = lit
+    run = unwrap(argv)[0]
+    if not argv and any(op == "<" for op, _ in redirs):
+        return lstdin
+    if (
+        out is None
+        or not run
+        or os.path.basename(run[0]) not in ("echo", "printf", "cat")
+    ):
+        return out
+    if largv is None or len(largv) != len(argv):
+        return ("unknown", "text the guard could not read literally")
+    lrun = largv[len(argv) - len(run) :]
+    name, args = os.path.basename(run[0]), lrun[1:]
+    if any(BRACES.search(a) for a in args):
+        return ("unknown", "a brace expansion")
+    if name == "printf" and args and args[0] != "-v":
+        convs = PRINTF_CONV.findall(args[0])
+        if any(c[1] for c in convs) or len(args) - 1 > len(convs):
+            return ("unknown", "a printf width, precision or reused format")
+    return output(name, args, lstdin) or ("unknown", "text")
 
 
 def check_write(path, content, ctx):

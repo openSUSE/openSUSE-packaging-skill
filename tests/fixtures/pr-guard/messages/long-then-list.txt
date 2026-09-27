@@ -1,0 +1,10 @@
+Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.
+
+- consumer: gimagereader builds against the new soname and was rebuilt locally
+- consumer: ocrmypdf builds against the new soname and was rebuilt locally
+- consumer: paperwork builds against the new soname and was rebuilt locally
+- consumer: tesseract-langpack builds against the new soname and was rebuilt locally
+- consumer: python-pytesseract builds against the new soname and was rebuilt locally
+- consumer: kraken builds against the new soname and was rebuilt locally
+- consumer: scantailor builds against the new soname and was rebuilt locally
+- consumer: gscan2pdf builds against the new soname and was rebuilt locally
