@@ -98,6 +98,8 @@ def tea(sub):
 
 TEA_MERGE, TEA_MERGE_ARGV = tea("merge|m")
 TEA_CREATE, TEA_CREATE_ARGV = tea("create|c")
+# tea's flags parse Go-style: a long option may take a single dash.
+TEA_LONG = Rx(r"^-(?=[A-Za-z][\w-]+(?:=|$))")
 TEA_API = Rx(r"\btea\b.*?(?<![-\w])api(?![-\w])")
 # A method that is not a literal GET or HEAD: a write, or one the text hides.
 METHOD = (
@@ -2482,9 +2484,14 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
         pass
     elif name == "tea":
-        wide = " ".join([joined, *expansions(run[1:], ctx, here)])
-        tea_api_merge(wide, ctx, here, only_reads("tea", run[1:]))
-        tool_rules(" ".join(["tea", *run[1:]]), ctx, here, argv=True)
+        args = [TEA_LONG.sub("--", a) for a in run[1:]]  # Go takes -repo as --repo
+        wide = " ".join(["tea", *args, *expansions(args, ctx, here)])
+        reads = only_reads("tea", args)
+        tea_api_merge(wide, ctx, here, reads)
+        tool_rules(" ".join(["tea", *args]), ctx, here, argv=True)
+        if TEA_API.search(wide) and "pulls" in wide and not reads:
+            if pool_or_unknown(wide, ctx, here, cmd=True):
+                block("create-tea-api", "a tea api write to pool pulls")
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])

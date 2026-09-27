@@ -4938,5 +4938,33 @@
       "command": "T=openSUSE:Factory; osc sr devel:tools tesseract-ocr \"$T\" -m 'Update to 5.5.3'"
     },
     "cwd": "@CLONE@"
+  },
+  "tea-create-single-dash-repo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pr create -repo pool/tesseract-ocr -title 'Update' -head someone:x -base leap-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "tea-api-pulls-single-dash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -method POST -data @pr.json repos/pool/tesseract-ocr/pulls"
+    },
+    "cwd": "@OTHER@"
+  },
+  "tea-create-single-dash-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pr create -repo AI/mistral-vibe -title 'Update' -head someone:x -base factory"
+    },
+    "cwd": "@OTHER@"
+  },
+  "tea-api-pulls-get-single-dash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -repo pool/tesseract-ocr repos/pool/tesseract-ocr/pulls"
+    },
+    "cwd": "@OTHER@"
   }
 }
