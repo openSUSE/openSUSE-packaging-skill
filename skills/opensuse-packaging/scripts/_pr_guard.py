@@ -10,6 +10,7 @@ PIN_REF = "refs/remotes/origin/main"
 CLEAN_ENV = {"TMPDIR", "LC_ALL", "LANG", "NO_COLOR", "CHANGES_AUTHOR"}
 MAX_DEPTH = 4
 MAX_BYTES = 8 << 20
+EXPANDED = 64 << 10  # characters a variable's expansions may reach
 
 
 class Rx:
@@ -764,11 +765,19 @@ def literal(text):
     return text.translate(str.maketrans(LIT_CHARS))
 
 
-def lit_texts(text, ctx, cwd, seen=frozenset(), longest=False):
+def lit_texts(text, ctx, cwd, seen=frozenset(), longest=False, memo=None):
     """Every text a literal-aware word or text stands for, its $NAME, ${NAME}
     and command substitutions expanded from what this call set; None when
-    anything it expands is not known, or past 64 spellings. longest: only
-    the longest spelling."""
+    anything it expands is not known, past 64 spellings or EXPANDED
+    characters. longest: only the longest spelling."""
+    memo = {} if memo is None else memo
+    if (text, seen, longest) not in memo:
+        got = _lit_texts(text, ctx, cwd, seen, longest, memo)
+        memo[text, seen, longest] = capped(got)
+    return memo[text, seen, longest]
+
+
+def _lit_texts(text, ctx, cwd, seen, longest, memo):
     m = VAR_REF.search(text)
     if not m or VARIABLE.search(text[: m.start()]):
         return None if VARIABLE.search(text) else [text.translate(UNLITERAL)]
@@ -785,12 +794,12 @@ def lit_texts(text, ctx, cwd, seen=frozenset(), longest=False):
         vals = vals and [literal(v) for v in vals]
     else:
         vals = None
-    tails = lit_texts(text[m.end() :], ctx, cwd, seen, longest)
+    tails = lit_texts(text[m.end() :], ctx, cwd, seen, longest, memo)
     if not vals or None in vals or tails is None:
         return None
     out = []
     for v in vals:
-        heads = lit_texts(v, ctx, cwd, seen | {name}, longest)
+        heads = lit_texts(v, ctx, cwd, seen | {name}, longest, memo)
         if heads is None:
             return None
         out += [
@@ -1526,11 +1535,24 @@ def resolve(raw, cwd):
     return os.path.normpath(p), None
 
 
-def substitute(word, ctx, cwd, seen=frozenset()):
+def substitute(word, ctx, cwd, seen=frozenset(), memo=None):
     """Every spelling of word once its $NAME and ${NAME} are replaced by what
     this call assigned them (a for loop assigns each of its words), $PWD by
     the tracked directory, $TMPDIR and $HOME by the environment; None when
-    anything else only the shell knows is left, or past 64 spellings."""
+    anything else only the shell knows is left, past 64 spellings, or past
+    EXPANDED characters (a value that doubles itself)."""
+    memo = {} if memo is None else memo
+    if (word, seen) not in memo:
+        memo[word, seen] = capped(_substitute(word, ctx, cwd, seen, memo))
+    return memo[word, seen]
+
+
+def capped(spellings):
+    too_long = spellings and sum(map(len, spellings)) > EXPANDED
+    return None if too_long else spellings
+
+
+def _substitute(word, ctx, cwd, seen, memo):
     m = VAR_REF.search(word)
     if not m:
         return None if VARIABLE.search(word) else [word]
@@ -1545,10 +1567,10 @@ def substitute(word, ctx, cwd, seen=frozenset()):
         vals = None
     if not vals or name in seen:
         return None
-    tails = substitute(word[m.end() :], ctx, cwd, seen)
+    tails = substitute(word[m.end() :], ctx, cwd, seen, memo)
     out = []
     for v in vals:
-        heads = substitute(v, ctx, cwd, seen | {name})
+        heads = substitute(v, ctx, cwd, seen | {name}, memo)
         if heads is None or tails is None:
             return None
         out += [word[: m.start()] + h + t for h in heads for t in tails]
@@ -2302,15 +2324,19 @@ def in_stamps(text, ctx, cwd):
     return False
 
 
-def held(word, ctx, seen=frozenset()):
+def held(word, ctx):
     """The values this call gave the variables a word names, and theirs, as
-    written: a value built on a substitution never expands, yet names a path."""
-    out = []
-    for a, b in VAR_REF.findall(word):
-        name = a or b
-        if name not in seen:
-            for v in ctx.values.get(name, ()):
-                out += [v, *held(v, ctx, seen | {name})]
+    written: a value built on a substitution never expands, yet names a path.
+    Each variable is visited once, so a value that doubles stays cheap."""
+    out, todo, seen = [], [word], set()
+    while todo:
+        for a, b in VAR_REF.findall(todo.pop()):
+            name = a or b
+            if name not in seen:
+                seen.add(name)
+                vals = ctx.values.get(name) or []
+                out += vals
+                todo += vals
     return out
 
 
