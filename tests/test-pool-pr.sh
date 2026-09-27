@@ -2,10 +2,10 @@
 # test-pool-pr.sh — proves scripts/pool-pr.sh creates or moves a pool PR only
 # behind a green target-gate.sh, and that leap-sync.sh syncs and builds but
 # never pushes. Copies of both scripts run next to a fake target-gate.sh, with
-# fake curl and tea and a git wrapper on PATH that record every network write
-# and stub push and git-lfs; leap-sync.sh clones a local forge through
-# url.insteadOf. All offline. Each negative case trips exactly one branch and
-# asserts its message. Exit 0 = all assertions hold.
+# fake git-obs and tea and a git wrapper on PATH that record every network
+# write and stub push and git-lfs; leap-sync.sh clones a local forge through
+# url.insteadOf. HOME holds no credential file. All offline. Each negative case
+# trips exactly one branch and asserts its message. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -18,7 +18,7 @@ REALGIT="$(command -v git)" || { echo "FAIL: git not found"; exit 1; }
 # Not $TMPDIR: leap-sync.sh refuses a --dir under /tmp, and that is where it may point.
 work="$(mktemp -d /var/tmp/test-pool-pr.XXXXXX)"; trap 'rm -rf "$work"' EXIT
 S="$work/scripts"; EV="$work/events"
-mkdir -p "$S" "$work/bin" "$work/py" "$work/home/.config/tea" "$work/forge/pool"
+mkdir -p "$S" "$work/bin" "$work/home" "$work/forge/pool"
 cp "$SK/pool-pr.sh" "$SK/leap-sync.sh" "$S/"
 
 # --- fakes -------------------------------------------------------------------
@@ -30,7 +30,6 @@ exit "${FAKE_GATE_RC:-0}"
 EOF
 cat > "$work/bin/git" <<'EOF'
 #!/bin/bash
-printf 'git %s\n' "$*" >> "$ARGV"
 a=("$@"); i=0
 while [ $i -lt ${#a[@]} ]; do
   case "${a[$i]}" in -C|-c) i=$((i+2));; -*) i=$((i+1));; *) break;; esac
@@ -42,16 +41,12 @@ if [ -n "${FAKE_GIT_FAIL:-}" ] && { [ "$FAKE_GIT_FAIL" = "$sub" ] || [ "$FAKE_GI
 fi
 case "$sub" in
   push) printf 'push %s\n' "$*" >> "$EV"
-        # What the credential helper answers, and the mode of its directory and
-        # of every file in it that holds the token.
-        if [ -n "${GIT_ASKPASS:-}" ]; then
-          sd=$(dirname "$GIT_ASKPASS"); m="dir=$(stat -c %a "$sd")"
-          for f in "$sd"/*; do grep -qF t0ken "$f" && m+=" ${f##*/}=$(stat -c %a "$f")"; done
-          printf 'askpass user=%s pass=%s %s\n' "$("$GIT_ASKPASS" 'Username for x')" "$("$GIT_ASKPASS" 'Password for x')" "$m" >> "$EV"
-        fi
+        [ -z "${GIT_ASKPASS:-}" ] || printf 'askpass %s\n' "$GIT_ASKPASS" >> "$EV"
         exit "${FAKE_PUSH_RC:-0}";;
   lfs) case "$nxt" in
-         push) printf 'lfs-push %s\n' "$*" >> "$EV"; exit 0;;
+         push) printf 'lfs-push %s\n' "$*" >> "$EV"
+               [ -z "${GIT_ASKPASS:-}" ] || printf 'askpass %s\n' "$GIT_ASKPASS" >> "$EV"
+               exit 0;;
          fsck) exit "${FAKE_FSCK_RC:-0}";;
          ls-files) [ -z "${FAKE_OID:-}" ] || echo "$FAKE_OID * foo-2.0.tar.gz"; exit 0;;
          fetch) printf 'lfs-fetch %s\n' "$*" >> "$EV"
@@ -73,84 +68,57 @@ case "$sub" in
 esac
 exec "$REALGIT" "$@"
 EOF
-cat > "$work/bin/curl" <<'EOF'
+# git-obs reads its own login; the fake answers as the user "tester".
+cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
-printf 'curl %s\n' "$*" >> "$ARGV"
-m=GET; url=""; data=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -X) m=$2; shift 2;;
-    -d) data=$2; shift 2;;
-    -H) h=$2; [ "${h#@}" = "$h" ] || h=$(cat "${h#@}"); printf 'hdr %s\n' "$h" >> "$EV"; shift 2;;
-    --max-time) shift 2;;
-    -*) shift;;
-    *) url=$1; shift;;
-  esac
+# Every call names the forge: the default login may be another forge's.
+[ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
+shift 3
+if [ "$1" = repo ]; then
+  printf 'fork %s\n' "$*" >> "$EV"
+  [ -z "${FAKE_FORK_OUT:-}" ] || echo "$FAKE_FORK_OUT" >&2
+  exit "${FAKE_FORK_RC:-0}"
+fi
+[ "$1" = api ] || { echo "fake git-obs: unexpected $1" >&2; exit 99; }
+shift; m=GET; data=""
+while [ $# -gt 1 ]; do
+  case "$1" in -X) m=$2; shift 2;; --data) data=$2; shift 2;; *) break;; esac
 done
-printf 'curl %s %s %s\n' "$m" "$url" "$data" >> "$EV"
-[ "${FAKE_CURL_FAIL:-}" = "$m" ] && { echo "curl: (6) Could not resolve host" >&2; exit 6; }
-case "$m" in
+path=$1
+printf 'api %s %s %s\n' "$m" "$path" "$data" >> "$EV"
+# As git-obs does: an HTTP error is exit 1 and one ERROR line.
+[ "${FAKE_API_FAIL:-}" = "$m" ] && { echo "ERROR: 409 Conflict: b'{\"message\":\"refused\"}'" >&2; exit 1; }
+case "$m $path" in
+  "GET /user")
+    [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
+    u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}";;
   # FAKE_PRS_ENDLESS: 30 full pages, past pool-pr.sh's cap, so a lost cap shows
   # as a PR opened rather than a hang.
-  GET) p=${url##*page=}
-       [ -n "${FAKE_PRS_ENDLESS:-}" ] && [ "$p" -le 30 ] 2>/dev/null && { cat "$FAKE_PRS_ENDLESS"; exit 0; }
-       case "$url" in
-         *page=1|*limit=50) cat "${FAKE_PRS:-$EMPTY}";;
-         *page=2) cat "${FAKE_PRS2:-$EMPTY}";;
-         *) cat "$EMPTY";;
-       esac;;
-  POST) if [ -n "${FAKE_RESP:-}" ]; then echo "$FAKE_RESP"
-        else echo '{"number": 12, "html_url": "https://src.opensuse.org/pool/foo/pulls/12"}'; fi;;
-  PATCH) n=${url##*/}; echo "{\"number\": $n, \"html_url\": \"https://src.opensuse.org/pool/foo/pulls/$n\"}";;
+  GET*) [ -z "${FAKE_PRS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
+        p=${path##*page=}
+        [ -n "${FAKE_PRS_ENDLESS:-}" ] && [ "$p" -le 30 ] 2>/dev/null && { cat "$FAKE_PRS_ENDLESS"; exit 0; }
+        case "$path" in
+          *page=1|*limit=50) cat "${FAKE_PRS:-$EMPTY}";;
+          *page=2) cat "${FAKE_PRS2:-$EMPTY}";;
+          *) cat "$EMPTY";;
+        esac;;
+  POST*) if [ -n "${FAKE_RESP:-}" ]; then echo "$FAKE_RESP"
+         else echo '{"number": 12, "html_url": "https://src.opensuse.org/pool/foo/pulls/12"}'; fi;;
+  PATCH*) n=${path##*/}; echo "{\"number\": $n, \"html_url\": \"https://src.opensuse.org/pool/foo/pulls/$n\"}";;
 esac
 EOF
+# A tripwire: the scripts fork and write through git-obs, never tea.
 cat > "$work/bin/tea" <<'EOF'
 #!/bin/bash
-printf 'tea %s\n' "$*" >> "$ARGV"
 printf 'tea %s\n' "$*" >> "$EV"
-[ -z "${FAKE_TEA_OUT:-}" ] || echo "$FAKE_TEA_OUT" >&2
-exit "${FAKE_TEA_RC:-0}"
 EOF
-# Only records argv: every command line the scripts run is checked for the token.
-cat > "$work/bin/python3" <<'EOF'
-#!/bin/bash
-printf 'python3 %s\n' "$*" >> "$ARGV"
-exec "$REALPY" "$@"
-EOF
-REALPY="$(command -v python3)" || { echo "FAIL: python3 not found"; exit 1; }
 chmod +x "$S"/*.sh "$work/bin"/*
-# JSON is YAML: the stub lets the scripts' tea-config loader run without PyYAML.
-printf 'import json\n\n\ndef safe_load(s):\n    return json.loads(s if isinstance(s, str) else s.read())\n' > "$work/py/yaml.py"
-TEACONF='{"logins": [{"name": "src.opensuse.org", "token": "t0ken", "user": "tester"}]}'
-printf '%s\n' "$TEACONF" > "$work/home/.config/tea/config.yml"
-mkdir -p "$work/home-nouser/.config/tea"
-printf '%s\n' '{"logins": [{"name": "src.opensuse.org", "token": "t0ken", "user": ""}]}' > "$work/home-nouser/.config/tea/config.yml"
-# The file tea writes, read with no PyYAML importable.
-mkdir -p "$work/home-yaml/.config/tea" "$work/noyaml"
-printf 'raise ImportError("no PyYAML here")\n' > "$work/noyaml/yaml.py"
-cat > "$work/home-yaml/.config/tea/config.yml" <<'EOF'
-logins:
-    - name: git.example.org
-      url: https://git.example.org
-      token: not-this-one
-      user: someone
-    - name: src.opensuse.org
-      url: https://src.opensuse.org
-      token: t0ken
-      default: true
-      ssh_agent: false
-      user: tester
-preferences:
-    editor: false
-    flag_defaults:
-        remote: ""
-EOF
+# Credential files that exist but cannot be read: nothing may need them.
+mkdir -p "$work/home-locked/.config/tea/config.yml" "$work/home-locked/.config/osc"
+echo '[https://api.opensuse.org]' > "$work/home-locked/.config/osc/oscrc" && chmod 000 "$work/home-locked/.config/osc/oscrc"
 EMPTY="$work/empty.json"; echo '[]' > "$EMPTY"
-ARGV="$work/argv"
-# Token files must not rely on the caller's umask.
-umask 022
-export EV ARGV REALGIT REALPY EMPTY
-export PATH="$work/bin:$PATH" PYTHONPATH="$work/py" HOME="$work/home" GIT_CONFIG_NOSYSTEM=1
+export EV REALGIT EMPTY
+export PATH="$work/bin:$PATH" HOME="$work/home" GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # leap-sync.sh's src.opensuse.org URLs resolve to the local forge.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$work/forge/.insteadOf" GIT_CONFIG_VALUE_0="https://src.opensuse.org/"
@@ -169,7 +137,7 @@ at() { grep -nE -- "$1" "$EV" | head -1 | cut -d: -f1; }
 run_() {
   local script=$1 name=$2 rc=$3 msg=$4 envs=(); shift 4
   while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
-  : > "$EV"; : > "$ARGV"
+  : > "$EV"
   out="$(env ${envs[@]+"${envs[@]}"} "$S/$script" "$@" 2>&1)"; got=$?
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"
@@ -180,17 +148,12 @@ run_() {
 pp() { run_ pool-pr.sh "$@"; }
 ls_() { run_ leap-sync.sh "$@"; }
 nowrites() {  # nothing but the gate reached the network
-  [ "$(n_of '^(push|lfs-push|tea|curl) ')" = 0 ] && pass "$1: no network call after the gate" \
+  [ "$(n_of '^(push|lfs-push|api|fork|tea) ')" = 0 ] && pass "$1: no network call after the gate" \
     || { fail "$1: network calls recorded"; sed 's/^/    event: /' "$EV"; }
 }
 nopush() {
-  [ "$(n_of '^(push|lfs-push) |^curl (POST|PATCH) ')" = 0 ] && pass "$1: nothing pushed, no PR written" \
+  [ "$(n_of '^(push|lfs-push) |^api (POST|PATCH) ')" = 0 ] && pass "$1: nothing pushed, no PR written" \
     || { fail "$1: push or PR write recorded"; sed 's/^/    event: /' "$EV"; }
-}
-notoken() {  # the token reached no command line, and did reach curl's header
-  ! grep -qF t0ken "$ARGV" && grep -qx 'hdr Authorization: token t0ken' "$EV" \
-    && pass "$1: token on no command line, sent as a header from a file" \
-    || { fail "$1: token on a command line, or no auth header"; grep -F t0ken "$ARGV" | sed 's/^/    argv: /'; }
 }
 
 # mkclone <dir> [upstream branch] [origin url] — a pool clone one commit ahead of its upstream
@@ -237,10 +200,10 @@ C4="$work/c4"; mkclone "$C4" factory
 pp upstream-not-leap 2 "tracks 'origin/factory', not origin/leap-16.x" -- "$C4"
 pp lfs-objects-missing 2 "missing or corrupt here" FAKE_FSCK_RC=1 -- "$C"
 nowrites lfs-objects-missing
-pp no-tea-login 2 "no src.opensuse.org token" "HOME=$work/nohome" -- "$C"
-nowrites no-tea-login
-pp no-tea-user 2 "could not determine your src.opensuse.org username" "HOME=$work/home-nouser" -- "$C"
-nowrites no-tea-user
+pp no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- "$C"
+nopush no-login
+pp login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- "$C"
+nopush login-unparseable
 pp lfs-ls-files-fails 2 "git lfs ls-files failed" "FAKE_GIT_FAIL=lfs ls-files" -- "$C"
 nowrites lfs-ls-files-fails
 pp title-needs-value 2 "--title needs a value" -- "$C" --title
@@ -257,7 +220,7 @@ C5="$work/c5"; mkclone "$C5"
 pp no-head-commit 2 "no HEAD commit" -- "$C5"
 
 # The open-PR lookup: a failure never reads as "no PR".
-pp pr-list-network 6 "could not list open PRs" FAKE_CURL_FAIL=GET -- "$C"
+pp pr-list-network 6 "could not list open PRs on pool/foo: ERROR: Failed to establish a new connection" FAKE_PRS_FAIL=1 -- "$C"
 nopush pr-list-network
 echo '{"message": "token is required"}' > "$work/bad.json"
 pp pr-list-unparseable 6 "cannot rule out a duplicate" "FAKE_PRS=$work/bad.json" -- "$C"
@@ -289,28 +252,24 @@ nopush pr-list-odd-entry
 
 # Write failures stop the flow and say so.
 pp push-fails 6 "push to tester/foo:$NEWHEAD failed" FAKE_PUSH_RC=1 -- "$C"
-[ "$(n_of '^curl (POST|PATCH) ')" = 0 ] && pass "push-fails: no PR opened over a failed push" || fail "push-fails: PR written"
+[ "$(n_of '^api (POST|PATCH) ')" = 0 ] && pass "push-fails: no PR opened over a failed push" || fail "push-fails: PR written"
 pp post-rejected 6 "PR POST rejected" 'FAKE_RESP={"message": "pull request already exists"}' -- "$C"
-pp post-network 6 "PR POST failed (network?)" FAKE_CURL_FAIL=POST -- "$C"
+pp post-http-error 6 "PR POST failed: ERROR: 409 Conflict" FAKE_API_FAIL=POST -- "$C"
 pp lfs-push-fails 6 "LFS object push to tester/foo failed" "FAKE_OID=$OID" "FAKE_GIT_FAIL=lfs push" -- "$C"
 nopush lfs-push-fails
-# A fork error is shown, then the push decides; an existing fork is not an error.
-pp fork-error-surfaced 0 "tea repo fork failed: fork quota exceeded" FAKE_TEA_RC=1 "FAKE_TEA_OUT=fork quota exceeded" -- "$C"
-for m in "already exists" "repository is already forked"; do
-  pp "fork-exists ($m)" 0 "PR opened" FAKE_TEA_RC=1 "FAKE_TEA_OUT=$m" -- "$C"
-  ! grep -qF "tea repo fork failed" <<<"$out" && pass "fork-exists ($m): reused silently" || fail "fork-exists ($m): reported as a failure"
-done
-mkdir -p "$work/sec"
-pp token-dir-removed 0 "PR opened" "TMPDIR=$work/sec" -- "$C"
-[ -z "$(ls -A "$work/sec")" ] && pass "token-dir-removed: no token file outlives the run" || fail "token-dir-removed: left $(ls -A "$work/sec")"
-pp token-no-pyyaml 0 "PR opened" "HOME=$work/home-yaml" "PYTHONPATH=$work/noyaml" -- "$C"
-grep -q '^askpass user=tester pass=t0ken ' "$EV" && notoken token-no-pyyaml \
-  || { fail "token-no-pyyaml: tea's config not read without PyYAML"; grep '^askpass' "$EV" | sed 's/^/    event: /'; }
+# A fork error is shown, then the push decides; git-obs reuses an existing fork.
+pp fork-error-surfaced 0 "git-obs repo fork failed: ERROR: 403 Forbidden: fork quota exceeded" FAKE_FORK_RC=1 "FAKE_FORK_OUT=ERROR: 403 Forbidden: fork quota exceeded" -- "$C"
+pp fork-exists 0 "PR opened" "FAKE_FORK_OUT= * Fork already exists: tester/foo" -- "$C"
+! grep -qF "fork failed" <<<"$out" && pass "fork-exists: reused silently" || fail "fork-exists: reported as a failure"
+mkdir -p "$work/scratch"
+pp tmp-dir-removed 0 "PR opened" "TMPDIR=$work/scratch" -- "$C"
+[ -z "$(ls -A "$work/scratch")" ] && pass "tmp-dir-removed: no file outlives the run" || fail "tmp-dir-removed: left $(ls -A "$work/scratch")"
+pp credentials-unreadable 0 "PR opened" "HOME=$work/home-locked" -- "$C"
 
 # Happy path: gate, then exactly one push, then exactly one POST.
 pp open-new 0 "PR opened: https://src.opensuse.org/pool/foo/pulls/12" "FAKE_OID=$OID" -- "$C"
-g=$(at '^gate '); lp=$(at '^lfs-push '); pu=$(at '^push '); po=$(at '^curl POST ')
-[ "$(n_of '^push ')" = 1 ] && [ "$(n_of '^curl POST ')" = 1 ] && [ "$(n_of '^curl PATCH ')" = 0 ] \
+g=$(at '^gate '); lp=$(at '^lfs-push '); pu=$(at '^push '); po=$(at '^api POST ')
+[ "$(n_of '^push ')" = 1 ] && [ "$(n_of '^api POST ')" = 1 ] && [ "$(n_of '^api PATCH ')" = 0 ] \
   && pass "open-new: exactly one push and one POST" || fail "open-new: push/POST counts wrong"
 [ -n "$g" ] && [ -n "$lp" ] && [ -n "$pu" ] && [ -n "$po" ] && [ "$g" -lt "$lp" ] && [ "$lp" -lt "$pu" ] && [ "$pu" -lt "$po" ] \
   && pass "open-new: order is gate, LFS objects, ref, POST" || { fail "open-new: wrong order"; sed 's/^/    event: /' "$EV"; }
@@ -319,32 +278,30 @@ grep -q "^push .* --no-verify fork $SHA:refs/heads/$NEWHEAD\$" "$EV" && ! grep -
 grep -q "^lfs-push .*--object-id fork $OID\$" "$EV" && pass "open-new: the tree's LFS objects pushed by id" || fail "open-new: lfs push argv"
 grep -qF "\"head\": \"tester:$NEWHEAD\", \"base\": \"leap-16.0\", \"title\": \"Update to 2.0\", \"body\": \"Synced body.\"" "$EV" \
   && pass "open-new: POST names head, base, and HEAD's subject/body" || fail "open-new: POST payload $(grep POST "$EV")"
-grep -q "^tea repo fork --repo pool/foo" "$EV" && pass "open-new: fork ensured" || fail "open-new: no tea fork"
+grep -qx "fork repo fork pool/foo" "$EV" && [ "$(n_of '^tea ')" = 0 ] && pass "open-new: fork ensured through git-obs" || fail "open-new: no git-obs fork"
 grep -qF "sr-status.py --pr pool/foo#12" <<<"$out" && pass "open-new: next step printed" || fail "open-new: no next step"
-grep -qE '^askpass user=tester pass=t0ken dir=700( [^ =]+=600)+$' "$EV" \
-  && pass "open-new: git gets the token from the helper; token files 0600 in a 0700 directory" \
-  || fail "open-new: $(grep '^askpass' "$EV" | sed 's/pass=[^ ]*/pass=.../')"
-notoken open-new
+[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo.git" ] && [ "$(n_of '^askpass ')" = 0 ] \
+  && pass "open-new: objects and ref go over SSH, no credential helper" \
+  || fail "open-new: fork url $("$REALGIT" -C "$C" config --get remote.fork.url), $(grep '^askpass' "$EV")"
 
 # Your open PR on the base, HEAD a fix on top of its head: force-push onto its
 # head, PATCH the title only.
 prs "$P" "$(prj 5 leap-16.0 leap-16.0-sync-1.0 tester "" "$PREV")" "$(prj 6 leap-16.1 other-head tester)"
 pp update-existing 0 "PR updated: https://src.opensuse.org/pool/foo/pulls/5" "FAKE_PRS=$P" -- --title "Update to 2.0 (refresh)" "$C"
-[ "$(n_of '^push ')" = 1 ] && [ "$(n_of '^curl PATCH .*/pulls/5 ')" = 1 ] && [ "$(n_of '^curl POST ')" = 0 ] && [ "$(n_of '^tea ')" = 0 ] \
+[ "$(n_of '^push ')" = 1 ] && [ "$(n_of '^api PATCH .*/pulls/5 ')" = 1 ] && [ "$(n_of '^api POST ')" = 0 ] && [ "$(n_of '^(tea|fork) ')" = 0 ] \
   && pass "update-existing: one push, one PATCH, no POST, no fork" || { fail "update-existing: wrong calls"; sed 's/^/    event: /' "$EV"; }
-grep -q "^push .* --force fork $SHA:refs/heads/leap-16.0-sync-1.0\$" "$EV" && [ "$(at '^push ')" -lt "$(at '^curl PATCH ')" ] \
+grep -q "^push .* --force fork $SHA:refs/heads/leap-16.0-sync-1.0\$" "$EV" && [ "$(at '^push ')" -lt "$(at '^api PATCH ')" ] \
   && pass "update-existing: force-pushed onto the PR's own head, before the PATCH" || fail "update-existing: push argv $(grep '^push' "$EV")"
 grep -qF '{"title": "Update to 2.0 (refresh)"}' "$EV" && pass "update-existing: PATCH carries the title, keeps the body" || fail "update-existing: PATCH payload $(grep PATCH "$EV")"
-notoken update-existing
 prs "$P" "$(prj 5 leap-16.0 sync tester tester/foo-renamed "$PREV")"
 printf 'New body.\n' > "$work/body.txt"
 pp update-own-head-repo 0 "PR updated" "FAKE_PRS=$P" -- --body-file "$work/body.txt" "$C"
-[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "https://src.opensuse.org/tester/foo-renamed.git" ] \
+[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo-renamed.git" ] \
   && pass "update-own-head-repo: pushes to the PR's head repo" || fail "update-own-head-repo: fork url $("$REALGIT" -C "$C" config --get remote.fork.url)"
 grep -qF '"body": "New body."' "$EV" && pass "update-own-head-repo: --body-file replaces the body" || fail "update-own-head-repo: body not sent"
 prs "$P" "$(prj 5 leap-16.0 sync tester "" "$PREV" | sed 's/, "full_name": "[^"]*"//')"
 pp update-no-head-repo 0 "PR updated" "FAKE_PRS=$P" -- "$C"
-[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "https://src.opensuse.org/tester/foo.git" ] \
+[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo.git" ] \
   && pass "update-no-head-repo: falls back to your fork" || fail "update-no-head-repo: fork url $("$REALGIT" -C "$C" config --get remote.fork.url)"
 
 # Your open PR's head is not in HEAD (say a CVE backport, then a sync): pushing
@@ -361,7 +318,7 @@ pp update-head-unlisted 2 "pushing would drop its commits" "FAKE_PRS=$P" -- "$C"
 nopush update-head-unlisted
 prs "$P" "$(prj 5 leap-16.0 leap-16.0-cve tester "" "$SIDE")"
 pp update-replace 0 "PR updated (head replaced): https://src.opensuse.org/pool/foo/pulls/5" "FAKE_PRS=$P" -- --replace "$C"
-grep -q "^push .* --force fork $SHA:refs/heads/leap-16.0-cve\$" "$EV" && [ "$(n_of '^curl PATCH .*/pulls/5 ')" = 1 ] \
+grep -q "^push .* --force fork $SHA:refs/heads/leap-16.0-cve\$" "$EV" && [ "$(n_of '^api PATCH .*/pulls/5 ')" = 1 ] \
   && pass "update-replace: HEAD force-pushed onto the PR's head, one PATCH" || { fail "update-replace: wrong calls"; sed 's/^/    event: /' "$EV"; }
 grep -qF "{\"title\": \"Update to 2.0\", \"body\": \"Synced body.\\n\\nHead replaced by ${SHA:0:12} (tree ${TREE:0:12}); the commits of the previous head ${SIDE:0:12} are no longer in this PR.\"}" "$EV" \
   && pass "update-replace: the stale body is replaced by one naming the new head" || fail "update-replace: PATCH payload $(grep PATCH "$EV")"
@@ -389,10 +346,10 @@ nowrites symlinked-pool-pr
 # Static: no network write can precede the gate call.
 awk '!/^[[:space:]]*#/ {
        if (!g && /target-gate\.sh" /) g = NR
-       if (!w && (/git .*[[:space:]]push([[:space:]]|$)/ || /lfs push/ || /(^|[^[:alnum:]_-])curl[[:space:]]/ || /tea[[:space:]]+(pr|pulls|repo|api)/)) w = NR
+       if (!w && (/git .*[[:space:]]push([[:space:]]|$)/ || /lfs push/ || /(^|[^[:alnum:]_-])curl[[:space:]]/ || /tea[[:space:]]+(pr|pulls|repo|api)/ || /git-obs[[:space:]]/)) w = NR
      } END { exit !(g && w && g < w) }' "$SK/pool-pr.sh" \
-  && pass "static: pool-pr.sh calls target-gate.sh before any push, curl or tea" \
-  || fail "static: pool-pr.sh has a push/curl/tea before (or without) the target-gate.sh call"
+  && pass "static: pool-pr.sh calls target-gate.sh before any push, git-obs, curl or tea" \
+  || fail "static: pool-pr.sh has a push/git-obs/curl/tea before (or without) the target-gate.sh call"
 
 # ============================ leap-sync.sh ====================================
 # mkforge <pkg> <branch=version>... — a bare pool/<pkg> with a factory branch at
@@ -425,7 +382,7 @@ D=$(d ls1); W="$D/leap-16.0/foo"
 ls_ sync-build-green 0 "target build GREEN" -- --dir "$D" foo
 grep -qx "gate $W --build" "$EV" && pass "sync-build-green: native build of the worktree" || fail "sync-build-green: gate argv $(grep '^gate' "$EV")"
 nopush sync-build-green
-[ "$(n_of '^tea ')" = 0 ] && pass "sync-build-green: no fork, no tea" || fail "sync-build-green: tea called"
+[ "$(n_of '^(tea|fork) ')" = 0 ] && pass "sync-build-green: no fork, no tea" || fail "sync-build-green: tea called"
 [ "$("$REALGIT" -C "$W" rev-parse 'HEAD^{tree}')" = "$FTREE" ] && pass "sync-build-green: worktree tree == factory tree" || fail "sync-build-green: tree differs from factory"
 [ "$("$REALGIT" -C "$W" rev-parse --abbrev-ref '@{upstream}')" = origin/leap-16.0 ] && pass "sync-build-green: tracks origin/leap-16.0" || fail "sync-build-green: wrong upstream"
 [ -z "$("$REALGIT" -C "$W" status --porcelain --ignored --untracked-files=all)" ] && pass "sync-build-green: worktree clean" || fail "sync-build-green: worktree dirty"
@@ -435,7 +392,6 @@ grep -qx "lfs-fetch-tree $FTREE" "$EV" && [ -n "$lc" ] && [ -n "$g" ] && [ "$lf"
   || { fail "sync-build-green: LFS fetch/checkout missing or out of order"; sed 's/^/    event: /' "$EV"; }
 grep -qF "pool-pr.sh $W" <<<"$out" && grep -qF "target-gate.sh $W --review FILE" <<<"$out" \
   && pass "sync-build-green: prints the review and pool-pr.sh steps" || fail "sync-build-green: next steps missing"
-notoken sync-build-green
 # The two halves meet: the worktree leap-sync.sh leaves is what pool-pr.sh takes.
 pp sync-then-pool-pr 0 "PR opened" -- "$W"
 grep -qF '"base": "leap-16.0", "title": "Update to 2.0 (sync leap-16.0 with Factory)"' "$EV" \
@@ -481,9 +437,9 @@ ls_ dir-missing 2 "--dir: no such directory" -- --dir "$work/no-such-dir" foo
 
 # Refusals before the clone: nothing is left in --dir.
 D=$(d ls10)
-ls_ no-tea-login 2 "no src.opensuse.org token" "HOME=$work/nohome" -- --dir "$D" foo
-ls_ no-tea-user 2 "could not determine your src.opensuse.org username" "HOME=$work/home-nouser" -- --dir "$D" foo
-ls_ pr-list-network 6 "could not query open PRs" FAKE_CURL_FAIL=GET -- --dir "$D" foo
+ls_ no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- --dir "$D" foo
+ls_ login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- --dir "$D" foo
+ls_ pr-list-network 6 "could not query open PRs for pool/foo: ERROR: Failed to establish a new connection" FAKE_PRS_FAIL=1 -- --dir "$D" foo
 ls_ pr-list-unparseable 6 "cannot rule out a duplicate" "FAKE_PRS=$work/bad.json" -- --dir "$D" foo
 ls_ pool-repo-unreachable 6 "could not reach pool/nosuch" -- --dir "$D" nosuch
 ls_ no-factory-branch 5 "has no 'factory' branch" -- --dir "$D" nofac
@@ -541,11 +497,9 @@ ls_ reused-clone-lfs 0 "target build GREEN" -- --dir "$D" moving
   && pass "reused-clone-lfs: LFS objects of the synced tree, not of the stale local factory" \
   || { fail "reused-clone-lfs: fetched for another tree"; grep '^lfs' "$EV" | sed 's/^/    event: /'; }
 
-# The token: stdlib only, and on no command line.
-D=$(d ls24); mkdir -p "$work/lsec"
-ls_ token-no-pyyaml 0 "target build GREEN" "HOME=$work/home-yaml" "PYTHONPATH=$work/noyaml" "TMPDIR=$work/lsec" -- --dir "$D" foo
-notoken "leap-sync token-no-pyyaml"
-[ -z "$(ls -A "$work/lsec")" ] && pass "leap-sync token-no-pyyaml: no token file outlives the lookup" || fail "leap-sync token-no-pyyaml: left $(ls -A "$work/lsec")"
+D=$(d ls24); mkdir -p "$work/lscratch"
+ls_ credentials-unreadable 0 "target build GREEN" "HOME=$work/home-locked" "TMPDIR=$work/lscratch" -- --dir "$D" foo
+[ -z "$(ls -A "$work/lscratch")" ] && pass "leap-sync credentials-unreadable: no file outlives the lookup" || fail "leap-sync credentials-unreadable: left $(ls -A "$work/lscratch")"
 
 D=$(d ls25)
 run_ ../lnk/leap-sync.sh symlinked-leap-sync 7 "target build RED" FAKE_GATE_RC=1 -- --dir "$D" foo
@@ -569,10 +523,17 @@ ls_ reused-clone-branch-dropped 0 "target build GREEN" -- --dir "$D" foo
 # Static: leap-sync.sh has no way left to push or write a PR. The long options
 # are grouped so the installed pr-guard.py does not read this line as a write.
 if grep -vE '^[[:space:]]*#' "$SK/leap-sync.sh" \
-     | grep -nE '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)|-X[[:space:]]*(POST|PATCH|PUT)|--(request|data)|[[:space:]]-d[[:space:]]|tea[[:space:]]+(pr|pulls|repo|api)'; then
+     | grep -nE '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)|-X[[:space:]]*(POST|PATCH|PUT)|--(request|data)|[[:space:]]-d[[:space:]]|tea[[:space:]]+(pr|pulls|repo|api)|git-obs.*[[:space:]](repo|pr)[[:space:]]'; then
   fail "static: leap-sync.sh still pushes or writes to the API (lines above)"
 else
-  pass "static: leap-sync.sh contains no push, POST/PATCH/PUT or tea call"
+  pass "static: leap-sync.sh contains no push, POST/PATCH/PUT, git-obs write or tea call"
+fi
+# Static: git-obs and ssh hold the credentials; no script reads or hands one on.
+if awk '!/^[[:space:]]*#/ && /tea\/config|askpass|Authorization|GIT_ASKPASS|token/ { print FILENAME ":" FNR ": " $0; f = 1 } END { exit !f }' \
+     "$SK/pool-pr.sh" "$SK/leap-sync.sh"; then
+  fail "static: pool-pr.sh or leap-sync.sh still handles a credential (lines above)"
+else
+  pass "static: pool-pr.sh and leap-sync.sh read no credential and pass none on"
 fi
 
 [ $fails -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"

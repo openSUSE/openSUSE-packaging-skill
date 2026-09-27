@@ -20,7 +20,8 @@
 # create the branch first (a contributor PR cannot create a branch); this script
 # errors out in that case. See references/leap-slfo.md.
 #
-# Requires: a src.opensuse.org login in ~/.config/tea/config.yml, git-lfs.
+# Requires: a git-obs login for src.opensuse.org (git-obs reads its own
+# credentials: this script reads none), git-lfs.
 #
 # Usage: leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]   (branch default: leap-16.0)
 #   --dir     where the clone and the per-branch worktrees go (default: .)
@@ -53,51 +54,19 @@ pkg=${args[0]}; leap=${args[1]:-leap-16.0}
 dir=$(cd "$dir" 2>/dev/null && pwd -P) || { echo "--dir: no such directory" >&2; exit 2; }
 # target-gate.sh refuses to build a clone there; fail before cloning, not after.
 case "$dir/" in /tmp/*) echo "REFUSING: $dir is under /tmp — pass --dir elsewhere (e.g. under /var/tmp)" >&2; exit 2;; esac
-tealogin() {   # "user<TAB>token" of the src.opensuse.org tea login; PyYAML optional
-  python3 - 2>/dev/null <<'PYEOF'
-import os
-import re
-
-with open(os.path.expanduser("~/.config/tea/config.yml"), encoding="utf-8") as fh:
-    text = fh.read()
-try:
-    import yaml
-
-    logins = (yaml.safe_load(text) or {}).get("logins") or []
-except ImportError:
-    # The one shape tea writes: a "logins:" list of flat mappings.
-    logins, cur = [], None
-    for line in text.splitlines():
-        m = re.match(r"^(\s*)(-\s+)?([\w-]+):\s*(.*?)\s*$", line)
-        if not m:
-            continue
-        if m.group(2):
-            cur = {}
-            logins.append(cur)
-        elif not m.group(1):
-            cur = None
-        if cur is not None:
-            cur[m.group(3)] = m.group(4).strip("'\"")
-for lg in logins:
-    if isinstance(lg, dict) and lg.get("name") == "src.opensuse.org":
-        print("%s\t%s" % (lg.get("user") or "", lg.get("token") or ""))
-        break
-PYEOF
-}
-tl=$(tealogin) || tl=""
-user=${tl%%$'\t'*}; tok=${tl#*$'\t'}
-[ -n "$tok" ] || { echo "no src.opensuse.org token in ~/.config/tea/config.yml" >&2; exit 2; }
-[ -n "$user" ] || { echo "could not determine your src.opensuse.org username from the tea login" >&2; exit 2; }
+# The forge through git-obs, which reads its own login (-G: the default one may
+# be another forge's) and exits non-zero on an HTTP error.
+tmpd=$(mktemp --directory -p "${TMPDIR:-/var/tmp}" leap-sync.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
+trap 'rm -rf "$tmpd"' EXIT
+gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
+gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
+user=$(gapi /user | python3 -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr)" >&2; exit 6; }
 
 # --- duplicate-PR guard: refuse to double-file over someone else's open PR ---
-# The token stays off argv: curl reads the header from a 0600 file, gone after.
-sec=$(mktemp --directory -p "${TMPDIR:-/var/tmp}" leap-sync.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
-trap 'rm -rf "$sec"' EXIT
-(umask 077; printf 'Authorization: token %s\n' "$tok" > "$sec/auth")
-prs=$(curl -sS --max-time 20 -H "@$sec/auth" \
-      "$G/api/v1/repos/pool/$pkg/pulls?state=open&limit=50" 2>&1) \
-  || { echo "could not query open PRs for pool/$pkg (network?): $prs" >&2; exit 6; }
-rm -rf "$sec"; trap - EXIT
+prs=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50") \
+  || { echo "could not query open PRs for pool/$pkg: $(gerr)" >&2; exit 6; }
+rm -rf "$tmpd"; trap - EXIT
 existing=$(printf '%s' "$prs" | python3 -c "
 import sys,json
 try: d=json.load(sys.stdin)

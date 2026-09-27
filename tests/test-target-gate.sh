@@ -2,8 +2,9 @@
 # test-target-gate.sh — proves scripts/target-gate.sh stamps only the exact tree
 # it built against the PR's own base, and refuses or reds on each condition it
 # exists for. Every case runs against a throwaway pool/foo clone under /var/tmp;
-# osc, curl, tea, findmnt, uname, git-lfs and obs-build's queryrecipe are fakes
-# on PATH that write the build roots, logs, obsinfo and results the script reads.
+# osc, git-obs, findmnt, uname, git-lfs and obs-build's queryrecipe are fakes
+# on PATH that write the build roots, logs, obsinfo and results the script reads;
+# HOME holds no forge credential. Pushes over SSH land in a local bare repo.
 # Each negative case trips exactly one branch and asserts its message. Offline.
 # Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
@@ -27,27 +28,26 @@ export FAKE_SRCMD5=0123456789abcdef0123456789abcdef FAKE_OLDMD5=fedcba9876543210
 export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export PATH="$work/bin:$PATH"
-mkdir -p "$HOME/.config/osc" "$HOME/.config/tea" "$TMPDIR" "$BUILD_DIR" "$work/bin" "$FAKE" \
+mkdir -p "$HOME/.config/osc" "$TMPDIR" "$BUILD_DIR" "$work/bin" "$FAKE" \
   "$work/forge/$U"
 printf '[general]\nbuild-root = %s/%%(package)s-%%(repo)s-%%(arch)s\n[https://api.opensuse.org]\nuser = %s\n' \
   "$ROOTS" "$U" > "$HOME/.config/osc/oscrc"
-printf 'logins:\n  - name: src.opensuse.org\n    url: https://src.opensuse.org\n    token: faketoken\n    user: %s\n' \
-  "$U" > "$HOME/.config/tea/config.yml"
 git config --global init.defaultBranch main
 # Pushes to the forge land in a local bare repo; origin's URL still reads as pool/foo.
-git config --global url."file://$work/forge/".pushInsteadOf https://src.opensuse.org/
+git config --global url."file://$work/forge/".pushInsteadOf gitea@src.opensuse.org:
 git init -q --bare "$work/forge/$U/foo.git"
 cat > "$work/forge/$U/foo.git/hooks/pre-receive" <<'EOF'
 #!/bin/sh
-[ -z "$FAKE_PUSH_FAIL" ] || { echo "pre-receive hook declined" >&2; exit 1; }
-# FAKE_DELETE_FAIL declines branch deletes only (the new ref is all zeros):
-# the run's initial push still lands, so a GREEN run can hit a failing cleanup.
-if [ -n "$FAKE_DELETE_FAIL" ]; then
-  while read -r _old new _ref; do
+while read -r _old new ref; do
+  echo "forge-receive $ref" >> "$FAKE/calls"
+  [ -z "$FAKE_PUSH_FAIL" ] || { echo "pre-receive hook declined" >&2; exit 1; }
+  # FAKE_DELETE_FAIL declines branch deletes only (the new ref is all zeros):
+  # the run's initial push still lands, so a GREEN run can hit a failing cleanup.
+  if [ -n "$FAKE_DELETE_FAIL" ]; then
     case "$new" in 0000000000000000000000000000000000000000)
       echo "pre-receive hook declined the delete" >&2; exit 1 ;; esac
-  done
-fi
+  fi
+done
 EOF
 chmod +x "$work/forge/$U/foo.git/hooks/pre-receive"
 
@@ -138,13 +138,26 @@ case "$sub" in
   *) echo "fake osc: unexpected subcommand $sub" >&2; exit 99 ;;
 esac
 EOF
-cat > "$work/bin/curl" <<'EOF'
+# git-obs reads its own login; the fake answers as $U.
+cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
-echo "curl $*" >> "$FAKE/calls"
-[ -z "${FAKE_CURL_FAIL:-}" ] || { echo "curl: (6) Could not resolve host: src.opensuse.org" >&2; exit 6; }
-p=${FAKE_PULLS:-}; case "$*" in *page=2*) p=${FAKE_PULLS2:-};; esac
-if [ -n "$p" ]; then cat "$p"; else echo '[]'; fi
+echo "git-obs $*" >> "$FAKE/calls"
+# Every call names the forge: the default login may be another forge's.
+[ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
+shift 3
+case "$1 ${2:-}" in
+  "repo fork") ;;
+  "api /user")
+    [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
+    u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}" ;;
+  "api "*pulls*)
+    [ -z "${FAKE_PULLS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
+    p=${FAKE_PULLS:-}; case "$2" in *page=2*) p=${FAKE_PULLS2:-};; esac
+    if [ -n "$p" ]; then cat "$p"; else echo '[]'; fi ;;
+  *) echo "fake git-obs: unexpected $*" >&2; exit 99 ;;
+esac
 EOF
+# A tripwire: nothing goes through tea.
 cat > "$work/bin/tea" <<'EOF'
 #!/bin/bash
 echo "tea $*" >> "$FAKE/calls"
@@ -444,11 +457,14 @@ case_ no-origin-base 2 "no origin/leap-16.1" "bash $TG $C --branch leap-16.1 --b
 C=$(fresh offbase)
 git -C "$C" update-ref refs/remotes/origin/leap-16.0 "$(git -C "$C" commit-tree 'HEAD~1^{tree}' -p HEAD~1 -m moved)"
 case_ not-on-base 2 "HEAD does not contain origin/leap-16.0" "bash $TG $C --build"
-case_ no-tea-login 2 "no src.opensuse.org login" "HOME=$work/nohome bash $TG $X --build"
-cp -a "$HOME" "$work/home4" && sed -i '/user:/d' "$work/home4/.config/tea/config.yml"
-case_ tea-login-no-user 2 "the tea login for src.opensuse.org names no user" "HOME=$work/home4 bash $TG $X --build"
-case_ pr-lookup-failed 2 "cannot read the open PRs of pool/foo (lookup failed, not 'none')" \
-  "FAKE_CURL_FAIL=1 bash $TG $X --build"
+case_ no-login 2 "cannot read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" \
+  "FAKE_NOLOGIN=1 bash $TG $X --build"
+case_ login-unparseable 2 "cannot read your src.opensuse.org user through git-obs" "FAKE_USER='{\"id\": 7}' bash $TG $X --build"
+case_ pr-lookup-failed 2 "cannot read the open PRs of pool/foo (lookup failed, not 'none'): ERROR: Failed to establish a new connection" \
+  "FAKE_PULLS_FAIL=1 bash $TG $X --build"
+# A tea config that exists but cannot be read: nothing needs it.
+cp -a "$HOME" "$work/home-locked" && mkdir -p "$work/home-locked/.config/tea/config.yml"
+case_ credentials-unreadable 0 "VERDICT: GREEN" "HOME=$work/home-locked bash $TG $(fresh locked) --build"
 printf 'not json' > "$FAKE/garbage.json"
 case_ pr-list-garbage 2 "unparseable open-PR list for pool/foo" "FAKE_PULLS=$FAKE/garbage.json bash $TG $X --build"
 
@@ -532,7 +548,9 @@ results() {   # results "<arch>:<code> ..." [dirty arch] [repository]
 export FAKE_LFS='*'
 case_ remote-first-call 3 "pointed $GPRJ/foo at $BR#${H:0:12}" "bash $TG $C --remote"
 check_ remote-pushed-branch "[ \"\$(git -C $work/forge/$U/foo.git rev-parse refs/heads/$BR)\" = $H ]"
-check_ remote-pushed-lfs "grep -q '^git-lfs push --object-id leapgate a\{64\}$' $FAKE/calls && grep -q '^tea repo fork --repo pool/foo' $FAKE/calls"
+check_ remote-pushed-lfs "grep -q '^git-lfs push --object-id leapgate a\{64\}$' $FAKE/calls && grep -qx 'git-obs -G src.opensuse.org -q repo fork pool/foo' $FAKE/calls && ! grep -q '^tea ' $FAKE/calls"
+check_ remote-pushes-over-ssh "[ \"\$(git -C $C config --get remote.leapgate.url)\" = gitea@src.opensuse.org:$U/foo.git ]"
+check_ remote-lfs-before-ref "l=\$(grep -n '^git-lfs push' $FAKE/calls | cut -d: -f1); r=\$(grep -n '^forge-receive refs/heads/$BR\$' $FAKE/calls | cut -d: -f1); [ -n \"\$l\" ] && [ -n \"\$r\" ] && [ \"\$l\" -lt \"\$r\" ]"
 check_ remote-pkg-meta "grep -qF '<scmsync>https://src.opensuse.org/$U/foo?trackingbranch=$BR#$H</scmsync>' $PKGMETA && grep -qF '<disable repository=\"leap-16.1\" />' $PKGMETA"
 check_ remote-prj-meta "python3 -c 'import sys,xml.etree.ElementTree as E; r=E.parse(sys.argv[1]).getroot(); g={x.get(\"name\"):([(p.get(\"project\"),p.get(\"repository\")) for p in x.findall(\"path\")],[a.text for a in x.findall(\"arch\")]) for x in r.findall(\"repository\")}; a=[\"i586\",\"x86_64\",\"aarch64\"]; sys.exit(g!={\"leap-16.0\":([(\"openSUSE:Backports:SLE-16.0\",\"standard\")],a+[\"ppc64le\",\"s390x\"]),\"leap-16.1\":([(\"openSUSE:Backports:SLE-16.1\",\"standard\")],a)})' $PRJMETA"
 case_ remote-not-synced 3 "has no _scmsync.obsinfo yet" "bash $TG $C --remote"
@@ -666,8 +684,7 @@ case_ remote-16.1-pr-arches-only 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --branch leap-16.1 --remote"
 case_ remote-account-from-oscrc 3 "pointed $GPRJ/foo at" "FAKE_WHOIS_FAIL=1 bash $TG $(fresh remote2) --remote"
 # The git config comes along so that even a broken gate pushes to the fake forge only.
-mkdir -p "$work/home3/.config/tea" && cp "$HOME/.config/tea/config.yml" "$work/home3/.config/tea/" \
-  && cp "$HOME/.gitconfig" "$work/home3/"
+mkdir -p "$work/home3" && cp "$HOME/.gitconfig" "$work/home3/"
 case_ remote-no-account 2 "cannot determine your OBS account" \
   "FAKE_WHOIS_FAIL=1 HOME=$work/home3 bash $TG $(fresh remote3) --remote"
 (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam next)
@@ -682,6 +699,13 @@ case_ remote-carry-changes-only 0 "only foo.changes differs from GREEN tree $(gi
   "bash $TG $C5 --remote"
 check_ remote-carry-no-obs-no-push "! grep -qE '^(osc (meta|api|cat|results|rdelete)|git-lfs push|tea |git-obs .*fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
 unset FAKE_LFS
+
+# Static: git-obs and ssh hold the forge credentials; the gate reads none and passes none on.
+if awk '!/^[[:space:]]*#/ && /tea\/config|askpass|Authorization|GIT_ASKPASS|token/ { print FILENAME ":" FNR ": " $0; f = 1 } END { exit !f }' "$TG"; then
+  fail "static: target-gate.sh still handles a forge credential (lines above)"
+else
+  pass "static: target-gate.sh reads no forge credential and passes none on"
+fi
 
 [ "$fails" -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"
 exit $((fails > 0))

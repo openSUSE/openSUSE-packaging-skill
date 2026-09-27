@@ -27,7 +27,7 @@
 # the review never carries. A tree stamped already is built for real.
 # PR arches: the standard repository of openSUSE:Backports:SLE-16.x:PullRequest,
 # where the PR bot builds. Your PRs: those whose head repo belongs to the user
-# of the src.opensuse.org tea login, the same identity pool-pr.sh updates by.
+# of your git-obs login for src.opensuse.org, the identity pool-pr.sh updates by.
 # Refused before anything is built: a dirty worktree (ignored and untracked
 # files count), a detached HEAD, unsmudged LFS files, a clone under /tmp or a
 # scratchpad, HEAD not on top of origin/<base>, HEAD stacked on more than one
@@ -35,13 +35,16 @@
 # does not build (never emulated), a flavor with no native route, a mounted
 # root. Every failed lookup is a refusal or a red, never a green.
 # Stamp: <git-common-dir>/target-gate/<tree>-<base>.json
-# Needs: osc, git-lfs, obs-build (queryrecipe) and a src.opensuse.org tea login.
+# Needs: osc, git-lfs, obs-build (queryrecipe) and a git-obs login for
+# src.opensuse.org; --remote pushes over SSH (gitea@src.opensuse.org) with your
+# key. git-obs and ssh read their own credentials: this script reads none.
 #
 # Exit: 0 = green (check: build GREEN and review PASS), 1 = red (the check is
 # named), 2 = refused or usage, 3 = no stamp, stale stamp or remote build pending.
 set -uo pipefail
 HERE=$(dirname "$(readlink -f -- "$0")")
 G=https://src.opensuse.org
+GS=gitea@src.opensuse.org
 
 usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; }
 say() { printf '%s\n' "$*"; }
@@ -84,39 +87,17 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def tea():
+def login():
+    # The user of the login git-obs used: GET /user.
     try:
-        with open(
-            os.path.expanduser("~/.config/tea/config.yml"), encoding="utf-8"
-        ) as fh:
-            text = fh.read()
-    except OSError:
+        d = json.load(sys.stdin)
+    except ValueError:
         return 1
-    try:
-        import yaml
-
-        logins = (yaml.safe_load(text) or {}).get("logins") or []
-    except ImportError:
-        # The one shape tea writes: a "logins:" list of flat mappings.
-        logins, cur = [], None
-        for line in text.splitlines():
-            m = re.match(r"^(\s*)(-\s+)?([\w-]+):\s*(.*?)\s*$", line)
-            if not m:
-                continue
-            if m.group(2):
-                cur = {}
-                logins.append(cur)
-            elif not m.group(1):
-                cur = None
-            if cur is not None:
-                cur[m.group(3)] = m.group(4).strip("'\"")
-    except Exception:
+    u = d.get("login") if isinstance(d, dict) else None
+    if not isinstance(u, str) or not u:
         return 1
-    for lg in logins:
-        if isinstance(lg, dict) and lg.get("name") == "src.opensuse.org":
-            print("%s\t%s" % (lg.get("user") or "", lg.get("token") or ""))
-            return 0
-    return 1
+    print(u)
+    return 0
 
 
 def oscuser():
@@ -508,7 +489,7 @@ def srcmd5():
 
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {
-    "tea": tea,
+    "login": login,
     "oscuser": oscuser,
     "pulls": pulls,
     "arches": arches,
@@ -590,15 +571,15 @@ bad=$(printf '%s\n' "$lfs" | awk '$2 == "-" {print $3}' | paste -sd' ')
 
 git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null || refuse "no origin/$base — git fetch origin $base"
 git merge-base --is-ancestor "origin/$base" HEAD || refuse "HEAD does not contain origin/$base — rebase onto it"
-tl=$(py tea) || refuse "no src.opensuse.org login in ~/.config/tea/config.yml"
-guser=${tl%%$'\t'*}; gtok=${tl#*$'\t'}
-[ -n "$guser" ] || refuse "the tea login for src.opensuse.org names no user"
-: > "$tmpd/auth"; chmod 600 "$tmpd/auth"
-[ -z "$gtok" ] || printf 'Authorization: token %s\n' "$gtok" > "$tmpd/auth"
+# The forge through git-obs, which reads its own login (-G: the default one may
+# be another forge's) and exits non-zero on an HTTP error.
+gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
+gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
+guser=$(gapi /user | py login) || refuse "cannot read your src.opensuse.org user through git-obs: $(gerr)"
 mine=""; page=1
 while :; do
-  js=$(curl -fsS --max-time 20 -H "@$tmpd/auth" "$G/api/v1/repos/pool/$pkg/pulls?state=open&limit=50&page=$page" 2>&1) \
-    || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $js"
+  js=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50&page=$page") \
+    || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $(gerr)"
   rows=$(printf '%s' "$js" | py pulls "$base" "$guser") || refuse "unparseable open-PR list for pool/$pkg"
   mine+=$(tail -n +2 <<<"$rows")$'\n'
   [ "$(head -1 <<<"$rows")" -ge 50 ] || break
@@ -666,29 +647,22 @@ if [ "$mode" = remote ]; then
   br="leapgate/$base-${head:0:12}"
   url="$G/$guser/$pkg?trackingbranch=$br#$head"
 
-  forkerr=$(tea repo fork --repo "pool/$pkg" --login src.opensuse.org 2>&1 >/dev/null) \
-    || case "$forkerr" in
-         *"already exists"*|*"already forked"*) : ;;
-         *) say "tea repo fork: $forkerr" ;;
-       esac
-  git remote add leapgate "$G/$guser/$pkg.git" 2>/dev/null || git remote set-url leapgate "$G/$guser/$pkg.git"
-  # The token reaches git and git-lfs through a 0600 file, never argv.
-  printf '%s' "$gtok" > "$tmpd/tok"; chmod 600 "$tmpd/tok"
-  # shellcheck disable=SC2016  # $1 belongs to the helper, not to this shell
-  printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "%s" ;;\n  Password*) cat "%s" ;;\nesac\n' \
-    "$guser" "$tmpd/tok" > "$tmpd/askpass"
-  chmod 700 "$tmpd/askpass"
+  # An existing fork is no error to git-obs; a failure shows, the push decides.
+  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
+    || say "git-obs repo fork pool/$pkg failed: $(tail -1 <<<"$forkerr")"
+  git remote add leapgate "$GS:$guser/$pkg.git" 2>/dev/null || git remote set-url leapgate "$GS:$guser/$pkg.git"
   # A fork does not share the parent's LFS store, and the pre-push hook would
-  # upload every object in the history: push refs without it, then exactly
-  # this tree's objects.
-  GIT_ASKPASS="$tmpd/askpass" git push -q --no-verify leapgate "HEAD:refs/heads/$br" \
-    || refuse "push to $guser/$pkg:$br failed"
+  # upload every object in the history: exactly this tree's objects first,
+  # then the ref without the hook, so the branch never points at a pointer.
+  # Both over SSH: git-lfs asks the forge for its credentials there.
   oids=$(git lfs ls-files -l | awk '{print $1}')
   if [ -n "$oids" ]; then
     # shellcheck disable=SC2086  # one argument per object id
-    GIT_ASKPASS="$tmpd/askpass" git lfs push --object-id leapgate $oids \
+    git lfs push --object-id leapgate $oids \
       || refuse "LFS object push to $guser/$pkg failed — OBS would fetch dangling pointers"
   fi
+  git push -q --no-verify leapgate "HEAD:refs/heads/$br" \
+    || refuse "push to $guser/$pkg:$br failed"
 
   metaget() {   # metaget prj|pkg ARGS... — current meta, empty when it does not exist
     local out
@@ -745,7 +719,7 @@ if [ "$mode" = remote ]; then
        # The branch and the package served their purpose: the stamp is the
        # evidence. Delete this run's fork branch and scratch package so they
        # don't pile up. Only on green -- a red build keeps both for debugging.
-       GIT_ASKPASS="$tmpd/askpass" git push -q leapgate --delete "$br" 2>/dev/null \
+       git push -q leapgate --delete "$br" 2>/dev/null \
          || say "note: could not delete the fork branch $br"
        osc rdelete -m "target-gate: tree ${tree:0:12} GREEN on $base, stamped" "$gprj" "$pkg" </dev/null >/dev/null 2>"$tmpd/err" \
          || say "note: could not delete $gprj/$pkg: $(tail -1 "$tmpd/err")"

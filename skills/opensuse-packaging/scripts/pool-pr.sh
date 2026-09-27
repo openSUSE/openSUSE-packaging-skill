@@ -16,7 +16,8 @@
 # else's open PR on the base (no double-filing), two of yours, and a head
 # branch that already heads a PR to another base (one head branch, one base).
 #
-# Requires: a src.opensuse.org login in ~/.config/tea/config.yml, git-lfs, tea.
+# Requires: a git-obs login for src.opensuse.org and an SSH key there (git-obs
+# and ssh read their own credentials: this script reads none), git-lfs.
 #
 # Usage: pool-pr.sh DIR [--title T] [--body-file F] [--replace]
 #   --title      PR title (default: HEAD's commit subject)
@@ -28,7 +29,7 @@
 set -uo pipefail
 # Resolved, so a symlinked copy never runs a target-gate.sh placed beside the link.
 HERE="$(dirname "$(readlink -f "$0")")"
-G=https://src.opensuse.org
+GS=gitea@src.opensuse.org
 usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 
 dir=""; title=""; bodyfile=""; replace=0
@@ -81,63 +82,23 @@ fi
 lfs=$(git -C "$dir" lfs ls-files -l "$sha") || { echo "git lfs ls-files failed — nothing pushed" >&2; exit 2; }
 oids=$(printf '%s\n' "$lfs" | awk 'NF {print $1}')
 
-tealogin() {   # "user<TAB>token" of the src.opensuse.org tea login; PyYAML optional
-  python3 - 2>/dev/null <<'PYEOF'
-import os
-import re
-
-with open(os.path.expanduser("~/.config/tea/config.yml"), encoding="utf-8") as fh:
-    text = fh.read()
-try:
-    import yaml
-
-    logins = (yaml.safe_load(text) or {}).get("logins") or []
-except ImportError:
-    # The one shape tea writes: a "logins:" list of flat mappings.
-    logins, cur = [], None
-    for line in text.splitlines():
-        m = re.match(r"^(\s*)(-\s+)?([\w-]+):\s*(.*?)\s*$", line)
-        if not m:
-            continue
-        if m.group(2):
-            cur = {}
-            logins.append(cur)
-        elif not m.group(1):
-            cur = None
-        if cur is not None:
-            cur[m.group(3)] = m.group(4).strip("'\"")
-for lg in logins:
-    if isinstance(lg, dict) and lg.get("name") == "src.opensuse.org":
-        print("%s\t%s" % (lg.get("user") or "", lg.get("token") or ""))
-        break
-PYEOF
-}
-tl=$(tealogin) || tl=""
-user=${tl%%$'\t'*}; tok=${tl#*$'\t'}
-[ -n "$tok" ] || { echo "no src.opensuse.org token in ~/.config/tea/config.yml" >&2; exit 2; }
-[ -n "$user" ] || { echo "could not determine your src.opensuse.org username from the tea login" >&2; exit 2; }
-
-# Token off argv: curl reads the header from a file, git/git-lfs get it through
-# GIT_ASKPASS (git-lfs ignores http.extraHeader, so a header-only push 401s on
-# any repo with LFS objects). 0600 files in a 0700 directory.
-sec=$(mktemp -d -p "${TMPDIR:-/var/tmp}" pool-pr.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
-trap 'rm -rf "$sec"' EXIT
-(umask 077
- printf 'Authorization: token %s\n' "$tok" > "$sec/auth"
- printf '%s' "$tok" > "$sec/tok"
- # shellcheck disable=SC2016  # $1 belongs to the helper, not to this script
- printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "%s" ;;\n  Password*) cat "%s" ;;\nesac\n' \
-   "$user" "$sec/tok" > "$sec/askpass")
-chmod 700 "$sec/askpass"
+tmpd=$(mktemp -d -p "${TMPDIR:-/var/tmp}" pool-pr.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
+trap 'rm -rf "$tmpd"' EXIT
+# The forge through git-obs, which reads its own login (-G: the default one may
+# be another forge's) and exits non-zero on an HTTP error.
+gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
+gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
+user=$(gapi /user | python3 -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr) — nothing pushed" >&2; exit 6; }
 
 # Every page: a head-branch clash or a PR on page 2 must not read as "none".
-api="$G/api/v1/repos/pool/$pkg"
+api="/repos/pool/$pkg"
 page=1
 while :; do
   [ "$page" -le 20 ] || { echo "open-PR list for pool/$pkg does not end — nothing pushed" >&2; exit 6; }
-  curl -fsS --max-time 20 -H "@$sec/auth" "$api/pulls?state=open&limit=50&page=$page" > "$sec/pulls.$page" \
-    || { echo "could not list open PRs on pool/$pkg (network?) — nothing pushed" >&2; exit 6; }
-  n=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, list); print(len(d))' "$sec/pulls.$page" 2>/dev/null) \
+  gapi "$api/pulls?state=open&limit=50&page=$page" > "$tmpd/pulls.$page" \
+    || { echo "could not list open PRs on pool/$pkg: $(gerr) — nothing pushed" >&2; exit 6; }
+  n=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, list); print(len(d))' "$tmpd/pulls.$page" 2>/dev/null) \
     || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate; nothing pushed" >&2; exit 6; }
   [ "$n" = 0 ] && break
   page=$((page + 1))
@@ -145,7 +106,7 @@ done
 
 # Prints mode, PR number, head branch, head repo, PR url, head commit, one per
 # line; exit 3 = refused.
-plan=$(python3 - "$user" "$base" "$base-${sha:0:12}" "$sec"/pulls.* <<'EOF'
+plan=$(python3 - "$user" "$base" "$base-${sha:0:12}" "$tmpd"/pulls.* <<'EOF'
 import json
 import sys
 
@@ -213,18 +174,16 @@ else
 fi
 
 if [ "$mode" = new ]; then
-  forkerr=$(tea repo fork --repo "pool/$pkg" --login src.opensuse.org 2>&1 >/dev/null) \
-    || case "$forkerr" in
-         *"already exists"*|*"repository is already forked"*) : ;;   # fine, reuse it
-         *) echo "tea repo fork failed: $forkerr" >&2 ;;             # surface, but the fork may still exist — try the push
-       esac
+  # An existing fork is no error to git-obs; a failure shows, the push decides.
+  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
+    || echo "git-obs repo fork failed: $(tail -1 <<<"$forkerr")" >&2
   hrepo="$user/$pkg"
 else
   # The PR's own head repo: pushing anywhere else leaves the PR on its old tree.
   [ -n "$hrepo" ] || hrepo="$user/$pkg"
   echo "updating PR #$num ($purl), head $hrepo:$head"
 fi
-furl="$G/$hrepo.git"
+furl="$GS:$hrepo.git"
 git -C "$dir" remote add fork "$furl" 2>/dev/null || git -C "$dir" remote set-url fork "$furl"
 
 # LFS objects first, then the ref, so the head never points at a tree whose
@@ -232,18 +191,19 @@ git -C "$dir" remote add fork "$furl" 2>/dev/null || git -C "$dir" remote set-ur
 # and the pre-push hook would upload every object reachable from the branch
 # history — including ones pruned on old product branches ("Unable to find
 # source for object ..."). So --no-verify on the ref push, and --object-id for
-# exactly the objects of this tree. (Real case: pool/ollama.)
+# exactly the objects of this tree. (Real case: pool/ollama.) Both over SSH:
+# git-lfs asks the forge for its credentials there.
 if [ -n "$oids" ]; then
   # shellcheck disable=SC2086  # one argument per oid
-  GIT_ASKPASS="$sec/askpass" git -C "$dir" lfs push --object-id fork $oids \
+  git -C "$dir" lfs push --object-id fork $oids \
     || { echo "LFS object push to $hrepo failed — ref not pushed" >&2; exit 6; }
 fi
 # A --replace shares no history with the old head; a bare --force-with-lease
 # would need a fork tracking ref never fetched.
 pushopt=""; [ "$mode" = update ] && pushopt="--force"
 # shellcheck disable=SC2086  # empty $pushopt must expand to no argument
-GIT_ASKPASS="$sec/askpass" git -C "$dir" push -q --no-verify $pushopt fork "$sha:refs/heads/$head" \
-  || { echo "push to $hrepo:$head failed (does the fork exist? see the tea output above)" >&2; exit 6; }
+git -C "$dir" push -q --no-verify $pushopt fork "$sha:refs/heads/$head" \
+  || { echo "push to $hrepo:$head failed (does the fork exist? see the git-obs output above)" >&2; exit 6; }
 
 [ -n "$title" ] || title=$(git -C "$dir" log -1 --format=%s "$sha")
 if [ -n "$bodyfile" ]; then body=$(cat "$bodyfile"); else body=$(git -C "$dir" log -1 --format=%b "$sha"); fi
@@ -263,8 +223,8 @@ else
     "$user:$head" "$base" "$title" "$body")
   method=POST; url="$api/pulls"
 fi
-resp=$(curl -sS --max-time 20 -X "$method" -H "@$sec/auth" -H "Content-Type: application/json" -d "$payload" "$url") \
-  || { echo "PR $method failed (network?) — $hrepo:$head is pushed; re-run to finish" >&2; exit 6; }
+resp=$(gapi -X "$method" --data "$payload" "$url") \
+  || { echo "PR $method failed: $(gerr) — $hrepo:$head is pushed; re-run to finish" >&2; exit 6; }
 pr=$(printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d["number"])); print(d["html_url"])' 2>/dev/null) \
   || { echo "PR $method rejected: $(printf '%s' "$resp" | head -c 300)" >&2; exit 6; }
 { read -r num; read -r purl; } <<<"$pr"
