@@ -30,8 +30,10 @@ skills/opensuse-packaging/   the skill — this directory is the unit of distrib
                              is scripts/README.md
   agents/                    delegation playbooks (role prompts) for the three blocks
 tests/                       the guard suite — repo-only, never installed
-contrib/harness/             drafts that wire scripts/pr-guard.py into Claude Code and
-                             opencode as a pinned hook — repo-only, installed by hand
+contrib/harness/             per-harness drafts: credential and merge deny rules for
+                             Claude Code, opencode, grok, Gemini CLI and Antigravity,
+                             and scripts/pr-guard.py as a pinned hook for Claude Code
+                             and opencode — repo-only, installed by hand
 evals/                       behaviour evals (JSON; no runner) — repo-only
 ```
 

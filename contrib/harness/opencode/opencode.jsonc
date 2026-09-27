@@ -1,27 +1,23 @@
-// Merge the "permission" block into ~/.config/opencode/opencode.jsonc.
+// Merge the "permission" keys into ~/.config/opencode/opencode.jsonc.
 // A backstop for pr-guard.py, not a replacement: these patterns see one command
 // at a time and cannot resolve a push destination or read a script. The last
-// matching pattern wins, so "*" comes first. git runs "git obs" as git-obs, so
-// each git-obs pattern comes in both spellings.
+// matching pattern wins, in file order: the bash "*" must be the first key, also
+// when another skill's snippet is merged beside this one. git runs "git obs" as
+// git-obs, so each git-obs pattern comes in both spellings.
 {
   "permission": {
+    // Absolute or ~ directory globs, checked when a tool (read, grep, glob, and
+    // cat/cp/mv/cd in bash) reaches outside the project directory.
+    "external_directory": {
+      "~/.config/osc/*": "deny",
+      "~/.config/tea/*": "deny",
+      "~/.config/gh/*": "deny",
+      "~/.local/state/osc/*": "deny",
+      "~/.config/mcp-bugzilla/*": "deny"
+    },
+    // Matched against each simple command's source text, unexpanded.
     "bash": {
       "*": "allow",
-
-      // Merging a PR on src.opensuse.org is never an agent's job, pool or
-      // not. gh is not matched: GitHub merges stay the maintainer's call there.
-      "tea pr merge *": "deny",
-      "tea pr m *": "deny",
-      "tea pulls merge *": "deny",
-      "tea pulls m *": "deny",
-      "tea pull merge *": "deny",
-      "tea api */pulls/*/merge*": "deny",
-      "git-obs *pr merge*": "deny",
-      "git obs *pr merge*": "deny",
-      "git-obs *api*/pulls/*/merge*": "deny",
-      "git obs *api*/pulls/*/merge*": "deny",
-      "*src.opensuse.org*/pulls/*/merge*": "deny",
-      "*repos/pool/*/pulls/*/merge*": "deny",
 
       // Pool PRs are opened by pool-pr.sh; a direct create gets a human look.
       "tea pr create *": "ask",
@@ -35,16 +31,76 @@
       "*-X POST*repos/pool/*/pulls*": "ask",
       "*repos/pool/*/pulls*-X POST*": "ask",
 
+      // Merging a PR on src.opensuse.org is never an agent's job, pool or
+      // not, and comes after the asks so that a merge POST is denied, not
+      // asked. gh is not matched: GitHub merges stay the maintainer's call there.
+      "tea pr *merge *": "deny",
+      "tea pr m *": "deny",
+      "tea pulls *merge *": "deny",
+      "tea pulls m *": "deny",
+      "tea pull *merge *": "deny",
+      "tea pull m *": "deny",
+      "tea api */pulls/*/merge*": "deny",
+      "git-obs *pr merge*": "deny",
+      "git obs *pr merge*": "deny",
+      "git-obs *api*/pulls/*/merge*": "deny",
+      "git obs *api*/pulls/*/merge*": "deny",
+      "*src.opensuse.org*/pulls/*/merge*": "deny",
+      "*repos/pool/*/pulls/*/merge*": "deny",
+
       // Tool discipline (references/osc-usage.md "Tool discipline"): the
-      // credentials stay inside osc/tea/git-obs, and OBS and the Gitea API are
-      // reached only through them.
-      "*tea/config.yml*": "deny",
+      // credentials stay inside osc/tea/git-obs, nothing prints them, and OBS
+      // and the Gitea API are reached only through them.
+      "*.config/osc*": "deny",
       "*oscrc*": "deny",
-      "*.config/osc/*": "deny",
+      "*.config/tea*": "deny",
+      "*gh/hosts.yml*": "deny",
+      "*.netrc*": "deny",
+      "*.git-credentials*": "deny",
+      "*gh auth token*": "deny",
+      "*gh auth status*": "deny",
+      "*gh auth git-credential*": "deny",
+      "*-H*uthorization*": "deny",
+      "*--header*uthorization*": "deny",
+      "*--apikey*": "deny",
+      "*--apisecret*": "deny",
+      "*://*:*@*": "deny",
+      "git-obs *login list*": "deny",
+      "git obs *login list*": "deny",
+      "*gitcredentials-helper*": "deny",
+      "*login helper*": "deny",
+      "*logins helper*": "deny",
+      "*login git-credential*": "deny",
+      "*logins git-credential*": "deny",
+      "tea login e*": "deny",
+      "tea logins e*": "deny",
+      "*--dump-*": "deny",
+      "*--http-d*": "deny",
+      "*--http-f*": "deny",
+      "*http_debug*": "deny",
+      "*http_full_debug*": "deny",
+      "*HTTP_DEBUG*": "deny",
+      "*HTTP_FULL_DEBUG*": "deny",
+      "osc -H*": "deny",
+      "osc * -H *": "deny",
+      "osc * -H": "deny",
+      "osc -qH*": "deny",
+      "osc -vH*": "deny",
+      "osc * -qH*": "deny",
+      "osc * -vH*": "deny",
+      "osc token*": "deny",
+      "osc config * pass*": "deny",
+      "osc *api*/person/*/token*": "deny",
+      "*credential fill*": "deny",
+      "*git credential-* get*": "deny",
+      "*git-credential-* get": "deny",
+      "*git-credential-* get *": "deny",
       "*osc/cookiejar*": "deny",
-      "*api-key*": "deny",
-      "*askpass*": "deny",
-      "*Authorization:*": "deny",
+      "*.config/mcp-bugzilla*": "deny",
+      "*GIT_ASKPASS=*": "deny",
+      "*SSH_ASKPASS=*": "deny",
+      "*core.askPass*": "deny",
+      "*core.askpass*": "deny",
       "curl *api.opensuse.org*": "deny",
       "curl *build.opensuse.org*": "deny",
       "curl *src.opensuse.org/api*": "deny",
@@ -60,17 +116,23 @@
       // Build roots are entered with osc chroot.
       "sudo chroot *": "deny"
     },
+    // The read tool matches the path relative to the git worktree
+    // ("../../.config/tea/config.yml"), or to "/" outside git, so every pattern
+    // starts with "*": "~/...", "$HOME/..." and absolute patterns never match.
+    // The built-in .env rules only ask; these deny. No "*" here: allow is the
+    // default, and a "*" merged after another snippet's denies would undo them.
     "read": {
-      "*": "allow",
       "*.env": "deny",
       "*.env.*": "deny",
       "*.env.example": "allow",
-      "*/.config/tea/*": "deny",
-      "*/.config/osc/*": "deny",
-      "*/.local/state/osc/*": "deny",
+      "*.config/osc/*": "deny",
       "*oscrc*": "deny",
-      "*api-key*": "deny",
-      "/tmp/askpass*": "deny"
+      "*.config/tea/*": "deny",
+      "*.config/gh/hosts.yml": "deny",
+      "*.netrc": "deny",
+      "*.git-credentials": "deny",
+      "*.local/state/osc/*": "deny",
+      "*.config/mcp-bugzilla/*": "deny"
     }
   }
 }

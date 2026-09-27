@@ -1,0 +1,45 @@
+# Copy to ~/.gemini/policies/opensuse-packaging.toml (user tier).
+# User tier: priority 999 -> 4.999, above YOLO allow-all (1.998) and
+# "Allow for all future sessions" rules (3.950 / 4.950).
+# argsPattern is tried against the tool's JSON-encoded arguments; commandRegex
+# becomes '"command":"' + regex, hence the leading [^\x00]* to float it, which
+# also lets it reach the description and directory arguments after the command.
+# The loader refuses a quantifier on a group that holds one, as in (a+)*.
+# A rule of several parts is a row of lookaheads anchored at the command's start,
+# each one lazy scan: a gap between parts ([^\x00]* inside [^\x00]*) backtracks
+# cubically and hung the matcher on a long command. The parts may come in any order.
+
+[[rule]]
+toolName = ["read_file", "read_many_files", "list_directory", "glob", "grep_search"]
+argsPattern = '\.config/(gh|osc|tea|mcp-bugzilla)\b|gh/hosts\.yml|oscrc|\.netrc|\.git-credentials|\.local/state/osc\b'
+decision = "deny"
+priority = 999
+denyMessage = "Credential files (osc, tea, gh, netrc, git credentials, API keys) are off limits: the CLIs read their own config."
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '(?:[^\x00]*(\.config/(gh|osc|tea|mcp-bugzilla)\b|gh/hosts\.yml|oscrc|\.netrc|\.git-credentials|osc/cookiejar|\b(GIT|SSH)_ASKPASS\s*=|core\.ask[Pp]ass|(-H|--header)[\s=]*\\?[\x27"]?[Aa]uthorization\s*:|--api(key|secret)|://[^\s/:@]+:[^\s/@]+@)|(?=[^\x00]*?\bcurl\s)(?=[^\x00]*?(api\.opensuse\.org|build\.opensuse\.org|src\.opensuse\.org/api)))'
+decision = "deny"
+priority = 999
+denyMessage = "Credentials stay inside osc, tea and git-obs, and OBS and the Gitea API are reached only through them."
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '(?:[^\x00]*(\bgh\s+auth\s+(token|status|git-credential)\b|gitcredentials-helper|\blogins?\s+(helper|git-credential)\b|--dump-|--http-[df]|(http|HTTP)[-_](debug|DEBUG|full[-_]debug|FULL[-_]DEBUG)|\bcredential\s+fill\b|\bgit[- ]credential-[\w.-]{1,64}\s+get\b|\bosc\s+token\b|\bosc\s+-\S+\s+token\b|\bosc\s+-[AcC]\s+\S+\s+token\b|\bosc\s+--(apiurl|config)\s+\S+\s+token\b|\bosc\s+config\s[^\x00]{0,200}?\spassx?\b|\bosc\s+-\S+\s+config\s[^\x00]{0,200}?\spassx?\b|\bosc\s+-[AcC]\s+\S+\s+config\s[^\x00]{0,200}?\spassx?\b|\bosc\s+--(apiurl|config)\s+\S+\s+config\s[^\x00]{0,200}?\spassx?\b)|(?=[^\x00]*?\bgit[- ]obs\s)(?=[^\x00]*?\blogin\s+list\b)|(?=[^\x00]*?\btea\s)(?=[^\x00]*?\blogins?\s+(edit|e)\b)|(?=[^\x00]*?\bosc\s)(?=[^\x00]*?\s-[a-zA-Z]*H\b)|(?=[^\x00]*?\bosc\s)(?=[^\x00]*?/person/[^/\s]+/token))'
+decision = "deny"
+priority = 999
+denyMessage = "This command prints a token or password; the tools use their credentials themselves."
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '(?:[^\x00]*\btea\s+(pr|pulls?)\s+m\b|(?=[^\x00]*?\btea\s)(?=[^\x00]*?\b(pr|pulls?)\b)(?=[^\x00]*?\bmerge\b)|(?=[^\x00]*?\btea\s)(?=[^\x00]*?/pulls/[^/]+/merge)|(?=[^\x00]*?\bgit[- ]obs\s)(?=[^\x00]*?(\bpr\s+merge\b|/pulls/[^/]+/merge))|(?=[^\x00]*?src\.opensuse\.org)(?=[^\x00]*?/pulls/[^/]+/merge)|(?=[^\x00]*?repos/pool/)(?=[^\x00]*?/pulls/[^/]+/merge))'
+decision = "deny"
+priority = 999
+denyMessage = "Merging a pull request on src.opensuse.org is the maintainer's call, never an agent's."
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = '(?:[^\x00]*\bsudo\s+chroot\b|(?=[^\x00]*?\bosc\s)(?=[^\x00]*?\b(sr|submitreq|submitrequest|submitpac|creq|createrequest)\b)(?=[^\x00]*?--nod))'
+decision = "deny"
+priority = 999
+denyMessage = "A Factory request comes from the registered devel project, and build roots are entered with osc chroot."

@@ -1,0 +1,40 @@
+{
+  "_comment": "Global options before the subcommand, as the README's Limits list them, and which harness's stand-in catches each; tests/test-harness.sh checks the README's attribution. Kept out of the suite: pr-guard reads the suite and refuses the merge commands.",
+  "commands": [
+    "tea --login x pr merge 3",
+    "tea logins --output simple e",
+    "git -C dir obs pr merge 3",
+    "osc -A https://api.opensuse.org sr --nodevelproject",
+    "osc -A https://api.opensuse.org token"
+  ],
+  "caught": {
+    "claude": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "grok": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "opencode": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "gemini": [
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  }
+}

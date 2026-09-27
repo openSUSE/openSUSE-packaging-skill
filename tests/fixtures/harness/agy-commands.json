@@ -1,0 +1,29 @@
+{
+  "_comment": "What Antigravity's command() prefixes can express of the shared set; tests/test-harness.sh checks the snippet names each. Kept out of the suite: pr-guard reads the suite and refuses the merge commands.",
+  "commands": [
+    "gh auth token",
+    "gh auth status",
+    "gh auth git-credential",
+    "git-obs login list",
+    "git obs login list",
+    "gitcredentials-helper",
+    "tea login helper",
+    "tea logins helper",
+    "tea login git-credential",
+    "tea login edit",
+    "tea logins e",
+    "osc config --dump-full",
+    "osc -H",
+    "osc --http-debug",
+    "osc --http-full-debug",
+    "osc token",
+    "git credential fill",
+    "git-credential-store get",
+    "tea pr merge",
+    "tea pull m",
+    "git-obs pr merge",
+    "git obs pr merge",
+    "osc sr --nodevelproject",
+    "sudo chroot"
+  ]
+}

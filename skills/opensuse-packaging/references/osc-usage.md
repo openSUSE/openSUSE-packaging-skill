@@ -55,7 +55,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc getbinaries PRJ PKG REPO ARCH` — download remote build results.
 - `osc whatdependson PRJ PKG REPO ARCH` — reverse build deps (`scripts/rdeps.sh` wraps it).
 - `osc service run source_validator` — the validator gate. `osc service manualrun` (mr) runs the `mode="manual"` services; `osc service run NAME` one service. Never `runall` (it also fires `buildtime` services).
-- `osc token --create --operation OP PRJ PKG` — a trigger token (e.g. for Gitea PR builds).
+- `osc token --create --operation OP PRJ PKG` — a trigger token (e.g. for Gitea PR builds). The maintainer runs it: it prints the token's secret, so an agent never does, and the harness snippets refuse every `osc token` call.
 
 ## Requests
 

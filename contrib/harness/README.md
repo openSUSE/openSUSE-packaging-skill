@@ -1,31 +1,248 @@
-# Harness wiring for `pr-guard.py`
+# Harness snippets
 
-Drafts, not installed by anything. They wire
-`skills/opensuse-packaging/scripts/pr-guard.py` into the two agent harnesses so that no
-agent opens, updates or merges a `pool/` PR on src.opensuse.org outside `pool-pr.sh`
-(through `tea`, `git-obs` or `git obs`, or the API), pushes to a branch that heads an open
-pool PR, writes a `target-gate.sh` stamp, runs an emulated `osc build`, or files a request
-against the scmsync'd `openSUSE:Backports:SLE-16.x` projects.
+Drafts, installed by hand, one directory per harness:
+
+- **Permission snippets** for each harness below keep credentials inside the tools, the
+  rule of the skill's `references/osc-usage.md` "Tool discipline": no agent reads an osc,
+  tea or gh credential file or `.netrc`, prints a token, passes a key on a command line or
+  talks to the OBS or Gitea API past osc, tea and git-obs. They also refuse a PR merge on
+  src.opensuse.org, a Factory request with `--nodevelproject` and `sudo chroot`.
+- **The pool PR guard**, for Claude Code and opencode: `scripts/pr-guard.py` as a hook.
+
+**You install them yourself.** An agent must not change its own permissions, and Claude
+Code's auto mode refuses the edit as self-modification. **Merge, do not replace**: each
+file holds only the keys to add to your settings. Show each diff before applying it.
+
+The patterns match text, not intent. A path spelled with a glob, a variable or split
+quoting (`.ne""trc`), a script written first and run later, or a program that opens the
+file itself gets past every one of them. For a hard boundary, run the agent in a sandbox
+or container that does not mount these files.
+
+## Permission snippets
+
+| Harness | File | Goes into |
+|---|---|---|
+| Claude Code | `claude/settings.json` | `permissions.deny` of `~/.claude/settings.json` |
+| opencode | `opencode/opencode.jsonc` | the `permission` keys of `~/.config/opencode/opencode.jsonc` (or `.json`) |
+| grok | `grok/config.toml` | `[permission]` `deny` of `~/.grok/config.toml` |
+| Gemini CLI | `gemini/opensuse-packaging.toml` | copy to `~/.gemini/policies/opensuse-packaging.toml` |
+| Antigravity CLI (`agy`) | `agy/settings.json` | `~/.gemini/antigravity-cli/settings.json`, with `/home/USER` replaced |
+| Codex, Kimi | — | not yet: snippets follow once their permission formats are verified |
+
+Every snippet denies, as far as its harness can express it:
+
+- the credential files `~/.config/osc/`, `~/.oscrc`, `~/.config/tea/`,
+  `~/.config/gh/hosts.yml`, `~/.netrc` and `~/.git-credentials`, osc's cookie jar
+  (`~/.local/state/osc/`) and the bugzilla MCP key (`~/.config/mcp-bugzilla/`), to the
+  read tool and on a command line;
+- what prints a secret:
+  - gh: `gh auth token`, `gh auth status` as a whole (`-t` also hides in `-at`) and `gh
+    auth git-credential`;
+  - git-obs: `git-obs login list` as a whole (`--show-tokens` has prefixes) and `git-obs
+    login gitcredentials-helper`;
+  - tea: `tea login helper`, its alias `git-credential`, and `tea login edit`/`e`, also
+    spelled `logins`;
+  - osc: `osc config --dump-...` (plain `--dump` hides the passwords and stays allowed),
+    `osc config <apiurl> pass`/`passx`, `osc token` as a whole (it lists and creates
+    tokens with their secrets; `--delete` and `--trigger` go with it), `osc api` on
+    `/person/<login>/token`, and HTTP debugging: `-H`, `-qH` and `-vH` (the Gemini CLI
+    rules take any short-option cluster ending in `H`),
+    `--http-d...`, `--http-f...`, and `http_debug`/`http_full_debug` as an environment
+    variable, `--setopt` or config key;
+  - git: `git credential fill`, and `git credential-<helper> get` or
+    `git-credential-<helper> get`;
+  - an `Authorization:` header passed with `-H` or `--header` (matched as
+    `uthorization`, so either case), `--apikey`, `--apisecret`, and a password in a URL
+    (`scheme://<user>:<password>@`);
+- handing git a credential by hand (`GIT_ASKPASS=`, `SSH_ASKPASS=`, `core.askPass`), and
+  `curl` to `api.opensuse.org`, `build.opensuse.org` or `src.opensuse.org/api`;
+- merging a PR on src.opensuse.org, pool or not, with `tea`, `git-obs` or `git obs` or
+  through the API (`gh` is not matched), `osc sr`/`creq` with `--nodevelproject`, and
+  `sudo chroot`.
+
+The rules match the mechanism, not the word, where the two differ: work on the
+openssh-askpass and git-credential-* packages, a grep for `api-key` or `Authorization:` in
+a source tree, `osc config --dump`, `tea logins list`, and a commit or request message
+that mentions a token or a config pass still run. The Claude Code,
+opencode and grok blocks are meant to match the openQA skill's rule for rule where the two
+overlap; the Gemini CLI and Antigravity snippets cover the same set in their own form. opencode also denies `.env` files but allows `.env.example`, and asks before a PR
+create. `tests/test-harness.sh` checks that every snippet parses, names the whole set and
+every path it claims for its read tool, has the command globs of Claude Code, grok and
+opencode refuse its probes and leave packaging commands alone, and runs the Gemini CLI
+rules against probes and against 64 KB of pathological input.
+
+These are pattern lists, and no pattern list is complete. Limits every harness shares:
+
+- A global option before the subcommand hides it from a rule that expects the
+  subcommand next: `tea --login x pr merge 3`, `tea logins --output simple e`, `git -C
+  dir obs pr merge`, `osc -A URL sr --nodevelproject`, `osc -A URL token`. The Claude
+  Code, grok and opencode globs catch none of these, nor do the Antigravity prefixes;
+  the Gemini CLI rules catch the merge behind `--login`, the request and the token call
+  behind `-A`, and neither of the other two (checked by `tests/test-harness.sh`). They
+  take one global option before `osc token` or `osc config`.
+- `osc` takes an option by any unambiguous prefix, so `--nod` is `--nodevelproject`: the
+  `osc sr *--nodevelproject*` rules miss it, the Gemini CLI rule takes `--nod`.
+  Antigravity lists only the full option names.
+- A short-option cluster other than `-qH` and `-vH` (`-dH`, `-qvH`) passes the Claude
+  Code, grok, opencode and Antigravity rules.
+- The API hosts are matched on `curl` only, not `wget` or httpie's `http`, nor a header
+  given another way (a config file, httpie's `Name:value`).
+- `osc api /person/<login>/token` and `git credential-<helper> get` are beyond the
+  Antigravity prefixes, which list only the `git-credential-<helper> get` form of a few
+  helpers. `gh config get oauth_token` is refused nowhere; it prints the token when gh
+  keeps it in `hosts.yml`.
+- False positives the globs keep: the glob for a password in a URL also refuses an osc
+  call whose explicit URL argument holds a `:` and an `@` (an XPath search, say), and
+  `*-H*uthorization*` refuses `grep -H Authorization` and a command that passes through a
+  `perl-HTTP-*` directory and mentions `Authorization`. The Gemini CLI regexes avoid
+  both.
+- Secrets outside files are not covered: the desktop keyring (`secret-tool lookup`, gh's
+  token when gh stores it there, reached over D-Bus), SSH private keys under `~/.ssh`, an
+  agent socket, or a credential helper not named above.
+- The skill's own gate scripts, `pool-pr.sh`, `target-gate.sh` and `leap-sync.sh`, still
+  read the tea token from `~/.config/tea/config.yml` themselves and hand it to git
+  through an askpass script until their migration lands. A snippet that stops the agent's
+  commands does not stop a script's own reads, and one that denies the file to every
+  process (Antigravity's sandboxed terminal, if it does) breaks them.
+
+### Claude Code
+
+Checked on 2.1.283 in a throw-away home: `claude doctor`, which names every malformed
+rule (tried with a planted one), reports none of the 87. Matching was measured by the
+openQA skill on the same version, in print mode: a `Read(...)` rule stops the Read tool
+but **not** `cat` of the same file, and a `Bash(*...*)` rule stops the command. So every
+path has both.
+
+- The pool PR guard's hook ships apart, in `claude/pr-guard-hook.json`: merge it only once
+  the guard is pinned ("Install the guard"). `python3` exits 2 on a missing script, and
+  Claude Code takes exit 2 as a refusal of every Bash, Write and Edit call.
+- Rules that start with a command (`tea pr m *`, `curl *...`, `osc sr *...`) are prefixes:
+  opencode's miss the command behind `env`, `command` or `A=1`; Claude Code's were not
+  measured that way.
+- A deny cannot be narrowed by an allow here, so `osc token` is refused whole, and `tea
+  pr *merge *` also refuses a PR create whose title holds the word "merge".
+
+### opencode
+
+Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
+D-Bus disabled. `opencode debug config` loads all 100 rules (5 `external_directory`, 84
+`bash`, 11 `read`). `opencode debug agent build --tool read` refuses every credential path
+of the set from a git worktree, from outside git and with the home directory as the
+worktree, with the `read` rules alone as well, and reads an openssh-askpass spec; `--tool
+bash` refuses every command of the set and the secret printers as text behind `echo`, and
+lets packaging commands and greps of source trees run; `--tool grep` is refused a search
+of the tea config directory from a project.
+
+- The last matching rule wins, in file order. The `bash` block's `"*": "allow"` must be
+  its first key, also when the openQA skill's snippet is merged beside this one; leave it
+  out to keep a default of your own, placed first. The `read` block has no `"*"`: allow is
+  the default there, and a `"*"` merged after another snippet's denies would undo them.
+- `read` patterns are matched against the path relative to the worktree, or to `/`
+  outside git, so they start with `*`: `~/`, `$HOME/` and absolute patterns never match,
+  and `*/.config/...` misses when the home directory is the worktree (both measured with
+  the first snippet).
+- The merge denies come after the create asks: a merge POST to a pool repository matches
+  both.
+- The built-in `.env` rules only ask, and an "always" answer approves every read for the
+  session; hence the explicit denies. The oscrc read rule is `*oscrc*`, broader than the
+  openQA skill's `*.oscrc`.
+- A project's own `opencode.json` can re-allow what the global file denies;
+  `OPENCODE_DISABLE_PROJECT_CONFIG=1` prevents that (both measured).
+- The grep tool ignores `read` rules. `external_directory` stops it outside the project,
+  and does nothing when opencode starts in the home directory: there grep finds the
+  credential files (measured).
+- Patterns that start with a command miss it behind `env`, `command` or `A=1` (measured).
+
+### grok
+
+Checked on 1.0.32: `grok inspect --json` loads all 85 rules with none skipped. An unknown
+rule is dropped silently (a planted `Frob(x)` counted 0), so compare the count after
+merging. Matching was not run here (it needs a model call); the openQA skill measured it:
+a deny beats every allow and ask and holds under always-approve, command globs match the
+whole command and each segment, and `*` crosses spaces and `/`.
+
+- A leading `~/` is literal text, so home paths use `**/`, and `X/**` does not match `X`,
+  so a directory is listed both ways.
+- grok also reads `~/.claude/settings.json`: with the Claude snippet merged it loads those
+  87 rules too (172), whose `Read(~/...)` rules do not match in grok. It lists the guard's
+  PreToolUse hook as enabled once `claude/pr-guard-hook.json` is merged; whether grok
+  hands the guard an event it can judge is not verified, so do not count on the guard in
+  grok.
+- As in Claude Code, a deny cannot be narrowed, so `osc token` is refused whole.
+
+### Gemini CLI
+
+Not installed here. Written against the policy engine of gemini-cli `main`
+(`packages/core/src/policy/`): `tests/test-harness.sh` runs the rules through a port of
+its loader (`commandRegex` becomes `"command":"` + the regex, and a quantified group that
+holds a quantifier is refused), probes them, and times each rule on 64 KB of pathological
+input; the CLI itself was not run. A file in
+`~/.gemini/policies/` is the user tier: priority 999 there outranks YOLO mode and "allow
+for all future sessions" answers; only the admin tier outranks it.
+
+- `settings.json` `tools.exclude` is deprecated and cannot match a path.
+- The `--policy` flag and the `policyPaths` setting replace the user tier, and drop this
+  file with it.
+- The shell regexes scan the JSON arguments from the command onwards, its description and
+  directory included: a commit message or a description that quotes a merge, a printer
+  or a credential path is refused too. File tools already refuse paths outside the
+  workspace; do not start Gemini in the home directory.
+- The CLI runs the rules in-process, so a slow regex hangs it. A gap between two parts
+  inside a floating gap backtracked cubically: the first version's `osc config ... pass`
+  rule never finished on a 64 KB command. A rule of several parts is now a row of
+  lookaheads anchored at the command's start, one lazy scan each, which finishes in
+  0.07 s at worst; its parts may come in any order.
+- Pool PR creation is not gated: the guard is not wired for Gemini.
+
+### Antigravity CLI (`agy`)
+
+Written from the permissions documentation of antigravity.google, as the openQA skill's
+was. On 1.2.5, in a throw-away home, `agy --log-file F agents` logs "CLI settings
+initialized" with all 51 deny entries; it logs any string, so that shows the file is read,
+not that each rule is valid. Check `/permissions`, Global, deny after merging.
+
+- Targets are absolute: replace `/home/USER` with your home directory.
+- `command()` rules match a command prefix, so the snippet lists the prefixes the set has:
+  the gh, git-obs, tea, osc and git printers, the known `git-credential-<helper> get`
+  forms, the merges and `--nodevelproject` right after the subcommand, and `sudo chroot`.
+  They cannot catch a path anywhere in a command, an option before the subcommand, a
+  header or a key in a URL, `osc config <apiurl> pass`, the HTTP-debug environment and
+  config forms, or a `curl` to the APIs.
+- The file rules are enforced by the operating system only for commands run in the
+  terminal sandbox, which `enableTerminalSandbox` turns on; `allowNonWorkspaceAccess:
+  false` keeps the file tools in the workspace. The sandbox was not run here (agy needs a
+  signed-in model), so it is untested whether those rules also keep osc, tea, git-obs, gh
+  and the skill's gate scripts from reading their own credentials in agy's terminal. If
+  they do, drop the entries for `~/.config/osc`, `~/.oscrc`, `~/.config/tea`,
+  `~/.config/gh/hosts.yml` and the cookie jar.
+- Whether the rules survive `--dangerously-skip-permissions` is not verified: do not use
+  that flag with this skill.
+
+## The pool PR guard
+
+The guard keeps every agent from opening, updating or merging a `pool/` PR on
+src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
+pushing to a branch that heads an open pool PR, writing a `target-gate.sh` stamp, running
+an emulated `osc build`, or filing a request against the scmsync'd
+`openSUSE:Backports:SLE-16.x` projects.
 
 | File | Goes to | Does |
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
-| `claude/settings.json` | merged into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`, plus deny rules: the Edit and Write tools stay off the hook and harness config, the Read tool off the osc and tea credential files, and a `sudo chroot …` command line is refused. Shell reads and curl calls are not covered — the opencode snippet's patterns are, and pr-guard judges only pool PR traffic |
+| `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook and harness config |
 | `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
-| `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges on src.opensuse.org (pool or not; `gh` is not matched), ask on PR creates, each `git-obs` pattern also spelled `git obs`; deny credential-file access and curl to the OBS and Gitea APIs (the skill's `references/osc-usage.md` "Tool discipline"), `--nodevelproject` requests and `sudo chroot` |
+| `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
 
 Both harnesses run one **pinned copy** of the guard. It is not updated with the skill:
 the guard polices the skill's own scripts, so a change to it is a decision, not a pull.
 
-## Install
+## Install the guard
 
 Wait until the branch that brought this guard is merged into `origin/main` **and** the
 skill checkout has fetched it (`git -C <checkout> fetch origin`). The guard runs the
 checkout's scripts unread once they match `origin/main`. Until the merge, that is the old
 `leap-sync.sh`, which pushes and opens or updates pool PRs itself with no gate, and a
 `git stash` or `checkout main` in the checkout would bring it back.
-
-Show each diff before applying it.
 
 1. Pin the guard, both files:
 
@@ -37,12 +254,13 @@ Show each diff before applying it.
    first, then re-run the `install`. Without `_pr_guard.py` every call the prefilter
    matches is refused.
 
-2. Claude Code: add the snippet's PreToolUse entry to `hooks.PreToolUse` in
-   `~/.claude/settings.json`, next to the existing entries, and its rules to
-   `permissions.deny`. Then delete any allow rule that pre-approves pool PR traffic from
-   the project settings (`.claude/settings.local.json`): `tea pr create --repo pool/...`,
-   `curl -X POST` to `.../repos/pool/...`. A hook's refusal wins over an allow rule, but
-   an allow rule for exactly the guarded call says the opposite of the policy.
+2. Claude Code: once step 1 is done, add the PreToolUse entry of
+   `claude/pr-guard-hook.json` to `hooks.PreToolUse` in `~/.claude/settings.json`, next to
+   the existing entries, and the rules of `claude/settings.json` to `permissions.deny`.
+   Then delete any allow rule that pre-approves pool PR traffic from the project settings
+   (`.claude/settings.local.json`): `tea pr create --repo pool/...`, `curl -X POST` to
+   `.../repos/pool/...`. A hook's refusal wins over an allow rule, but an allow rule for
+   exactly the guarded call says the opposite of the policy.
 
 3. opencode:
 
@@ -151,8 +369,8 @@ be refused with the guard's message. The `AI/zzz` variant must run, and so must
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
-- The Claude deny rules stop the Edit, Write and Read tools, not a shell command that
-  edits or reads the same files.
+- The Claude Edit and Write denies stop those tools, not a shell command that edits the
+  same files.
 - A push through a helper is not seen: a Python `def git(*a)`, a shell function
   `g() { git "$@"; }`, `git -c alias.x=push x`.
 - A pulls URL assembled without a literal `/pulls` (`base + 'pulls'`, `urljoin`,
