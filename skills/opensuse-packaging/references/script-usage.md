@@ -18,6 +18,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 - `scm-snapshot.sh [git-url] [--rev SHA|BRANCH] [--base X.Y.Z] [--pkg NAME] [--update]` — url required unless `--update`, which re-pins `./_service` in place; exit 0 verified · 1 mismatch · 2 usage or a step failed
 - `rdeps.sh <pkg-or-substring> [project] [repo] [arch]` — exit 0 listed · 1 no _builddepinfo · 2 usage
 - `cone-status.sh <project> [repo] [arch]` — remote-build loop; exit 0 all green · 1 in flight · 2 settled failure · 3 no answer (usage or lookup failed)
+- `obs-wait.py build PRJ PKG [--repo R] [--arch A] [--timeout S] [--recheck S] | request ID [--timeout S] [--recheck S]` — one bounded wait, `--timeout` default 80, 0 asks once; polls osc when the event stream is unreachable; exit 0 green from the current sources, or accepted · 1 still pending: repeat the call · 2 settled failure, or declined/revoked/superseded/deleted · 3 no answer (usage or lookup failed)
 - `gpg-verify.sh <tarball> <keyring> [signature]` — exit 0 good · 1 bad or unverifiable · 2 usage or unusable input
 
 ## Changelog and gates

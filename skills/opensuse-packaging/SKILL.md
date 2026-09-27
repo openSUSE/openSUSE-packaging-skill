@@ -73,6 +73,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `build-summary.sh` — the last `osc build`'s verdict, `%check` count, rpmlint badness, produced RPMs. **Its exit code IS the verdict** — gate on it instead of eyeballing a tail.
 - `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME.
 - `cone-status.sh` — per-package build-status table for a whole project with a loopable exit code.
+- `obs-wait.py` — one bounded wait (~80 s) for one OBS build or request, woken by OBS's event stream, verdict from osc; exit 1 = repeat the call. Never a `sleep` loop.
 - `leap-sync.sh` — content-sync a Leap pool branch up to Factory and run `target-gate.sh` on it; pushes nothing.
 - `target-gate.sh` — build the exact pool tree against its Leap base (`openSUSE:Backports:SLE-16.x standard`) and stamp it; `--review FILE` records the PASS for that tree.
 - `pool-pr.sh` — the only route that opens or updates a pool PR; refuses (exit 7, nothing pushed) without a GREEN + PASS stamp for HEAD's tree.
