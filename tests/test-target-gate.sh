@@ -296,6 +296,40 @@ case_ review-stamp-renamed 3 "no GREEN build of tree $(tree "$C" | cut -c1-12)" 
 C=$(fresh garbage); mkdir -p "$(dirname "$(stampf "$C")")" && echo 'not json' > "$(stampf "$C")"
 case_ stamp-garbage 3 "VERDICT: NO BUILD — unreadable stamp" "bash $TG $C"
 
+# --- a .changes-only change carries the last GREEN build, never its review ---------
+SEP67=$(printf -- '-%.0s' $(seq 67))
+chg() {   # chg DIR BULLET [HEADER] — DIR/foo.changes as one entry
+  printf '%s\n%s\n\n- %s\n' "$SEP67" "${3:-Thu Sep 24 00:00:00 UTC 2026 - T <t@example.com>}" "$2" > "$1/foo.changes"
+}
+C=$(fresh carry); chg "$C" "Fix the build on Leap"; (cd "$C" && git commit -qam entry)
+OLD=$(tree "$C"); S=$(stampf "$C")
+(cd "$C" && bash "$TG" --build >/dev/null && printf 'PASS tree %s\n' "${OLD:0:12}" > "$R.old" && bash "$TG" --review "$R.old" >/dev/null)
+chg "$C" "Fix the build on Leap 16.0"; (cd "$C" && git commit -qam reword)
+N12=$(tree "$C" | cut -c1-12)
+case_ carry-changes-only 0 "VERDICT: GREEN — tree $N12 on leap-16.0: only foo.changes differs from GREEN tree ${OLD:0:12}" \
+  "cd $C && bash $TG --build"
+check_ carry-builds-nothing "[ \"\$(calls '^osc build')\" = 0 ] && [ \"\$(calls '^osc buildinfo')\" = 0 ]"
+check_ carry-stamp "python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); d=json.load(open(sys.argv[2])); sys.exit(not (d[\"verdict\"]==\"GREEN\" and d[\"mode\"]==\"carried\" and d[\"from\"]==sys.argv[3] and d[\"arches\"]==o[\"arches\"] and \"review\" not in d and d[\"commit\"]==sys.argv[4]))' $S $(stampf "$C") $OLD \$(git -C $C rev-parse HEAD)"
+case_ carry-needs-review 3 "VERDICT: NO REVIEW — tree $N12 on leap-16.0 built GREEN (carried" "bash $TG $C"
+printf 'PASS tree %s\n' "$N12" > "$R.carried"
+case_ carry-review-then-green 0 "VERDICT: GREEN — tree $N12 on leap-16.0: build GREEN (carried from ${OLD:0:12}" \
+  "cd $C && bash $TG --review $R.carried && bash $TG"
+# A tree already stamped is built: that is how a carried build is made real.
+case_ carry-rebuilt-for-real 0 "VERDICT: GREEN — tree $N12 on leap-16.0: built aarch64" "cd $C && bash $TG --build && bash $TG"
+check_ carry-rebuilt-is-local "[ \"\$(calls '^osc build ')\" = 1 ] && grep -q '\"mode\": \"local\"' $(stampf "$C")"
+chg "$C" "Fix the build on Leap 16.0, again" "Thu Sep 24 2026 - T <t@example.com>"; (cd "$C" && git commit -qam badhdr)
+case_ carry-lint-fails-builds 0 "foo.changes fails changes-lint — building" "cd $C && bash $TG --build"
+check_ carry-lint-fails-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+chg "$C" "Fix the build on Leap 16.0, once more"; (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam spec)
+case_ carry-spec-changed-builds 0 "built aarch64" "cd $C && bash $TG --build"
+check_ carry-spec-changed-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+(cd "$C" && git rm -q foo.changes && git commit -qm drop)
+case_ carry-dropped-changes-builds 0 "built aarch64" "cd $C && bash $TG --build"
+check_ carry-dropped-changes-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+# Another base's GREEN is no evidence for this one.
+chg "$C" "Fix the build on Leap 16.1"; (cd "$C" && git add foo.changes && git commit -qm readd)
+case_ carry-other-base-builds 0 "on leap-16.1: built aarch64" "bash $TG $C --branch leap-16.1 --build"
+
 C=$(fresh redrop)
 case_ red-drops-stamp 1 "RED: build: build-summary rc=1" \
   "cd $C && bash $TG --build >/dev/null && FAKE_BUILD=failed bash $TG --build"
@@ -622,9 +656,17 @@ mkdir -p "$work/home3/.config/tea" && cp "$HOME/.config/tea/config.yml" "$work/h
   && cp "$HOME/.gitconfig" "$work/home3/"
 case_ remote-no-account 2 "cannot determine your OBS account" \
   "FAKE_WHOIS_FAIL=1 HOME=$work/home3 bash $TG $(fresh remote3) --remote"
-(cd "$C" && printf -- '- next\n' >> foo.changes && git commit -qam next)
+(cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam next)
 case_ remote-new-commit-repoints 3 "pointed $GPRJ/foo at leapgate/leap-16.0-$(git -C "$C" rev-parse HEAD | cut -c1-12)" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
+# A .changes-only commit after a remote GREEN is carried: nothing pushed, nothing repointed.
+C5=$(fresh remote5); chg "$C5" "Fix the build on Leap"; (cd "$C5" && git commit -qam entry); H5=$(git -C "$C5" rev-parse HEAD)
+results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
+bash "$TG" "$C5" --remote >/dev/null; FAKE_OBSINFO_COMMIT=$H5 bash "$TG" "$C5" --remote >/dev/null
+chg "$C5" "Fix the build on Leap 16.0"; (cd "$C5" && git commit -qam reword)
+case_ remote-carry-changes-only 0 "only foo.changes differs from GREEN tree $(git -C "$C5" rev-parse 'HEAD~1^{tree}' | cut -c1-12)" \
+  "bash $TG $C5 --remote"
+check_ remote-carry-no-obs-no-push "! grep -qE '^(osc (meta|api|cat|results|rdelete)|git-lfs push|tea |git-obs .*fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
 unset FAKE_LFS
 
 [ "$fails" -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"

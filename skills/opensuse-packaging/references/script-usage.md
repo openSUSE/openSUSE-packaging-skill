@@ -42,7 +42,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 - `leap-status.sh <pkg>` — exit 0 in sync · 1 behind, no PR · 2 behind, PR open · 3 not in Leap · 4 no verdict (a Version unreadable, or usage) · 5 network
 - `leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]` — sync + target build, never pushes; exit 0 synced and target build green, or already in sync · 2 error · 3 new to Leap · 4 someone else's PR open · 5 no factory branch · 6 network · 7 target build red · 8 remote build pending
-- `target-gate.sh [DIR] [--branch BASE] (--build [--jobs N] | --remote | --review FILE)` — no mode = check GREEN build + PASS review for HEAD's tree; `--review`: FILE's first non-empty line starts with `PASS` and names `tree <sha12>` of HEAD; PR arches from `openSUSE:Backports:SLE-16.x:PullRequest`; exit 0 green · 1 red · 2 refused or usage · 3 no stamp, stale or pending
+- `target-gate.sh [DIR] [--branch BASE] (--build [--jobs N] | --remote | --review FILE)` — no mode = check GREEN build + PASS review for HEAD's tree; `--review`: FILE's first non-empty line starts with `PASS` and names `tree <sha12>` of HEAD; a `.changes`-only change carries the base's last GREEN build (changes-lint must pass), never its review; PR arches from `openSUSE:Backports:SLE-16.x:PullRequest`; exit 0 green · 1 red · 2 refused or usage · 3 no stamp, stale or pending
 - `pool-pr.sh DIR [--title T] [--body-file F] [--replace]` — the only route to open/update a pool PR; your open PR is updated only when HEAD contains its head, `--replace` drops its commits and resets its body; exit 0 opened/updated · 2 refused or usage · 6 network/API failure · 7 gate not green, nothing pushed
 
 ## Skill upkeep

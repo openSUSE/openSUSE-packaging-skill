@@ -21,6 +21,10 @@
 #                  starts with PASS and names "tree <sha12>" of HEAD (trees
 #                  quoted further down are ignored); needs a GREEN build first
 #   (no mode)      check: GREEN build and PASS review for HEAD's tree and base
+# Carried: when HEAD's tree differs from the base's last GREEN tree only in
+# .changes files and changes-lint passes the entries they touch, --build and
+# --remote stamp that build for HEAD's tree (mode carried) without building;
+# the review never carries. A tree stamped already is built for real.
 # PR arches: the standard repository of openSUSE:Backports:SLE-16.x:PullRequest,
 # where the PR bot builds. Your PRs: those whose head repo belongs to the user
 # of the src.opensuse.org tea login, the same identity pool-pr.sh updates by.
@@ -220,6 +224,58 @@ def stamp_write(path, *kv):
     return 0
 
 
+def last(sd, base, tree):
+    # The newest GREEN build of another tree on this base.
+    best = None
+    for p in glob.glob(os.path.join(sd, "*-%s.json" % base)):
+        d = load(p)
+        t = os.path.basename(p)[: -len("-%s.json" % base)]
+        if not d or d.get("tree") != t or d.get("base") != base or t == tree:
+            continue
+        if d.get("verdict") == "GREEN":
+            key = (d.get("time") or "", os.path.getmtime(p))
+            if best is None or key > best[0]:
+                best = (key, t)
+    if best is None:
+        return 1
+    print(best[1])
+    return 0
+
+
+def touched(new):
+    # changes-lint --entries: down to the deepest entry of NEW that the
+    # stamped tree's copy (stdin) lacks verbatim.
+    def entries(text):
+        return [e for e in re.split(r"(?m)^(?=---)", text) if e.strip()]
+
+    old = set(entries(sys.stdin.read()))
+    try:
+        with open(new, encoding="utf-8", errors="replace") as fh:
+            ents = entries(fh.read())
+    except OSError:
+        return 1
+    print(max([i + 1 for i, e in enumerate(ents) if e not in old] or [1]))
+    return 0
+
+
+def carry(src, dst, *kv):
+    # The build verdict of src for a tree that differs only in .changes;
+    # never its review (stamp_write keeps one only for the same tree).
+    s = load(src)
+    if not s or s.get("verdict") != "GREEN":
+        return 1
+    extra = ["arches=" + ",".join(s.get("arches") or [])]
+    if s.get("flavors") is not None:
+        extra.append("flavors=" + "|".join(s["flavors"]))
+    return stamp_write(dst, *(extra + list(kv)))
+
+
+def built(d):
+    if d.get("mode") == "carried":
+        return "carried from %s, %s" % ((d.get("from") or "?")[:12], d.get("time"))
+    return "%s, %s" % (d.get("mode"), d.get("time"))
+
+
 def stamp_check(sd, tree, base):
     t12, path = tree[:12], os.path.join(sd, "%s-%s.json" % (tree, base))
     if os.path.exists(path):
@@ -233,14 +289,13 @@ def stamp_check(sd, tree, base):
         rv = d.get("review") or {}
         if rv.get("verdict") != "PASS":
             print(
-                "VERDICT: NO REVIEW — tree %s on %s built GREEN (%s, %s); "
-                "run the change review, then --review FILE"
-                % (t12, base, d.get("mode"), d.get("time"))
+                "VERDICT: NO REVIEW — tree %s on %s built GREEN (%s); "
+                "run the change review, then --review FILE" % (t12, base, built(d))
             )
             return 3
         print(
-            "VERDICT: GREEN — tree %s on %s: build GREEN (%s, %s), review PASS (%s)"
-            % (t12, base, d.get("mode"), d.get("time"), rv.get("time"))
+            "VERDICT: GREEN — tree %s on %s: build GREEN (%s), review PASS (%s)"
+            % (t12, base, built(d), rv.get("time"))
         )
         return 0
     same = sorted(glob.glob(os.path.join(sd, "*-%s.json" % base)), key=os.path.getmtime)
@@ -461,6 +516,9 @@ fn = {
     "qr": qr,
     "stamp-write": stamp_write,
     "stamp-check": stamp_check,
+    "last": last,
+    "touched": touched,
+    "carry": carry,
     "review": review,
     "prjmeta": prjmeta,
     "pkgmeta": pkgmeta,
@@ -559,6 +617,30 @@ done <<<"$mine"
 say "target-gate: $pkg tree ${tree:0:12} (commit ${head:0:12}) on $base -> $prj standard"
 mkdir -p "$sd" || refuse "cannot create $sd"
 [ ${#anc[@]} -eq 0 ] || say "note: HEAD extends your open PR ${anc[0]} — pool-pr.sh updates that PR"
+
+# A changelog changes nothing that builds but a heading changes-lint checks, so
+# a .changes-only step from the base's last GREEN tree carries that build, not
+# its review. A tree stamped already is built for real.
+if [ ! -e "$stamp" ] && from=$(py last "$sd" "$base" "$tree") \
+   && ns=$(git diff --no-renames --name-status "$from" HEAD 2>/dev/null) && [ -n "$ns" ] \
+   && files=$(awk -F'\t' '$1 !~ /^[AM]$/ || $2 !~ /\.changes$/ {exit 1} {print $2}' <<<"$ns"); then
+  carry=1
+  while IFS= read -r f; do
+    n=$({ git show "$from:$f" 2>/dev/null || :; } | py touched "$f") || n=1
+    if ! out=$("$HERE/changes-lint.sh" --entries "$n" "$f" 2>&1); then
+      say "note: $f fails changes-lint — building, not carrying tree ${from:0:12}:"
+      printf '%s\n' "$out" | head -5
+      carry=0
+    fi
+  done <<<"$files"
+  if [ $carry = 1 ]; then
+    py carry "$sd/$from-$base.json" "$stamp" tree="$tree" commit="$head" base="$base" project="$prj" \
+      mode=carried from="$from" verdict=GREEN || refuse "cannot write $stamp"
+    v=differs; [ "$(wc -l <<<"$files")" = 1 ] || v=differ
+    say "VERDICT: GREEN — tree ${tree:0:12} on $base: only $(paste -sd' ' <<<"$files") $v from GREEN tree ${from:0:12}, whose build carries; stamped $stamp — the review does not carry"
+    exit 0
+  fi
+fi
 
 pr_arches() {   # arches the PR bot builds for base $1; Backports itself has more
   local p m a
