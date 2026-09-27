@@ -96,6 +96,8 @@ printf '#!/bin/bash\nbash %s/open-pr.sh\n' "$W" > "$W/outer.sh"
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
 # A short long.txt where a message substitution that changes directory must not look.
 printf 'Short.\n' > "$W/long.txt"
+# A FIFO blocks whoever opens it until a writer comes: never opened by the guard.
+mkfifo "$W/fifo"
 # The harmless scripts of a sweep loop, 64 of them.
 mkdir -p "$W/sweep" && for i in $(seq -w 1 64); do printf 'echo %s\n' "$i" > "$W/sweep/p$i.sh"; done
 # A local script named like the gate, which copies its arguments.
@@ -935,6 +937,11 @@ case_ fd-number-attached         2 push-pr-head "pool/tesseract-ocr#3"
 echo "--- an expansion that doubles past 64 KiB is unknown, and fast"
 case_ var-doubling-script        2 exec-unresolved "\$V40"
 case_ var-doubling-message       2 request-message-unknown "\$V40"
+
+echo "--- a FIFO or device is refused, never read"
+case_ run-fifo                   2 exec-unreadable "not a regular file"
+case_ msg-fifo                   2 request-message-unknown "-F"
+case_ run-dev-stdin              2 exec-unreadable "not a regular file"
 case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 characters of prose"
 case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"

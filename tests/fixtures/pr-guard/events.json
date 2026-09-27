@@ -4994,5 +4994,26 @@
       "command": "V0=x; V1=\"$V0$V0\"; V2=\"$V1$V1\"; V3=\"$V2$V2\"; V4=\"$V3$V3\"; V5=\"$V4$V4\"; V6=\"$V5$V5\"; V7=\"$V6$V6\"; V8=\"$V7$V7\"; V9=\"$V8$V8\"; V10=\"$V9$V9\"; V11=\"$V10$V10\"; V12=\"$V11$V11\"; V13=\"$V12$V12\"; V14=\"$V13$V13\"; V15=\"$V14$V14\"; V16=\"$V15$V15\"; V17=\"$V16$V16\"; V18=\"$V17$V17\"; V19=\"$V18$V18\"; V20=\"$V19$V19\"; V21=\"$V20$V20\"; V22=\"$V21$V21\"; V23=\"$V22$V22\"; V24=\"$V23$V23\"; V25=\"$V24$V24\"; V26=\"$V25$V25\"; V27=\"$V26$V26\"; V28=\"$V27$V27\"; V29=\"$V28$V28\"; V30=\"$V29$V29\"; V31=\"$V30$V30\"; V32=\"$V31$V31\"; V33=\"$V32$V32\"; V34=\"$V33$V33\"; V35=\"$V34$V34\"; V36=\"$V35$V35\"; V37=\"$V36$V36\"; V38=\"$V37$V37\"; V39=\"$V38$V38\"; V40=\"$V39$V39\"; osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$V40\""
     },
     "cwd": "@CLONE@"
+  },
+  "run-fifo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/fifo"
+    },
+    "cwd": "@CLONE@"
+  },
+  "msg-fifo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F @WORK@/fifo"
+    },
+    "cwd": "@CLONE@"
+  },
+  "run-dev-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 /dev/stdin <<'EOF'\nimport os\nEOF"
+    },
+    "cwd": "@CLONE@"
   }
 }

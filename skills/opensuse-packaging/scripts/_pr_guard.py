@@ -834,7 +834,7 @@ def piped(out, ctx, cwd):
     for raw in what:
         for path in locate(raw, ctx, cwd)[0] or [None]:
             real = path and os.path.realpath(path)
-            if not real or written(real, ctx) or real.startswith(("/dev/", "/proc/")):
+            if not real or written(real, ctx) or not regular(real):
                 return None
             try:
                 with open(real, "rb") as fh:
@@ -1598,6 +1598,16 @@ def locate(raw, ctx, cwd):
     return paths, None
 
 
+def regular(path):
+    """Whether path is a regular file, which the guard may open and read."""
+    import stat
+
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
 def written(real, ctx):
     return any(real == w or real.startswith(w + os.sep) for w in ctx.written)
 
@@ -1702,6 +1712,8 @@ def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
         return
     ctx.scanned.add(real)
     try:
+        if os.path.exists(path) and not regular(path):  # a FIFO: open() may hang
+            raise OSError(0, "not a regular file")
         with open(real, "rb") as fh:
             data = fh.read(MAX_BYTES)
     except OSError as e:
