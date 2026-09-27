@@ -23,8 +23,7 @@
 #   4  no verdict: a branch's spec Version could not be read, or usage error
 #   5  network/API failure (NEVER reported as a fake in-sync)
 #
-# Public reads work unauthenticated; a token from ~/.config/tea/config.yml is
-# used when present (rate limits).
+# Every read is public and anonymous: no token is read or sent.
 set -uo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
@@ -32,10 +31,8 @@ case "${1:-}" in
 esac
 pkg="$1"
 G="https://src.opensuse.org"
-tok=$(python3 -c "import yaml,os;c=yaml.safe_load(open(os.path.expanduser('~/.config/tea/config.yml')));print([l['token'] for l in c['logins'] if l['name']=='src.opensuse.org'][0])" 2>/dev/null) || tok=""
-auth=(); [ -n "$tok" ] && auth=(-H "Authorization: token $tok")
 
-gget() { curl -fsS --max-time 20 "${auth[@]}" "$1"; }
+gget() { curl -fsS --max-time 20 "$1"; }
 
 # ---- 1. branches + per-branch spec version ----------------------------------
 branches_json="$(gget "$G/api/v1/repos/pool/$pkg/branches")" \
