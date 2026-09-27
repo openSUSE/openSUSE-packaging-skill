@@ -332,20 +332,20 @@ through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-merging any other src.opensuse.org PR the same ways (`gh` is not judged; an API merge call
-counts unless it provably only reads), pushing to a branch that heads an open pool PR,
-writing a `target-gate.sh` stamp, running an emulated `osc build`, filing a request
-against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
+merging any other src.opensuse.org PR the same ways (`gh` is not judged; a merge URL on a
+pool or unnamed repository is refused however it is sent, and elsewhere counts unless the
+call provably only reads), pushing to a branch that heads an open pool PR, writing a
+`target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
+scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
 `--nodevelproject`, a request through the API (`/request?cmd=create`) or one whose message
 has over 300 characters of prose (every line but a `- ` list item), a list line over 100
 characters or over 1000 in all (read from `-m`, `-F`, stdin, a variable or an
 `echo`/`printf`/`cat` substitution; one it cannot read is refused), or writing into a
-`*:Update` or `*:Maintenance:*` project outside `home:` (commit, `osc api` (sources or
-builds), `branch`, `copypac`, `linkpac`, `aggregatepac`, `rdelete`, `undelete`, `rremove`,
-`setdevelproject`, `setlinkrev`, `detachbranch`, `linktobranch`, `lock`, `release`,
-`wipebinaries`, a `meta prj|pkg` write) or one it cannot place. A `-h`/`--help` call of
-`tea`, `git-obs`, `git` or `osc` is not judged, and a refusal redacts the credentials it
-would echo (URL userinfo, `Authorization`/`Bearer` values, `token=`).
+`*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
+another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
+or one it cannot place. A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not
+judged, and a refusal redacts the credentials it would echo (URL userinfo,
+`Authorization`/`Bearer` values, `token=`).
 
 | File | Goes to | Does |
 |---|---|---|
@@ -409,11 +409,12 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 
 ## What reaches the guard
 
-The prefilter matches any path, `tea`, `git-obs` or `git obs`, `src.opensuse.org`,
-`push`, `send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and a command
-named by a variable (`$OSC ci`): a file a command runs is where a POST hides. A command
-named by a variable is judged as the tool its value names, or, unknown, as every guarded
-tool. A call whose working directory is inside a
+The prefilter matches any path, `tea`, `git-obs` or `git obs`, `src.opensuse.org`, `push`,
+`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and a command named
+by a variable (`$OSC ci`), each also read with its quotes and backslashes dropped
+(`o''sc`): a file a command runs is where a POST hides. A command named by a variable is
+judged as the tool its value names; one only the shell knows as every guarded tool, and as
+osc only when the variable is named for it. A call whose working directory is inside a
 `target-gate` directory is judged too. The rest of the command line decides nothing.
 
 A matched command is judged one parsed command at a time: a commit message, a grep
@@ -489,9 +490,10 @@ create must be refused too, the `AI/zzz` create must run, and so must
   the call does not set or made by a substitution (`$CMD`, `eval "$CMD"`,
   `bash -c "$(cat F)"`).
 - After a `cd` to a variable the call did not set, or to a `$(...)`, the working
-  directory is unknown (a loop's words, and values the call set, are followed): a push, an
-  unnamed `tea` or `git-obs` call, an `osc commit`, or a script run by relative path is
-  refused.
+  directory is unknown (values the call set, a loop's words and globs are followed; a
+  variable a loop reassigns holds all its values; `read`, `mapfile`, `printf -v` and
+  `declare -n` leave it unknown): a push, an unnamed `tea` or `git-obs` call, an
+  `osc commit`, or a script run by relative path is refused.
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
@@ -529,10 +531,18 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is.
 - The opencode plugin does not send `patch`/`apply_patch` tool calls to the guard.
-- A merge through the pulls API is refused whatever its host; `gh` is not judged, so
-  `gh pr merge` on a GitHub repository runs.
+- A merge through the pulls API is judged whatever its host; `gh` is not judged, so
+  `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
+  comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
+- A script that runs its own arguments (`"$@"`) is not followed, and `"$@"` or an array
+  in a script's command position is its arguments, not judged; on the call's own command
+  line an unknown one is refused.
+- The prefilter reads the text as written and with its quotes and backslashes dropped:
+  a command name only an expansion spells (`${X:-osc}`, `$(echo osc)`) is not seen.
 - Request messages are measured on osc command lines only: not in program code running
-  osc, and not in PR descriptions (`tea`, `git-obs`).
+  osc, and not in PR descriptions (`tea`, `git-obs`). A message another program writes, a
+  printf width or reused format, or a brace expansion is refused as unknown.
 - The maintenance rule reads osc command lines only, not program code running osc, and
-  not `osc rebuild`, `restartbuild`, `abortbuild`, `copyprj`, `service remoterun` or
-  `meta prjconf`/`attribute`/`pattern`.
+  covers the direct writes it names, not every osc subcommand that writes: `rebuild`,
+  `restartbuild`/`abortbuild`, `service remoterun` and `meta prjconf`/`attribute`/`pattern`
+  are among those it does not judge.

@@ -3,18 +3,18 @@
 
 Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
 update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
-(tea, git-obs, or an API call that does not provably only read; gh is not
-judged), push to a branch that heads an open pool PR, write a target-gate.sh
-stamp, run an emulated osc build, file a request against the scmsync'd
-openSUSE:Backports:SLE-16.x projects, file a submit request that overrides
-osc's devel-project check or create one through the API, file a request whose
-message is too long (over 300 characters of prose, which is every line but a "-
-" list item; a list line over 100; over 1000 in all) or cannot be read, or
-write into a *:Update or *:Maintenance:* project outside home: (commit, api,
-and osc's other writes) or one it cannot place. A -h/--help call of tea,
-git-obs, git or osc is not judged, and a refusal redacts the credentials it
-would echo. Its rules live in _pr_guard.py beside it, read only once a call
-matches the prefilter.
+(tea, git-obs, a merge URL on pool, or elsewhere an API call that does not
+provably only read; gh is not judged), push to a branch that heads an open pool
+PR, write a target-gate.sh stamp, run an emulated osc build, file a request
+against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
+request that overrides osc's devel-project check or create one through the API,
+file a request whose message is too long (over 300 characters of prose, which
+is every line but a "- " list item; a list line over 100; over 1000 in all) or
+cannot be read, or write into a *:Update or *:Maintenance:* project outside
+home: (commit, api, and osc's other writes) or one it cannot place. A -h/--help
+call of tea, git-obs, git or osc is not judged, and a refusal redacts the
+credentials it would echo. Its rules live in _pr_guard.py beside it, read only
+once a call matches the prefilter.
 
 A command line is judged one parsed command at a time, so what a command only
 carries -- a commit message, a grep pattern, an echo -- is not read as a
