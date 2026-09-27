@@ -26,8 +26,8 @@ jobs:
       fail-fast: false
       matrix:
         # 3.13 is what the suites are developed against; 3.9 establishes the
-        # real floor, which nothing had ever executed.
-        python: ["3.9", "3.13"]
+        # real floor, which nothing had ever executed; 3.15 is the next release.
+        python: ["3.9", "3.13", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          # Use a release candidate while a version has no final release yet.
+          allow-prereleases: true
       # The helpers and their tests are standard library only, and every suite is
       # offline (network lookups are stubbed). The one install is osc itself:
       # check-osc.py reads its argparse parser, pinned so the check is stable.
