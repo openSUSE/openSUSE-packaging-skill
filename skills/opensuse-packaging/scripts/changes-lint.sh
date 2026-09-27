@@ -7,7 +7,7 @@
 # that this catches locally in milliseconds.
 #
 # Usage: changes-lint.sh [--entries N | --all] <file>.changes [more.changes ...]
-#   --entries N  lint only the N newest (topmost) entries (default: 1 —
+#   --entries N  lint only the N >= 1 newest (topmost) entries (default: 1 —
 #                the entry your SR adds; use the number of entries new
 #                to the SR when superseding). Historical entries routinely
 #                violate today's rules and must never be retro-edited, so
@@ -39,7 +39,10 @@ entries=1
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
-  --entries) [ $# -ge 2 ] || { echo "--entries needs a value" >&2; exit 2; }; entries=$2; shift 2 ;;
+  --entries) [ $# -ge 2 ] || { echo "--entries needs a value" >&2; exit 2; }
+    # 0 is --all's internal value: from --entries it would lint released entries
+    [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "--entries takes a positive integer, got '$2' (--all lints every entry)" >&2; exit 2; }
+    entries=$2; shift 2 ;;
   --all) entries=0; shift ;;
 esac
 
