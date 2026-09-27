@@ -4966,5 +4966,19 @@
       "command": "tea api -repo pool/tesseract-ocr repos/pool/tesseract-ocr/pulls"
     },
     "cwd": "@OTHER@"
+  },
+  "fd-number-argument": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push fork 2 > push.log"
+    },
+    "cwd": "@ONPR@"
+  },
+  "fd-number-attached": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push fork tess-88053-16.0 2>push.log"
+    },
+    "cwd": "@CLONE@"
   }
 }

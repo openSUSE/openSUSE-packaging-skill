@@ -349,6 +349,7 @@ SUB_WORD = Rx(r"\$__sub(\d+)")
 HEREDOC = Rx(r"(?<!<)<<(-?)[ \t]*(?:\\([A-Za-z_][\w.-]*)|([\"']?)([A-Za-z_][\w.-]*)\3)")
 SH_SHEBANG = Rx(r"#!\s*\S*/(?:env\s+)?(?:ba|z|da|k)?sh\b")
 OPS = set(";&|()<>\n")
+FD_MARK = "\x04"  # before the digits of an fd that a redirection operator follows
 STDOUT = {">", ">>", ">|", "1>", "1>>", "1>|", "&>", "&>>"}
 SEPS = Rx(r"\|\||\|&?|&&|;;&?|;&|[;&()\n]")
 ASSIGN = Rx(r"[A-Za-z_]\w*\+?=")
@@ -1379,6 +1380,14 @@ def substitutions(text, quotes=True, base=0, lit=False):
             out.append(LIT_CHARS[esc] if lit and esc in LIT_CHARS else text[i : i + 2])
             i += 2
             continue
+        if not q and c.isdigit() and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = i
+            while j < n and text[j].isdigit():
+                j += 1
+            if j < n and text[j] in "<>":  # 2>file: an fd, not an argument
+                out.append(FD_MARK + text[i:j])
+                i = j
+                continue
         if lit and not q and text.startswith("$'", i):
             j = i + 2
             while j < n and text[j] != "'":
@@ -1482,8 +1491,9 @@ def commands(tokens):
     for tok in tokens:
         if tok and set(tok) <= OPS:
             if "<" in tok or ">" in tok:
-                # the fd of 2>&1 goes with its operator
-                op = (argv.pop() if argv and argv[-1].isdigit() else "") + tok
+                # the fd of 2>&1 goes with its operator (substitutions() marked it)
+                fd = argv and argv[-1][:1] == FD_MARK
+                op = (argv.pop()[1:] if fd else "") + tok
                 continue
             if argv or redirs:
                 yield argv, redirs
