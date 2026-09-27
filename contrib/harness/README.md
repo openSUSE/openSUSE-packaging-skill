@@ -121,11 +121,12 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
 - Secrets outside files are covered only as far as `secret-tool lookup` and `search`: any
   other keyring reader over D-Bus, SSH private keys under `~/.ssh`, an agent socket, or a
   credential helper not named above is not.
-- The skill's own gate scripts, `pool-pr.sh`, `target-gate.sh` and `leap-sync.sh`, still
-  read the tea token from `~/.config/tea/config.yml` themselves and hand it to git
-  through an askpass script until their migration lands. A snippet that stops the agent's
-  commands does not stop a script's own reads, and one that denies the file to every
-  process (Codex's `credentials-strict`, Antigravity's sandboxed terminal) breaks them.
+- The skill's own gate scripts, `pool-pr.sh`, `target-gate.sh` and `leap-sync.sh`, read
+  no credential themselves: they reach src.opensuse.org through
+  `git-obs -G src.opensuse.org api` and push over SSH, so git-obs reads its login (the tea
+  config by default) and ssh its key. A profile that denies those files to every process
+  (Codex's `credentials-strict`, Antigravity's sandboxed terminal) breaks the scripts
+  through them.
 
 ### Claude Code
 
@@ -239,8 +240,8 @@ not that each rule is valid. Check `/permissions`, Global, deny after merging.
   terminal sandbox, which `enableTerminalSandbox` turns on; `allowNonWorkspaceAccess:
   false` keeps the file tools in the workspace. The sandbox was not run here (agy needs a
   signed-in model), so it is untested whether those rules also keep osc, tea, git-obs, gh
-  and the skill's gate scripts from reading their own credentials in agy's terminal. If
-  they do, drop the entries for `~/.config/osc`, `~/.oscrc`, `~/.config/tea`,
+  and the skill's gate scripts (through git-obs) from reading their credentials in agy's
+  terminal. If they do, drop the entries for `~/.config/osc`, `~/.oscrc`, `~/.config/tea`,
   `~/.config/gh/hosts.yml` and the cookie jar.
 - Whether the rules survive `--dangerously-skip-permissions` is not verified: do not use
   that flag with this skill.
@@ -301,10 +302,10 @@ opt-in `credentials-strict` profile denies them to every process.
   directory under its root, or more than 8192 matches, fails every command (measured with
   `**/.env` and one unreadable directory in the workspace). So the profile names literal
   paths only, and `.env` is denied at the workspace root, not in subdirectories.
-- `credentials-strict` also keeps osc, tea, git-obs, gh and the skill's gate scripts from
-  reading their own credentials inside Codex (osc then asks for a user name), so it is
-  opt-in per session. gh's token lives in the keyring, reached over D-Bus, not a file: the
-  commented socket deny cuts it off.
+- `credentials-strict` also keeps osc, tea, git-obs, gh and the skill's gate scripts
+  (through git-obs) from reading their credentials inside Codex (osc then asks for a user
+  name), so it is opt-in per session. gh's token lives in the keyring, reached over D-Bus,
+  not a file: the commented socket deny cuts it off.
 
 ### Kimi Code
 
