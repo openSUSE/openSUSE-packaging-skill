@@ -392,5 +392,45 @@ case_ table-merged-not-read 0 "| PR | #4 | tesseract-ocr | pool/tesseract-ocr:le
 row=$(grep '| #4 |' <<<"$LAST")
 [ -n "$row" ] && ! grep -qF "PR build" <<<"$row" && pass "table: a merged PR is not read from OBS" || fail "table: merged row: $row"
 
+# ---------------------------------------------------------------- replaced declines
+# A declined SR that a later accepted one for the same package and target
+# replaced still counts for osc -- the next `osc sr` from that source prompts
+# over it -- so it stays at the top as cleanup, with the revoke that clears it.
+# Only rows already fetched count (--state all, or ids given), never an extra
+# call. The note avoids "superseded", which is an OBS state of its own.
+sreq() { # <id> <package> <target project> <state> [decline comment]
+  printf '<request id="%s"><action type="submit"><source project="devel:example" package="%s"/>
+  <target project="%s" package="%s"/></action><state name="%s" who="a-reviewer">%s</state></request>\n' \
+    "$1" "$2" "$3" "$2" "$4" "${5:+<comment>$5</comment>}"
+}
+ALL=request_view_collection_states_new,review,declined,accepted,revoked,superseded_roles_creator_user_tester_types_submit
+{ echo '<collection>'
+  sreq 100 foo openSUSE:Factory declined 'fix the changelog'
+  sreq 120 foo openSUSE:Factory accepted
+  sreq 90 bar openSUSE:Factory accepted
+  sreq 110 bar openSUSE:Factory declined
+  sreq 130 baz openSUSE:Factory declined
+  sreq 140 baz devel:example accepted
+  echo '</collection>'; } > "$work/collection.xml"
+REVOKE='declined; later #120 accepted — revoke: osc rq revoke -m "replaced by #120" 100'
+case_ replaced-brief 0 "SR 100  [$REVOKE]" \
+  "cp '$work/collection.xml' \$B/obs/$ALL" --state all --brief --no-prs
+rows=$(grep '^  SR ' <<<"$LAST")
+[ "$(head -3 <<<"$rows" | awk '{print $2}' | tr '\n' ' ')" = "100 110 130 " ] \
+  && pass "replaced-brief: every decline stays at the top" || fail "replaced-brief: order: $rows"
+# bar's accepted #90 came before its decline; baz's accepted went elsewhere.
+grep -qF "SR 110  [declined ]" <<<"$rows" && grep -qF "SR 130  [declined ]" <<<"$rows" \
+  && ! grep -qi "superseded" <<<"$rows" && pass "replaced-brief: only the replaced one is annotated" \
+  || fail "replaced-brief: annotations: $rows"
+case_ replaced-ids 0 "| SR | 100 | foo | openSUSE:Factory | ❌ $REVOKE |" \
+  "mkdir -p \$B/obs/request \$B/obs/comments/request &&
+   { sreq 100 foo openSUSE:Factory declined 'fix the changelog'; } > \$B/obs/request/100 &&
+   { sreq 120 foo openSUSE:Factory accepted; } > \$B/obs/request/120 &&
+   echo '<comments/>' > \$B/obs/comments/request/120" 100 120
+[ "$(grep '^| SR ' <<<"$LAST" | head -1 | cut -d'|' -f3)" = " 100 " ] \
+  && pass "replaced-ids: the declined row stays first" || fail "replaced-ids: order: $LAST"
+case_ declined-alone-ids 0 "| SR | 100 | foo | openSUSE:Factory | ❌ declined |" \
+  "mkdir -p \$B/obs/request && { sreq 100 foo openSUSE:Factory declined 'fix the changelog'; } > \$B/obs/request/100" 100
+
 echo "---"; [ "$fails" = 0 ] && echo "all sr-status checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

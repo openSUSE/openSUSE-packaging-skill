@@ -30,6 +30,12 @@ always run: PRs you created, and PRs awaiting your review. `--no-prs` skips
 both. Every osc / git-obs call times out after 60s and then counts as a failed
 lookup (a network failure for --pr), never as an empty answer.
 
+A declined SR that a later accepted one for the same package and target
+replaced is annotated with the revoke that clears it and stays at the top:
+osc still counts a declined request, so the next `osc sr` from that source
+prompts over it. Only when both are among the rows fetched (--state all, or
+both ids given).
+
 An open pool/ PR's build is read from OBS, not from the staging bot's last
 comment: the `...:PullRequest:<n>` project the bot names is built from whatever
 commit its products PR pins, which can be older than the PR head (STALE). A
@@ -709,6 +715,28 @@ def main():
                 }
             )
 
+    # A decline that a later accepted request for the same package and target
+    # replaced is cleanup, not done: osc still counts it, and the next `osc sr`
+    # from that source prompts over it until it is revoked. Only rows already
+    # fetched are compared (the default view holds no accepted ones), so this
+    # costs no call.
+    accepted = [r for r in rows if r["state"] == "accepted" and r["pkg"] != "?"]
+    for r in rows:
+        if r["state"] != "declined":
+            continue
+        later = [
+            x["num"]
+            for x in accepted
+            if (x["pkg"], x["target"]) == (r["pkg"], r["target"])
+            and x["num"] > r["num"]
+        ]
+        if later:
+            n = min(later)
+            r["note"] = (
+                f"; later #{n} accepted — revoke: "
+                f'osc rq revoke -m "replaced by #{n}" {r["id"]}'
+            )
+
     failed_legs = []
     if not a.ids and not a.no_prs:
         for leg in ("created", "review-requested"):
@@ -736,7 +764,8 @@ def main():
         for r in rows:
             src = f"  {r.get('src', '')} ->" if r.get("src") else " "
             print(
-                f"  {r['kind']} {r['id']}  [{r['state']:9}] {src} {r['target']}"
+                f"  {r['kind']} {r['id']}  [{r['state'] + r.get('note', ''):9}] {src} "
+                f"{r['target']}"
                 + (f"/{r['pkg']}" if r["kind"] == "SR" else "")
                 + (f"  @{r['staging']}" if r.get("staging") else "")
             )
@@ -745,7 +774,7 @@ def main():
         for r in rows:
             print(
                 f"**{r['kind']} {r['id']} — {r['pkg']}**  {badge(r['state'])} "
-                f"{r['state']}  ·  → `{r['target']}`"
+                f"{r['state']}{r.get('note', '')}  ·  → `{r['target']}`"
             )
             for rv in r.get("reviews", []):
                 print(f"- {review_full(rv)} {badge(rv.get('state', ''))}")
@@ -764,7 +793,8 @@ def main():
         for r in rows:
             print(
                 f"| {r['kind']} | {r['id']} | {r['pkg']} | {r['target']} | "
-                f"{badge(r['state'])} {r['state']} | {r['chain']} | {r['comment']} |"
+                f"{badge(r['state'])} {r['state']}{r.get('note', '')} | {r['chain']} | "
+                f"{r['comment']} |"
             )
     print(
         "\n_Legend: ✅ accepted/merged · 🔎 review/open · ⏳ new/pending · "
