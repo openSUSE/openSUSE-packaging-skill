@@ -232,4 +232,5 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
   --build-log  also run build-summary.sh on this osc build log (verdict only)
   --full       print every gate's complete output (default: last 12 lines each;
                full output is always saved under $TMPDIR/gate-<pkg>/)
-Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage.
+Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage,
+      or DIR is not a package checkout (no *.spec, no .osc/_package).

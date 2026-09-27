@@ -15,7 +15,8 @@
 #   --build-log  also run build-summary.sh on this osc build log (verdict only)
 #   --full       print every gate's complete output (default: last 12 lines each;
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
-# Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage.
+# Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage,
+#       or DIR is not a package checkout (no *.spec, no .osc/_package).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 dir=.; entries=1; amend=""; target=""; buildlog=""; full=0
@@ -23,7 +24,8 @@ while [ $# -gt 0 ]; do
   case "$1" in --entries|--amend-top|--target|--build-log) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    --entries) entries=$2; shift 2 ;;
+    --entries) [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "gate.sh: --entries takes a positive integer, got '$2'" >&2; exit 2; }
+               entries=$2; shift 2 ;;
     --amend-top) amend=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;
     --build-log) buildlog=$2; shift 2 ;;
@@ -33,6 +35,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 cd "$dir" || exit 2
+# Anywhere else source_validator reports rc=0 over nothing: a green piece of a
+# verdict about no package.
+specs=( *.spec )
+if [ ! -e "${specs[0]}" ] && [ ! -r .osc/_package ]; then
+  if [ -r .osc/_project ]; then echo "gate.sh: $(pwd): osc project checkout — cd into the package directory" >&2
+  else echo "gate.sh: $(pwd): no *.spec and no .osc/_package — not a package checkout" >&2; fi
+  exit 2
+fi
 pkg=$(basename "$(pwd -P)"); [ -r .osc/_package ] && pkg=$(tr -d '\n' < .osc/_package)
 log="${TMPDIR:-/tmp}/gate-$pkg"; rm -rf "$log"; mkdir -p "$log"
 red=()
