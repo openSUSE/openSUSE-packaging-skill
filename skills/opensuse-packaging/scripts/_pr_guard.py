@@ -171,6 +171,12 @@ OSC_REQUEST = Rx(
     r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|mr|maintenancerequest"
     r"|creq|createrequest)(?![-\w]).*?openSUSE:Backports:SLE-16"
 )
+# --nodevelproject, or a prefix argparse expands to it, on a submit request.
+NODEVEL = "|".join("--nodevelproject"[:n] for n in range(5, 17))
+OSC_NODEVEL = Rx(
+    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest"
+    rf"|(?:rq|request){SEP}create)(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
+)
 
 HEREDOC = Rx(r"(?<!<)<<(-?)[ \t]*(?:\\([A-Za-z_][\w.-]*)|([\"']?)([A-Za-z_][\w.-]*)\3)")
 SH_SHEBANG = Rx(r"#!\s*\S*/(?:env\s+)?(?:ba|z|da|k)?sh\b")
@@ -251,6 +257,9 @@ MESSAGES = {
     "For a foreign-arch proof run target-gate.sh DIR --remote.",
     "backports": "{0}: openSUSE:Backports:SLE-16.x is scmsync'd from pool and "
     "takes no requests; " + ROUTE + ".",
+    "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
+    "factory-auto declines a Factory request whose source is not the devel "
+    "project. Submit from the devel project.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -424,6 +433,8 @@ def osc_rules(seg, request=None):
                 block("emulated-build", f"an osc build for {arch} on {native}")
     if OSC_REQUEST.search(seg if request is None else request):
         block("backports", "an osc request to openSUSE:Backports:SLE-16.x")
+    if OSC_NODEVEL.search(seg if request is None else request):
+        block("nodevelproject", "an osc request with --nodevelproject")
 
 
 def without_message(run):

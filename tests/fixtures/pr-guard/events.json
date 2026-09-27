@@ -2865,5 +2865,47 @@
       "command": "git obs pr create --target AI/mistral-vibe:factory --title 'Update to 2.25.1'"
     },
     "cwd": "@CLONE@"
+  },
+  "osc-sr-nodevelproject": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:<you>:branches:devel:tools tesseract-ocr openSUSE:Factory --nodevelproject -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-creq-nodevelproject": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit home:<you>:branches:devel:tools tesseract-ocr openSUSE:Factory --nodevelproject -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-nodevel-abbrev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitreq --nodevel devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-nodevel-python": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import subprocess; subprocess.run([\"osc\", \"sr\", \"--nodevelproject\", \"devel:tools\", \"tesseract-ocr\", \"openSUSE:Factory\"])'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-devel-control": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:<you>:branches:devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-nodevel-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr -m 'from the devel project, no --nodevelproject' devel:tools tesseract-ocr openSUSE:Factory"
+    },
+    "cwd": "@CLONE@"
   }
 }

@@ -640,6 +640,13 @@ case_ osc-sr-factory      0 - ""
 # The request message only describes the request.
 case_ osc-sr-message-backports 0 - ""
 case_ osc-sr-message-eq   0 - ""
+# factory-auto declines a Factory request whose source is not the devel project.
+case_ osc-sr-nodevelproject   2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-creq-nodevelproject 2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-sr-devel-control    0 - ""
+case_ osc-sr-nodevel-message  0 - ""
 
 echo "--- a help invocation of a guarded tool does nothing"
 case_ help-tea-create           0 - ""
