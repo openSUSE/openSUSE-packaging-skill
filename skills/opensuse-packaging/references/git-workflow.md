@@ -2,7 +2,7 @@
 
 openSUSE is migrating package sources from classic OBS `osc` checkouts to **Git on `src.opensuse.org`** (a Gitea instance). Reference: https://en.opensuse.org/openSUSE:Git_Packaging_Workflow (and its companion https://en.opensuse.org/openSUSE:OBS_to_Git). A package is in the Git workflow when you clone it from `src.opensuse.org` instead of `osc co`-ing it; the checkout is a plain git repo (no `.osc/` dir) with the `.spec`, `.changes`, source tarball(s), `.gitattributes`, and `.gitignore`.
 
-**The spec/`.changes`/spec-cleaner/rpmlint rules in this skill are unchanged** — only the *plumbing* around them (fork / checkout / commit / submit) differs. Everything in SKILL.md "Core directive" still applies: spec-cleaner clean, `.changes` entry per session, local `osc build`, etc.
+**The spec/`.changes`/spec-cleaner/rpmlint rules in this skill are unchanged** — only the *plumbing* around them (fork / checkout / commit / submit) differs. Everything in SKILL.md "Core directive" still applies: spec-cleaner clean, one `.changes` entry per change, a clean `osc build`, etc.
 
 ## Repo topology on src.opensuse.org
 
@@ -119,6 +119,8 @@ git-obs -G src.opensuse.org pr create --title "..." --description "..." --target
 # or use tea:  tea pulls create --login <login> --repo <devel-project>/<pkg> --head <youruser>:<branch> --base main
 # or the Gitea web UI.
 ```
+
+The description is 1–3 sentences: `references/submit-watch.md` "Filing an SR".
 
 If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `git-obs -G src.opensuse.org pr create`. Never fall back to curl with a token taken from the tea config; `git-obs -G src.opensuse.org api -X POST /repos/<devel-project>/<pkg>/pulls --data "$(python3 -c 'import json; print(json.dumps({"head": "<you>:<branch>", "base": "main", "title": "<title>", "body": open("body.txt").read()}))')"` covers what the CLIs lack. **Build that JSON with `json.dumps`, as here, never by pasting the text into a quoted string** — a literal `"`, a backtick or a newline breaks it after the branch is already pushed, and you get `invalid character '…'` and *no PR*.
 

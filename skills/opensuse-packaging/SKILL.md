@@ -87,7 +87,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `changes-guard.sh` — integrity gate: a `.changes` edit must be *insertion-only*. `--amend-top "<Name> <mail>"` permits amending your OWN not-yet-accepted top entry and nothing below it.
 - Bugzilla has **no bundled script** — all access goes through the bugwarden MCP server (core directive 7).
 - `distro-survey.sh` — version (+ Fedora patch-count hint) across all 11 surveyed distros in one call (core directive 8–9).
-- `rdeps.sh` — reverse build-deps via `_builddepinfo`; the soname-bump rebuild-scope check.
+- `rdeps.sh` — reverse build-deps via `_builddepinfo`: who a soname bump touches (in Factory only a spec naming `lib<name><sover>` needs an edit).
 - `wiki-drift.sh` — pinned wiki revisions vs the live wiki, for human review; the only sanctioned wiki→`references/` bridge.
 - `factory-report.py` — contributor-activity report for a project ("who is shipping Factory?"), ranked by accepted SRs, always beside **shape** and **rhythm** — it counts *requests*, not commits or lines.
 - `_anitya.py`, `_forges.py` — shared modules imported by `outdated.py` / `upstream-probe.py`; not directly runnable — **do not prune them**.
@@ -133,7 +133,7 @@ This workflow *requires* reading text an adversary can author: upstream release 
    - **HARD RULE — re-derive the licences for a NEW package and on every VENDORED-DEPENDENCY update** (Rust `vendor.tar.zst`, Go modules, npm): a re-vendor can add copyleft the previous tarball never had, so the existing `License:` tag is **not** evidence for the new one. Declare upstream's own licence **AND** every copyleft/weak-copyleft licence genuinely linked into what you ship. → `references/language-packaging.md` "Rust (cargo) deep-dive"; `references/specfile-guidelines.md` "Spec file — general rules"
    - **Use `# Legal-Review-Notice:` to talk to the legal-review team in the spec** when a licence conclusion is non-obvious or a scanner false positive needs recording, so the tag is not re-litigated. **A licence merely *named in a comment* is not a licence *granted*** — verify the crate's declared `license` field and its LICENSE files before believing a grep hit (boo#1273104). → `references/specfile-guidelines.md` "Spec file — general rules"
    - **If the package ships a shared library, run `scripts/soname-check.sh` on the built RPMs — HARD RULE.** rpmlint and `source_validator` both pass a versioned symlink that is not the SONAME, because the defect needs two versions installed to show; it detonates in the target project's staging as a file conflict and comes back as a reviewer decline. → `references/shlib-alternatives.md` "Shared libraries"
-6. **Always add a `.changes` entry** for any spec edit, in the same turn as the edit — non-optional (skip only if the user explicitly said so, or the edit is purely cosmetic, e.g. a comment typo). **One entry per session** — see "Adding a .changes entry" below for the amend mechanics.
+6. **Always add a `.changes` entry** for any spec edit, in the same turn as the edit — non-optional (skip only if the user explicitly said so, or the edit is purely cosmetic, e.g. a comment typo). **One entry per change** — see "Adding a .changes entry" below for the amend mechanics.
 6b. **Declare the version floors the build actually checks, and re-verify inherited pins — HARD RULE.** Three failure modes, all of which pass every local gate (why, and the real cases: `references/specfile-guidelines.md` "Spec file — general rules"):
    - **Missing floors.** If `configure`/`meson`/`cmake` tests for `foo >= X.Y`, the spec must say `BuildRequires: pkgconfig(foo) >= X.Y` — without it OBS *starts* a build that can only die in `configure` instead of holding the package **unresolvable** until the dependency lands, which is the honest state and what reviewers ask for.
    - **Stale pins.** A workaround pinned for version N is not automatically right for N+1: before carrying any pin, `%define`, disabled option, downgrade or `update=false`-style flag forward, **re-verify that the condition which caused it still reproduces**.
@@ -153,9 +153,9 @@ The order matters: spec-cleaner output is mechanically correct *style*; the wiki
 
 `osc vc` is interactive, so write the entry directly. **HARD RULE — a prepend is an *insertion*, never a rewrite:** never `open(f,"w").write(hdr + open(f).read())` or any other truncate-then-read form (it silently deletes every previous entry), and afterwards verify the separator count went up by exactly one and that `osc diff` shows a pure insertion. Prefer `scripts/changes-prepend.sh`, which is canonical by construction, then `scripts/changes-lint.sh --entries <n>`.
 
-**One entry per session** (amend yours, don't stack a second), full `Full Name <email>` author line, `LC_ALL=C date -u "+%a %b %_d %T UTC %Y"` for the header, a **blank line at the end of the block**, and **never touch an already-released entry** (narrow exceptions only). The bullet records *net change*, not the journey.
+**One entry per change** (amend your unaccepted top entry, don't stack a second), full `Full Name <email>` author line, `LC_ALL=C date -u "+%a %b %_d %T UTC %Y"` for the header, a **blank line at the end of the block**, and **never touch an already-released entry** (narrow exceptions only). The bullet records *net change*, not the journey.
 
-→ `references/changelog-entry.md` "The entry template", "Prepend is an *insertion*, never a rewrite", "One `.changes` entry per session", "`.changes` records net change, not the journey"; format/content rules: `references/changelog-rules.md` "Changelog (`*.changes`)"
+→ `references/changelog-entry.md` "The entry template", "Prepend is an *insertion*, never a rewrite", "One `.changes` entry per change", "`.changes` records net change, not the journey"; format/content rules: `references/changelog-rules.md` "Changelog (`*.changes`)"
 
 ## Wiki provenance and trust
 

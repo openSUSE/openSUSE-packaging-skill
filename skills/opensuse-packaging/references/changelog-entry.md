@@ -90,7 +90,7 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   repair): `scripts/README.md` "`changes-guard.sh`" and `references/changelog-rules.md`
   "Sanctioned exception 2".
 
-## One `.changes` entry per session — amend, don't stack
+## One `.changes` entry per change — amend, don't stack
 
 Pair edits with entries in the same turn: a `.spec` edit and its `.changes` edit land together
 before the task is reported done.
@@ -101,6 +101,13 @@ session **amend it**: refresh the timestamp to the new current time, and add the
 `*` under an existing dash when it fits thematically, else a new `-`). If a previous turn already
 stacked a second entry that should have been an amendment, merge them under the later timestamp,
 preserving all bullets. Version bumps stay a separate top-level bullet within that one entry.
+
+**The unit is the change, not the session.** While your top entry is not yet accepted (its SR or PR
+still open, or declined and being refiled), a later session's fix to the same change — review
+feedback, a reword, a forgotten bullet — amends that entry too; `changes-guard.sh --amend-top
+"<Name> <email>"` permits exactly that and nothing below it. Never stack a second entry on your own
+unaccepted one. Only a new upstream version, committed as its own devel revision, starts a new
+entry; a superseding SR may carry several of those.
 
 ## `.changes` records net change, not the journey
 

@@ -26,7 +26,7 @@ python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 
 | trigger | read |
 |---|---|
-| a decline or a reviewer comment | `submit-watch.md` "Triaging your declined submit requests", then `decline-catalog.md` "What human Factory reviewers decline for" to class it |
+| a decline or a reviewer comment | `submit-watch.md` "Triaging your declined submit requests", then `decline-catalog.md` "What human Factory reviewers decline for" to class it; a factory-auto decline → `decline-catalog.md` "factory-auto declines that point the wrong way" |
 | git/scmsync package (PR, not `osc sr`) | `git-workflow.md` "Submitting changes — PR, not `osc sr`", "Verify a push/PR actually landed" |
 | the target is Leap 16.x / SLFO / Backports | `leap-slfo.md` "1. Where does the package come from?" (routing); a released product → `maintenance-updates.md` "Maintenance updates (Backports / Leap)" |
 | a Leap `pool/` PR (a `leap-16.x` branch) | `leap-slfo.md` "The pool PR gate — build, review, open, watch", then `script-usage.md` "Leap" |

@@ -5,6 +5,8 @@ Owner of the maintenance-update route. The Leap 16.x / SLFO / SLE-15 routing dec
 
 ## Maintenance updates (Backports / Leap)
 
+**HARD RULE — never write into a maintained product.** No checkout-and-commit, `osc copypac` or `osc api -X POST`/`PUT` in a `*:Update` project outside your `home:`, `openSUSE:Maintenance*` or an incident — not even a "probe" to see whether you may: a write that succeeds lands in a released product. The only route is `osc mbranch` + `osc mr` below (without incident rights, `osc branch` + `osc sr`: `references/leap-slfo.md` "6. `openSUSE:Backports:SLE-15-SPx` maintenance updates").
+
 A change that already landed in the devel project (and is in flight to Factory) does **not** automatically reach released distributions — Leap, Package Hub, etc. Those are maintained separately and require a *maintenance request* (MR), which is a different workflow from `osc sr`. The typical sequence:
 
 1. **`osc maintained <pkg>`** — discovers which maintained products carry the package today. Output is one `<project>/<package>` line per instance, e.g. `openSUSE:Backports:SLE-15-SP7:Update/fwts`. If the output is empty, there's nothing to update — the package isn't in a released distribution. Always run this first; assumptions about "is this in Leap?" are unreliable.
@@ -19,6 +21,6 @@ A change that already landed in the devel project (and is in flight to Factory) 
 
 Gotchas observed in practice:
 
-- **`osc maintenancerequest` has no `--yes` flag.** Unlike `osc sr`, there's no built-in non-interactive switch. Pipe `echo y |` to confirm when scripting. The `-m` message is the same convention as for `osc sr` — paste the new `.changes` bullets.
+- **`osc maintenancerequest` has no `--yes` flag — and never pipe `echo y |` into it.** With `-m` given it asks two things: from a checkout with uncommitted changes (`osc mr .`), whether to go on without them; and, when incident requests from the same branch are open, the all-or-nothing supersede question, where `y` supersedes every one of them. Commit first, name the one request you replace with `-s <id>`, and run it `</dev/null`, so an unexpected question aborts. The `-m` message follows the `osc sr` rule: 1–3 sentences (`references/submit-watch.md` "Filing an SR").
 - **Wiki says bug references are mandatory for Backports — they aren't.** `openSUSE:Backports_Package_Submission_Process` lists "A bug entry in bugzilla, referenced in the submission" as a requirement for Package Hub 15 submissions. That item is **outdated**; current Backports policy does not enforce a bugzilla reference. The rest of that wiki page (factory-source must accept, must already be in Factory or a maintained Leap, must respect Leap maintenance policy) is still valid.
 - **Branch vrev tells you whether someone's already worked on it.** `osc cat <branch_project> <branch_package> fwts.spec` reveals the in-branch version. If it's older than the devel-project version, the branch is stale and you need step 3 above. If it already matches, you can skip straight to step 4.
