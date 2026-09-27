@@ -4,10 +4,9 @@
 #     (a read verb within 60 chars of such a qualifier), or to "read SKILL.md"
 #   - a `references/<file>.md "<Section>"` pointer in SKILL.md, agents/ or
 #     references/ does not resolve through scripts/refsection.py (exit != 0)
-#   - a doc cites merging a pool/ PR (tea pr|pulls merge, git-obs pr merge,
-#     .../pulls/N/merge) on pool/ or on no named repository, outside a
-#     "Wrong forms" section: agents never merge one, and check-osc.py sees
-#     only osc citations
+#   - a doc cites merging a PR (tea pr|pulls merge, git-obs pr merge,
+#     .../pulls/N/merge) on any repository, outside a "Wrong forms" section:
+#     agents never merge one, and check-osc.py sees only osc citations
 #   - a doc teaches a credential recipe outside a "Wrong forms" section: a read
 #     verb on an osc, tea, gh, netrc, cookie-jar or api-key file, a token piped
 #     out of `gh auth token`, a key on a command line, a concrete Authorization
@@ -60,7 +59,7 @@ PY
 )
 [ $bad -eq 0 ] && pass "pointers: $ok resolve" || fail "pointers: $bad of $((ok+bad)) unresolved"
 
-# Prints "<file>:<line>" for each merge citation on pool/ or on no named repo.
+# Prints "<file>:<line>" for each merge citation.
 # Headings open and close the exemption only outside fences: a "# ..." line in
 # a code block is a comment, not a section.
 merge_lint() {
@@ -69,9 +68,6 @@ import re, sys
 MERGE = re.compile(
     r"\btea\b[^`\n]*?\b(?:pr|pulls?)\s+(?:merge|m)\b"
     r"|\bgit-obs\b[^`\n]*?\bpr\s+merge\b|/pulls/[^/\s`]+/merge\b")
-OWNER = re.compile(
-    r"(?:--repo|-r)[= ]+([^\s/`]+)/|/repos/([^\s/`]+)/"
-    r"|(?<![\w/<>-])([\w.<>-]+)/[\w.<>+-]+#\d")
 HEADING = re.compile(r"^(#{1,6})\s")
 WRONG = re.compile(r"^#{1,6}\s+wrong forms\b", re.I)
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -87,10 +83,7 @@ for path in sys.argv[1:]:
                     wrong = 0
                 if WRONG.match(line):
                     wrong = len(h.group(1))
-            if wrong or not MERGE.search(line):
-                continue
-            owners = [next(g for g in m.groups() if g) for m in OWNER.finditer(line)]
-            if not owners or any(o.lower() == "pool" for o in owners):
+            if not wrong and MERGE.search(line):
                 print(f"{path}:{n}")
 PY
 }
@@ -101,9 +94,9 @@ got=$(merge_lint "$probe" | cut -d: -f2 | paste -sd' ')
   || fail "merge-advice self-test: caught lines '${got}', want '${want}' — the check is broken, nothing below is trustworthy"
 hits=$(merge_lint "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md "$ROOT/scripts/README.md")
 if [ -n "$hits" ]; then
-  fail "a doc cites merging a pool PR outside a Wrong forms section (agents never merge one):"
+  fail "a doc cites merging a PR outside a Wrong forms section (agents never merge one):"
   printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"
-else pass "no pool PR merge advice"; fi
+else pass "no PR merge advice"; fi
 # Prints "<file>:<line>: <what>" for each credential recipe outside a Wrong forms
 # section. Slots (<token>, $VAR) and prose that only names a file pass.
 cred_lint() {

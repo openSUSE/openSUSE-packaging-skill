@@ -4,7 +4,9 @@ A line ending in the flag comment must be reported, every other line must not.
 
 Merge it with `tea pr merge --repo pool/foo 3`. <!-- flag -->
 Or run `tea pulls merge 3` from the clone. <!-- flag -->
-A devel-project PR: `tea pr merge 2 --repo AI/mistral-vibe`.
+A devel-project PR: `tea pr merge 2 --repo AI/mistral-vibe`. <!-- flag -->
+Or by the API: `curl -X POST .../repos/AI/mistral-vibe/pulls/2/merge`. <!-- flag -->
+Watch it until the reviewers merge it: `tea pr list --repo AI/mistral-vibe`.
 
 ```
 # Wrong forms -- a comment in a fence, not a heading
