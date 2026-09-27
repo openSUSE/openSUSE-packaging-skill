@@ -217,7 +217,21 @@ SKIP_DIRS = {".git", "__pycache__", ".ruff_cache", ".github"}
 # -- evals.json itself is authored here and stays in scope.
 SKIP_TREES = ("tests/fixtures", "evals/opensuse-packaging/files")
 SKIP_FILES = {"LICENSE", "tests/repo/check-skills.py"}
-TEXT_EXT = {".md", ".py", ".sh", ".txt", ".tsv", ".yml", ".yaml", ".json", ".cc", ""}
+TEXT_EXT = {
+    ".md",
+    ".py",
+    ".sh",
+    ".txt",
+    ".tsv",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".jsonc",
+    ".toml",
+    ".ts",
+    ".cc",
+    "",
+}
 
 
 def _text_files():
