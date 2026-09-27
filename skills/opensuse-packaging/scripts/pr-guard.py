@@ -16,7 +16,8 @@ code (-c, -e), and text fed to a shell or interpreter (heredoc, here-string,
 run: its content is not known yet. The scripts in the skill checkout's scripts/
 run unread only when run by path, while every file scripts/ tracks is
 byte-identical to its blob at the pinned ref (as merged, not as edited
-locally), with no environment change but TMPDIR, LC_ALL, LANG and NO_COLOR.
+locally), with no environment change but TMPDIR, LC_ALL, LANG, NO_COLOR and
+CHANGES_AUTHOR.
 
 Usage: pr-guard.py < EVENT
   EVENT  the Claude Code PreToolUse JSON: {"tool_name", "cwd", "tool_input":

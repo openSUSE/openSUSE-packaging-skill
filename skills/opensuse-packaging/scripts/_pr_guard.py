@@ -7,7 +7,7 @@ import re
 
 GITEA = "https://src.opensuse.org/api/v1"
 PIN_REF = "refs/remotes/origin/main"
-CLEAN_ENV = {"TMPDIR", "LC_ALL", "LANG", "NO_COLOR"}
+CLEAN_ENV = {"TMPDIR", "LC_ALL", "LANG", "NO_COLOR", "CHANGES_AUTHOR"}
 MAX_DEPTH = 4
 MAX_BYTES = 8 << 20
 
@@ -258,8 +258,8 @@ MESSAGES = {
     "exec-unresolved": "cannot tell which file {0} names, so it is refused. Run "
     "the script by a literal path.",
     "canonical-env": "{0}: the skill's scripts run unread only in the environment "
-    "they were given. Drop the change (allowed: TMPDIR, LC_ALL, LANG, NO_COLOR) and "
-    "pass values as arguments.",
+    "they were given. Drop the change (allowed: TMPDIR, LC_ALL, LANG, NO_COLOR, "
+    "CHANGES_AUTHOR) and pass values as arguments.",
     "canonical-read": "{0}: the skill's scripts find their siblings from their own "
     "path, so they are run by path (bash <skill>/scripts/NAME ...), never sourced "
     "or fed on stdin.",

@@ -2718,5 +2718,19 @@
       "command": "bash '/nonexistent/Bearer tok3n'"
     },
     "cwd": "@CLONE@"
+  },
+  "canonical-env-changes-author": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf -- '- Update to 1.2.0\\n' | CHANGES_AUTHOR=\"Test User <user@example.com>\" @SKILL@/scripts/changes-prepend.sh @CLONE@/x.changes"
+    },
+    "cwd": "@CLONE@"
+  },
+  "canonical-env-changes-author-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export CHANGES_AUTHOR='Test User <user@example.com>'; bash @SKILL@/scripts/changes-prepend.sh x.changes < notes.txt"
+    },
+    "cwd": "@CLONE@"
   }
 }

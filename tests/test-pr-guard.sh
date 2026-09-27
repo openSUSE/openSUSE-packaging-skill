@@ -70,6 +70,8 @@ clone_ "$work/tokened" leap-16.0 "origin=https://user:tok3n@${F#https://}/pool/x
 # new-tool.sh is not committed.
 S=$work/skill
 mkdir -p "$S/scripts" && cp "$FX/pool-pr.sh" "$FX/open-pr.sh" "$S/scripts/"
+# A changes-prepend.sh that is refused if read: allowed, it ran unread.
+cp "$FX/pool-pr.sh" "$S/scripts/changes-prepend.sh"
 printf '#!/bin/bash\necho "gate $*"\n' > "$S/scripts/target-gate.sh"
 git init -q -b main "$S" && git -C "$S" add -A && git -C "$S" commit -q -m init
 git -C "$S" update-ref refs/remotes/origin/main HEAD
@@ -485,6 +487,9 @@ case_ canonical-env-command 2 canonical-env "run with PATH"   PR_GUARD_SKILL_DIR
 case_ canonical-env-export 2 canonical-env "run with PATH"    PR_GUARD_SKILL_DIR="$S"
 case_ canonical-env-then  2 canonical-env "run with PATH"    PR_GUARD_SKILL_DIR="$S"
 case_ canonical-env-clean 0 - ""                          PR_GUARD_SKILL_DIR="$S"
+# changes-prepend.sh documents CHANGES_AUTHOR as the way to name the entry's author.
+case_ canonical-env-changes-author 0 - ""                 PR_GUARD_SKILL_DIR="$S"
+case_ canonical-env-changes-author-export 0 - ""          PR_GUARD_SKILL_DIR="$S"
 case_ canonical-shell-variable 0 - ""                     PR_GUARD_SKILL_DIR="$S"
 # A commit that is not merged is not trusted: the pin is origin/main, not HEAD.
 echo 'echo edited' >> "$S/scripts/pool-pr.sh"; git -C "$S" commit -qam 'local edit'
