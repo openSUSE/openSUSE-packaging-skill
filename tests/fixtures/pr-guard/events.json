@@ -3301,5 +3301,292 @@
       "command": "tea --debug pulls merge --repo AI/mistral-vibe 3"
     },
     "cwd": "@CLONE@"
+  },
+  "merge-curl-var-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "B=https://src.opensuse.org/api/v1/repos/AI/mistral-vibe; P=pulls/3/merge; curl -sS -X POST -H \"Authorization: token $TOK\" \"$B/$P\" -d '{}'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-curl-attached-d": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -dDo=merge https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-pool-http-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{\"Do\": \"merge\"}' | http https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-pool-xh-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "xh https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge < m.json"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-http-implicit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-curl-no-q": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-wget-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-pct-encoded": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -q -sS -X POST 'https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merg%65'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-dot-segment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -q -sS -X POST https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/./merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-double-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -q -sS -X POST https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3//merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-ai-do-lowercase": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 - <<'EOF'\nimport json, urllib.request\nurl = '/'.join([API, 'repos', 'AI', 'mistral-vibe', 'pulls', '3', 'merge'])\nurllib.request.urlopen(urllib.request.Request(url, json.dumps({\"do\": \"merge\"}).encode()))\nEOF"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-curl-q": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -q -sS -o /dev/null -w '%{http_code}' https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-http-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http GET https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-http-ignore-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http --ignore-stdin https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-wget-no-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget --no-config -qO- https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-git-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api /repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-ai-script-curl-sf": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c 'curl -q -sf https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge && echo merged'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-curl-attached-F": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -FDo=merge https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-curl-cluster-X": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sX POST -H \"Authorization: token $TOK\" https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-curl-request-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS --req POST https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-wget-post-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- --post-d=Do=merge https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-wget-method-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- --meth=POST https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-meth-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org api --meth POST /repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-dat-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api --dat @m.json /repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-space-meth": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs api --meth=POST /repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-tea-api-attached-f": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -fDo=merge repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-tea-api-go-method": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -method POST repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-python-opener": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import urllib.request as u; u.build_opener().open(\"https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge\", open(\"m.json\", \"rb\").read())'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-curl-cluster": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sSfL -H 'Accept: application/json' -o /dev/null -w '%{http_code}' https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-curl-head": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sI https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-git-obs-meth-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org api --meth GET /repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-tea-api-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -X GET -o merged.json repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-wget": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-tea-api-var-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "U=repos/AI/mistral-vibe/pulls/3/merge; tea api -X POST \"$U\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-api-var-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "U=/repos/AI/mistral-vibe/pulls/3/merge; git-obs api -X POST \"$U\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "merge-git-obs-space-api-var-ai": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for n in 3 4; do git obs api -X POST \"/repos/AI/mistral-vibe/pulls/$n\"/merge; done"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-curl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -o /dev/null -w '%{http_code}' https://src.opensuse.org/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-curl-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -X GET https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-tea-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-git-obs-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api /repos/pool/gitoxide/pulls/5/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-python": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import urllib.request; print(urllib.request.urlopen(\"https://src.opensuse.org/api/v1/repos/pool/gitoxide/pulls/5/merge\").status)'"
+    },
+    "cwd": "@CLONE@"
   }
 }

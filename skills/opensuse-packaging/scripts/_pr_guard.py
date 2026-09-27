@@ -114,7 +114,9 @@ GIT_OBS = Rx(
 )
 GIT_OBS_TARGET = Rx(r"(?<![\w-])--(?:target|target-owner|self)\b")
 MERGE_URL = Rx(r"/pulls/[^/\s\"']+/merge(?![-\w])")
-DO_MERGE = Rx(r"[\"']Do[\"']\s*:|\bDo\s*=\s*[\"']")
+DO_MERGE = Rx(
+    r"(?i)[\"']Do[\"']\s*:|\bDo\s*=\s*[\"']"
+)  # Go reads JSON keys in any case
 # The API's pulls path, or one built from a variable. A web link to a PR
 # (src.opensuse.org/pool/x/pulls/3) quoted in a comment is not an endpoint.
 PULLS_REF = Rx(r"(?:repos/[^/\s\"'`]+/[^/\s\"'`]+|[})\"'`]|\$\w+)/pulls(?![-\w])")
@@ -157,6 +159,42 @@ HTTPIE_VALUED = {
 }  # fmt: skip
 # A request item that sends data: field=value, field:=json, field@file.
 HTTPIE_DATA = Rx(r"[^=:@\s]+(?::=|=(?!=)|@)")
+# What a call to curl, tea api or git-obs api may carry and still provably
+# only read: its short flags, the short options that take a value, its long
+# flags and the long options that take a value. Anything else may send a body
+# or another method; the method option itself must say GET or HEAD, a header
+# must not override it.
+READ_OPTS = {
+    "curl": (
+        "sSfLiIvkqG0O46ngNR#",
+        "owmHuAexrYyE",
+        "silent show-error fail fail-with-body location include head verbose "
+        "insecure compressed get no-progress-meter progress-bar http1.1 http2 "
+        "create-dirs remote-name ipv4 ipv6 netrc globoff no-buffer remote-time",
+        "output write-out max-time header user user-agent referer proxy "
+        "connect-timeout retry retry-delay retry-max-time cacert capath cert key "
+        "output-dir url dump-header netrc-file noproxy",
+    ),
+    "tea": ("ih", "HloRr", "include debug vvv help", "header output login repo remote"),
+    "git-obs": ("qh", "G", "quiet help", "gitea-config gitea-login"),
+}
+METHOD_OPT = {"curl": "--request", "tea": "--method", "git-obs": "--method"}
+# git-obs is argparse: a long option may be any unique prefix of its name.
+GIT_OBS_LONG = ("--quiet", "--help", "--gitea-config", "--gitea-login", "--method")
+GIT_OBS_LONG += ("--data",)
+# wget's options that send a body, set the method, or run wgetrc commands that
+# may; getopt takes any unique prefix of them.
+WGET_WRITES = ("post-data", "post-file", "body-data", "body-file", "method")
+WGET_WRITES += ("execute", "config")
+WGET_VALUED = "oaOtTwUPQBDiARlIX"  # its short options that take a value
+GET = ("GET", "HEAD")
+# In program text, anything that may make a request send a body or another
+# method: a merge URL near none of them is a GET.
+MAY_WRITE = Rx(
+    r"(?i:\b(?:data|json|body|form|files|fields?|method|post|put|patch|delete"
+    r"|upload)\b)|(?<![\w-])-[a-zA-Z]*[XdFTf]|--(?:request|method|data|json|form"
+    r"|upload|post|body|field)|\b(?:urlopen|open|Request|request|fetch|send)\s*\([^()]*,"
+)
 PUSH = Rx(r"(?<![-\w])push(?![-\w])")
 STASH_PUSH = Rx(r"\bstash\s+push\b")
 PUSH_POOL = Rx(r"src\.opensuse\.org(?::\d+)?[:/]+pool/|refs\/for\/")
@@ -446,11 +484,29 @@ def tool_rules(ln, ctx, cwd, argv=False):
             block("create-git-obs", "a git-obs PR forward on pool")
     if getattr(create, tea)(ln) and pool_or_unknown(ln, ctx, cwd, cmd=True):
         block("create-tea", "a tea PR create on a pool (or unnamed) repository")
-    if TEA_API.search(ln) and MERGE_URL.search(ln):
-        block("merge-api", "an API merge of a PR")
+    if not argv:  # a command line's own call is judged by its options
+        tea_api_merge(ln, ctx, cwd)
     if TEA_API.search(ln) and "pulls" in ln and TEA_WRITE.search(ln):
         if pool_or_unknown(ln, ctx, cwd, cmd=True):
             block("create-tea-api", "a tea api write to pool pulls")
+
+
+def tea_api_merge(ln, ctx, cwd, reads=None):
+    """A tea api call on a merge URL: on a pool (or unknown) repository, or
+    one that does not provably only read."""
+    ln = norm_urls(ln)
+    if TEA_API.search(ln) and MERGE_URL.search(ln):
+        if pool_or_unknown(ln, ctx, cwd, cmd=True) or not (
+            code_reads(ln) if reads is None else reads
+        ):
+            block("merge-api", "an API merge of a PR")
+
+
+def expansions(words, ctx, cwd):
+    """The spellings of the words that hold variables this call set."""
+    return [
+        e for w in words if VARIABLE.search(w) for e in substitute(w, ctx, cwd) or ()
+    ]
 
 
 def osc_rules(seg, request=None):
@@ -468,6 +524,14 @@ def osc_rules(seg, request=None):
         block("backports", "an osc request to openSUSE:Backports:SLE-16.x")
     if OSC_NODEVEL.search(seg if request is None else request):
         block("nodevelproject", "an osc request with --nodevelproject")
+
+
+def long_prefix(a, names):
+    """a with a long option given by an unambiguous prefix, as argparse takes
+    it, written out in full."""
+    k, eq, v = a.partition("=")
+    hits = [n for n in names if n.startswith(k)] if a[:2] == "--" and k[2:] else []
+    return hits[0] + eq + v if len(hits) == 1 else a
 
 
 def split_message(run):
@@ -625,6 +689,25 @@ def writes(text):
     return False
 
 
+def httpie_reads(run, stdin):
+    """Whether an HTTPie or xh call provably only reads: no request item that
+    sends data, and an explicit GET or HEAD -- or no stdin it would send as a
+    body (--ignore-stdin, nothing piped in)."""
+    if httpie_writes(run):
+        return False
+    words = [a for a in run[1:] if a[:1] != "-"]
+    ignore = "--ignore-stdin" in run or "-I" in run
+    return words[:1] in (["GET"], ["HEAD"]) or ignore and stdin is None
+
+
+def curl_reads(args):
+    """Whether a curl call provably only reads: -q (--disable) first, so no
+    curlrc adds a method or body, and only_reads()."""
+    first = args[0] if args else ""
+    no_rc = first == "--disable" or re.fullmatch(r"-q[a-zA-Z]*", first)
+    return bool(no_rc) and only_reads("curl", args)
+
+
 def httpie_writes(run):
     """HTTPie and xh: an explicit method, or request items that make a POST."""
     words, i = [], 1
@@ -643,10 +726,115 @@ def httpie_writes(run):
     return any(HTTPIE_DATA.match(w) for w in words[1:])
 
 
-def api_rules(text, ctx, cwd, write=False):
-    """The pulls API: a merge on any repository, or any write on a pool (or
-    unknown) one."""
-    if MERGE_URL.search(text) or DO_MERGE.search(text):
+def only_reads(tool, args, names=()):
+    """Whether a curl, tea api or git-obs api call provably only reads: each
+    option one of READ_OPTS, its method GET or HEAD. names: the long options a
+    prefix may stand for."""
+    flags, valued, lflags, lvalued = READ_OPTS[tool]
+    method = METHOD_OPT[tool]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            break
+        if a[:1] != "-" or a == "-":
+            continue
+        if a[:2] == "--":
+            k, eq, v = long_prefix(a, names).partition("=")
+            if k[2:] in lflags.split() and not eq:
+                continue
+            if k != method and k[2:] not in lvalued.split():
+                return False
+            if not eq:
+                v, i = (args[i] if i < len(args) else ""), i + 1
+        else:
+            j = 1
+            while j < len(a) and a[j] in flags:
+                j += 1
+            if j == len(a):
+                continue
+            if a[j] != "X" and a[j] not in valued:
+                return False
+            k, v = ("--method" if a[j] == "X" else a[j]), a[j + 1 :].lstrip("=")
+            if not v:
+                v, i = (args[i] if i < len(args) else ""), i + 1
+        if k in (method, "--method") and v.upper() not in ("GET", "HEAD"):
+            return False
+        if k in ("H", "--header") and "method" in v.lower():
+            return False
+    return True
+
+
+def wget_reads(args):
+    """Whether a wget call provably only reads: its wgetrc off (--no-config),
+    and no option that sends a body, sets a method other than GET or HEAD, or
+    runs wgetrc commands (-e)."""
+    if "--no-config" not in args:
+        return False
+    for a in args:
+        k, _, v = a.partition("=")
+        if a[:2] == "--" and len(k) > 2:
+            for w in WGET_WRITES:
+                if w.startswith(k[2:]) and not (w == "method" and v.upper() in GET):
+                    return False
+        elif a[:1] == "-":
+            for c in a[1:]:
+                if c == "e":
+                    return False
+                if c in WGET_VALUED:
+                    break
+    return True
+
+
+def code_reads(text):
+    """Whether program text provably only reads: a curl or wget on a merge
+    URL's line only reads by its options, and the text shows no other sign of
+    a write at all."""
+    if writes(text):
+        return False
+    other = False
+    for ln in text.split("\n"):
+        m = CURL.search(ln) if MERGE_URL.search(ln) else None
+        if m:
+            args = re.findall(r"[^\s\"',\[\]()]+", re.split(r"[;&|]", ln[m.end() :])[0])
+            if not (curl_reads(args) if m.group() == "curl" else wget_reads(args)):
+                return False
+        else:
+            other = True
+    return not (other and MAY_WRITE.search(text))
+
+
+def norm_urls(text):
+    """text for the URL rules: percent-encoding decoded, runs of / collapsed
+    (a scheme's // kept), dot segments removed."""
+    import urllib.parse
+
+    text = re.sub(r"(?<!:)//+", "/", urllib.parse.unquote(text))
+    end = r"(?=/|[?#\s\"'`]|$)"
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(rf"/\.{end}", "", text)
+        text = re.sub(rf"/[^/\s\"'`?#]+/\.\.{end}", "", text)
+    return text
+
+
+def api_rules(text, ctx, cwd, write=False, reads=None):
+    """The pulls API: a merge -- a merge payload; a merge URL on a pool (or
+    unknown) repository, however it is sent; elsewhere one in a call that
+    does not provably only read (reads: that proof for a command line;
+    program text must show no sign of a write) -- or any write to pool (or
+    unknown) pulls. URLs are judged normalised (norm_urls)."""
+    text = norm_urls(text)
+    if (
+        DO_MERGE.search(text)
+        or MERGE_URL.search(text)
+        and (
+            pool_or_unknown(text, ctx, cwd)
+            or not (code_reads(text) if reads is None else reads)
+        )
+    ):
         block("merge-api", "an API merge of a PR")
     if PULLS_REF.search(text) and (write or writes(text)):
         if pool_or_unknown(text, ctx, cwd):
@@ -1440,7 +1628,8 @@ def git_command(argv, ctx, cwd):
     elif sub[:1] == ["obs"]:
         ln = " ".join(["git-obs", *sub[1:]])
         tool_rules(ln, ctx, cwd)
-        api_rules(ln, ctx, cwd)
+        wide = " ".join([ln, *expansions(sub[1:], ctx, cwd)])
+        api_rules(wide, ctx, cwd, reads=git_obs_reads(sub[1:]))
     elif sub[:1] == ["remote"] and sub[1:2] in (["add"], ["set-url"]):
         pos, j = [], 2
         while j < len(sub):
@@ -1454,12 +1643,22 @@ def git_command(argv, ctx, cwd):
             ctx.remotes[(cwd, pos[0])] = pos[1]
 
 
+def git_obs_reads(args):
+    """Whether git-obs arguments provably only read: an api call that does, or
+    another subcommand, which sends no request of its own making."""
+    i = 0
+    while i < len(args) and args[i][:1] == "-":
+        a = long_prefix(args[i], GIT_OBS_LONG)
+        i += 2 if a in ("-G", "--gitea-login", "--gitea-config") else 1
+    return args[i : i + 1] != ["api"] or only_reads("git-obs", args, GIT_OBS_LONG)
+
+
 def guess(run, ctx, cwd):
     """A command whose name only the shell knows, judged as each guarded tool."""
     rest = run[1:]
     tool_rules(" ".join(["tea", *rest]), ctx, cwd, argv=True)
     tool_rules(" ".join(["git-obs", *rest]), ctx, cwd)
-    api_rules(" ".join(["curl", *rest]), ctx, cwd)
+    api_rules(" ".join(["curl", *rest]), ctx, cwd, reads=False)
     if rest[:1] in (["push"], ["obs"]):
         git_command(["git", *rest], ctx, cwd)
 
@@ -1724,10 +1923,13 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
     elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
         pass
     elif name == "tea":
+        wide = " ".join([joined, *expansions(run[1:], ctx, here)])
+        tea_api_merge(wide, ctx, here, only_reads("tea", run[1:]))
         tool_rules(" ".join(["tea", *run[1:]]), ctx, here, argv=True)
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
-        api_rules(joined, ctx, here)
+        wide = " ".join([joined, *expansions(run[1:], ctx, here)])
+        api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
     elif name == "git":
         git_command(run, ctx, here)
     elif name == "osc":
@@ -1740,8 +1942,10 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
         held = [
             v for k in re.findall(r"\$\{?(\w+)", joined) for v in ctx.values.get(k, ())
         ]
-        text = " ".join([joined, *held])
-        api_rules(text, ctx, here, write=name in HTTPIE and httpie_writes(run))
+        text = " ".join([joined, *held, *expansions(run[1:], ctx, here)])
+        write = name in HTTPIE and httpie_writes(run)
+        reads = {"curl": curl_reads(run[1:]), "wget": wget_reads(run[1:])}
+        api_rules(text, ctx, here, write, reads.get(name, httpie_reads(run, stdin)))
     elif name == "eval":
         run_text(" ".join(run[1:]), "shell", ctx, here, depth)
     elif name in SHELLS:
@@ -1817,7 +2021,12 @@ def check_write(path, content, ctx):
                 block("merge-tea", "a script running a tea PR merge")
             if TEA_CREATE.search(ln) and pool_or_unknown(ln, ctx, ctx.cwd, cmd=True):
                 block("create-tea", "a script running a tea PR create on pool")
-        if MERGE_URL.search(lines) or DO_MERGE.search(lines):
+        lines = norm_urls(lines)
+        if (
+            DO_MERGE.search(lines)
+            or MERGE_URL.search(lines)
+            and (pool_or_unknown(lines, ctx, ctx.cwd) or not code_reads(lines))
+        ):
             block("merge-api", "a script merging a PR")
         if PULLS_REF.search(lines) and writes(lines):
             if pool_or_unknown(lines, ctx, ctx.cwd):
