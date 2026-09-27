@@ -13,8 +13,8 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/.." && pwd)"
 GUARD=$REPO/skills/opensuse-packaging/scripts/pr-guard.py
-PLUGIN=$REPO/contrib/harness/opencode-pool-pr-guard.ts
-PERMS=$REPO/contrib/harness/opencode-permission-snippet.jsonc
+PLUGIN=$REPO/contrib/harness/opencode/pool-pr-guard.ts
+PERMS=$REPO/contrib/harness/opencode/opencode.jsonc
 FX=$HERE/fixtures/pr-guard
 fails=0; used=" "
 pass() { printf 'PASS: %s\n' "$*"; }

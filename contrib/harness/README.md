@@ -10,9 +10,9 @@ against the scmsync'd `openSUSE:Backports:SLE-16.x` projects.
 | File | Goes to | Does |
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
-| `claude-settings-snippet.json` | merged into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`, plus deny rules: the Edit and Write tools stay off the hook and harness config, the Read tool off the osc and tea credential files, and a `sudo chroot …` command line is refused. Shell reads and curl calls are not covered — the opencode snippet's patterns are, and pr-guard judges only pool PR traffic |
-| `opencode-pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
-| `opencode-permission-snippet.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges on src.opensuse.org (pool or not; `gh` is not matched), ask on PR creates, each `git-obs` pattern also spelled `git obs`; deny credential-file access and curl to the OBS and Gitea APIs (the skill's `references/osc-usage.md` "Tool discipline"), `--nodevelproject` requests and `sudo chroot` |
+| `claude/settings.json` | merged into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`, plus deny rules: the Edit and Write tools stay off the hook and harness config, the Read tool off the osc and tea credential files, and a `sudo chroot …` command line is refused. Shell reads and curl calls are not covered — the opencode snippet's patterns are, and pr-guard judges only pool PR traffic |
+| `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
+| `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges on src.opensuse.org (pool or not; `gh` is not matched), ask on PR creates, each `git-obs` pattern also spelled `git obs`; deny credential-file access and curl to the OBS and Gitea APIs (the skill's `references/osc-usage.md` "Tool discipline"), `--nodevelproject` requests and `sudo chroot` |
 
 Both harnesses run one **pinned copy** of the guard. It is not updated with the skill:
 the guard polices the skill's own scripts, so a change to it is a decision, not a pull.
@@ -47,7 +47,7 @@ Show each diff before applying it.
 3. opencode:
 
    ```
-   install -D -m 0444 contrib/harness/opencode-pool-pr-guard.ts "$HOME/.config/opencode/plugins/pool-pr-guard.ts"
+   install -D -m 0444 contrib/harness/opencode/pool-pr-guard.ts "$HOME/.config/opencode/plugins/pool-pr-guard.ts"
    ```
 
    Merge the snippet's `permission` block into `~/.config/opencode/opencode.jsonc`, then
