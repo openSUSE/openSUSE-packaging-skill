@@ -11,7 +11,14 @@ import { join } from "node:path"
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
 // Verbatim copy of PREFILTER in pr-guard.py; tests/test-pr-guard.sh compares them.
-const PREFILTER = new RegExp(String.raw`\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b`)
+const PREFILTER = new RegExp(String.raw`\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)\s*[\x22']?\$[{A-Za-z_@*]`)
+// As unquoted() in pr-guard.py: $'...' decoded, then quotes and backslashes dropped.
+const unquoted = (t: string) =>
+  t.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_m: string, body: string) =>
+    body.replace(/\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)/g, (_e: string, e: string) =>
+      e[0] === "x" && e.length > 1 ? String.fromCharCode(parseInt(e.slice(1), 16))
+        : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : e))
+    .replace(/["'\\]/g, "")
 // As in pr-guard.py: a call run inside the stamp directory is judged whatever it says.
 const STAMP_DIR = "target-gate"
 
@@ -41,7 +48,8 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
           : { tool_name: "Edit", tool_input: { file_path, new_string: content }, cwd: workdir }
       } else return
 
-      if (!PREFILTER.test(text) && !String(workdir ?? "").includes(STAMP_DIR)) return
+      if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text))
+        && !String(workdir ?? "").includes(STAMP_DIR)) return
       const r = spawnSync("python3", [GUARD], {
         input: JSON.stringify(event),
         encoding: "utf8",

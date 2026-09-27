@@ -893,6 +893,31 @@ case_ parallel-push-placeholder  2 push-unknown  "the pushed branch is held in a
 case_ find-exec-grep             0 - ""
 case_ watch-osc-results          0 - ""
 case_ parallel-echo              0 - ""
+
+echo "--- osc named by a variable is judged as osc"
+case_ var-osc-ci-update          2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+# The prefilter also reads the text without its quotes and backslashes, $'...'
+# decoded, and a variable after if, while, !, { or a wrapper.
+case_ prefilter-split-quotes     2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ prefilter-ansi-c           2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ prefilter-quoted-var       2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ prefilter-if-var           2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ prefilter-wrapper-var      2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+# A command held in several words (a variable, an array, a function running "$@")
+# is those words; one only the shell knows is refused.
+case_ var-multiword-command      2 merge-tea     "tea PR merge"
+case_ var-array-command          2 merge-tea     "tea PR merge"
+case_ func-wrapper-merge         2 merge-tea     "tea PR merge"
+case_ var-array-unknown          2 command-unknown "\${ARGS[@]}"
+case_ func-wrapper-status        0 - ""
+case_ var-array-status           0 - ""
+# An unknown command is judged as osc only when its variable is named for it.
+case_ var-git-commit             0 - ""
+case_ var-make-release           0 - ""
+case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 characters of prose"
+case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"
+case_ var-osc-ci-devel           0 - ""
 # A request message is 1-3 sentences: over 300 characters it is refused.
 case_ osc-sr-long-message        2 request-message "an osc sr message with 380 characters of prose"
 case_ osc-sr-message-301         2 request-message "an osc submitreq message with 301 characters of prose"
@@ -1034,6 +1059,8 @@ print(mod.PREFILTER.pattern); print(mod.STAMP_DIR)' "$GUARD")"
 ts="$(sed -n 's/^const PREFILTER = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
 [ -n "$ts" ] && [ "${py%$'\n'*}" = "$ts" ] && pass "prefilter identical in the plugin" \
   || fail "prefilter differs: guard '${py%$'\n'*}' plugin '$ts'"
+grep -qF 'PREFILTER.test(unquoted(text))' "$PLUGIN" && pass "plugin also reads the text unquoted" \
+  || fail "the plugin does not apply the prefilter to the unquoted text"
 ts="$(sed -n 's/^const STAMP_DIR = "\(.*\)"$/\1/p' "$PLUGIN")"
 [ -n "$ts" ] && [ "${py##*$'\n'}" = "$ts" ] && grep -qF 'includes(STAMP_DIR)' "$PLUGIN" \
   && pass "plugin also judges a call run inside the stamp directory" \

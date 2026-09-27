@@ -4777,5 +4777,131 @@
       "command": "parallel echo {} ::: a b"
     },
     "cwd": "@CLONE@"
+  },
+  "var-osc-ci-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "OSC=osc; $OSC ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "prefilter-split-quotes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "o''sc ci -m 'Fix'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "prefilter-ansi-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$'\\x6fsc' ci -m 'Fix'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "prefilter-quoted-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\"$OSC\" ci -m 'Fix'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "prefilter-if-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if $OSC ci -m 'Fix'; then :; fi"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "prefilter-wrapper-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "nohup $OSC ci -m 'Fix'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "var-multiword-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "CMD='tea pr merge --repo AI/mistral-vibe 3'; $CMD"
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-array-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "A=(tea pr merge --repo AI/mistral-vibe 3); \"${A[@]}\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "func-wrapper-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "run() { \"$@\"; }; run tea pr merge --repo AI/mistral-vibe 3"
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-array-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\"${ARGS[@]}\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "func-wrapper-status": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "run() { \"$@\"; }; run git status"
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-array-status": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "A=(git status --short); \"${A[@]}\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-git-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$GIT commit -m 'Update'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "var-make-release": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$MAKE release"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "var-osc-path-sr-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "O=/usr/bin/osc; $O sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-osc-unset-ci-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$OSC ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "var-osc-unset-nodevel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$OSC sr --nodevelproject devel:tools tesseract-ocr openSUSE:Factory -m 'Update'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "var-osc-ci-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "OSC=osc; $OSC ci -m 'Update to 1.2.0'"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }

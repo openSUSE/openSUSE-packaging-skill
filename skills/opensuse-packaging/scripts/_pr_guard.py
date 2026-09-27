@@ -153,6 +153,7 @@ KWARG = Rx(r"\w+\s*=(?!=)")
 QUOTED = Rx(r"[bruf]*([\"'])(.*)\1")
 HTTPIE = {"http", "https", "xh", "xhs"}
 HTTP_TOOLS = HTTPIE | {"curl", "wget"}
+GUARDED = HTTP_TOOLS | {"tea", "git-obs", "git", "osc"}
 HTTPIE_VALUED = {
     "-a", "--auth", "-A", "--auth-type", "-o", "--output", "--session",
     "--session-read-only", "--cert", "--cert-key", "--cert-key-pass", "--proxy",
@@ -328,6 +329,10 @@ STDIN = ("-", "/dev/stdin")
 # printf's conversions (with any flags, width or precision), and a brace
 # expansion echo or printf would print expanded.
 PRINTF_CONV = Rx(r"%(?!%)([-+ #0]*)([0-9*]*(?:\.[0-9*]*)?)[a-zA-Z]")
+# A command position that runs its arguments, or expands to several words:
+# "$@", "$*", ${A[@]}.
+ARGS_RUN = Rx(r"\$[@*1]|\$\{[@*1]\}")
+ARRAY_ALL = Rx(r"\$[@*]|\$\{[@*]\}|\$\{(\w+)\[[@*]\]\}")
 BRACES = Rx(r"\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")
 # A $ or backtick the shell takes literally (single quotes, $'...', a
 # backslash), as the literal-aware text of substitutions(lit=True) spells it.
@@ -441,6 +446,8 @@ MESSAGES = {
     "the checkout, or name the checkout or the project literally.",
     "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
     'a list may follow as "- " lines of ≤100 characters, 1000 in all.',
+    "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
+    "the command literally.",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
     "message inline or from a readable file.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
@@ -518,6 +525,8 @@ class Ctx:
         self.values = {}
         self.written = set()
         self.lit_values = {}  # the values, as literal-aware text
+        self.wrappers = set()  # functions that run their arguments ("$@")
+        self.in_function = 0  # inside a function body, where "$@" is its arguments
         self.subs = []  # what each command substitution writes, as literal-aware text
 
 
@@ -2100,13 +2109,49 @@ def git_obs_reads(args):
 
 
 def guess(run, ctx, cwd):
-    """A command whose name only the shell knows, judged as each guarded tool."""
+    """A command whose name only the shell knows, judged as each guarded tool
+    -- as osc only when it could be osc: a value naming osc, or none known and
+    a variable named for it. A refusal names the variable."""
     rest = run[1:]
-    tool_rules(" ".join(["tea", *rest]), ctx, cwd, argv=True)
-    tool_rules(" ".join(["git-obs", *rest]), ctx, cwd)
-    api_rules(" ".join(["curl", *rest]), ctx, cwd, reads=False)
-    if rest[:1] in (["push"], ["obs"]):
-        git_command(["git", *rest], ctx, cwd)
+    try:
+        tool_rules(" ".join(["tea", *rest]), ctx, cwd, argv=True)
+        tool_rules(" ".join(["git-obs", *rest]), ctx, cwd)
+        api_rules(" ".join(["curl", *rest]), ctx, cwd, reads=False)
+        if rest[:1] in (["push"], ["obs"]):
+            git_command(["git", *rest], ctx, cwd)
+        held = substitute(run[0], ctx, cwd)
+        if (
+            held is None
+            and re.search(r"(?i)osc", run[0])
+            or any(os.path.basename(h) == "osc" for h in held or ())
+        ):
+            osc = ["osc", *rest]
+            osc_rules(" ".join(osc), " ".join(without_message(osc)))
+            request_message(osc, None, ctx, cwd)
+            osc_writes(osc, ctx, cwd)
+    except Blocked as b:
+        raise Blocked(b.rule, b.kind, f"{run[0]}: {b.detail}") from None
+
+
+def command_words(word, ctx, cwd, depth):
+    """The argv spellings of a command held in several words -- a variable
+    whose value has spaces, an array ${A[@]} or ${A[*]} -- or None when the
+    word is not one. On the call's own command line "$@", "$*" and an unknown
+    array are refused, outside a function that passes them on; a script's
+    are its arguments, which the guard does not follow."""
+    arr = ARRAY_ALL.fullmatch(word)
+    if arr and arr.group(1):
+        vals = ctx.values.get(arr.group(1))
+        if vals:
+            return [v.strip("()").split() for v in vals]
+    if arr and not ctx.in_function and depth == 0:
+        block("command-unknown", word)
+    if arr:
+        return [[]]
+    vals = substitute(word, ctx, cwd)
+    if vals and any(len(v.split()) > 1 for v in vals):
+        return [v.split() for v in vals]
+    return None
 
 
 def asks_help(args):
@@ -2356,7 +2401,25 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if shell is not None:
         shell_pass(shell, ctx, here, depth)
         return cwd, ("unknown", "a wrapper")
+    lrun = (
+        lit[0][len(argv) - len(run) :] if lit[0] and len(lit[0]) == len(argv) else None
+    )
+    if lrun and VARIABLE.search(run[0]) and not VARIABLE.search(lrun[0]):
+        run = [lrun[0].translate(UNLITERAL), *run[1:]]  # a quoted or $'...' name
     name = os.path.basename(run[0])
+    if VARIABLE.search(name):
+        words = command_words(run[0], ctx, here, depth)
+        if words is not None:  # a command held in words: judge each spelling
+            for w in words:
+                if w:
+                    one_command([*w, *run[1:]], redirs, stdin, ctx, here, depth)
+            return cwd, ("unknown", name)
+        tools = {os.path.basename(h) for h in substitute(run[0], ctx, here) or ()}
+        if len(tools) == 1 and tools <= GUARDED:  # a guarded tool in a variable
+            name = tools.pop()
+            run = [name, *run[1:]]
+    if name in ctx.wrappers and len(run) > 1:  # a function that runs "$@"
+        one_command(run[1:], redirs, stdin, ctx, here, depth)
     for k in shell_assigned(name, run[1:]):
         ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
     out = ("unknown", name)
@@ -2367,9 +2430,6 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         return new, None
     if name == "popd":
         return None, None
-    lrun = (
-        lit[0][len(argv) - len(run) :] if lit[0] and len(lit[0]) == len(argv) else None
-    )
     if name == "for":
         if run[2:3] == ["in"]:
             ctx.values.setdefault(run[1], []).extend(run[3:])
@@ -2460,6 +2520,32 @@ def find_exec(run, ctx, cwd, depth):
         i = end + 1
 
 
+def function_bodies(items, ctx):
+    """{item index: +1 where a function body starts, -1 after it ends}; a
+    function whose body runs "$@", "$*" or "$1" as a command joins ctx.wrappers."""
+    marks = {}
+    for k, item in enumerate(items):
+        argv = item[0] if len(item) == 2 else []
+        name = argv[1] if argv[:1] == ["function"] and len(argv) > 1 else None
+        if name is None and len(argv) == 1 and items[k + 1 : k + 3] == ["(", ")"]:
+            name = argv[0]
+        if name is None:
+            continue
+        depth, j = 0, k + 1
+        while j < len(items):
+            words = items[j][0] if len(items[j]) == 2 else []
+            depth += words.count("{") - words.count("}")
+            head = [w for w in words if w not in KEYWORDS][:1]
+            if head and ARGS_RUN.fullmatch(head[0]):
+                ctx.wrappers.add(name)
+            if depth <= 0 and "}" in words:
+                break
+            j += 1
+        marks[k + 1] = marks.get(k + 1, 0) + 1
+        marks[j + 1] = marks.get(j + 1, 0) - 1
+    return marks
+
+
 def loop_assignments(items, lits):
     """{index of a loop's first command: the assignments its body makes, as
     (word, literal-aware word)}: a variable a loop assigns holds each of its
@@ -2528,9 +2614,11 @@ def shell_pass(text, ctx, cwd, depth):
     stack, out, piped, case, pattern = [], None, None, 0, False
     writers, lpiped = [], None
     loops = loop_assignments(items, lits)
+    bodies = function_bodies(items, ctx)
     for k, (item, litem) in enumerate(zip(items, lits)):
         for word, lword in loops.get(k, ()):
             widen(word, lword, ctx)
+        ctx.in_function += bodies.get(k, 0)
         head = [w for w in item[0] if w not in KEYWORDS][:1] if len(item) == 2 else []
         # A case clause's patterns, up to its ")", are words, not commands.
         if pattern:

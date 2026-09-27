@@ -410,8 +410,10 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 ## What reaches the guard
 
 The prefilter matches any path, `tea`, `git-obs` or `git obs`, `src.opensuse.org`,
-`push`, `send-pack`, `target-gate`, `osc`, a shell or interpreter, and `. FILE`: a file a
-command runs is where a POST hides. A call whose working directory is inside a
+`push`, `send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and a command
+named by a variable (`$OSC ci`): a file a command runs is where a POST hides. A command
+named by a variable is judged as the tool its value names, or, unknown, as every guarded
+tool. A call whose working directory is inside a
 `target-gate` directory is judged too. The rest of the command line decides nothing.
 
 A matched command is judged one parsed command at a time: a commit message, a grep

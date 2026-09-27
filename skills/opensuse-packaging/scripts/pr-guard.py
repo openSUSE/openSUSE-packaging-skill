@@ -60,12 +60,35 @@ import sys
 
 # No match, no analysis. The opencode plugin carries a verbatim copy so it
 # spawns this guard only on a match; tests/test-pr-guard.sh compares the two.
-# Any path matches, because a file a command runs is where a POST hides.
+# Any path matches, because a file a command runs is where a POST hides, and
+# so does a command named by a variable.
 PREFILTER = re.compile(
     r"\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b"
     r"|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b"
     r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b"
+    r"|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time"
+    r"|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)"
+    r"\s*[\x22']?\$[{A-Za-z_@*]"
 )
+ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)")
+
+
+def unquoted(text):
+    """text as the shell joins its words: $'...' decoded, then quotes and
+    backslashes dropped (o''sc, "osc", \\osc and $'\\x6fsc' all read osc).
+    The opencode plugin carries the same function."""
+
+    def esc(m):
+        e = m.group(1)
+        if e[0] == "x" and len(e) > 1:
+            return chr(int(e[1:], 16))
+        return chr(int(e, 8)) if e[0] in "01234567" else e
+
+    text = ANSI_C.sub(lambda m: ESCAPE.sub(esc, m.group(1)), text)
+    return re.sub(r"[\"'\\]", "", text)
+
+
 # A call run inside the stamp directory is judged whatever it says. Two pieces:
 # the guard reads this file too when a call runs it.
 STAMP_DIR = "target-" + "gate"
@@ -109,7 +132,9 @@ def main(argv):
         ev, text = None, raw
     cwd = ev.get("cwd") if isinstance(ev, dict) else None
     in_stamps = isinstance(cwd, str) and STAMP_DIR in cwd
-    if text is None or not (PREFILTER.search(text) or in_stamps):
+    if text is None or not (
+        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or in_stamps
+    ):
         return 0
     mod = {}
     try:
