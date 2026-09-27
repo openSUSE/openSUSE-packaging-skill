@@ -101,15 +101,18 @@ def main(argv):
     in_stamps = isinstance(cwd, str) and STAMP_DIR in cwd
     if text is None or not (PREFILTER.search(text) or in_stamps):
         return 0
+    mod = {}
     try:
         if ev is None:
             raise ValueError("the event is not JSON")
-        why = rules()["judge"](ev)
+        mod = rules()
+        why = mod["judge"](ev)
     except Exception as e:  # fail closed: the call matched a guarded pattern
         why = (
             f"pr-guard: BLOCKED [undecided] a guarded pattern matched but the guard "
             f"failed ({type(e).__name__}: {e}), so the call is refused."
         )
+        why = mod.get("redact", str)(why)
     if why:
         sys.stderr.write(why + "\n")
         return 2

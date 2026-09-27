@@ -62,6 +62,8 @@ git -C "$work/refspec" config remote.fork.push 'refs/heads/*:refs/heads/*'
 clone_ "$work/onpr" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
 clone_ "$work/pdef" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
 git -C "$work/pdef" config remote.pushDefault fork
+# A remote URL that carries a token, which no refusal may print.
+clone_ "$work/tokened" leap-16.0 "origin=https://user:tok3n@${F#https://}/pool/x.git"
 
 # A skill checkout whose pool-pr.sh stand-in, a target-gate.sh it would run and
 # another script are committed and merged (origin/main, the pinned ref);
@@ -109,7 +111,7 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     OTHER="$work/other" BROKEN="$work/broken" MANY="$work/many" ODD="$work/odd" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
-    WORK="$W" SKILL="$S" BARE="$work/barerepo"
+    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -196,6 +198,16 @@ case_ quoted-backticks          0 - ""
 case_ stash-push-rtk            0 - ""
 case_ stash-push-bash-c         0 - ""
 case_ stash-push-naming-pool    0 - ""
+echo "--- a refusal prints no credential"
+case_ push-token-remote         2 push-pool    "a push to https://user:[REDACTED]@src.opensuse.org/pool/x.git"
+case_ push-token-query          2 push-unknown "x.git?access_token=[REDACTED] is named by a variable"
+# Whatever a message echoes is redacted, a script path included.
+case_ redact-authorization-token 2 exec-unreadable "Authorization: token [REDACTED]"
+case_ redact-bearer             2 exec-unreadable "Bearer [REDACTED]"
+for name in push-token-remote push-token-query redact-authorization-token redact-bearer; do
+  out="$(ev "$name" | python3 "$GUARD" 2>&1)"
+  grep -qF tok3n <<<"$out" && fail "$name: the refusal prints the token" || pass "$name: token redacted"
+done
 echo "--- the hook's cwd: two calls, one call, subshells"
 case_ cd-call-1                 0 - ""
 case_ cd-call-2                 2 push-pr-head "pool/tesseract-ocr#3"
@@ -628,6 +640,12 @@ out="$(ev nothing-guarded | python3 "$work/bare/pr-guard.py" 2>&1)"; got=$?
 out="$(ev merge-gitoxide | python3 "$work/bare/pr-guard.py" 2>&1)"; got=$?
 [ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && grep -qF "_pr_guard.py" <<<"$out" \
   && pass "matched call without _pr_guard.py (rc=2)" || fail "matched call without _pr_guard.py: rc=$got $out"
+# A failure's own text is redacted too.
+mkdir -p "$work/raises" && cp "$GUARD" "$work/raises/"
+{ cat "${GUARD%/*}/_pr_guard.py"; printf '\n\ndef judge(ev):\n    raise ValueError("https://user:tok3n@example.com")\n'; } > "$work/raises/_pr_guard.py"
+out="$(ev merge-gitoxide | python3 "$work/raises/pr-guard.py" 2>&1)"; got=$?
+[ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && grep -qF "user:[REDACTED]@" <<<"$out" && ! grep -qF tok3n <<<"$out" \
+  && pass "a failure's text is redacted (rc=2)" || fail "a failure's text is not redacted: rc=$got $out"
 out="$(python3 "$GUARD" --help)"; got=$?
 [ "$got" = 0 ] && grep -q '^Exit: 0 = allowed' <<<"$out" && pass "--help (rc=0)" || fail "--help: rc=$got"
 python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?

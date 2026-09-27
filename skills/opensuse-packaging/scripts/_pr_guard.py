@@ -266,14 +266,37 @@ MESSAGES = {
 }
 
 
+# Credentials a message may echo from a remote URL or a command: a URL's
+# password (or a token as its user), an Authorization value, a token= value.
+SECRETS = (
+    (Rx(r"(://[^/\s:@]*:)[^/\s@]+@"), r"\1[REDACTED]@"),
+    (Rx(r"(://)[\w-]{20,}@"), r"\1[REDACTED]@"),
+    (
+        Rx(
+            r"(?i)(\b(?:authorization:\s*(?:(?:token|bearer|basic)\s+)?|token\s+"
+            r"|bearer\s+))[^\s\"'`]+"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (Rx(r"(?i)(token=)[^\s&\"'`]+"), r"\1[REDACTED]"),
+)
+
+
+def redact(text):
+    for rx, repl in SECRETS:
+        text = rx.sub(repl, text)
+    return text
+
+
 class Blocked(Exception):
     def __init__(self, rule, kind, detail):
         super().__init__(detail)
         self.rule, self.kind, self.detail = rule, kind, detail
 
     def __str__(self):
-        return f"pr-guard: BLOCKED [{self.rule}] " + MESSAGES[self.kind].format(
-            self.detail
+        return redact(
+            f"pr-guard: BLOCKED [{self.rule}] "
+            + MESSAGES[self.kind].format(self.detail)
         )
 
 

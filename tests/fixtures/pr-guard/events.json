@@ -2690,5 +2690,33 @@
       "command": "cd \"$(git rev-parse --git-common-dir)/target-gate\" && ls -la"
     },
     "cwd": "@CLONE@"
+  },
+  "push-token-remote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push origin HEAD"
+    },
+    "cwd": "@TOKENED@"
+  },
+  "push-token-query": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push \"https://src.opensuse.org/someone/x.git?access_token=tok3n\" HEAD"
+    },
+    "cwd": "@CLONE@"
+  },
+  "redact-authorization-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash '/nonexistent/Authorization: token tok3n'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "redact-bearer": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash '/nonexistent/Bearer tok3n'"
+    },
+    "cwd": "@CLONE@"
   }
 }
