@@ -79,12 +79,25 @@ LITERAL = Rx(r"[A-Za-z0-9][\w.-]*")
 FORGE = Rx(r"(?i:src\.opensuse\.org)(?::\d+)?[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
 
 
+# Program text splits an argument list any way (['tea'] + ['pr', 'merge']).
+WSEP = r"[\s\"',\[\]()+]+"
+WOPTS = rf"(?:{WSEP}-[^\s\"',\[\]()+]+(?:{WSEP}[^-\s\"',\[\]()+][^\s\"',\[\]()+]*)?)*"
+
+
 def tea(sub):
-    return Rx(rf"\btea\b.*?(?<![-\w])(?:pr|pulls?)[\"']?{OPTS}{SEP}(?:{sub})(?![-\w])")
+    """Patterns of tea's pr/pulls subcommand sub: for program text, anywhere
+    after tea; for a command line, matched from its start over options only,
+    so a description or comment that quotes one is text."""
+    return (
+        Rx(rf"\btea\b.*?(?<![-\w])(?:pr|pulls?)[\"']?{WOPTS}{WSEP}(?:{sub})(?![-\w])"),
+        Rx(
+            rf"\btea\b[\"']?{OPTS}{SEP}(?:pr|pulls?)[\"']?{OPTS}{SEP}(?:{sub})(?![-\w])"
+        ),
+    )
 
 
-TEA_MERGE = tea("merge|m")
-TEA_CREATE = tea("create|c")
+TEA_MERGE, TEA_MERGE_ARGV = tea("merge|m")
+TEA_CREATE, TEA_CREATE_ARGV = tea("create|c")
 TEA_API = Rx(r"\btea\b.*?(?<![-\w])api(?![-\w])")
 # A method that is not a literal GET or HEAD: a write, or one the text hides.
 METHOD = (
@@ -411,9 +424,14 @@ def code_lines(text):
     ]
 
 
-def tool_rules(ln, ctx, cwd):
-    """tea and git-obs, on one command line or one line of a program."""
-    if TEA_MERGE.search(ln):
+def tool_rules(ln, ctx, cwd, argv=False):
+    """tea and git-obs, on one command line or one line of a program. argv:
+    a command line, whose tea subcommand is its first word after options."""
+    merge, create = (
+        (TEA_MERGE_ARGV, TEA_CREATE_ARGV) if argv else (TEA_MERGE, TEA_CREATE)
+    )
+    tea = "match" if argv else "search"
+    if getattr(merge, tea)(ln):
         block("merge-tea", "a tea PR merge")
     m = GIT_OBS.search(ln)
     # A PR id or repository held in a variable names no owner.
@@ -426,7 +444,7 @@ def tool_rules(ln, ctx, cwd):
     if m and m.group(1) == "forward":
         if held or pool_or_unknown(ln, ctx, cwd, True, BARE_REPO):
             block("create-git-obs", "a git-obs PR forward on pool")
-    if TEA_CREATE.search(ln) and pool_or_unknown(ln, ctx, cwd, cmd=True):
+    if getattr(create, tea)(ln) and pool_or_unknown(ln, ctx, cwd, cmd=True):
         block("create-tea", "a tea PR create on a pool (or unnamed) repository")
     if TEA_API.search(ln) and MERGE_URL.search(ln):
         block("merge-api", "an API merge of a PR")
@@ -1439,7 +1457,7 @@ def git_command(argv, ctx, cwd):
 def guess(run, ctx, cwd):
     """A command whose name only the shell knows, judged as each guarded tool."""
     rest = run[1:]
-    tool_rules(" ".join(["tea", *rest]), ctx, cwd)
+    tool_rules(" ".join(["tea", *rest]), ctx, cwd, argv=True)
     tool_rules(" ".join(["git-obs", *rest]), ctx, cwd)
     api_rules(" ".join(["curl", *rest]), ctx, cwd)
     if rest[:1] in (["push"], ["obs"]):
@@ -1706,7 +1724,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
     elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
         pass
     elif name == "tea":
-        tool_rules(joined, ctx, here)
+        tool_rules(" ".join(["tea", *run[1:]]), ctx, here, argv=True)
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
         api_rules(joined, ctx, here)

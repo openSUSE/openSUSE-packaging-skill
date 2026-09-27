@@ -3244,5 +3244,62 @@
       "command": "osc api -X DELETE '/source/openSUSE:Leap:15.6:Update/x?cmd=branch'"
     },
     "cwd": "@PLAIN@"
+  },
+  "tea-create-describes-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pr create --repo AI/mistral-vibe --head someone:update-2.25.1 --base factory --title 'Update to 2.25.1' --description 'Reviewers merge this; do not tea pr merge it by hand.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "prog-node-execfilesync-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e \"require('child_process').execFileSync('tea', ['pr', 'merge', '--repo', 'pool/gitoxide', '5'])\""
+    },
+    "cwd": "@OTHER@"
+  },
+  "prog-node-spawn-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "node -e \"require('child_process').spawn('tea', ['pulls', 'create', '--repo', 'pool/tesseract-ocr', '--title', 'Update'])\""
+    },
+    "cwd": "@OTHER@"
+  },
+  "prog-python-concat-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c \"import subprocess; subprocess.run(['tea'] + ['pr', 'merge', '5'])\""
+    },
+    "cwd": "@CLONE@"
+  },
+  "write-script-node-merge": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "@WORK@/land.js",
+      "content": "const { execFileSync } = require('child_process');\nexecFileSync('tea', ['pr', 'merge', '--repo', 'pool/gitoxide', '5']);\n"
+    },
+    "cwd": "@CLONE@"
+  },
+  "tea-comment-quotes-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 3 --repo AI/mistral-vibe 'Please do not run tea pulls merge on this one.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "tea-issue-quotes-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea issues create --title 'Docs' --description 'Opened by hand with tea pr create, which the route forbids.'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "tea-global-option-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea --debug pulls merge --repo AI/mistral-vibe 3"
+    },
+    "cwd": "@CLONE@"
   }
 }
