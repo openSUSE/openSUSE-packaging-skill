@@ -2795,5 +2795,33 @@
       "command": "bash @WORK@/open-pr.sh --help"
     },
     "cwd": "@CLONE@"
+  },
+  "run-relative-dot-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "./sweep/p01.sh"
+    },
+    "cwd": "@WORK@"
+  },
+  "run-relative-bash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash sweep/p01.sh 2>&1 | tail -n 1"
+    },
+    "cwd": "@WORK@"
+  },
+  "run-relative-after-cd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd @WORK@ && ./sweep/p01.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "run-relative-missing": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd @CLONE@ && git checkout -q leap-16.0 && ./scripts/leap-sync.sh --dir @CLONE@ tesseract-ocr leap-16.1 2>&1 | tail -n 8"
+    },
+    "cwd": "@WORK@"
   }
 }

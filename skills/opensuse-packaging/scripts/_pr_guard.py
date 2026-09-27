@@ -940,7 +940,8 @@ def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
             data = fh.read(MAX_BYTES)
     except OSError as e:
         if depth == 0:
-            block("exec-unreadable", f"{raw} ({e.strerror or e})")
+            where = "" if path == raw else f"{path}: "
+            block("exec-unreadable", f"{raw} ({where}{e.strerror or e})")
         return
     if data.startswith(b"\x7fELF"):
         return

@@ -430,6 +430,12 @@ case_ run-bash-stdin-args       0 - ""
 case_ run-not-yet-written       2 exec-written    "pp2.sh"
 case_ run-missing               2 exec-unreadable "no-such-script.sh"
 case_ run-cwd-unknown           2 exec-unreadable "the working directory is unknown"
+# A relative path is placed in the event's cwd (or where a cd moved), not the hook's own;
+# one that is not there is refused, naming where it was looked for.
+case_ run-relative-dot-slash    0 - ""
+case_ run-relative-bash         0 - ""
+case_ run-relative-after-cd     0 - ""
+case_ run-relative-missing      2 exec-unreadable "./scripts/leap-sync.sh ($work/clone/scripts/leap-sync.sh: No such file"
 
 echo "--- a file the call writes does not run in the same call"
 case_ written-cat-run           2 exec-written "$W/iter.py"
