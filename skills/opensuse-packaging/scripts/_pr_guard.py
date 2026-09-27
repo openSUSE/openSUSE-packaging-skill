@@ -231,7 +231,8 @@ OSC_NODEVEL = Rx(
 # A maintenance or update project, which takes no direct write; one under
 # home: is the user's own branch, whatever its name ends in.
 MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
-SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
+# The project an API path writes into: its sources, or its builds.
+SOURCE_PRJ = Rx(r"(?:^|/)(?:source|build)/([^/?#\s]+)")
 # POST cmds that write nothing into the project named: osc diffs, lists links
 # and branches (into home:, unless target_project says otherwise) by them.
 READ_CMDS = {"diff", "showlinked", "branch"}
@@ -246,8 +247,70 @@ OSC_OPTS = {
         "message file; no-message force skip-local-service-run noservice no-service",
     ),
     "api": ("XmdTfa", "method data file add-header; edit"),
+    "copypac": (
+        "rtm",
+        "revision to-apiurl message; client-side-copy keep-maintainers keep-link "
+        "keep-develproject expand",
+    ),
+    "linkpac": (
+        "Cr",
+        "cicount revision; current force disable-build disable-publish new-package",
+    ),
+    "aggregatepac": ("m", "map-repo; nosources disable-publish"),
+    "rdelete": ("m", "message; recursive force"),
+    "undelete": ("m", "message;"),
+    "meta": (
+        "aFrms",
+        "attribute file revision message set add; attribute-defaults "
+        "attribute-project blame force edit create remove-linking-repositories delete",
+    ),
 }
-OSC_ALIAS = {"ci": "commit", "checkin": "commit"}
+OSC_OPTS.update(
+    {
+        "branch": (
+            "mr",
+            "message revision linkrev add-repositories-block add-repositories-rebuild; "
+            "nodevelproject checkout force add-repositories extend-package-names "
+            "noaccess maintenance new-package disable-build",
+        ),
+        "rremove": ("", "; force"),
+        "setdevelproject": ("", "; unset"),
+        "setlinkrev": ("r", "revision vrev; use-plain-revision unset"),
+        "detachbranch": ("m", "message;"),
+        "linktobranch": ("", ";"),
+        "lock": ("m", "message;"),
+        "release": (
+            "ar",
+            "arch repo target-project target-repository set-release; no-delay",
+        ),
+        "wipebinaries": (
+            "aMr",
+            "arch multibuild-package repo; build-disabled build-failed broken "
+            "unresolvable all",
+        ),
+        "rmkpac": ("", "scmsync; force"),
+        "repo": ("", "repo arch path; disable-publish yes"),
+        "updatepacmetafromspec": ("", "specfile;"),
+        "unlock": ("m", "message;"),
+        "mbranch": (
+            "au",
+            "attribute update-project-attribute; checkout dryrun noaccess "
+            "nodevelproject version",
+        ),
+        "addchannels": ("", "; skip-disabled enable-all"),
+        "addcontainers": ("", "; extend-package-names"),
+    }
+)
+OSC_ALIAS = {"ci": "commit", "checkin": "commit", "bco": "branch", "branchco": "branch"}
+OSC_ALIAS.update(
+    {"getpac": "branch", "sdp": "setdevelproject", "unpublish": "wipebinaries"}
+)
+OSC_ALIAS.update(
+    {
+        "metafromspec": "updatepacmetafromspec",
+        "updatepkgmetafromspec": "updatepacmetafromspec",
+    }
+)
 REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
 REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
 REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
@@ -355,8 +418,8 @@ MESSAGES = {
     "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
     "factory-auto declines a Factory request whose source is not the devel "
     "project. Submit from the devel project.",
-    "maintenance": "{0}: maintenance and update projects take no direct writes. "
-    "Branch with osc mbranch, commit there, and file osc mr.",
+    "maintenance": "{0}: no direct writes into maintenance/update projects — use "
+    "osc mbranch + osc mr.",
     "maintenance-unknown": "cannot tell where {0} lands, so it is refused. Run it in "
     "the checkout, or name the checkout or the project literally.",
     "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
@@ -778,18 +841,30 @@ def shown(word):
 
 
 def osc_writes(run, ctx, cwd):
-    """osc commit and osc api writes into a maintenance or update project, or
-    into one the guard cannot place."""
+    """osc writes into a maintenance or update project, or into one the guard
+    cannot place: commit, api, and the project arguments of osc_target()."""
     sub, args = osc_sub(run)
     sub = OSC_ALIAS.get(sub, sub)
     if sub not in OSC_OPTS:
         return
     opts, pos = osc_args(sub, args)
-    if sub == "commit":
+    if sub in ("commit", "updatepacmetafromspec"):  # checkouts, by their paths
+        rule = "maintenance-commit" if sub == "commit" else "maintenance-write"
         for raw in pos or ["."]:
-            for prj in osc_projects(raw, "osc commit", ctx, cwd):
+            for prj in osc_projects(raw, f"osc {sub}", ctx, cwd):
                 if prj and MAINT_PRJ.fullmatch(prj):
-                    block("maintenance-commit", f"an osc commit into {prj}")
+                    block(rule, f"an osc {sub} into {prj}")
+        return
+    if sub != "api":
+        for target in filter(None, osc_targets(sub, pos, opts)):
+            if target == ".":
+                prjs = [p for p in osc_projects(".", f"osc {sub} to", ctx, cwd) if p]
+            else:
+                prjs = substitute(target, ctx, cwd)
+                if prjs is None:
+                    block("maintenance-unknown", f"osc {sub} to {shown(target)}")
+            for prj in filter(MAINT_PRJ.fullmatch, prjs):
+                block("maintenance-write", f"an osc {sub} into {prj}")
         return
     keys = {k for k, _ in opts}
     method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
@@ -808,6 +883,56 @@ def osc_writes(run, ctx, cwd):
                     block("maintenance-unknown", f"osc api {method} {shown(a)}")
                 if MAINT_PRJ.fullmatch(prj):
                     block("maintenance-api", f"an osc api {method} into {prj}")
+
+
+def osc_targets(sub, pos, opts):
+    """The projects an osc write names, "." for the checkout's: the
+    destination of copypac, linkpac, aggregatepac and branch (from a
+    checkout, linkpac's operands are the destination), release's project and
+    --target-project, the project of meta prj|pkg with -F or -e, and the one
+    of the rest (rdelete, rremove, setdevelproject, lock ...). Empty when the
+    call writes into nothing it names."""
+    keys = {k for k, _ in opts}
+
+    def project(args):  # osc's PROJECT PACKAGE, or PROJECT/PACKAGE
+        a = args.pop(0) if args else None
+        if a and a.count("/") != 1 and args:
+            args.pop(0)
+        return a and a.split("/")[0]
+
+    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
+    if sub == "meta":
+        if words[:1] not in (["prj"], ["pkg"]):
+            return []
+        if not keys & {"-F", "--file", "-e", "--edit"}:
+            return []
+        rest = words[1:]
+        return [rest[0] if len(rest) > (words[0] == "pkg") else "."]
+    if sub == "branch":
+        return words[2:3]
+    if sub in ("copypac", "linkpac", "aggregatepac"):
+        rest = list(pos)
+        project(rest)
+        return [project(rest) or project(list(pos))]
+    if sub == "setdevelproject" and (
+        len(pos) < 2 or len(pos) == 2 and "/" not in pos[0]
+    ):
+        return ["."]  # the devel project is what it names
+    if sub == "release":
+        return [project(list(pos)) or "."] + [
+            v for k, v in opts if k == "--target-project"
+        ]
+    if sub in ("rdelete", "undelete", "rremove", "lock", "rmkpac"):
+        return [project(list(pos))]
+    if sub == "repo":  # add or remove change the project's meta; list reads it
+        return (
+            [project(pos[1:]) or "."]
+            if pos[:1] in (["add"], ["remove"], ["rm"])
+            else []
+        )
+    if sub == "mbranch":  # a second operand is the project it branches into
+        return pos[1:2]
+    return [project(list(pos)) or "."]
 
 
 def api_segment(url):

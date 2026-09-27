@@ -4217,5 +4217,404 @@
       "command": "D=@OSC@/devel/x; osc ci -m 'Update to 1.2.0' \"$D\""
     },
     "cwd": "@PLAIN@"
+  },
+  "osc-copypac-into-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc copypac openSUSE:Factory x openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rmkpac-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rmkpac openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-repo-add-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc repo add openSUSE:Leap:15.6:Update --repo r --path openSUSE:Factory/standard"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-repo-remove-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc repo remove --repo r"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-metafromspec-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc updatepacmetafromspec"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-unlock-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc unlock openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-mbranch-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc mbranch x openSUSE:Maintenance:12345"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-addchannels-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc addchannels openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-addcontainers-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc addcontainers openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-maintained": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintained x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-repo-list-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc repo list openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-metafromspec-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc metafromspec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "osc-rmkpac-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rmkpac home:tester:branches:x x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-branch-into-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc branch openSUSE:Factory x openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-branch-dot-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc branch openSUSE:Factory x ."
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-rremove-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rremove -f openSUSE:Leap:15.6:Update x x.spec"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-sdp-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc setdevelproject openSUSE:Leap:15.6:Update x devel:tools"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-sdp-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sdp devel:tools"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-setlinkrev-maint": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc setlinkrev openSUSE:Maintenance:12345 x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-detachbranch-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc detachbranch openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-linktobranch-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc linktobranch"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-lock-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc lock -m 'freeze' openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-release-maint": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc release openSUSE:Maintenance:12345"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-release-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc release home:tester:branches:x --target-project openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-wipebinaries-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc wipebinaries --all openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-unpublish-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc unpublish openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-build-wipe": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/build/openSUSE:Leap:15.6:Update?cmd=wipe&package=x'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-branch-from-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc branch openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-bco-from-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc bco openSUSE:Backports:SLE-15-SP7:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-branch-into-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc branch openSUSE:Leap:15.6:Update x home:tester:branches:openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-sdp-devel-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sdp devel:tools:compiler"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "osc-release-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc release home:tester:branches:x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-wipebinaries-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc wipebinaries --all home:tester:branches:x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-build-result": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api '/build/openSUSE:Leap:15.6:Update/_result?package=x'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-build-rebuild-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/build/home:tester:branches:x?cmd=rebuild'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-copypac-slash-into-maint": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc copypac -K -m 'sync' devel:tools/x openSUSE:Maintenance:12345/x.openSUSE_Leap_15.6_Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-linkpac-into-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc linkpac openSUSE:Factory x openSUSE:Backports:SLE-15-SP7:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-linkpac-from-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc linkpac openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "osc-aggregatepac-into-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc aggregatepac openSUSE:Factory x openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rdelete-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete -m 'drop' openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rdelete-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete openSUSE:Leap:15.6:Update/x --mess drop"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rdelete-dot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete . x -m 'drop'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-undelete-maintenance": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc undelete openSUSE:Maintenance:12345 x -m 'back'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-pkg-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg openSUSE:Leap:15.6:Update x -F meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-prj-edit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta prj openSUSE:Backports:SLE-15-SP7:Update -e"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-pkg-slash-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg openSUSE:Leap:15.6:Update/x --file=meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-pkg-checkout-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg x --fi meta.xml"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-copypac-var-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc copypac openSUSE:Factory x \"$DEST\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-copypac-from-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc copypac openSUSE:Leap:15.6:Update x home:tester:branches:x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-linkpac-into-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc linkpac openSUSE:Leap:15.6:Update x home:tester:branches:openSUSE:Leap:15.6:Update"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-aggregatepac-from-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc aggregatepac openSUSE:Leap:15.6:Update x devel:tools"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rdelete-home-branch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete home:tester:branches:openSUSE:Leap:15.6:Update x -m 'cleanup'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-rdelete-dot-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete . x -m 'cleanup'"
+    },
+    "cwd": "@OSC@/branch/x"
+  },
+  "osc-meta-pkg-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg openSUSE:Leap:15.6:Update x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-prj-blame": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta prj openSUSE:Backports:SLE-15-SP7:Update --blame"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-pkg-home-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg home:tester:branches:openSUSE:Leap:15.6:Update x -F meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-meta-pkg-edit-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg openSUSE:Leap:15.6:Update x --ed"
+    },
+    "cwd": "@PLAIN@"
   }
 }
