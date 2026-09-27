@@ -24,7 +24,9 @@ response). Bucket C: one issues/search + one PR-detail call per candidate.
 Gitea (bucket C) is read through `git-obs api`, which keeps its own login
 (needs a default one — `git-obs login add`, then `git-obs login update <name>
 --set-as-default`). A failure skips bucket C with a stderr warning; A/B still
-report. `--no-prs` skips bucket C outright.
+report, and the output says the src.opensuse.org PRs are UNKNOWN. `--no-prs`
+skips bucket C outright. Every osc / git-obs call times out after 60s and then counts as a
+failed query, never as an empty answer.
 
 Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
                              [--verbose] [--no-prs]
@@ -43,9 +45,27 @@ import subprocess
 import json
 import xml.etree.ElementTree as ET
 
+# seconds per osc / git-obs call: both have hung for good, and a harness
+# gives the whole tool call 2 minutes, so the timeout must come first
+TIMEOUT = 60
+
+
+def run(cmd):
+    """subprocess.run with TIMEOUT. A call that times out, or whose binary is
+    missing, comes back as a failed one (rc 124 / 127, as in the shell) and is
+    reported like any other."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, 124, "", f"{cmd[0]} timed out after {TIMEOUT}s"
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
+
 
 def osc_api(path):
-    r = subprocess.run(["osc", "api", path], capture_output=True, text=True)
+    r = run(["osc", "api", path])
     if r.returncode != 0:
         sys.stderr.write(
             f"ERROR: osc api {path} failed (rc={r.returncode}): {r.stderr.strip()}\n"
@@ -63,9 +83,11 @@ def parse_xml(text, what):
 
 
 def whois_user():
-    r = subprocess.run(["osc", "whois"], capture_output=True, text=True)
+    r = run(["osc", "whois"])
     if r.returncode != 0 or ":" not in r.stdout:
-        sys.stderr.write("ERROR: `osc whois` failed; pass --user explicitly\n")
+        sys.stderr.write(
+            f"ERROR: `osc whois` failed ({r.stderr.strip()}); pass --user explicitly\n"
+        )
         sys.exit(2)
     return r.stdout.split(":", 1)[0].strip()
 
@@ -98,9 +120,7 @@ def my_direct_targets(user):
         if prj and name:
             packages.add((prj, name))
 
-    r = subprocess.run(
-        ["osc", "maintainer", "-U", user], capture_output=True, text=True
-    )
+    r = run(["osc", "maintainer", "-U", user])
     if r.returncode != 0:
         sys.stderr.write(
             f"ERROR: 'osc maintainer -U {user}' failed (needs osc >= 1.15): "
@@ -234,7 +254,7 @@ def gitea_get(path):
     """`git-obs api <path>` -- strips the leading 'Response:' banner line and
     parses JSON. Returns None on any failure (missing/non-default login,
     network, HTTP error, bad JSON) so the caller can skip bucket C cleanly."""
-    r = subprocess.run(["git-obs", "-q", "api", path], capture_output=True, text=True)
+    r = run(["git-obs", "-q", "api", path])
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
         return None
@@ -404,13 +424,22 @@ def main():
     user = args.user or whois_user()
 
     results = fetch_incoming_srs(user, args.verbose)
+    prs_unknown = False
     if not args.no_prs:
         prs = fetch_review_prs(user, args.verbose)
-        if prs:
+        if prs is None:
+            prs_unknown = True
+        else:
             results.extend(prs)
 
     if not results:
-        sys.stderr.write(f"no requests or PRs need '{user}' personally right now\n")
+        if prs_unknown:
+            sys.stderr.write(
+                f"no OBS requests need '{user}' personally; src.opensuse.org PRs "
+                "UNKNOWN (the PR leg failed, see above)\n"
+            )
+        else:
+            sys.stderr.write(f"no requests or PRs need '{user}' personally right now\n")
         return
 
     results.sort(key=lambda r: r["created"])  # oldest first -- these are going stale
@@ -432,6 +461,8 @@ def main():
             )
     else:
         print(render_ascii(results))
+    if prs_unknown:
+        print("src.opensuse.org PRs: UNKNOWN (see stderr)")
 
 
 if __name__ == "__main__":

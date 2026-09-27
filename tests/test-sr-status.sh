@@ -17,12 +17,14 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
-# A missing fixture is a 404; one holding @NET is a refused connection, and
-# one holding "@ERR <text>" fails with that text.
+# A missing fixture is a 404; one holding @NET is a refused connection, one
+# holding "@ERR <text>" fails with that text, and one holding @HANG answers
+# nothing for 20s (then an empty success).
 mkdir -p "$work/bin"
 cat > "$work/bin/serve" <<'EOF'
 #!/bin/bash
 [ -f "$1" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+[ "$(cat "$1")" = @HANG ] && exec sleep 20
 [ "$(cat "$1")" = @NET ] && { echo "Failed to establish a new connection: [Errno 111] Connection refused" >&2; exit 1; }
 [ "$(head -c5 "$1")" = "@ERR " ] && { cut -c6- "$1" >&2; exit 1; }
 cat "$1"
@@ -31,7 +33,7 @@ cat > "$work/bin/osc" <<'EOF'
 #!/bin/bash
 echo "osc $*" >> "$FIX/calls"
 case $1 in
-  whois) echo 'tester: "Tester"' ;;
+  whois) exec serve "$FIX/obs/whois" ;;
   api) exec serve "$FIX/obs/$(printf %s "$2" | tr '?&=' '___')" ;;
   results) [ "$2" = --xml ] && exec serve "$FIX/obs/results/$3/$4" ;;
   *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
@@ -136,17 +138,19 @@ put "$S/search_type_pulls_review_requested_true_state_open_limit_50" '[]'
 put "$G/somegroup/example/pulls/2" '{"number": 2, "state": "open", "mergeable": true, "base": {"ref": "main"}}'
 put "$G/somegroup/example/issues/2/comments" '[{"user": {"login": "autogits_obs_staging_bot"}, "body": "Build successful"}]'
 put "$B/obs/request_view_collection_states_new,review,declined_roles_creator_user_tester_types_submit" '<collection matches="0"/>'
+put "$B/obs/whois" 'tester: "Tester"'
 
 # case_ <name> <expected rc> <expected message> <mutation> [sr-status args...]
 # Mutations run in the case's fixture tree ($B there), with $G/$P3/... to hand.
-# XENV holds extra environment for the run.
-XENV=()
+# XENV holds extra environment for the run; SHORT=("$work/short.py") runs the
+# script with a 3s call timeout.
+XENV=(); SHORT=()
 case_() {
   local name=$1 rc=$2 msg=$3 mut=$4 dir="$work/$1" out got; shift 4
   cp -a "$B" "$dir" && mkdir -p "$dir/home"
   (B=$dir G=$dir/gitea/repos; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   out="$(cd "$dir" && FIX=$dir HOME=$dir/home PATH="$work/bin:$PATH" \
-    env ${XENV[@]+"${XENV[@]}"} python3 "$SR" "$@" 2>&1)"; got=$?
+    env ${XENV[@]+"${XENV[@]}"} python3 ${SHORT[@]+"${SHORT[@]}"} "$SR" "$@" 2>&1)"; got=$?
   LAST=$out; CALLS=$(cat "$dir/calls" 2>/dev/null)
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"
@@ -309,6 +313,49 @@ case_ comments-missing 2 "VERDICT: UNKNOWN — could not read the PR comments (l
   "rm \$G/pool/tesseract-ocr/issues/4/comments" --pr 'pool/tesseract-ocr#4'
 case_ bad-pr-spec 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/tesseract-ocr'
 case_ pr-with-ids 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/tesseract-ocr#4' 1234
+
+# ---------------------------------------------------------------- hung calls
+# osc and git-obs have hung for good in the field. A call that does not answer
+# times out and is reported like any other failure, never as an empty result.
+cat > "$work/short.py" <<'EOF'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.TIMEOUT = 3
+sys.argv = sys.argv[1:]
+sys.exit(mod.main())
+EOF
+SHORT=("$work/short.py")
+case_ hang-git-obs-pr 6 "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (network failure)" \
+  "put \$G/pool/tesseract-ocr/pulls/4 @HANG" --pr 'pool/tesseract-ocr#4'
+grep -qF "git-obs timed out after 3s" <<<"$LAST" && pass "hang-git-obs-pr: says it timed out" || fail "hang-git-obs-pr: $LAST"
+case_ hang-osc-obsinfo 6 "could not read $P4/tesseract-ocr/_scmsync.obsinfo (network failure)" \
+  "put \$B/obs/source/$P4/tesseract-ocr/_scmsync.obsinfo @HANG" --pr 'pool/tesseract-ocr#4'
+case_ hang-osc-collection 2 "osc timed out after 3s" \
+  "put \$B/obs/request_view_collection_states_new,review,declined_roles_creator_user_tester_types_submit @HANG"
+case_ hang-osc-whois 2 "could not determine OBS user" "put \$B/obs/whois @HANG"
+grep -qF "osc timed out after 3s" <<<"$LAST" && pass "hang-osc-whois: says it timed out" || fail "hang-osc-whois: $LAST"
+# The table leg warns and goes on without the PRs, so its header must not
+# claim them.
+case_ hang-git-obs-pr-leg 0 "src.opensuse.org PRs UNKNOWN" \
+  "put \$G/issues/search_type_pulls_created_true_state_open_limit_50 @HANG"
+SHORT=()
+# A hung call must fail before the harness gives up on the whole tool call
+# (2 minutes by default), or the timeout is never seen.
+python3 -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m); sys.exit(0 if m.TIMEOUT < 120 else 1)' "$SR" \
+  && pass "TIMEOUT is under the 2-minute tool limit" || fail "TIMEOUT is not under 120s"
+# A missing osc or git-obs is a failed lookup, not a traceback: exit 1 would
+# read as "red at the PR head".
+mkdir -p "$work/py-only" && ln -sf "$(command -v python3)" "$work/py-only/python3"
+out="$(PATH="$work/py-only" HOME="$work" python3 "$SR" --pr 'pool/tesseract-ocr#4' 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (lookup failed)" <<<"$out" \
+  && grep -qF "git-obs: command not found" <<<"$out" && ! grep -q Traceback <<<"$out" \
+  && pass "missing git-obs: lookup failed (rc=2)" || { fail "missing git-obs: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------- the table
 case_ table-stale-sorts-first 0 "| PR | #3 | tesseract-ocr | pool/tesseract-ocr:leap-16.0 |" ":"

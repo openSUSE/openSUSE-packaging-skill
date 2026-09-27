@@ -25,8 +25,10 @@ Usage:
 The PR leg reads src.opensuse.org through `git-obs api`, which keeps its own
 login (needs a default one: `git-obs login add`, then `git-obs login update
 <name> --set-as-default`); if that fails it warns and falls back to the
-OBS-only table. Two sub-legs, both always run: PRs you created, and PRs
-awaiting your review. `--no-prs` skips both.
+OBS-only table, and the header says the PRs are UNKNOWN. Two sub-legs, both
+always run: PRs you created, and PRs awaiting your review. `--no-prs` skips
+both. Every osc / git-obs call times out after 60s and then counts as a failed
+lookup (a network failure for --pr), never as an empty answer.
 
 An open pool/ PR's build is read from OBS, not from the staging bot's last
 comment: the `...:PullRequest:<n>` project the bot names is built from whatever
@@ -46,6 +48,24 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # escape/Unicode-smuggling filter for third-party text
 
+# seconds per osc / git-obs call: both have hung for good, and a harness
+# gives the whole tool call 2 minutes, so the timeout must come first
+TIMEOUT = 60
+
+
+def run(cmd):
+    """subprocess.run with TIMEOUT. A call that times out, or whose binary is
+    missing, comes back as a failed one (rc 124 / 127, as in the shell) and is
+    reported like any other."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, 124, "", f"{cmd[0]} timed out after {TIMEOUT}s"
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
+
 
 def api(path, hard=True, errors=None):
     """osc api wrapper. hard=True: exit 2 on failure (discovery must not
@@ -57,7 +77,7 @@ def api(path, hard=True, errors=None):
 def osc(args, hard=True, errors=None):
     """Run osc; a failure's text is appended to `errors` so --pr can tell a
     network failure from a refusal or a missing object."""
-    r = subprocess.run(["osc", *args], capture_output=True, text=True)
+    r = run(["osc", *args])
     if r.returncode != 0:
         msg = f"osc {' '.join(args)} failed (rc={r.returncode}): {r.stderr.strip()}"
         sys.stderr.write(f"ERROR: {msg}\n")
@@ -171,7 +191,7 @@ def gitea_get(path, errors=None):
     parses JSON. Returns None on any failure (missing/non-default login,
     network, HTTP error, bad JSON), with its text appended to `errors`, so
     the caller can emit a FETCH FAILED row."""
-    r = subprocess.run(["git-obs", "-q", "api", path], capture_output=True, text=True)
+    r = run(["git-obs", "-q", "api", path])
     if r.returncode != 0:
         sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
         if errors is not None:
@@ -572,7 +592,7 @@ def main():
         if not m or a.ids:
             ap.error("--pr takes OWNER/REPO#N and no request ids")
         sys.exit(pr_mode(m[1], m[2]))
-    w = subprocess.run(["osc", "whois"], capture_output=True, text=True)
+    w = run(["osc", "whois"])
     user = a.user or w.stdout.split(":")[0].strip()
     if not user:
         sys.stderr.write(
@@ -689,18 +709,27 @@ def main():
                 }
             )
 
+    failed_legs = []
     if not a.ids and not a.no_prs:
         for leg in ("created", "review-requested"):
             prs = fetch_prs(a.state, a.brief, leg)
-            if prs:
+            if prs is None:
+                failed_legs.append(leg)
+            else:
                 rows.extend(prs)
 
     # declined SRs / closed-unmerged PRs first, then ids numeric descending-safe
     rows.sort(key=lambda r: (not r["bad"], r["num"]))
 
+    scope = " (OBS SRs + src.opensuse.org PRs)"
+    if failed_legs:
+        scope = (
+            " (OBS SRs; src.opensuse.org PRs UNKNOWN: the "
+            f"{' and '.join(failed_legs)} leg failed, see stderr)"
+        )
     print(
         f"### Submissions for `{user}` — {len(rows)} shown"
-        + ("" if a.no_prs or a.ids else " (OBS SRs + src.opensuse.org PRs)")
+        + ("" if a.no_prs or a.ids else scope)
         + "\n"
     )
     if a.brief:
