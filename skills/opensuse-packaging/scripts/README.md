@@ -115,7 +115,7 @@ Format-lint the newest N `.changes` entries (separators, headers, blank lines, b
 
 ## `changes-patches.sh`
 
-Factory-auto's patch-mention rule run locally against the SR **target** (not your branch's last commit, which already holds the change): each `*.patch`/`*.diff`/`*.dif` added or removed must have its literal filename on a single `+`/`-` line of the `.changes` diff — a glob, a `%{version}` form, a name split by the 67-col wrap, or a mention only in an untouched old entry all decline, and a rename counts twice. `--target PRJ` (default: the checkout's link origin, else Factory), `--base DIR` for offline use. Real case: a three-patch rename cost three SRs in a row.
+Factory-auto's patch-mention rule run locally against the SR **target** (not your branch's last commit, which already holds the change): each `*.patch`/`*.diff`/`*.dif` added or removed must have its literal filename on a single `+`/`-` line of the `.changes` diff — a glob, a `%{version}` form, a name split by the 67-col wrap, or a mention only in an untouched old entry all decline, and a rename counts twice. `--target PRJ` (default: the checkout's link origin, else Factory), `--base DIR` for offline use. Real case: a three-patch rename cost three SRs in a row. It also counts the entries the `.changes` adds vs the target: more than `--entries N` (default 1) is a finding — typically a fix-up stacked as a second entry instead of folded into the top one; pass the real count for deliberate per-version entries or a devel forward (`gate.sh --entries N` passes it on). In a non-link osc checkout without `--target` (a direct commit to a devel project, which may be entries ahead of Factory) they count against the committed copy instead.
 
 ## `changes-guard.sh`
 
@@ -226,7 +226,8 @@ still follows — it is a judgement, not a check, and stays outside this script.
 Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
                [--build-log FILE] [--full]
   DIR          package checkout (default .)
-  --entries N  entries the submission adds vs the target (changes-lint, default 1)
+  --entries N  entries the submission adds vs the target (changes-lint and
+               changes-patches, default 1)
   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
   --target     SR target for changes-patches (default: link origin, else Factory)
   --build-log  also run build-summary.sh on this osc build log (verdict only)

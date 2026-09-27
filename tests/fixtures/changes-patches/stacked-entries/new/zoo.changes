@@ -1,0 +1,14 @@
+-------------------------------------------------------------------
+Mon Sep 14 09:00:00 UTC 2026 - Jane Packager <jane@example.com>
+
+- Fix the build with GCC 16
+
+-------------------------------------------------------------------
+Sun Sep 13 17:13:13 UTC 2026 - Jane Packager <jane@example.com>
+
+- Update to version 2.10.1
+
+-------------------------------------------------------------------
+Fri Jul 31 07:09:36 UTC 2026 - Jane Packager <jane@example.com>
+
+- Update to version 2.10

@@ -38,6 +38,7 @@ source-exempt    0 0 0 0
 new-package      0 0 0 0
 diff-dif         1 1 1 0
 old-entry-only   1 1 0 0
+stacked-entries  1 0 0 0
 TABLE
 
 # the exact factory-auto wording must survive, so a decline and the local
@@ -45,6 +46,17 @@ TABLE
 out="$("$SCRIPT" "$FIX/rename-glob/new" --base "$FIX/rename-glob/old" 2>/dev/null)"
 grep -qxF 'A patch (zoo-2.10.1-tempfile.patch) is being added without this addition being mentioned in the changelog.' <<<"$out" \
   && pass "finding uses factory-auto's exact sentence" || fail "finding wording drifted from factory-auto"
+# One submission, one entry: two new entries vs the target are a finding even
+# with no patch delta (a second prepend stacked them); --entries N allows a
+# forward that carries N.
+out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'zoo.changes: 2 new entries vs' <<<"$out" \
+  && pass "stacked entries: named with their count" || { fail "stacked entries: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A red run never ends on an "OK:" line.
+[ "$(tail -1 <<<"$out" | cut -c1-3)" != "OK:" ] && ! grep -q '^OK:' <<<"$out" \
+  && pass "stacked entries: no OK: line on a red run" || { fail "stacked entries: OK: printed on a red run"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" --entries 2 2>&1)"; rc=$?
+[ "$rc" = 0 ] && pass "stacked entries: --entries 2 allows two" || { fail "stacked entries --entries 2: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # An scmsync package carries BOTH .osc and .git, and the osc side cannot see the
 # change: it keeps no _files, so the listing comes back as git HEAD (the
 # unmodified side) and `osc status` says nothing in a git checkout. Taking the
@@ -82,6 +94,9 @@ fi
 
 # usage errors never look clean
 "$SCRIPT" --target 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"
+out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" --entries 0 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF -- "--entries takes a positive integer" <<<"$out" \
+  && pass "--entries 0 is a usage error that says so" || fail "--entries 0: rc=$rc $out"
 "$SCRIPT" /nonexistent-dir-for-test --base "$FIX/rename-glob/old" >/dev/null 2>&1; [ $? -ne 0 ] && pass "nonexistent DIR does not exit 0" || fail "nonexistent DIR exited 0"
 
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

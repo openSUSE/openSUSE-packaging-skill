@@ -26,7 +26,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 - `changes-prepend.sh <name>.changes [--author 'Name <email>']` — bullets on stdin; author falls back to `$CHANGES_AUTHOR`, then git `user.name`/`user.email`; exit 0 verified · 1 verification failed (restored) · 2 usage or no author · 3 refused: the file already differs from its committed version (edit the top entry instead)
 - `changes-lint.sh [--entries N | --all] <file>.changes [...]` — N ≥ 1, `--all` for every entry; exit 0 clean · 1 findings · 2 usage · 3 unreadable file (wins over 1)
 - `changes-guard.sh [--base FILE] [--amend-top AUTHOR] <pkg>.changes [...]` — exit 0 insertion-only · 1 prior entry changed · 2 usage · 3 unreadable input (wins over 1)
-- `changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]` — exit 0 clean · 1 findings · 2 usage or lookup failed
+- `changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF] [--entries N]` — also a finding: the `.changes` adds more than N entries (default 1) vs the target; exit 0 clean · 1 findings · 2 usage or lookup failed
 
 ## Submit and watch
 

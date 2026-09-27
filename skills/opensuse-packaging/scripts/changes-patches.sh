@@ -19,6 +19,7 @@
 # no file delta at all — exactly the blind spot factory-auto does not have.
 #
 # Usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]
+#                           [--entries N]
 #   DIR         package checkout (default .)
 #   --target    SR target. Default: a branched osc checkout's link origin
 #               (<linkinfo project=> in .osc/_files, or the API listing for an
@@ -29,8 +30,16 @@
 #               upstream tracking branch). For a fork PR pass the TARGET
 #               remote's branch, e.g. origin/factory — your own branch already
 #               contains the change and would compare clean.
+#   --entries N entries the .changes may add vs the target (default 1): more
+#               is a finding — typically a fix-up stacked as a second entry
+#               instead of folded into the top one. Pass the real count when
+#               the submission carries several on purpose (per-version entries
+#               of a superseding SR, a forward from devel). A non-link osc
+#               checkout without --target is a direct commit to its project:
+#               its entries count against the committed copy instead, as that
+#               project may be entries ahead of Factory.
 # Output: factory-auto's own sentence per patch, plus a hint when the name is
-# present but wrapped across lines.
+# present but wrapped across lines; a line per .changes adding too many entries.
 # Exit: 0 = clean (or new package), 1 = findings, 2 = usage / lookup failure
 #       (a failed lookup never reports clean).
 set -euo pipefail
@@ -39,21 +48,25 @@ exec python3 - "$@" <<'PY'
 import os, re, sys, difflib, subprocess, xml.etree.ElementTree as ET
 
 def usage():
-    print("usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]",
-          file=sys.stderr); sys.exit(2)
+    print("usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]"
+          " [--entries N]", file=sys.stderr); sys.exit(2)
 def fail(msg):
     print(f"changes-patches: {msg}", file=sys.stderr); sys.exit(2)
 def run(cmd, cwd=None):
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     return p.returncode, p.stdout, p.stderr
 
-args, d, target, base, gitbase, i = sys.argv[1:], ".", None, None, None, 0
+args, d, target, base, gitbase, maxnew, i = sys.argv[1:], ".", None, None, None, 1, 0
 while i < len(args):
     a = args[i]
-    if a in ("--target", "--base", "--git-base"):
+    if a in ("--target", "--base", "--git-base", "--entries"):
         if i + 1 >= len(args): usage()
         if a == "--target": target = args[i + 1]
         elif a == "--base": base = args[i + 1]
+        elif a == "--entries":
+            if not re.fullmatch(r"[1-9][0-9]*", args[i + 1]):
+                fail(f"--entries takes a positive integer, got '{args[i + 1]}'")
+            maxnew = int(args[i + 1])
         else: gitbase = args[i + 1]
         i += 2
     elif a.startswith("-"): usage()
@@ -64,6 +77,7 @@ PATCH = re.compile(r".*\.(patch|diff|dif)$")
 def read(path):
     return open(path, encoding="utf-8", errors="replace").read() if os.path.isfile(path) else None
 
+count_old = count_where = None       # entries count against the target unless set
 # --- the target ("old") side and the working ("new") file set -----------------
 if base is not None:
     if not os.path.isdir(base):
@@ -87,9 +101,19 @@ elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(
         rc, out, err = run(["osc", "api", f"/source/{prj}/{pkg}?expand=1"])
         if rc != 0: fail(f"osc api /source/{prj}/{pkg} failed: {err.strip()[:200]}")
         files_xml = ET.fromstring(out)
+    li = files_xml.find("linkinfo")
+    linked = li is not None and bool(li.get("project"))
+    if target is None and not linked:
+        # a direct commit to this (devel) project: its entries count against
+        # the committed copy -- the project may be entries ahead of Factory
+        def count_old(name):
+            for p in (".osc/sources", ".osc"):
+                txt = read(os.path.join(d, p, name))
+                if txt is not None: return txt
+            return None
+        count_where = "the committed copy"
     if target is None:
-        li = files_xml.find("linkinfo")
-        target = li.get("project") if li is not None and li.get("project") else "openSUSE:Factory"
+        target = li.get("project") if linked else "openSUSE:Factory"
     tprj, tpkg = target.split("/", 1) if "/" in target else (target, pkg)
     rc, out, err = run(["osc", "api", f"/source/{tprj}/{tpkg}?expand=1"])
     if rc != 0:
@@ -139,6 +163,24 @@ else:
 
 def new_read(name): return read(os.path.join(d, name))
 
+# --- one submission, one entry (runs whenever a target was resolved) ----------
+changes = {ch: (new_read(ch), old_read(ch))
+           for ch in sorted(f for f in new_files if f.endswith(".changes"))}
+def nentries(txt): return sum(1 for l in txt.splitlines() if re.fullmatch(r"-{3,}\s*", l))
+stacked = []
+for ch, (new, old) in changes.items():
+    old = count_old(ch) if count_old else old
+    if new is None or old is None: continue
+    n = nentries(new) - nentries(old)
+    if n > maxnew:
+        stacked.append(f"{ch}: {n} new entries vs {count_where or where}, expected at most"
+                       f" {maxnew} — fold a fix-up into the top entry; for {n} deliberate"
+                       f" per-version entries pass --entries {n}")
+def done(msg):                       # the entry finding last; no "OK:" on a red run
+    print(msg[4:] if stacked and msg.startswith("OK: ") else msg)
+    for m in stacked: print(m)
+    sys.exit(1 if stacked else 0)
+
 # --- factory-auto's algorithm, step for step ---------------------------------
 opatches = {f for f in old_files if PATCH.match(f)}
 npatches = {f for f in new_files if PATCH.match(f)}
@@ -146,11 +188,10 @@ common = opatches & npatches
 to_mention = {p: "old" for p in opatches - common}
 to_mention.update({p: "new" for p in npatches - common})
 if not to_mention:
-    print(f"OK: no patch added or removed vs {where}"); sys.exit(0)
+    done(f"OK: no patch added or removed vs {where}")
 
 plus_minus = []                      # only the +/- lines of the .changes diff count
-for ch in sorted(f for f in new_files if f.endswith(".changes")):
-    new, old = new_read(ch), old_read(ch)
+for ch, (new, old) in changes.items():
     if new is None: continue
     lines = (["+" + l for l in new.splitlines(True)] if old is None
              else list(difflib.unified_diff(old.splitlines(True), new.splitlines(True))))
@@ -167,7 +208,7 @@ for spec in sorted(f for f in (new_files | old_files) if f.endswith(".spec")):
 for s in srcs: to_mention.pop(s, None)
 
 if not to_mention:
-    print(f"OK: every added/removed patch vs {where} is named in the .changes diff"); sys.exit(0)
+    done(f"OK: every added/removed patch vs {where} is named in the .changes diff")
 
 glued, spaced = "".join(plus_minus), " ".join(plus_minus)
 for p, state in sorted(to_mention.items()):
@@ -176,6 +217,7 @@ for p, state in sorted(to_mention.items()):
     if p in glued or p in spaced:
         msg += " (it is there, but wrapped across lines — keep the filename on one line)"
     print(msg)
+for m in stacked: print(m)
 print(f"-> name each file literally, on one line, in the new .changes entry (compared against {where})",
       file=sys.stderr)
 sys.exit(1)

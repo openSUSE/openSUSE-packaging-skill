@@ -9,7 +9,8 @@
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
 #                [--build-log FILE] [--full]
 #   DIR          package checkout (default .)
-#   --entries N  entries the submission adds vs the target (changes-lint, default 1)
+#   --entries N  entries the submission adds vs the target (changes-lint and
+#                changes-patches, default 1)
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
 #   --target     SR target for changes-patches (default: link origin, else Factory)
 #   --build-log  also run build-summary.sh on this osc build log (verdict only)
@@ -70,8 +71,8 @@ else
   echo "## changes-lint / changes-guard: no *.changes in $(pwd)"; red+=(changes)
 fi
 
-if [ -n "$target" ]; then "$HERE/changes-patches.sh" . --target "$target" > "$log/changes-patches.txt" 2>&1; rc=$?
-else "$HERE/changes-patches.sh" . > "$log/changes-patches.txt" 2>&1; rc=$?; fi
+if [ -n "$target" ]; then "$HERE/changes-patches.sh" . --target "$target" --entries "$entries" > "$log/changes-patches.txt" 2>&1; rc=$?
+else "$HERE/changes-patches.sh" . --entries "$entries" > "$log/changes-patches.txt" 2>&1; rc=$?; fi
 show changes-patches $rc "$log/changes-patches.txt"
 
 if [ -n "$buildlog" ]; then
