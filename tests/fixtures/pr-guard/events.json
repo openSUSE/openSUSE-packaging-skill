@@ -4700,5 +4700,82 @@
       "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -s 1234567 -m 'Update to 5.5.3'"
     },
     "cwd": "@PLAIN@"
+  },
+  "find-exec-tea-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -maxdepth 0 -exec tea pr merge --repo AI/mistral-vibe 3 \\;"
+    },
+    "cwd": "@CLONE@"
+  },
+  "find-execdir-push": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -maxdepth 1 -name .git -execdir git push fork tess-88053-16.0 \\;"
+    },
+    "cwd": "@CLONE@"
+  },
+  "find-ok-sh-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -maxdepth 0 -ok sh -c 'tea pr merge --repo AI/mistral-vibe 3' \\;"
+    },
+    "cwd": "@CLONE@"
+  },
+  "find-exec-placeholder-push": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -maxdepth 0 -exec git push fork {} +"
+    },
+    "cwd": "@CLONE@"
+  },
+  "watch-tea-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "watch -n 60 'tea pr merge --repo AI/mistral-vibe 3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "watch-exec-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "watch -x tea pulls merge --repo AI/mistral-vibe 3"
+    },
+    "cwd": "@CLONE@"
+  },
+  "parallel-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel -j2 tea pr merge --repo AI/mistral-vibe ::: 3 4"
+    },
+    "cwd": "@CLONE@"
+  },
+  "parallel-push-placeholder": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel 'git push fork {}' ::: tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "find-exec-grep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '*.spec' -exec grep -H Version {} \\;"
+    },
+    "cwd": "@CLONE@"
+  },
+  "watch-osc-results": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "watch -n 60 osc results devel:tools tesseract-ocr"
+    },
+    "cwd": "@CLONE@"
+  },
+  "parallel-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel echo {} ::: a b"
+    },
+    "cwd": "@CLONE@"
   }
 }

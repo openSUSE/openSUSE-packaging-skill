@@ -391,6 +391,18 @@ LONG = {
         "--experimental-loader": "value",
     },
 }
+# find's actions that run a command, which ends at ";" or "+" (the -dir ones in
+# each match's directory); GNU parallel's options that take a value, and the
+# placeholders find and parallel fill in.
+FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+PARALLEL_VALUED = (
+    "-j", "-N", "-n", "-I", "-S", "-a", "-L", "-l", "-P", "-E", "-d", "-C", "-s",
+    "--jobs", "--colsep", "--arg-file", "--delay", "--timeout", "--joblog",
+    "--results", "--tmpdir", "--workdir", "--sshlogin", "--basefile", "--env",
+    "--tagstring", "--retries", "--memfree", "--load", "--max-args",
+    "--max-replace-args", "--max-lines", "--max-chars",
+)  # fmt: skip
+PLACEHOLDER = Rx(r"\{[\d./#%]*\}")
 UV_RUN_VALUED = (
     "--with", "--with-requirements", "--with-editable", "--python", "-p", "--project",
     "--directory", "--package", "--extra", "--group", "--env-file", "--index",
@@ -1732,6 +1744,20 @@ def unwrap(argv):
                 return ["python3"] + argv[i:], None, changes, chdir
         elif base == "timeout":
             i = skip(i + 1, ("-s", "-k", "--signal", "--kill-after")) + 1
+        elif base == "watch":  # its command runs through sh -c, or as is with -x
+            j = skip(i + 1, ("-n", "--interval", "-q", "--equexit"))
+            if {"-x", "--exec"} & set(argv[i + 1 : j]):
+                i = j
+                continue
+            return [], " ".join(argv[j:]), changes, chdir
+        elif base == "parallel":  # the command before ::: runs through a shell
+            j = skip(i + 1, PARALLEL_VALUED)
+            rest = argv[j:]
+            end = next(
+                (k for k, a in enumerate(rest) if a.startswith(":::")), len(rest)
+            )
+            text = PLACEHOLDER.sub("$__arg", " ".join(rest[:end]))
+            return [], text, changes, chdir
         elif base in WRAPPERS:
             if base in ("sudo", "doas"):
                 changes.append(base)
@@ -2397,6 +2423,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         api_rules(text, ctx, here, write, reads.get(name, httpie_reads(run, stdin)))
     elif name == "eval":
         run_text(" ".join(run[1:]), "shell", ctx, here, depth)
+    elif name == "find":
+        find_exec(run, ctx, here, depth)
     elif name in SHELLS:
         interpreter(run, "shell", stdin, env, ctx, here, depth)
     elif PYTHON.fullmatch(name):
@@ -2412,6 +2440,24 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if any(op in STDOUT or op in (">&", "1>&") and t != "1" for op, t in redirs):
         out = None
     return cwd, out
+
+
+def find_exec(run, ctx, cwd, depth):
+    """Judge each command find runs, a match's name ({}) held in a variable,
+    and the -dir ones run in a directory only find knows."""
+    i = 1
+    while i < len(run):
+        if run[i] not in FIND_EXEC:
+            i += 1
+            continue
+        end = next(
+            (j for j in range(i + 1, len(run)) if run[j] in (";", "+")), len(run)
+        )
+        argv = [PLACEHOLDER.sub("$__arg", a) for a in run[i + 1 : end]]
+        where = None if run[i].endswith("dir") else cwd
+        if argv:
+            one_command(argv, [], None, ctx, where, depth)
+        i = end + 1
 
 
 def loop_assignments(items, lits):
