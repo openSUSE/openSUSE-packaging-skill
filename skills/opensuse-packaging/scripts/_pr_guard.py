@@ -177,6 +177,11 @@ OSC_NODEVEL = Rx(
     r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest"
     rf"|(?:rq|request){SEP}create)(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
 )
+# A maintenance or update project, which takes no direct write; one under
+# home: is the user's own branch, whatever its name ends in.
+MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
+SOURCE_PRJ = Rx(r"(?:^|/)source/([^/?#\s]+)")
+OSC_GLOBAL = ("-A", "--apiurl", "--config")  # osc's global options with a value
 
 HEREDOC = Rx(r"(?<!<)<<(-?)[ \t]*(?:\\([A-Za-z_][\w.-]*)|([\"']?)([A-Za-z_][\w.-]*)\3)")
 SH_SHEBANG = Rx(r"#!\s*\S*/(?:env\s+)?(?:ba|z|da|k)?sh\b")
@@ -260,6 +265,8 @@ MESSAGES = {
     "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
     "factory-auto declines a Factory request whose source is not the devel "
     "project. Submit from the devel project.",
+    "maintenance": "{0}: maintenance and update projects take no direct writes. "
+    "Branch with osc mbranch, commit there, and file osc mr.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -449,6 +456,46 @@ def without_message(run):
             out.append(a)
         i += 1
     return out
+
+
+def osc_project(path):
+    """The projects an osc checkout path (a checkout, or a file in one) may
+    commit to: its .osc/_project, else, for a checkout this call makes, the
+    path's own components."""
+    d = path if os.path.isdir(path) else os.path.dirname(path)
+    try:
+        with open(os.path.join(d, ".osc", "_project"), encoding="utf-8") as fh:
+            return [fh.read().strip()]
+    except OSError:
+        return path.split(os.sep)
+
+
+def osc_writes(run, ctx, cwd):
+    """osc commit and osc api writes into a maintenance or update project."""
+    i = 1
+    while i < len(run) and run[i].startswith("-"):
+        i += 2 if run[i] in OSC_GLOBAL else 1
+    sub, args = (run[i], run[i + 1 :]) if i < len(run) else (None, [])
+    if sub in ("ci", "commit", "checkin"):
+        pos = parse_opts(args, "mFA", ("--message", "--file", *OSC_GLOBAL[1:]))[1]
+        for raw in pos or ["."]:
+            for path in locate(raw, ctx, cwd)[0] or ():
+                for prj in filter(MAINT_PRJ.fullmatch, osc_project(path)):
+                    block("maintenance-commit", f"an osc commit into {prj}")
+    elif sub == "api":
+        valued = ("--method", "--data", "--file", "--add-header", *OSC_GLOBAL[1:])
+        opts, pos = parse_opts(args, "XmdTfaA", valued)
+        keys = {k for k, _ in opts}
+        method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
+        # As osc: a file uploads by PUT, and --edit PUTs what it fetched.
+        if method == "GET" and keys & {"-T", "-f", "--file"} or keys & {"-e", "--edit"}:
+            method = "PUT"
+        if method.upper() in ("GET", "HEAD"):
+            return
+        for a in pos:
+            for m in SOURCE_PRJ.finditer(a):
+                if MAINT_PRJ.fullmatch(m.group(1)):
+                    block("maintenance-api", f"an osc api {method} into {m.group(1)}")
 
 
 def call_args(text, i):
@@ -1629,6 +1676,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth):
         git_command(run, ctx, here)
     elif name == "osc":
         osc_rules(joined, " ".join(without_message(run)))
+        osc_writes(run, ctx, here)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
         held = [

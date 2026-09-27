@@ -101,6 +101,15 @@ cp "$FX/fake-gate.sh" "$W/target-gate.sh"; chmod +x "$W/target-gate.sh"
 # in pieces: the guard reads this suite), and a git directory not named .git.
 g=gate; mkdir -p "$W/wt/target-$g"
 git init -q --bare "$work/barerepo"
+# osc checkouts: .osc/_project names the project a commit lands in. The home
+# projects are spelled in pieces: check-skills.py reads this suite.
+osc_co_() { mkdir -p "$1/.osc" && printf '%s\n' "$2" > "$1/.osc/_project"; }
+h=home
+osc_co_ "$work/osc/upd/x" openSUSE:Backports:SLE-15-SP7:Update
+osc_co_ "$work/osc/incident/x" openSUSE:Maintenance:12345
+osc_co_ "$work/osc/$h:tester:branches:OBS_Maintained:x/x.openSUSE_Backports_SLE-15-SP7_Update" "$h:tester:branches:OBS_Maintained:x"
+osc_co_ "$work/osc/branch/x" "$h:tester:branches:openSUSE:Backports:SLE-15-SP7:Update"
+osc_co_ "$work/osc/devel/x" devel:tools
 
 # ev <name>: the fixture event, placeholders filled in.
 ev() {
@@ -113,7 +122,7 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     OTHER="$work/other" BROKEN="$work/broken" MANY="$work/many" ODD="$work/odd" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
-    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened"
+    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -647,6 +656,24 @@ case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelpro
 case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-devel-control    0 - ""
 case_ osc-sr-nodevel-message  0 - ""
+# Maintenance and update projects take no direct write, by commit or by API;
+# a home: branch of one is the user's own, whatever its name ends in.
+case_ osc-ci-update-checkout     2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ osc-ci-incident-checkout   2 maintenance-commit "an osc commit into openSUSE:Maintenance:12345"
+case_ osc-ci-update-operand      2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ osc-ci-update-file-operand 2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ osc-ci-update-new-checkout 2 maintenance-commit "an osc commit into openSUSE:Leap:15.6:Update"
+case_ osc-api-put-update         2 maintenance-api "an osc api PUT into openSUSE:Backports:SLE-15-SP7:Update"
+case_ osc-api-post-maintenance-m 2 maintenance-api "an osc api POST into openSUSE:Maintenance:12345"
+case_ osc-api-file-implies-put   2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
+case_ osc-api-delete-full-url    2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
+case_ osc-mbranch                0 - ""
+case_ osc-mr                     0 - ""
+case_ osc-ci-mbranch-checkout    0 - ""
+case_ osc-ci-home-update-branch  0 - ""
+case_ osc-ci-devel               0 - ""
+case_ osc-api-get-update         0 - ""
+case_ osc-api-put-home-branch    0 - ""
 
 echo "--- a help invocation of a guarded tool does nothing"
 case_ help-tea-create           0 - ""

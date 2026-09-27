@@ -2907,5 +2907,117 @@
       "command": "osc sr -m 'from the devel project, no --nodevelproject' devel:tools tesseract-ocr openSUSE:Factory"
     },
     "cwd": "@CLONE@"
+  },
+  "osc-ci-update-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234 (boo#1234567)'"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-ci-incident-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc commit -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/incident/x"
+  },
+  "osc-ci-update-operand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -A https://api.opensuse.org ci -m 'Fix CVE-2026-1234' @OSC@/upd/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-update-file-operand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234' x.changes x.spec"
+    },
+    "cwd": "@OSC@/upd/x"
+  },
+  "osc-ci-update-new-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co openSUSE:Leap:15.6:Update x && cd openSUSE:Leap:15.6:Update/x && osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-put-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/openSUSE:Backports:SLE-15-SP7:Update/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-post-maintenance-m": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -m POST '/source/openSUSE:Maintenance:12345/x?cmd=commit'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-file-implies-put": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -f x.spec /source/openSUSE:Leap:15.6:Update/x/x.spec"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-delete-full-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE https://api.opensuse.org/source/openSUSE:Leap:15.6:Update/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-mbranch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc mbranch x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-mr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc mr home:tester:branches:OBS_Maintained:x x.openSUSE_Backports_SLE-15-SP7_Update openSUSE:Backports:SLE-15-SP7:Update -m 'Fix CVE-2026-1234 (boo#1234567)'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-ci-mbranch-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/home:tester:branches:OBS_Maintained:x/x.openSUSE_Backports_SLE-15-SP7_Update"
+  },
+  "osc-ci-home-update-branch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Fix CVE-2026-1234'"
+    },
+    "cwd": "@OSC@/branch/x"
+  },
+  "osc-ci-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update to 1.2.0'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "osc-api-get-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api /source/openSUSE:Backports:SLE-15-SP7:Update/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-api-put-home-branch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X PUT /source/home:tester:branches:openSUSE:Leap:15.6:Update/x/_meta -f meta.xml"
+    },
+    "cwd": "@PLAIN@"
   }
 }
