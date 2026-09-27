@@ -112,6 +112,10 @@ case "$sub" in
   cat)
     [ -n "${FAKE_OBSINFO_COMMIT:-}" ] || { echo "Server returned an error: HTTP Error 404: Not Found"; exit 1; }
     printf 'mtime: 1\ncommit: %s\nurl: x\n' "$FAKE_OBSINFO_COMMIT" ;;
+  rdelete)
+    [ "$1" = -m ] && [ -n "$2" ] || { echo "fake osc: rdelete without -m" >&2; exit 99; }
+    [ -z "${FAKE_RDELETE_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 403: Forbidden" >&2; exit 1; }
+    rm -f "$FAKE/meta-pkg-${3//:/_}-$4" ;;
   results)
     [ -z "${FAKE_RESULTS_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
     cat "$FAKE/results.xml" ;;
@@ -567,6 +571,7 @@ case_ remote-commit-mismatch 3 "OBS synced 0123456789ab, HEAD is $H" \
   "FAKE_OBSINFO_COMMIT=0123456789ab bash $TG $C --remote"
 results "x86_64:succeeded aarch64:succeeded s390x:building"
 case_ remote-building 3 "still scheduling or building" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
+check_ remote-pending-keeps-package "[ \"\$(calls '^osc rdelete')\" = 0 ] && [ -e $PKGMETA ]"
 results "x86_64:succeeded aarch64:succeeded" aarch64
 case_ remote-dirty 3 "(dirty: aarch64)" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "x86_64:failed aarch64:succeeded s390x:excluded"
@@ -620,6 +625,9 @@ check_ remote-stale-no-stamp "[ ! -e $(stampf "$C") ]"
   done
   echo '</resultlist>'; } > "$FAKE/results.xml"
 case_ remote-other-repo-ignored 0 "VERDICT: GREEN" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
+check_ remote-green-deletes-package "grep -qx 'osc rdelete -m .* $GPRJ foo' $FAKE/calls && [ ! -e $PKGMETA ]"
+# The next run of the same tree builds it again, in a new package.
+case_ remote-green-rerun-repoints 3 "pointed $GPRJ/foo at $BR#${H:0:12}" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
 # A sibling branch proves the GREEN cleanup deletes exactly its own branch.
 # (Planted straight into the fake forge: a git push here is text the
@@ -635,7 +643,9 @@ case_ remote-green-passes-gate 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-
   "cd $C && bash $TG --review $R.remote && bash $TG"
 check_ remote-green-stamp "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d[\"mode\"]==\"remote\" and d[\"obs_project\"]==sys.argv[2] and d[\"arches\"]==[\"aarch64\",\"i586\",\"ppc64le\",\"x86_64\"] and d[\"commit\"]==sys.argv[3]))' $(stampf "$C") $GPRJ $H"
 results "i586:succeeded x86_64:unresolvable aarch64:succeeded"
+bash "$TG" "$C" --remote >/dev/null
 case_ remote-red-drops-stamp 1 "VERDICT: RED" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
+check_ remote-red-keeps-package "[ \"\$(calls '^osc rdelete')\" = 0 ] && [ -e $PKGMETA ]"
 check_ remote-red-drops-stamp-file "[ ! -e $(stampf "$C") ]"
 check_ remote-red-kept-branch "[ \"\$(git -C $work/forge/$U/foo.git rev-parse refs/heads/$BR)\" = $H ]"
 # A failing cleanup is a warning, not a verdict change: still GREEN, rc 0.
@@ -643,6 +653,10 @@ results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s39
 case_ remote-green-delete-failed 0 "note: could not delete the fork branch $BR" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_DELETE_FAIL=1 bash $TG $C --remote"
 check_ remote-green-delete-failed-kept-branch "[ -n \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/$BR)\" ]"
+bash "$TG" "$C" --remote >/dev/null
+case_ remote-green-rdelete-failed 0 "note: could not delete $GPRJ/foo: Server returned an error: HTTP Error 403" \
+  "FAKE_OBSINFO_COMMIT=$H FAKE_RDELETE_FAIL=1 bash $TG $C --remote"
+check_ remote-green-rdelete-failed-stamped "[ -e $PKGMETA ] && grep -q '\"verdict\": \"GREEN\"' $(stampf "$C")"
 case_ remote-other-base-repoints 3 "pointed $GPRJ/foo at leapgate/leap-16.1-${H:0:12}" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --branch leap-16.1 --remote"
 check_ remote-other-base-disables-16.0 "grep -qF '<disable repository=\"leap-16.0\" />' $PKGMETA"

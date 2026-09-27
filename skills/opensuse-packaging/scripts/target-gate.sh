@@ -16,7 +16,7 @@
 #                  leapgate/<base>-<sha12> and build it in home:<you>:leapgate;
 #                  re-run to poll (pending until every PR arch built the
 #                  source revision whose obsinfo names HEAD); the fork branch
-#                  is deleted once the build is GREEN
+#                  and the package are deleted once the build is GREEN
 #   --review FILE  record the change review: FILE's first non-empty line
 #                  starts with PASS and names "tree <sha12>" of HEAD (trees
 #                  quoted further down are ignored); needs a GREEN build first
@@ -742,11 +742,13 @@ if [ "$mode" = remote ]; then
     0) py stamp-write "$stamp" tree="$tree" commit="$head" base="$base" project="$prj" mode=remote \
          arches="$(sed -n 's/^#arches //p' <<<"$sum" | tr ' ' ',')" \
          obs_project="$gprj" verdict=GREEN || refuse "cannot write $stamp"
-       # The branch served its purpose: the stamp is the evidence. Delete
-       # this run's fork branch so stale leapgate/* branches don't pile up.
-       # Only on green -- a red build keeps its branch for debugging.
+       # The branch and the package served their purpose: the stamp is the
+       # evidence. Delete this run's fork branch and scratch package so they
+       # don't pile up. Only on green -- a red build keeps both for debugging.
        GIT_ASKPASS="$tmpd/askpass" git push -q leapgate --delete "$br" 2>/dev/null \
          || say "note: could not delete the fork branch $br"
+       osc rdelete -m "target-gate: tree ${tree:0:12} GREEN on $base, stamped" "$gprj" "$pkg" </dev/null >/dev/null 2>"$tmpd/err" \
+         || say "note: could not delete $gprj/$pkg: $(tail -1 "$tmpd/err")"
        say "VERDICT: GREEN — tree ${tree:0:12} built on $gprj/$base at commit ${head:0:12}; stamped $stamp"
        exit 0 ;;
     1) rm -f "$stamp"
