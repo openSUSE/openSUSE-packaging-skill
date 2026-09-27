@@ -446,6 +446,8 @@ MESSAGES = {
     "the checkout, or name the checkout or the project literally.",
     "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
     'a list may follow as "- " lines of ≤100 characters, 1000 in all.',
+    "request-unknown": "cannot tell where {0} goes, so it is refused. Name its "
+    "projects literally, or set them in this call.",
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
     "the command literally.",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
@@ -676,6 +678,30 @@ def without_message(run):
             out.append(a)
         i += 1
     return out
+
+
+def request_args(run, ctx, cwd):
+    """osc_rules on an osc command line and on the values its variables hold
+    (a loop's words included); a request whose non-message argument holds a
+    value only the shell knows is refused: where it goes is unknown."""
+    rest = without_message(run)
+    extra, unknown = [], None
+    for k, a in enumerate(rest[1:], 1):
+        if not VARIABLE.search(a) or rest[k - 1] in ("-F", "--file"):
+            continue  # a literal, or the message file request_message() reads
+        spellings = substitute(a, ctx, cwd)
+        if spellings is None:  # unknown, or past 64 spellings: each value then
+            names = [x or y for x, y in VAR_REF.findall(a)]
+            if VARIABLE.search(VAR_REF.sub("", a)) or not all(
+                ctx.values.get(n) for n in names
+            ):
+                unknown = unknown or a
+            spellings = [v for n in names for v in ctx.values.get(n, ())]
+        extra += spellings
+    osc_rules(" ".join([*run, *extra]), " ".join([*rest, *extra]))
+    sub = osc_sub(rest)[0]
+    if sub in REQUESTS and unknown:
+        block("request-unknown", f"osc {sub} {shown(unknown)}")
 
 
 def request_message(run, lit, ctx, cwd):
@@ -2126,7 +2152,7 @@ def guess(run, ctx, cwd):
             or any(os.path.basename(h) == "osc" for h in held or ())
         ):
             osc = ["osc", *rest]
-            osc_rules(" ".join(osc), " ".join(without_message(osc)))
+            request_args(osc, ctx, cwd)
             request_message(osc, None, ctx, cwd)
             osc_writes(osc, ctx, cwd)
     except Blocked as b:
@@ -2469,7 +2495,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         if osc_sub(run)[0] == "api" and REQUEST_CREATE.search(norm_urls(wide)):
             block("request-api", "a request created through the API")
-        osc_rules(joined, " ".join(without_message(run)))
+        request_args(run, ctx, here)
         request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
     elif name in HTTP_TOOLS:

@@ -4903,5 +4903,40 @@
       "command": "OSC=osc; $OSC ci -m 'Update to 1.2.0'"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "osc-sr-var-backports": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "T=openSUSE:Backports:SLE-16.0; osc sr home:tester:leap tesseract-ocr \"$T\" -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-loop-backports": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for t in openSUSE:Factory openSUSE:Backports:SLE-16.1; do osc sr devel:tools tesseract-ocr $t -m 'Update to 5.5.3'; done"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-var-nodevel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "F=--nodevelproject; osc sr devel:tools tesseract-ocr openSUSE:Factory $F -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-unknown-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr \"$TARGET\" -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "osc-sr-var-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "T=openSUSE:Factory; osc sr devel:tools tesseract-ocr \"$T\" -m 'Update to 5.5.3'"
+    },
+    "cwd": "@CLONE@"
   }
 }

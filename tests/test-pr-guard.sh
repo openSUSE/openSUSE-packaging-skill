@@ -914,6 +914,13 @@ case_ var-array-status           0 - ""
 # An unknown command is judged as osc only when its variable is named for it.
 case_ var-git-commit             0 - ""
 case_ var-make-release           0 - ""
+
+echo "--- osc request arguments held in variables are judged by their values"
+case_ osc-sr-var-backports       2 backports "scmsync'd from pool"
+case_ osc-sr-loop-backports      2 backports "scmsync'd from pool"
+case_ osc-sr-var-nodevel         2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-sr-unknown-target      2 request-unknown "osc sr \$TARGET"
+case_ osc-sr-var-factory         0 - ""
 case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 characters of prose"
 case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"
