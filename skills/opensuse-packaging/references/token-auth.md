@@ -5,7 +5,7 @@ general API token instead of a username and password. The server side is
 implemented alongside this contract as a draft in open-build-service
 (`Token::APIToken`: `Authorization: Bearer` authentication, SHA256-hashed
 secret storage, optional expiry, web UI plus API issuance/revocation —
-branch `draft/api-tokens` on scarabeusiv/open-build-service); this document
+a draft branch in a fork of open-build-service); this document
 fixes what the client — `osc`, scripts, and agents — must do so both sides
 stay aligned.
 
