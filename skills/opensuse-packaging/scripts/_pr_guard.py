@@ -11,6 +11,7 @@ CLEAN_ENV = {"TMPDIR", "LC_ALL", "LANG", "NO_COLOR", "CHANGES_AUTHOR"}
 MAX_DEPTH = 4
 MAX_BYTES = 8 << 20
 EXPANDED = 64 << 10  # characters a variable's expansions may reach
+NET_BUDGET = 40  # seconds all of a call's open-PR lookups may take: the hook's is 60
 
 
 class Rx:
@@ -337,13 +338,22 @@ PRINTF_CONV = Rx(r"%(?!%)([-+ #0]*)([0-9*]*(?:\.[0-9*]*)?)[a-zA-Z]")
 ARGS_RUN = Rx(r"\$[@*1]|\$\{[@*1]\}")
 ARRAY_ALL = Rx(r"\$[@*]|\$\{[@*]\}|\$\{(\w+)\[[@*]\]\}")
 BRACES = Rx(r"\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")
+# The body of a brace sequence: integers, or single letters, with a step.
+BRACE_SEQ = Rx(
+    r"([-+]?\d+)\.\.([-+]?\d+)(?:\.\.([-+]?\d+))?"
+    r"|([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?\d+))?"
+)
 # A $ or backtick the shell takes literally (single quotes, $'...', a
 # backslash), as the literal-aware text of substitutions(lit=True) spells it.
 LIT_CHARS = {"$": "\x02", "`": "\x03"}
 UNLITERAL = str.maketrans({v: k for k, v in LIT_CHARS.items()})
-ANSI_C = Rx(r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)")
+ANSI_C = Rx(
+    r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}"
+    r"|c(?:\\\\?|[^\\])|.)"
+)
 ANSI_ESC = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f"}
-ANSI_ESC.update({"v": "\v", "e": "\x1b", "E": "\x1b"})
+ANSI_ESC.update({"v": "\v", "e": "\x1b", "E": "\x1b", "\\": "\\", "'": "'"})
+ANSI_ESC.update({'"': '"', "?": "?"})
 # The word a command substitution leaves, naming its output in ctx.subs.
 SUB_WORD = Rx(r"\$__sub(\d+)")
 
@@ -530,9 +540,12 @@ class Ctx:
     call writes, and memoised lookups."""
 
     def __init__(self, cwd):
+        import time
+
         self.cwd = cwd
         self.remotes = {}
         self.prs = {}
+        self.deadline = time.monotonic() + NET_BUDGET  # of the open-PR lookups
         self.owners = {}
         self.scanned = set()
         self.canon = {}
@@ -1452,17 +1465,28 @@ def substitutions(text, quotes=True, base=0, lit=False):
 
 
 def ansi_c(text):
-    """The text of a $'...' word, its backslash escapes decoded."""
+    """The text of a $'...' word, its backslash escapes decoded as bash does;
+    a character a str cannot hold raises ValueError."""
 
     def one(m):
         e = m.group(1)
-        if e[0] in "xuU":
-            return chr(int(e[1:], 16))
-        if e[0] in "01234567":
-            return chr(int(e, 8))
-        return ANSI_ESC.get(e, e)
+        if e[0] in "xuU" and len(e) > 1:
+            n = int(e[1:], 16)
+        elif e[0] in "01234567":
+            n = int(e, 8) & 0xFF
+        elif e[0] == "c" and len(e) > 1:  # a control character
+            if not e[1].isascii():
+                raise ValueError(
+                    f"$'...' escape {m.group(0)} is a byte, not a character"
+                )
+            n = {"\\": 0x1C, "?": 0x7F}.get(e[1], ord(e[1].upper()) & 0x1F)
+        else:
+            return ANSI_ESC.get(e, m.group(0))  # an unknown escape keeps its backslash
+        if n > 0x10FFFF or 0xD800 <= n <= 0xDFFF:
+            raise ValueError(f"$'...' escape {m.group(0)} names no character")
+        return chr(n)
 
-    return ANSI_C.sub(one, text)
+    return ANSI_C.sub(one, text).split("\0", 1)[0]  # a NUL ends the word
 
 
 def tokenize(text):
@@ -1560,6 +1584,95 @@ def substitute(word, ctx, cwd, seen=frozenset(), memo=None):
 def capped(spellings):
     too_long = spellings and sum(map(len, spellings)) > EXPANDED
     return None if too_long else spellings
+
+
+def braces(word):
+    """The words bash's brace expansion makes of word, in its order: comma
+    lists and {x..y[..step]} sequences, nested, ${...} left alone, none of
+    them empty; None past 64 words, EXPANDED characters or a 1 KB word
+    (bash's scan is quadratic in nested braces)."""
+    if "{" not in word:
+        return [word]
+    if len(word) > 1024:
+        return None
+    try:
+        return capped([w for w in _braces(word) if w])  # empty words drop out
+    except OverflowError:
+        return None
+
+
+def _brace_scan(word, i, stop):
+    """bash's brace_gobbler from i: the index of the first stop character at
+    the top level (braces and ${...} nest), or len(word); and whether a "," or
+    a ".." not closing the braces sat at the top level before it."""
+    level, sep = 0, False
+    while i < len(word):
+        c = word[i]
+        if c == "$" and word[i + 1 : i + 2] == "{":
+            level, i = level + 1, i + 2
+            continue
+        if c in stop and level == 0:
+            return i, sep
+        if c == "{":
+            level += 1
+        elif c == "}" and level:
+            level -= 1
+        elif level == 0 and c == ",":
+            sep = True
+        elif level == 0 and word[i : i + 2] == ".." and word[i + 2 : i + 3] != "}":
+            sep = True
+        i += 1
+    return i, sep
+
+
+def _braces(word):
+    i = 0
+    while True:  # the first "{" that opens an expression: a close, and a separator
+        i = _brace_scan(word, i, "{")[0]
+        if i == len(word):
+            return [word]
+        close, sep = _brace_scan(word, i + 1, "}")
+        if close < len(word) and sep:
+            break
+        i += 1
+    amble, rest = word[i + 1 : close], word[close + 1 :]
+    if "," in amble:
+        tack, j = [], 0
+        while j <= len(amble):  # its top-level alternatives
+            k = _brace_scan(amble, j, ",")[0]
+            tack += _braces(amble[j:k])
+            j = k + 1
+            if len(tack) > 64:
+                raise OverflowError
+    else:
+        tack = brace_seq(amble)
+        if tack is None:
+            if not rest:
+                return [word]
+            tack = [word[i : close + 1]]
+    tails = _braces(rest) if rest else [""]
+    if len(tack) * len(tails) > 64:
+        raise OverflowError
+    return [word[:i] + t + r for t in tack for r in tails]
+
+
+def brace_seq(amble):
+    """The words of a {x..y[..step]} body, or None when it is no sequence."""
+    m = BRACE_SEQ.fullmatch(amble)
+    if not m:
+        return None
+    step = abs(int(m.group(3) or m.group(6) or 1)) or 1
+    if m.group(1) is not None:
+        a, b = int(m.group(1)), int(m.group(2))
+        zero = any(re.match(r"[-+]?0\d", x) for x in m.group(1, 2))
+        width = max(len(m.group(1)), len(m.group(2))) if zero else 0
+        show = lambda n: f"{n:0{width}d}"  # noqa: E731
+    else:
+        a, b, show = ord(m.group(4)), ord(m.group(5)), chr
+    if abs(b - a) // step >= 64:
+        raise OverflowError
+    way = 1 if b >= a else -1
+    return [show(n) for n in range(a, b + way, step * way)]
 
 
 def _substitute(word, ctx, cwd, seen, memo):
@@ -2109,7 +2222,11 @@ def push_branch(cwd, gargs, remote):
 
 def open_pool_prs(ctx, repo):
     """Open PRs of pool/<repo>; a 404 means there is no such pool repository.
-    Any other failure refuses: an empty answer must not read as "no PR"."""
+    Any other failure refuses: an empty answer must not read as "no PR". The
+    lookups of one call share NET_BUDGET, and one still running when it is
+    spent refuses too, before the hook's timeout lets the call run unjudged."""
+    import threading
+    import time
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -2117,24 +2234,39 @@ def open_pool_prs(ctx, repo):
     if repo in ctx.prs:
         return ctx.prs[repo]
     stub = os.environ.get("PR_GUARD_PULLS_DIR")
-    try:
-        if stub:
-            path = os.path.join(stub, repo + ".json")
-            data = []
-            if os.path.exists(path):
-                with open(path, encoding="utf-8") as fh:
-                    data = json.load(fh)
-        else:
-            url = f"{GITEA}/repos/pool/{urllib.parse.quote(repo)}/pulls?state=open&limit=50"
-            try:
-                with urllib.request.urlopen(url, timeout=15) as r:
-                    data = json.load(r)
-            except urllib.error.HTTPError as e:
-                if e.code != 404:
-                    raise
-                data = []
-    except (OSError, ValueError) as e:
-        unsure(f"could not list the open PRs of pool/{repo}: {e}")
+    got = {}
+
+    def fetch():
+        try:
+            if stub:
+                path = os.path.join(stub, repo + ".json")
+                got["data"] = []
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as fh:
+                        got["data"] = json.load(fh)
+            else:
+                url = f"{GITEA}/repos/pool/{urllib.parse.quote(repo)}/pulls?state=open&limit=50"
+                try:
+                    with urllib.request.urlopen(url, timeout=15) as r:
+                        got["data"] = json.load(r)
+                except urllib.error.HTTPError as e:
+                    if e.code != 404:
+                        raise
+                    got["data"] = []
+        except Exception as e:  # raised again in the caller's thread
+            got["error"] = e
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(max(0.0, ctx.deadline - time.monotonic()))
+    if worker.is_alive():
+        unsure(f"the open-PR lookups of this call ran past {NET_BUDGET} s")
+    err = got.get("error")
+    if isinstance(err, (OSError, ValueError)):
+        unsure(f"could not list the open PRs of pool/{repo}: {err}")
+    if err is not None:
+        raise err
+    data = got["data"]
     if not isinstance(data, list) or not all(isinstance(p, dict) for p in data):
         unsure(f"unexpected open-PR list for pool/{repo}")
     if len(data) >= 50:
@@ -2537,7 +2669,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         note_written(t, ctx, cwd)
     for op, t in redirs:  # the credential rules judge the agent's own commands
         if depth == 0 and op.lstrip("0123456789") in ("<", "<>"):
-            cred_word(t, "a redirection", False, ctx, cwd)
+            for w in braced([t], "a redirection"):
+                cred_word(w, "a redirection", False, ctx, cwd)
     run, shell, env, chdir = unwrap(argv)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
@@ -2554,6 +2687,11 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         shell_pass(shell, ctx, here, depth)
         if depth == 0:
             assignment_rules(argv)
+            before, own = wrapper_words(argv, shell)
+            for w in braced(before, os.path.basename(before[0]) if before else ""):
+                cred_word(w, os.path.basename(before[0]), False, ctx, here)
+            for w in braced(own, "parallel"):
+                cred_word(w, "parallel", False, ctx, here)
         return cwd, ("unknown", "a wrapper")
     lrun = (
         lit[0][len(argv) - len(run) :] if lit[0] and len(lit[0]) == len(argv) else None
@@ -2976,6 +3114,46 @@ def above_creds(path):
     return any((h + r).startswith(top) for h in homes() for r in CRED_ROOTS)
 
 
+def braced(words, what):
+    """words as bash's brace expansion leaves them (braces()); one it cannot
+    enumerate is refused. A word with a space was quoted: bash leaves it."""
+    out = []
+    for w in words:
+        alts = [w] if re.search(r"\s", w) else braces(w)
+        if alts is None:
+            block(
+                "credential-read",
+                f"{what} reads {shown(w)[:80]}, a brace expansion past 64 words or 1 KB",
+            )
+        out += alts
+    return out
+
+
+def wrapper_words(argv, shell):
+    """The words of a command that runs shell text (unwrap()) other than that
+    text and assignments: (the wrappers before it, with their options; GNU
+    parallel's own options, and what follows its :::, ::::, :::+ or ::::+ --
+    inputs, or files of them)."""
+    k = next((i for i, w in enumerate(argv) if os.path.basename(w) == "parallel"), None)
+    if k is None:
+        n, t = -1, len(argv)
+        while t > 0 and n < len(shell):
+            t -= 1
+            n += len(argv[t]) + 1
+        k = t if n == len(shell) and " ".join(argv[t:]) == shell else len(argv)
+        return [w for w in argv[:k] if not ASSIGN.match(w)], []
+    j = k + 1
+    while j < len(argv) and argv[j].startswith("-") and argv[j] != "-":
+        if argv[j] == "--":
+            j += 1
+            break
+        j += 2 if argv[j] in PARALLEL_VALUED else 1
+    rest = argv[j:]
+    end = next((i for i, a in enumerate(rest) if a.startswith(":::")), len(rest))
+    inputs = [a for a in rest[end:] if not a.startswith(":::")]
+    return [w for w in argv[:k] if not ASSIGN.match(w)], argv[k + 1 : j] + inputs
+
+
 def cred_word(word, what, deep, ctx, cwd):
     """Refuse a word that names a credential file: placed in cwd (each
     directory of a loop) through this call's values, globs, dot segments and
@@ -3057,10 +3235,18 @@ def key_grep(name, args):
 def credential_read(name, argv, run, ctx, cwd):
     """A command that reads a credential file (cred_word): through a wrapper's
     own words (xargs -a FILE), or its own, unless it only looks (NO_READ, find
-    without an action) or prints only a build-* setting (key_grep)."""
+    without an action) or prints only a build-* setting (key_grep). Its
+    words are judged as bash's brace expansion leaves them."""
     wrapped = [w for w in argv[: len(argv) - len(run)] if not ASSIGN.match(w)]
+    wrapped = braced(wrapped, name)
     for w in wrapped:
         cred_word(w, os.path.basename(wrapped[0]), False, ctx, cwd)
+    if name in NO_READ and "{" not in run[0]:
+        return
+    run = braced(run, name)
+    if not run:
+        return
+    name = os.path.basename(run[0])
     if name in NO_READ or name == "find" and not FIND_ACTS.intersection(run):
         return
     if key_grep(name, run[1:]):

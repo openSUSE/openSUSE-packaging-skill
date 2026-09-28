@@ -719,6 +719,20 @@
     },
     "cwd": "@CLONE@"
   },
+  "ansi-c-bare-escapes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '%s\\n' $'\\x' $'\\u' $'\\U' $'\\q' $'\\cA' $'\\777' $'a\\0b' > /var/tmp/esc.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ansi-c-no-character": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '%s\\n' $'\\U110000' > /var/tmp/esc.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
   "push-git-c": {
     "tool_name": "Bash",
     "tool_input": {
@@ -5135,6 +5149,41 @@
     },
     "cwd": "@PLAIN@"
   },
+  "cred-parallel-input": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel cat ::: ~/.netrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-parallel-arg-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel -a ~/.config/tea/config.yml echo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-parallel-quad": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel -j2 echo :::: ~/.git-credentials"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-wrapper-watch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "xargs -a ~/.netrc watch -n 60 date"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-wrapper-parallel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "xargs -a ~/.git-credentials parallel echo"
+    },
+    "cwd": "@PLAIN@"
+  },
   "cred-find-exec": {
     "tool_name": "Bash",
     "tool_input": {
@@ -5160,6 +5209,90 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "cd ~/ && rg -n token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/{osc/oscrc,tea/config.yml}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-glob": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "head -50 ~/.config/{tea,osc}/*"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-grep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -H token ~/.config/{tea/config.yml,osc/oscrc}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-dotfiles": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.{netrc,git-credentials}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -r token ~/.{config,local}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-tar": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar czf /var/tmp/x.tgz ~/.config/{tea,osc}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-nested": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat \"$HOME\"/.{config/{gh/hosts.yml,x},y}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-sequence": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/mcp-bugzilla/api-ke{x..z}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-pattern-shift": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep {token,~/.netrc}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "{head,-1,~/.git-credentials}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-redirect": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "read -r line < ~/.netr{c..c}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-too-many": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.x{1..100}"
     },
     "cwd": "@PLAIN@"
   },
@@ -5286,6 +5419,55 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "grep -rn Version ~/obs/tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-sources": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat src/{a,b}.c"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-ls": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls ~/.config/{tea,osc}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-ls-many": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -d ~/.x{1..100}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-backup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp spec{,.orig} && sed -n 1p spec.orig"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-find-exec": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find . -name '*.spec' -exec grep -H Version {} +"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-sequence-small": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '%s\\n' part{01..12}.log > /var/tmp/list"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-parallel-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "parallel -j4 gzip -k ::: /var/tmp/a.log /var/tmp/b.log"
     },
     "cwd": "@PLAIN@"
   },

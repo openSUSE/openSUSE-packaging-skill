@@ -381,8 +381,9 @@ HTTP debugging, `token` and `config … pass`); a credential on the command line
 `wget`, HTTPie, `tea api`, `git-obs api` or git; and `curl`, `wget` or HTTPie calls to the
 OBS or Gitea API, which `osc api` and `git-obs -G src.opensuse.org api` make with their own
 logins. This backs the snippets' deny patterns above with the guard's parsing: a path is
-resolved through the call's cwd, values, globs and symlinks, and a tool through its
-wrappers, variables and options. The Read tool stays with the snippets.
+resolved through the call's cwd, values, brace expansions, globs and symlinks, and a tool
+through its wrappers (`xargs -a` and GNU `parallel` inputs included), variables and
+options. The Read tool stays with the snippets.
 
 | File | Goes to | Does |
 |---|---|---|
@@ -521,12 +522,19 @@ create must be refused too, the `AI/zzz` create must run, and so must
   Any other non-zero exit is a non-blocking error, so the guard turns every failure
   after a match (an unresolvable remote, a failed PR lookup, a missing `_pr_guard.py`,
   a crash) into exit 2.
-- The opencode plugin throws on any non-zero exit, and when `python3` or the pinned
-  guard cannot be spawned. That refuses only calls that matched the prefilter; the rest
-  never reach the guard.
+- Claude Code runs a call unjudged when the hook is killed at its `timeout` (60 s in
+  `claude/pr-guard-hook.json`) or cannot start: `python3` missing is exit 127, a
+  non-blocking error, as the Kimi hook fails open on its timeout. So the open-PR lookups
+  of one call stop at 40 s in all and refuse the call past that.
+- The opencode plugin throws on any non-zero exit, on its own 60 s timeout, and when
+  `python3` or the pinned guard cannot be spawned: it fails closed. That refuses only
+  calls that matched the prefilter; the rest never reach the guard.
 
 ## Limits
 
+- In Claude Code a hook killed at its 60 s timeout, or a missing `python3`, lets the call
+  run unjudged. Only the open-PR lookups share a 40 s budget; the git queries a push
+  needs (10 s each) are not budgeted. The opencode plugin refuses in both cases.
 - Trust in the skill's scripts is trust in the checkout's `origin/main`: moving that ref
   by hand (`update-ref`, a fetch from another remote) re-blesses whatever it names.
 - A script run by bare name from `PATH` is not read, nor a program held in a variable
@@ -577,6 +585,9 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A merge through the pulls API is judged whatever its host; `gh` is not judged, so
   `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
+- Braces are expanded in every word of a command that may read, quoted ones too (the parser
+  has dropped the quotes by then), so a quoted `{…}` can only refuse more: one past 64
+  words, or a braced word over 1 KB, is refused as unknown.
 - The credential rules read the agent's own commands only. A script's body, program code
   (`python3 -c`, a heredoc fed to Python) and Write/Edit content are not scanned for
   them, and the Read tool is left to the snippets. Nor are a credential file named by a

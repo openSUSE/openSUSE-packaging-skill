@@ -1076,12 +1076,31 @@ case_ cred-redirect              2 credential-read "a redirection reads ~/.netrc
 case_ cred-subst-redirect        2 credential-read "a redirection reads ~/.netrc"
 case_ cred-bash-c                2 credential-read "head reads ~/.git-credentials"
 case_ cred-xargs-file            2 credential-read "xargs reads ~/.netrc"
+case_ cred-parallel-input        2 credential-read "parallel reads ~/.netrc"
+case_ cred-parallel-arg-file     2 credential-read "parallel reads ~/.config/tea/config.yml"
+case_ cred-parallel-quad         2 credential-read "parallel reads ~/.git-credentials"
+case_ cred-wrapper-watch         2 credential-read "xargs reads ~/.netrc"
+case_ cred-wrapper-parallel      2 credential-read "xargs reads ~/.git-credentials"
 case_ cred-find-exec             2 credential-read "find reads ~/.config/gh"
 case_ cred-cwd-unknown-oscrc     2 credential-read "cat reads oscrc"
 # A recursive read of a directory above them reads them too.
 case_ cred-recursive-grep        2 credential-read "grep reaches the credential files under ~/.config"
 case_ cred-recursive-tar         2 credential-read "tar reaches the credential files under ~/.local"
 case_ cred-recursive-rg-cwd      2 credential-read "rg reaches the credential files under ~"
+# A brace expansion names each word bash expands it to: lists and sequences,
+# nested, into the pattern's place or the command's; past 64 words it is unknown.
+case_ cred-brace-list            2 credential-read "cat reads ~/.config/osc/oscrc"
+case_ cred-brace-glob            2 credential-read "head reads ~/.config/tea/config.yml"
+case_ cred-brace-grep            2 credential-read "grep reads ~/.config/tea/config.yml"
+case_ cred-brace-dotfiles        2 credential-read "cat reads ~/.netrc"
+case_ cred-brace-recursive       2 credential-read "grep reaches the credential files under ~/.config"
+case_ cred-brace-tar             2 credential-read "tar reads ~/.config/tea"
+case_ cred-brace-nested          2 credential-read "cat reads ~/.config/gh/hosts.yml"
+case_ cred-brace-sequence        2 credential-read "cat reads ~/.config/mcp-bugzilla/api-key"
+case_ cred-brace-pattern-shift   2 credential-read "grep reads ~/.netrc"
+case_ cred-brace-command         2 credential-read "head reads ~/.git-credentials"
+case_ cred-brace-redirect        2 credential-read "a redirection reads ~/.netrc"
+case_ cred-brace-too-many        2 credential-read "a brace expansion past 64 words"
 # Looking is not reading, a write is not a read, and a word is not a file:
 # a search pattern, a commit message, a package named for a helper.
 case_ cred-ls-config             0 - ""
@@ -1094,6 +1113,13 @@ case_ cred-spec-askpass          0 - ""
 case_ cred-grep-pattern          0 - ""
 case_ cred-commit-message        0 - ""
 case_ cred-grep-elsewhere        0 - ""
+case_ cred-brace-sources         0 - ""
+case_ cred-brace-ls              0 - ""
+case_ cred-brace-ls-many         0 - ""
+case_ cred-brace-backup          0 - ""
+case_ cred-brace-find-exec       0 - ""
+case_ cred-brace-sequence-small  0 - ""
+case_ cred-parallel-plain        0 - ""
 # The tools read their own: osc its --config, git-obs its --gitea-config.
 case_ cred-osc-own-config        0 - ""
 case_ cred-git-obs-own-config    0 - ""
@@ -1215,6 +1241,9 @@ case_ prefilter-askpass-no-slash 2 askpass "SSH_ASKPASS"
 echo "--- plumbing: fail closed only after a match"
 case_ nothing-guarded     0 - ""
 case_ nul-in-remote       2 undecided "embedded null byte"
+# $'...' decodes as bash does, and a character it cannot hold is refused.
+case_ ansi-c-bare-escapes 0 - ""
+case_ ansi-c-no-character 2 undecided "names no character"
 out="$(printf '{"tool_name": "Bash", "tool_input": {"command": "tea pr merge' | python3 "$GUARD" 2>&1)"; got=$?
 [ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && pass "malformed event after a match (rc=2)" \
   || fail "malformed event after a match: rc=$got $out"
@@ -1240,6 +1269,22 @@ printf '\n\ndef redact(text):\n    raise RuntimeError("no redaction")\n' >> "$wo
 out="$(ev merge-gitoxide | python3 "$work/raises/pr-guard.py" 2>&1)"; got=$?
 [ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && ! grep -qF tok3n <<<"$out" \
   && pass "a failed redaction still refuses (rc=2)" || fail "a failed redaction: rc=$got $out"
+# The open-PR lookups of one call share a budget below the hook's timeout, past which
+# Claude Code would run the call unjudged: a lookup still sleeping when it runs out refuses.
+mkdir -p "$work/slow/prs" && cp "$GUARD" "$work/slow/"
+{ cat "${GUARD%/*}/_pr_guard.py"; printf '\nNET_BUDGET = 1\n'; } > "$work/slow/_pr_guard.py"
+mkfifo "$work/slow/prs/tesseract-ocr.json"  # no writer: opening it sleeps for good
+t0=$(date +%s)
+out="$(ev push-wip | PR_GUARD_PULLS_DIR="$work/slow/prs" timeout 30 python3 "$work/slow/pr-guard.py" 2>&1)"; got=$?
+took=$(( $(date +%s) - t0 ))
+[ "$got" = 2 ] && grep -qF "BLOCKED [push-unknown]" <<<"$out" && grep -qF "ran past 1 s" <<<"$out" && [ "$took" -lt 10 ] \
+  && pass "a lookup still sleeping when the call's budget runs out refuses (rc=2, ${took}s)" \
+  || fail "a lookup past the budget: rc=$got after ${took}s $out"
+budget=$(sed -n 's/^NET_BUDGET = \([0-9]*\).*/\1/p' "${GUARD%/*}/_pr_guard.py")
+hook=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"])' \
+  "$REPO/contrib/harness/claude/pr-guard-hook.json")
+[ -n "$budget" ] && [ $((budget + 15)) -le "$hook" ] && pass "the lookup budget (${budget} s) leaves room below the hook's ${hook} s" \
+  || fail "lookup budget ${budget:-unset} s against the hook's ${hook} s timeout"
 out="$(python3 "$GUARD" --help)"; got=$?
 [ "$got" = 0 ] && grep -q '^Exit: 0 = allowed' <<<"$out" && pass "--help (rc=0)" || fail "--help: rc=$got"
 python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?

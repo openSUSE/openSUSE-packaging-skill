@@ -54,9 +54,9 @@ Environment:
 
 A call that matches nothing guarded is allowed without a lookup. Once one
 matches, anything the guard cannot establish -- a remote, branch or repository
-held in a variable, a failed PR lookup, an unreadable script or stdin program, a
-script path it cannot expand, a malformed event, a missing _pr_guard.py --
-refuses the call.
+held in a variable, a failed PR lookup or lookups past 40 s in all (under the
+hook's 60 s timeout), an unreadable script or stdin program, a script path it
+cannot expand, a malformed event, a missing _pr_guard.py -- refuses the call.
 
 Exit: 0 = allowed · 2 = refused, reason on stderr
 """
