@@ -3116,10 +3116,11 @@ def above_creds(path):
 
 def braced(words, what):
     """words as bash's brace expansion leaves them (braces()); one it cannot
-    enumerate is refused. A word with a space was quoted: bash leaves it."""
+    enumerate is refused. Bash expands braces before quote removal, so a quoted
+    space inside one alternative does not stop the others from being judged."""
     out = []
     for w in words:
-        alts = [w] if re.search(r"\s", w) else braces(w)
+        alts = braces(w)
         if alts is None:
             block(
                 "credential-read",

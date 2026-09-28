@@ -1090,6 +1090,8 @@ case_ cred-recursive-rg-cwd      2 credential-read "rg reaches the credential fi
 # A brace expansion names each word bash expands it to: lists and sequences,
 # nested, into the pattern's place or the command's; past 64 words it is unknown.
 case_ cred-brace-list            2 credential-read "cat reads ~/.config/osc/oscrc"
+case_ cred-brace-quoted-space    2 credential-read "cat reads ~/.config/osc/oscrc"
+case_ cred-brace-escaped-space   2 credential-read "cat reads ~/.config/osc/oscrc"
 case_ cred-brace-glob            2 credential-read "head reads ~/.config/tea/config.yml"
 case_ cred-brace-grep            2 credential-read "grep reads ~/.config/tea/config.yml"
 case_ cred-brace-dotfiles        2 credential-read "cat reads ~/.netrc"
@@ -1114,6 +1116,7 @@ case_ cred-grep-pattern          0 - ""
 case_ cred-commit-message        0 - ""
 case_ cred-grep-elsewhere        0 - ""
 case_ cred-brace-sources         0 - ""
+case_ cred-brace-quoted-echo     0 - ""
 case_ cred-brace-ls              0 - ""
 case_ cred-brace-ls-many         0 - ""
 case_ cred-brace-backup          0 - ""

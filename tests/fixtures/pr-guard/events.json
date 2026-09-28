@@ -5219,6 +5219,27 @@
     },
     "cwd": "@PLAIN@"
   },
+  "cred-brace-quoted-space": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/{osc/oscrc,\"tea config\"}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-escaped-space": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/{osc/oscrc,tea\\ config}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-brace-quoted-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo {\"a b\",c}"
+    },
+    "cwd": "@PLAIN@"
+  },
   "cred-brace-glob": {
     "tool_name": "Bash",
     "tool_input": {
