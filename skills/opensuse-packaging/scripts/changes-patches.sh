@@ -37,7 +37,8 @@
 #               of a superseding SR, a forward from devel). A non-link osc
 #               checkout without --target is a direct commit to its project:
 #               its entries count against the committed copy instead, as that
-#               project may be entries ahead of Factory.
+#               project may be entries ahead of Factory, or Factory may not
+#               have the package yet.
 # Output: factory-auto's own sentence per patch, plus a hint when the name is
 # present but wrapped across lines; a line per .changes adding too many entries.
 # Exit: 0 = clean (or new package), 1 = findings, 2 = usage / lookup failure
@@ -78,6 +79,7 @@ def read(path):
     return open(path, encoding="utf-8", errors="replace").read() if os.path.isfile(path) else None
 
 count_old = count_where = None       # entries count against the target unless set
+new_pkg = None                       # the target does not exist: only entries count
 # --- the target ("old") side and the working ("new") file set -----------------
 if base is not None:
     if not os.path.isdir(base):
@@ -117,10 +119,12 @@ elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(
     tprj, tpkg = target.split("/", 1) if "/" in target else (target, pkg)
     rc, out, err = run(["osc", "api", f"/source/{tprj}/{tpkg}?expand=1"])
     if rc != 0:
-        if "404" in err or "does not exist" in err:
-            print(f"OK: {tprj}/{tpkg} does not exist — new package, factory-auto skips this check")
-            sys.exit(0)
-        fail(f"osc api /source/{tprj}/{tpkg} failed: {err.strip()[:200]}")
+        if "404" not in err and "does not exist" not in err:
+            fail(f"osc api /source/{tprj}/{tpkg} failed: {err.strip()[:200]}")
+        new_pkg = f"OK: {tprj}/{tpkg} does not exist — new package, factory-auto skips this check"
+        if count_old is None:
+            print(new_pkg); sys.exit(0)
+        out = "<directory/>"         # the entries still count against the committed copy
     old_files = {e.get("name") for e in ET.fromstring(out).findall("entry")}
     def old_read(name):
         if name not in old_files: return None
@@ -180,6 +184,8 @@ def done(msg):                       # the entry finding last; no "OK:" on a red
     print(msg[4:] if stacked and msg.startswith("OK: ") else msg)
     for m in stacked: print(m)
     sys.exit(1 if stacked else 0)
+if new_pkg:
+    done(new_pkg)
 
 # --- factory-auto's algorithm, step for step ---------------------------------
 opatches = {f for f in old_files if PATCH.match(f)}

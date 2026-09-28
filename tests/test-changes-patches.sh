@@ -92,6 +92,35 @@ else
   printf '%s\n' "$out" | sed 's/^/    /'
 fi
 
+# A non-link osc checkout of a package not in Factory: factory-auto skips the patch
+# rule, but the entries still count against the committed copy -- two stacked on it
+# are a finding, one is not. A stub osc answers the Factory lookup with a 404.
+dev="$(mktemp -d)"; trap 'rm -rf "$scm" "$prj" "$dev"' EXIT
+mkdir -p "$dev/bin" "$dev/p/.osc/sources"
+cat > "$dev/bin/osc" <<'EOF'
+#!/bin/bash
+case "$1" in
+  api) echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1;;
+  status) exit 0;;
+esac
+exit 99
+EOF
+chmod +x "$dev/bin/osc"
+printf 'p\n' > "$dev/p/.osc/_package"; printf 'devel:example\n' > "$dev/p/.osc/_project"
+printf '<directory name="p"><entry name="p.changes"/><entry name="p.spec"/></directory>\n' > "$dev/p/.osc/_files"
+entry() { printf -- '-------------------------------------------------------------------\nMon Jan  %s 00:00:00 UTC 2024 - you@example.com\n\n- change %s\n\n' "$1" "$1"; }
+entry 1 > "$dev/p/.osc/sources/p.changes"; printf 'Name: p\n' > "$dev/p/p.spec"
+{ entry 3; entry 2; entry 1; } > "$dev/p/p.changes"
+out="$(PATH="$dev/bin:$PATH" "$SCRIPT" "$dev/p" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'p.changes: 2 new entries vs the committed copy' <<<"$out" \
+  && pass "not in Factory: two entries stacked on the committed copy are a finding" \
+  || { fail "not in Factory, two stacked entries: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+{ entry 2; entry 1; } > "$dev/p/p.changes"
+out="$(PATH="$dev/bin:$PATH" "$SCRIPT" "$dev/p" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qF 'does not exist — new package' <<<"$out" \
+  && pass "not in Factory: one new entry passes as a new package" \
+  || { fail "not in Factory, one entry: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 # usage errors never look clean
 "$SCRIPT" --target 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"
 out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" --entries 0 2>&1)"; rc=$?

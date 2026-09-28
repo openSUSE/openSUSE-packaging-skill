@@ -131,7 +131,7 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
 ### Claude Code
 
 Checked on 2.1.283 in a throw-away home: `claude doctor`, which names every malformed
-rule (tried with a planted one), reports none of the 90. Matching was measured by the
+rule (tried with a planted one), reports none of the 93. Matching was measured by the
 openQA skill on the same version, in print mode: a `Read(...)` rule stops the Read tool
 but **not** `cat` of the same file, and a `Bash(*...*)` rule stops the command. So every
 path has both.
@@ -148,13 +148,15 @@ path has both.
 ### opencode
 
 Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
-D-Bus disabled. `opencode debug config` loads all 103 rules (5 `external_directory`, 87
-`bash`, 11 `read`). `opencode debug agent build --tool read` refuses every credential path
-of the set from a git worktree, from outside git and with the home directory as the
-worktree, with the `read` rules alone as well, and reads an openssh-askpass spec; `--tool
-bash` refuses every command of the set and the secret printers as text behind `echo`, and
-lets packaging commands and greps of source trees run; `--tool grep` is refused a search
-of the tea config directory from a project.
+D-Bus disabled. `opencode debug config` loaded all 103 rules then (5 `external_directory`,
+87 `bash`, 11 `read`); the three `bash` rules added since, for a quoted `~/.config/gh` and
+for `~/.local/state/osc`, are checked by the suite's matcher only. `opencode debug agent
+build --tool read` refuses every credential path of the set from a git worktree, from
+outside git and with the home directory as the worktree, with the `read` rules alone as
+well, and reads an openssh-askpass spec; `--tool bash` refuses every command of the set
+and the secret printers as text behind `echo`, and lets packaging commands and greps of
+source trees run; `--tool grep` is refused a search of the tea config directory from a
+project.
 
 - The last matching rule wins, in file order. The `bash` block's `"*": "allow"` must be
   its first key, also when the openQA skill's snippet is merged beside this one; leave it
@@ -178,7 +180,7 @@ of the tea config directory from a project.
 
 ### grok
 
-Checked on 1.0.32: `grok inspect --json` loads all 88 rules with none skipped. An unknown
+Checked on 1.0.32: `grok inspect --json` loads all 91 rules with none skipped. An unknown
 rule is dropped silently (a planted `Frob(x)` counted 0), so compare the count after
 merging. Matching was not run here (it needs a model call); the openQA skill measured it:
 a deny beats every allow and ask and holds under always-approve, command globs match the
@@ -187,7 +189,7 @@ whole command and each segment, and `*` crosses spaces and `/`.
 - A leading `~/` is literal text, so home paths use `**/`, and `X/**` does not match `X`,
   so a directory is listed both ways.
 - grok also reads `~/.claude/settings.json`: with the Claude snippet merged it loads those
-  90 rules too (178), whose `Read(~/...)` rules do not match in grok. It lists the guard's
+  93 rules too (184), whose `Read(~/...)` rules do not match in grok. It lists the guard's
   PreToolUse hook as enabled once `claude/pr-guard-hook.json` is merged; whether grok
   hands the guard an event it can judge is not verified, so do not count on the guard in
   grok.

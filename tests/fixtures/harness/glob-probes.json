@@ -31,7 +31,11 @@
     "git-obs api -X POST /repos/AI/x/pulls/3/merge",
     "git obs api -X POST /repos/AI/x/pulls/3/merge",
     "curl -H'Authorization: token x' https://example.org",
-    "osc -A https://x -qvH ls"
+    "osc -A https://x -qvH ls",
+    "grep -rn token ~/.local/state/osc",
+    "cd ~/.local/state && cp osc/cookiejar /var/tmp/jar",
+    "cat \"$HOME/.config/gh\"/hosts.yml",
+    "grep -r oauth_token '/home/u/.config/gh'"
   ],
   "allow": [
     "osc build openSUSE_Tumbleweed x86_64 openssh-askpass-gnome.spec",
@@ -61,6 +65,7 @@
     "git clone ssh://gitea@src.opensuse.org:3022/pool/x.git",
     "osc ci -m 'fix token handling'",
     "osc sr -m 'update config, pass tests'",
-    "cd git-credential-oauth && osc getbinaries openSUSE_Tumbleweed x86_64"
+    "cd git-credential-oauth && osc getbinaries openSUSE_Tumbleweed x86_64",
+    "cat \"$HOME/.config/ghostty\"/config"
   ]
 }

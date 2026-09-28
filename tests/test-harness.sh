@@ -311,7 +311,7 @@ check(all(r.startswith(("read_file(/home/USER/", "command(")) for r in deny),
 # Codex: prefix rules with a placeholder home, and a permission profile whose globs
 # rg expands before every command (an error there fails the command: no /tmp glob).
 rules = open(os.path.join(H, "codex/opensuse-packaging.rules"), encoding="utf-8").read()
-covers([rules], READ_PATHS[:5] + [".local/state/osc/cookiejar", ".config/mcp-bugzilla"], "prefix", "codex")
+covers([rules], PATHS + [".local/state/osc/cookiejar", ".config/mcp-bugzilla"], "prefix", "codex")
 check('HOME = "/home/USER"' in rules and '"~/' not in rules, "codex: rules use the /home/USER placeholder")
 
 

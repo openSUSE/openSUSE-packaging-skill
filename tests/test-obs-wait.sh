@@ -380,10 +380,15 @@ expect "a missing request is no answer" 3 "VERDICT: UNKNOWN — osc api /request
 # ---------------------------------------------------------------- usage
 
 new usage
+touched=  # run empties $FIX/calls, so each run's calls are kept here
 run usage; [ "$rc" = 3 ] && pass "no arguments: exit 3" || fail "no arguments: rc=$rc"
+touched+=$(cat "$FIX/calls")
 run usage request abc; [ "$rc" = 3 ] && pass "a non-numeric request id: exit 3" || fail "request abc: rc=$rc"
+touched+=$(cat "$FIX/calls")
 run usage build $P; [ "$rc" = 3 ] && pass "a missing package: exit 3" || fail "build without a package: rc=$rc"
+touched+=$(cat "$FIX/calls")
 run usage --help; [ "$rc" = 0 ] && has "$out" "Exit:" && pass "--help: exit 0 with the exit codes" || fail "--help: rc=$rc"
-[ ! -s "$FIX/calls" ] && pass "  ...none of them touched osc or the stream" || fail "  usage errors called out: $(cat "$FIX/calls")"
+touched+=$(cat "$FIX/calls")
+[ -z "$touched" ] && pass "  ...none of them touched osc or the stream" || fail "  usage errors called out: $touched"
 
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
