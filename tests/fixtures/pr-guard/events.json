@@ -5015,5 +5015,936 @@
       "command": "python3 /dev/stdin <<'EOF'\nimport os\nEOF"
     },
     "cwd": "@CLONE@"
+  },
+  "cred-tea-scrape-field": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "TOK=$(grep -A3 'src.opensuse.org' ~/.config/tea/config.yml | grep token | awk '{print $2}'); curl -sS -H \"Authorization: token $TOK\" 'https://src.opensuse.org/api/v1/repos/pool/tesseract-ocr/pulls?state=open'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-home-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -m1 token \"$HOME/.config/tea/config.yml\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-dot-segment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/./tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-relative-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat config.yml"
+    },
+    "cwd": "@HOME@/.config/tea"
+  },
+  "cred-cd-relative": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.config && head -3 tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-glob": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/te?/*.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-var-assigned": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "F=~/.netrc; awk '{print $6}' \"$F\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-symlink": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat @WORK@/cfg-link"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-oscrc-sed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -n 's/^pass *= *//p' ~/.config/osc/oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-source-oscrc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "source ~/.config/osc/oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-cookiejar-cp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp ~/.local/state/osc/cookiejar /tmp/jar"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-gh-hosts": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "yq '.[\"github.com\"].oauth_token' ~/.config/gh/hosts.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-git-credentials": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cut -d@ -f1 ~/.git-credentials"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-mcp-api-key": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/mcp-bugzilla/api-key"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-redirect": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "read -r line < ~/.netrc; echo \"$line\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-subst-redirect": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"$(< ~/.netrc)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xargs-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "xargs -a ~/.netrc -n1 echo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-find-exec": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find ~/.config/gh -name '*.yml' -exec cat {} +"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-recursive-grep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rn oauth_token ~/.config"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-recursive-tar": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar czf /tmp/state.tgz ~/.local"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-recursive-rg-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/ && rg -n token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-cwd-unknown-oscrc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd \"$UNSET_DIR\" && cat oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-oscrc-grep-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -hE '^\\s*pass\\s*=' ~/.config/osc/oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-oscrc-grep-context": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -A2 '^build-root *=' ~/.config/osc/oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/scrape-token.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-yaml-heredoc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 - <<'EOF'\nimport os, yaml\ncfg = yaml.safe_load(open(os.path.expanduser('~/.config/tea/config.yml')))\nprint([l['token'] for l in cfg['logins']])\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ls-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la ~/.config ~/.config/tea"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-stat-test": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "test -f ~/.config/osc/oscrc && stat -c %a ~/.netrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ls-in-cred-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la"
+    },
+    "cwd": "@HOME@/.config/gh"
+  },
+  "cred-find-listing": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find ~ -maxdepth 3 -name '*.spec'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-write-fake-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p ~/.config/osc && printf '[general]\\nbuild-root = /var/tmp/build-root\\n' > ~/.config/osc/oscrc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-build-root-grep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -hE '^\\s*build-root\\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null | tail -1 | sed -E 's/^[^=]*=\\s*//; s/\\s+$//'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-spec-oauth": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co devel:tools git-credential-oauth && grep -n Version git-credential-oauth/git-credential-oauth.spec"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-spec-askpass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat openssh-askpass.spec | grep -i askpass"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-grep-pattern": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rn '~/.config/tea/config.yml' skills/ && rg -n 'oscrc|\\.netrc' references/"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-commit-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -m 'docs: never cat ~/.netrc, osc reads it'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "cred-osc-own-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --config ~/.config/osc/oscrc results openSUSE:Factory tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-git-obs-own-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs --gitea-config ~/.config/tea/config.yml -G src.opensuse.org api '/repos/pool/tesseract-ocr/pulls?state=open'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-grep-elsewhere": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rn Version ~/obs/tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-run": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\"$GIT_ASKPASS\" 'Password for https://src.opensuse.org'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-cat": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat \"$SSH_ASKPASS\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-env-clone": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_ASKPASS=/tmp/askpass.sh git clone https://src.opensuse.org/someone/foo.git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-push-fork": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_ASKPASS=/tmp/askpass-soo.sh rtk git push --no-verify fork wip"
+    },
+    "cwd": "@CLONE@"
+  },
+  "askpass-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export SSH_ASKPASS=/tmp/pw.sh SSH_ASKPASS_REQUIRE=force"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-alone": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_ASKPASS=/tmp/pw.sh; git fetch fork"
+    },
+    "cwd": "@CLONE@"
+  },
+  "askpass-env-wrapper": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env GIT_ASKPASS=/tmp/pw.sh git fetch fork"
+    },
+    "cwd": "@CLONE@"
+  },
+  "askpass-git-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -c core.askPass=/tmp/pw.sh fetch fork"
+    },
+    "cwd": "@CLONE@"
+  },
+  "askpass-git-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --global core.askpass /tmp/pw.sh"
+    },
+    "cwd": "@CLONE@"
+  },
+  "askpass-test-set": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "[ -n \"$GIT_ASKPASS\" ] && echo set"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "askpass-git-config-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --get core.askpass"
+    },
+    "cwd": "@CLONE@"
+  },
+  "secret-gh-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GH_TOKEN=$(gh auth token) gh api user"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-gh-status": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh auth status --show-token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-gh-git-credential": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo host=github.com | gh auth git-credential get"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-obs-login-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs login list"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-obs-space": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs -G src.opensuse.org login list"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-obs-helper": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'host=src.opensuse.org\\n' | git-obs login gitcredentials-helper get"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-tea-helper": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo host=src.opensuse.org | tea login helper get"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-tea-edit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "EDITOR=cat tea logins e"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-dump-full": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc config --dump-full"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-dump-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc config --dump-f | grep pass"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-dump-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "OSC=osc; timeout 20 $OSC config --dump-full"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-dump-var-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$OSC config --dump-full"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-http-debug": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -H api /about"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-http-debug-cluster": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -vH ls openSUSE:Factory"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-http-full-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --http-f api /source/openSUSE:Factory/tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-setopt-debug": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc --setopt http_debug=1 api /about"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-env-debug": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env OSC_HTTP_FULL_DEBUG=1 osc api /about"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-token-apiurl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -A https://api.opensuse.org token --create openSUSE:Factory tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-config-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc config https://api.opensuse.org passx"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-api-person-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/person/someone/token?cmd=create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-quoted": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "o''sc token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-credential-fill": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'protocol=https\\nhost=src.opensuse.org\\n\\n' | git credential fill"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-credential-helper": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo host=src.opensuse.org | git credential-libsecret get"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-credential-direct": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'host=src.opensuse.org\\n' | git-credential-oauth get"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-tool-lookup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "secret-tool lookup service osc username someone"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-tool-search": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "secret-tool search --all service osc"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-gh-pr-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr list --repo example/tool"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-tea-login-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea login list"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-dump": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc config --dump | grep -v '^#'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-config-build-root": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc config general build-root"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-api-person": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api /person/someone"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-whois": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc whois"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-osc-token-help": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc token --help"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-config-helper": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git config --get credential.helper"
+    },
+    "cwd": "@CLONE@"
+  },
+  "secret-names-only": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc results devel:tools git-credential-oauth && osc ls openSUSE:Factory secret-tool"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "secret-git-obs-api-user": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org api /user"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-header-curl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -H \"Authorization: token $TOK\" https://api.github.com/user"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-header-wget": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- --header=\"Authorization: Bearer $TOK\" https://example.com/api/items"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-private-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -H \"PRIVATE-TOKEN: $T\" https://gitlab.example.com/api/v4/projects"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-user-pass-curl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsS -u someone:hunter2 https://example.com/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-url-userinfo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsS https://someone:hunter2@example.com/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-httpie-header": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http GET https://example.com/api Authorization:\"token $TOK\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-xh-auth": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "xh -a someone:hunter2 https://example.com/api"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-httpie-bearer": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "https -A bearer -a \"$TOK\" example.com/api"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-curl-bearer-opt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl --oauth2-bearer \"$TOK\" https://example.com/api"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-wget-password": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget --user=someone --password=hunter2 https://example.com/f"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-tea-api-header": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api --login src.opensuse.org -H \"Authorization: token $TOK\" /user"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-git-obs-api-header": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org api -H 'Authorization: token x' /user"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-git-clone-userinfo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clone https://someone:tok3n@src.opensuse.org/someone/foo.git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-git-extraheader": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -c http.extraHeader=\"Authorization: Basic $B\" clone https://src.opensuse.org/someone/foo.git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-curl-no-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -u someone:hunter2 example.com"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-accept-header": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sS -H 'Accept: application/json' https://api.github.com/repos/example/tool/releases/latest"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-clone-public": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clone https://src.opensuse.org/pool/tesseract-ocr.git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "auth-clone-ssh": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clone gitea@src.opensuse.org:someone/foo.git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-curl-obs-field": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://api.opensuse.org/source/openSUSE:Factory/tesseract-ocr/_meta"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-curl-obs-schemeless": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sn api.opensuse.org/about"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-curl-build-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://build.opensuse.org/source/openSUSE:Factory/tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-wget-gitea": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget -qO- https://src.opensuse.org/api/v1/repos/pool/tesseract-ocr/branches"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-var-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "G=https://src.opensuse.org; curl -fsS \"$G/api/v1/repos/pool/tesseract-ocr/pulls?state=open\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-uppercase-host": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s HTTPS://API.OPENSUSE.ORG/about"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-gitea-dot-segment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://src.opensuse.org/pool/../api/v1/version"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-httpie-gitea": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http https://src.opensuse.org/api/v1/version"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-python-urllib-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import urllib.request; print(urllib.request.urlopen(\"https://api.opensuse.org/about\").read())'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/obs-api.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-download": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsSLO https://download.opensuse.org/repositories/devel:/tools/openSUSE_Factory/repodata/repomd.xml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-src-raw": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -fsSL https://src.opensuse.org/pool/tesseract-ocr/raw/branch/factory/tesseract-ocr.spec"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-github": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://api.github.com/repos/tesseract-ocr/tesseract/releases/latest"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-pypi": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -s https://pypi.org/pypi/requests/json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-crates": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import urllib.request; urllib.request.urlopen(\"https://crates.io/api/v1/crates/serde\")'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-build-web-page": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -sI https://build.opensuse.org/request/show/1234567"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-osc-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api /source/openSUSE:Factory/tesseract-ocr/_meta"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-print-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import urllib.request; print(\"https://build.opensuse.org/package/show/openSUSE:Factory/tesseract-ocr\")'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "api-git-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org api /repos/pool/tesseract-ocr/branches"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "prefilter-netrc-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat .netrc"
+    },
+    "cwd": "@HOME@"
+  },
+  "prefilter-cred-dir-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat hosts.yml"
+    },
+    "cwd": "@HOME@/.config/gh"
+  },
+  "prefilter-askpass-no-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export SSH_ASKPASS=pw.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c 'head -1 ~/.git-credentials'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "merged-check-other-curl-q": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "curl -q -sS -o /dev/null -w '%{http_code}' https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-other-http-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http GET https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-other-http-ignore-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "http --ignore-stdin https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-other-wget-no-config": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "wget --no-config -qO- https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge"
+    },
+    "cwd": "@CLONE@"
+  },
+  "merged-check-other-script-curl-sf": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c 'curl -q -sf https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge && echo merged'"
+    },
+    "cwd": "@CLONE@"
   }
 }

@@ -83,6 +83,17 @@ W=$work/scripts
 # The canonical script, byte-identical and same-named but outside the checkout; and linked to.
 mkdir -p "$W/elsewhere" && cp "$S/scripts/pool-pr.sh" "$W/elsewhere/"; ln -s "$S/scripts/pool-pr.sh" "$W/pool-pr-link.sh"
 cp "$FX/open-pr.sh" "$FX/open_pr.py" "$FX/open-pr.js" "$FX/open-pr.pl" "$FX/agit.sh" "$FX/land.sh" "$FX/quoting.sh" "$FX/stamp.py" "$FX/kpi.py" "$W/"
+cp "$FX/scrape-token.sh" "$FX/obs-api.sh" "$W/"
+# Stand-in credential files under the suite's HOME, and a link to one; their
+# names live in a fixture, since the guard reads this suite.
+python3 -c 'import json, os, sys
+spec = json.load(open(sys.argv[1]))
+for rel in spec["files"]:
+    path = os.path.join(sys.argv[2], rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("fake\n")
+for name, rel in spec["links"].items():
+    os.symlink(os.path.join(sys.argv[2], rel), os.path.join(sys.argv[3], name))' "$FX/creds.json" "$HOME" "$W"
 # The real pool-pr.sh without its gate call and its pushes: the PR write alone,
 # with method, body and URL all held in variables.
 grep -v -e 'target-gate\.sh' -e ' push ' "$REPO/skills/opensuse-packaging/scripts/pool-pr.sh" > "$W/pp-nogate.sh"
@@ -128,7 +139,7 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
     WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
-    DEVEL="$work/devel" MSGS="$FX/messages"
+    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -291,7 +302,7 @@ case_ merge-git-obs-space-api-ai 2 merge-api    "API merge"
 case_ merge-tea-api-ai          2 merge-api     "API merge"
 case_ merge-tea-api-pool        2 merge-api     "API merge"
 case_ merge-do-payload-ai-clone 2 merge-api     "API merge"
-case_ merge-api-control-get-pr  0 - ""
+case_ merge-api-control-get-pr  2 api-direct "curl to src.opensuse.org/api"
 case_ merge-api-control-tea-get 0 - ""
 # A merge URL held in variables this call set is judged by its value.
 case_ merge-curl-var-ai         2 merge-api     "API merge"
@@ -311,12 +322,18 @@ case_ merge-ai-pct-encoded      2 merge-api     "API merge"
 case_ merge-ai-dot-segment      2 merge-api     "API merge"
 case_ merge-ai-double-slash     2 merge-api     "API merge"
 case_ merge-ai-do-lowercase     2 merge-api     "API merge"
-case_ merged-check-ai-curl-q    0 - ""
-case_ merged-check-ai-http-get  0 - ""
-case_ merged-check-ai-http-ignore-stdin 0 - ""
-case_ merged-check-ai-wget-no-config 0 - ""
+case_ merged-check-other-curl-q 0 - ""
+case_ merged-check-other-http-get 0 - ""
+case_ merged-check-other-http-ignore-stdin 0 - ""
+case_ merged-check-other-wget-no-config 0 - ""
 case_ merged-check-ai-git-obs   0 - ""
-case_ merged-check-ai-script-curl-sf 0 - ""
+case_ merged-check-other-script-curl-sf 0 - ""
+# On src.opensuse.org itself such a read goes through git-obs, not curl or HTTPie.
+case_ merged-check-ai-curl-q    2 api-direct "curl to src.opensuse.org/api"
+case_ merged-check-ai-http-get  2 api-direct "http to src.opensuse.org/api"
+case_ merged-check-ai-http-ignore-stdin 2 api-direct "http to src.opensuse.org/api"
+case_ merged-check-ai-wget-no-config 2 api-direct "wget to src.opensuse.org/api"
+case_ merged-check-ai-script-curl-sf 2 api-direct "curl to src.opensuse.org/api"
 case_ merge-curl-attached-F     2 merge-api     "API merge"
 case_ merge-curl-cluster-X      2 merge-api     "API merge"
 case_ merge-curl-request-prefix 2 merge-api     "API merge"
@@ -448,12 +465,13 @@ case_ create-ai-mistral-vibe    0 - ""
 case_ create-git-obs-ai         0 - ""
 case_ create-git-obs-target-owner-ai 0 - ""
 case_ create-tea-api-ai         0 - ""
-case_ create-curl-short-ai      0 - ""
-case_ get-curl-pulls            0 - ""
 case_ get-tea-list              0 - ""
 case_ get-tea-api               0 - ""
-case_ post-fork                 0 - ""
-case_ post-lfs-batch            0 - ""
+# Past the pool rules, curl on the Gitea API and a token header are refused.
+case_ create-curl-short-ai      2 api-direct  "curl to src.opensuse.org/api"
+case_ get-curl-pulls            2 api-direct  "curl to src.opensuse.org/api"
+case_ post-fork                 2 auth-header "curl with a credential header (Authorization)"
+case_ post-lfs-batch            2 auth-header "curl with a credential header (Authorization)"
 
 echo "--- any request to pool pulls but a literal GET is a write"
 case_ write-curl-method-var     2 create-api "a write to pool pulls"
@@ -489,9 +507,9 @@ fi
 case_ get-urllib                0 - ""
 case_ get-requests              0 - ""
 case_ get-http-client           0 - ""
-case_ get-httpie                0 - ""
-case_ get-httpie-query          0 - ""
-case_ get-curl-query            0 - ""
+case_ get-httpie                2 api-direct "http to src.opensuse.org/api"
+case_ get-httpie-query          2 api-direct "http to src.opensuse.org/api"
+case_ get-curl-query            2 api-direct "curl to src.opensuse.org/api"
 
 echo "--- scripts: written, then run, in every form"
 case_ write-script              2 create-api      "a script writing to pool pulls"
@@ -1036,6 +1054,164 @@ case_ help-as-option-value      2 create-tea   "tea PR create"
 case_ help-after-dashdash       2 push-pr-head "pool/tesseract-ocr#3"
 case_ help-script-still-read    2 create-api   "a write to pool pulls"
 
+echo "--- credential files are read only by the tools that own them"
+# On the agent's own command line: named as written, placed in the cwd a cd
+# leaves or the event gives, through this call's values, dot segments, globs
+# and symlinks; the first is the field's token scrape.
+case_ cred-tea-scrape-field      2 credential-read "grep reads ~/.config/tea/config.yml"
+case_ cred-home-var              2 credential-read "grep reads ~/.config/tea/config.yml"
+case_ cred-dot-segment           2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ cred-relative-cwd          2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ cred-cd-relative           2 credential-read "head reads ~/.config/tea/config.yml"
+case_ cred-glob                  2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ cred-var-assigned          2 credential-read "awk reads ~/.netrc"
+case_ cred-symlink               2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ cred-oscrc-sed             2 credential-read "sed reads ~/.config/osc/oscrc"
+case_ cred-source-oscrc          2 credential-read "source reads ~/.config/osc/oscrc"
+case_ cred-cookiejar-cp          2 credential-read "cp reads ~/.local/state/osc/cookiejar"
+case_ cred-gh-hosts              2 credential-read "yq reads ~/.config/gh/hosts.yml"
+case_ cred-git-credentials       2 credential-read "cut reads ~/.git-credentials"
+case_ cred-mcp-api-key           2 credential-read "cat reads ~/.config/mcp-bugzilla/api-key"
+case_ cred-redirect              2 credential-read "a redirection reads ~/.netrc"
+case_ cred-subst-redirect        2 credential-read "a redirection reads ~/.netrc"
+case_ cred-bash-c                2 credential-read "head reads ~/.git-credentials"
+case_ cred-xargs-file            2 credential-read "xargs reads ~/.netrc"
+case_ cred-find-exec             2 credential-read "find reads ~/.config/gh"
+case_ cred-cwd-unknown-oscrc     2 credential-read "cat reads oscrc"
+# A recursive read of a directory above them reads them too.
+case_ cred-recursive-grep        2 credential-read "grep reaches the credential files under ~/.config"
+case_ cred-recursive-tar         2 credential-read "tar reaches the credential files under ~/.local"
+case_ cred-recursive-rg-cwd      2 credential-read "rg reaches the credential files under ~"
+# Looking is not reading, a write is not a read, and a word is not a file:
+# a search pattern, a commit message, a package named for a helper.
+case_ cred-ls-config             0 - ""
+case_ cred-stat-test             0 - ""
+case_ cred-ls-in-cred-dir        0 - ""
+case_ cred-find-listing          0 - ""
+case_ cred-write-fake-config     0 - ""
+case_ cred-spec-oauth            0 - ""
+case_ cred-spec-askpass          0 - ""
+case_ cred-grep-pattern          0 - ""
+case_ cred-commit-message        0 - ""
+case_ cred-grep-elsewhere        0 - ""
+# The tools read their own: osc its --config, git-obs its --gitea-config.
+case_ cred-osc-own-config        0 - ""
+case_ cred-git-obs-own-config    0 - ""
+# A grep that prints only a build-* setting of oscrc (build-summary.sh and
+# target-gate.sh read build-root so); any other key or a context option reads more.
+case_ cred-build-root-grep       0 - ""
+case_ cred-oscrc-grep-pass       2 credential-read "grep reads ~/.config/osc/oscrc"
+case_ cred-oscrc-grep-context    2 credential-read "grep reads ~/.config/osc/oscrc"
+# An askpass program hands git or ssh a password: setting one, or running or
+# reading it, is refused; testing that one is set is not.
+case_ askpass-run                2 askpass "\$GIT_ASKPASS"
+case_ askpass-cat                2 askpass "\$SSH_ASKPASS"
+case_ askpass-env-clone          2 askpass "GIT_ASKPASS"
+case_ askpass-push-fork          2 askpass "GIT_ASKPASS"
+case_ askpass-export             2 askpass "SSH_ASKPASS"
+case_ askpass-alone              2 askpass "GIT_ASKPASS"
+case_ askpass-env-wrapper        2 askpass "GIT_ASKPASS"
+case_ askpass-git-c              2 askpass "core.askPass"
+case_ askpass-git-config         2 askpass "core.askpass"
+case_ askpass-test-set           0 - ""
+case_ askpass-git-config-get     0 - ""
+
+echo "--- the tools' own secret printers"
+case_ secret-gh-token            2 secret-gh      "gh auth token"
+case_ secret-gh-status           2 secret-gh      "gh auth status"
+case_ secret-gh-git-credential   2 secret-gh      "gh auth git-credential"
+case_ secret-git-obs-login-list  2 secret-git-obs "git-obs login list"
+case_ secret-git-obs-space       2 secret-git-obs "git-obs login list"
+case_ secret-git-obs-helper      2 secret-git-obs "git-obs gitcredentials-helper"
+case_ secret-tea-helper          2 secret-tea     "tea login helper"
+case_ secret-tea-edit            2 secret-tea     "tea logins e"
+case_ secret-osc-dump-full       2 secret-osc     "osc config --dump-full"
+case_ secret-osc-dump-prefix     2 secret-osc     "osc config --dump-full"
+case_ secret-osc-dump-var        2 secret-osc     "osc config --dump-full"
+case_ secret-osc-dump-var-unknown 2 secret-osc    "\$OSC: osc config --dump-full"
+case_ secret-osc-http-debug      2 secret-osc     "osc HTTP debugging"
+case_ secret-osc-http-debug-cluster 2 secret-osc  "osc HTTP debugging"
+case_ secret-osc-http-full-prefix 2 secret-osc    "osc HTTP debugging"
+case_ secret-osc-setopt-debug    2 secret-osc     "osc HTTP debugging"
+case_ secret-osc-env-debug       2 secret-osc     "osc HTTP debugging"
+case_ secret-osc-token           2 secret-osc     "osc token"
+case_ secret-osc-token-apiurl    2 secret-osc     "osc token"
+case_ secret-osc-quoted          2 secret-osc     "osc token"
+case_ secret-osc-config-pass     2 secret-osc     "osc config passx"
+case_ secret-osc-api-person-token 2 secret-osc    "osc api /person/<login>/token"
+case_ secret-git-credential-fill 2 secret-git     "git credential fill"
+case_ secret-git-credential-helper 2 secret-git   "git credential-libsecret get"
+case_ secret-git-credential-direct 2 secret-git   "git-credential-oauth get"
+case_ secret-tool-lookup         2 secret-tool    "secret-tool lookup"
+case_ secret-tool-search         2 secret-tool    "secret-tool search"
+case_ secret-gh-pr-list          0 - ""
+case_ secret-tea-login-list      0 - ""
+case_ secret-osc-dump            0 - ""
+case_ secret-osc-config-build-root 0 - ""
+case_ secret-osc-api-person      0 - ""
+case_ secret-osc-whois           0 - ""
+case_ secret-osc-token-help      0 - ""
+case_ secret-git-config-helper   0 - ""
+case_ secret-names-only          0 - ""
+case_ secret-git-obs-api-user    0 - ""
+
+echo "--- a credential on a command line"
+case_ auth-header-curl           2 auth-header "curl with a credential header (Authorization)"
+case_ auth-header-wget           2 auth-header "wget with a credential header (Authorization)"
+case_ auth-private-token         2 auth-header "curl with a credential header (PRIVATE-TOKEN)"
+case_ auth-httpie-header         2 auth-header "http with a credential header (Authorization)"
+case_ auth-tea-api-header        2 auth-header "tea api with a credential header (Authorization)"
+case_ auth-git-obs-api-header    2 auth-header "git-obs api with a credential header (Authorization)"
+case_ auth-git-extraheader       2 auth-header "git with a credential header (Authorization)"
+case_ auth-user-pass-curl        2 auth-user   "curl -u with a password"
+case_ auth-curl-no-slash         2 auth-user   "curl -u with a password"
+case_ auth-xh-auth               2 auth-user   "xh -a with a password"
+case_ auth-httpie-bearer         2 auth-user   "https -a with a secret"
+case_ auth-curl-bearer-opt       2 auth-user   "curl --oauth2-bearer"
+case_ auth-wget-password         2 auth-user   "wget --password"
+case_ auth-url-userinfo          2 auth-url    "curl with a password in a URL"
+case_ auth-git-clone-userinfo    2 auth-url    "git with a password in a URL"
+case_ auth-accept-header         0 - ""
+case_ auth-clone-public          0 - ""
+case_ auth-clone-ssh             0 - ""
+for name in auth-user-pass-curl auth-curl-no-slash auth-xh-auth auth-wget-password auth-url-userinfo auth-git-clone-userinfo; do
+  out="$(ev "$name" | python3 "$GUARD" 2>&1)"
+  grep -qe hunter2 -e tok3n <<<"$out" && fail "$name: the refusal prints the password" || pass "$name: password not printed"
+done
+
+echo "--- the OBS and Gitea APIs are reached through osc and git-obs"
+case_ api-curl-obs-field         2 api-direct "curl to api.opensuse.org"
+case_ api-curl-obs-schemeless    2 api-direct "curl to api.opensuse.org"
+case_ api-curl-build-source      2 api-direct "curl to build.opensuse.org/source"
+case_ api-wget-gitea             2 api-direct "wget to src.opensuse.org/api"
+case_ api-var-url                2 api-direct "curl to src.opensuse.org/api"
+case_ api-uppercase-host         2 api-direct "curl to api.opensuse.org"
+case_ api-gitea-dot-segment      2 api-direct "curl to src.opensuse.org/api"
+case_ api-httpie-gitea           2 api-direct "http to src.opensuse.org/api"
+# Downloads, public git over https, other forges and registries, OBS web pages.
+case_ api-download               0 - ""
+case_ api-src-raw                0 - ""
+case_ api-github                 0 - ""
+case_ api-pypi                   0 - ""
+case_ api-crates                 0 - ""
+case_ api-build-web-page         0 - ""
+case_ api-osc-api                0 - ""
+case_ api-print-link             0 - ""
+case_ api-git-obs                0 - ""
+
+echo "--- the credential rules judge the agent's own commands, not the programs they run"
+# A script's body, and program code inline or fed on stdin, are not scanned
+# for them: the harness's Read denies and its snippets cover the rest.
+case_ cred-script                0 - ""
+case_ api-script                 0 - ""
+case_ cred-yaml-heredoc          0 - ""
+case_ api-python-urllib-obs      0 - ""
+
+echo "--- the prefilter sends them without a path: a keyword, or a cwd among the credentials"
+case_ prefilter-netrc-cwd        2 credential-read "cat reads ~/.netrc"
+case_ prefilter-cred-dir-cwd     2 credential-read "cat reads ~/.config/gh/hosts.yml"
+case_ prefilter-askpass-no-slash 2 askpass "SSH_ASKPASS"
+
 echo "--- plumbing: fail closed only after a match"
 case_ nothing-guarded     0 - ""
 case_ nul-in-remote       2 undecided "embedded null byte"
@@ -1082,17 +1258,23 @@ echo "--- the opencode plugin carries the same prefilter"
 py="$(python3 -c 'import importlib.util, sys
 spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-print(mod.PREFILTER.pattern); print(mod.STAMP_DIR)' "$GUARD")"
+print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)' "$GUARD")"
+{ IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; } <<<"$py"
 # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
 ts="$(sed -n 's/^const PREFILTER = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
-[ -n "$ts" ] && [ "${py%$'\n'*}" = "$ts" ] && pass "prefilter identical in the plugin" \
-  || fail "prefilter differs: guard '${py%$'\n'*}' plugin '$ts'"
+[ -n "$ts" ] && [ "$py_pre" = "$ts" ] && pass "prefilter identical in the plugin" \
+  || fail "prefilter differs: guard '$py_pre' plugin '$ts'"
 grep -qF 'PREFILTER.test(unquoted(text))' "$PLUGIN" && pass "plugin also reads the text unquoted" \
   || fail "the plugin does not apply the prefilter to the unquoted text"
 ts="$(sed -n 's/^const STAMP_DIR = "\(.*\)"$/\1/p' "$PLUGIN")"
-[ -n "$ts" ] && [ "${py##*$'\n'}" = "$ts" ] && grep -qF 'includes(STAMP_DIR)' "$PLUGIN" \
+[ -n "$ts" ] && [ "$py_stamp" = "$ts" ] && grep -qF 'includes(STAMP_DIR)' "$PLUGIN" \
   && pass "plugin also judges a call run inside the stamp directory" \
-  || fail "the plugin does not send a call run inside '${py##*$'\n'}' to the guard"
+  || fail "the plugin does not send a call run inside '$py_stamp' to the guard"
+# shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
+ts="$(sed -n 's/^const CRED_DIR = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
+[ -n "$ts" ] && [ "$py_cred" = "$ts" ] && grep -qF 'CRED_DIR.test(' "$PLUGIN" \
+  && pass "plugin also judges a call run among the credential files" \
+  || fail "the plugin's CRED_DIR differs or is unused: guard '$py_cred' plugin '$ts'"
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
 miss="$(sed -n 's/^ *"\(git-obs [^"]*\)": "\([a-z]*\)",\{0,1\}$/\1\t\2/p' "$PERMS" | while IFS=$'\t' read -r pat act; do
   grep -qF "\"git obs ${pat#git-obs }\": \"$act\"" "$PERMS" || printf '%s ' "$pat"; done)"

@@ -77,7 +77,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `leap-sync.sh` — content-sync a Leap pool branch up to Factory and run `target-gate.sh` on it; pushes nothing.
 - `target-gate.sh` — build the exact pool tree against its Leap base (`openSUSE:Backports:SLE-16.x standard`) and stamp it; `--review FILE` records the PASS for that tree.
 - `pool-pr.sh` — the only route that opens or updates a pool PR; refuses (exit 7, nothing pushed) without a GREEN + PASS stamp for HEAD's tree.
-- `pr-guard.py` — the harness hook that refuses pool PR creates and head pushes outside `pool-pr.sh`, merges of src.opensuse.org PRs (`tea`, `git-obs`, Gitea API; `gh` is not judged), and direct writes into `:Update`/`:Maintenance:` projects; the harness runs it, never an agent.
+- `pr-guard.py` — the harness hook that refuses pool PR creates and head pushes outside `pool-pr.sh`, merges of src.opensuse.org PRs (`tea`, `git-obs`, Gitea API; `gh` is not judged), direct writes into `:Update`/`:Maintenance:` projects, and on an agent's own commands credential-file reads, the tools' secret printers and `curl`/`wget` to the OBS or Gitea API (use `osc api`, `git-obs -G src.opensuse.org api`); the harness runs it, never an agent.
 - `leap-status.sh` — in Leap? at what version per branch? PR already open?
 - `scm-snapshot.sh` — scaffold + verify a pinned-commit `obs_scm` `_service`. **`--update` edits ONLY the obs_scm `revision` param, in place** — sibling services and the declared `versionformat` survive byte-for-byte.
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks); **prefer it over hand-editing**.

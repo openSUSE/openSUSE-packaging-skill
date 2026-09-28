@@ -1,0 +1,13 @@
+{
+  "files": [
+    ".config/tea/config.yml",
+    ".config/osc/oscrc",
+    ".oscrc",
+    ".netrc",
+    ".git-credentials",
+    ".config/gh/hosts.yml",
+    ".local/state/osc/cookiejar",
+    ".config/mcp-bugzilla/api-key"
+  ],
+  "links": {"cfg-link": ".config/tea/config.yml"}
+}

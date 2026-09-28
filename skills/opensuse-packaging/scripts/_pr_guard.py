@@ -156,7 +156,7 @@ KWARG = Rx(r"\w+\s*=(?!=)")
 QUOTED = Rx(r"[bruf]*([\"'])(.*)\1")
 HTTPIE = {"http", "https", "xh", "xhs"}
 HTTP_TOOLS = HTTPIE | {"curl", "wget"}
-GUARDED = HTTP_TOOLS | {"tea", "git-obs", "git", "osc"}
+GUARDED = HTTP_TOOLS | {"tea", "git-obs", "git", "osc", "gh", "secret-tool"}
 HTTPIE_VALUED = {
     "-a", "--auth", "-A", "--auth-type", "-o", "--output", "--session",
     "--session-read-only", "--cert", "--cert-key", "--cert-key-pass", "--proxy",
@@ -468,6 +468,16 @@ MESSAGES = {
     "canonical-read": "{0}: the skill's scripts find their siblings from their own "
     "path, so they are run by path (bash <skill>/scripts/NAME ...), never sourced "
     "or fed on stdin.",
+    "credential": "{0}: a login is read only by the tool that owns it (osc, tea, "
+    "git-obs, gh). Run that tool or a skill script; ls and stat may look.",
+    "askpass": "{0}: an askpass program hands git or ssh a password. git-obs's "
+    "credential helper and SSH carry the logins.",
+    "secret": "{0}: it prints a secret. Check a login without it: osc whois, "
+    "git-obs -G src.opensuse.org api /user.",
+    "auth": "{0}: a credential on a command line lands in logs and transcripts. "
+    "Let the tool authenticate: osc api, git-obs -G src.opensuse.org api.",
+    "api": "{0} goes past the tools that hold the login. OBS: osc api PATH; "
+    "Gitea: git-obs -G src.opensuse.org api PATH; or the skill's scripts.",
 }
 
 
@@ -2168,6 +2178,52 @@ def git_command(argv, ctx, cwd):
             j += 1
         if len(pos) >= 2:
             ctx.remotes[(cwd, pos[0])] = pos[1]
+    return gargs, sub
+
+
+def git_secrets(argv, gargs, sub, ctx, cwd):
+    """git printing a stored credential, handed an askpass program or a
+    credential header by its config, or a password in a URL; git obs as
+    git-obs."""
+    if sub[:1] == ["obs"]:
+        git_obs_secret(sub[1:])
+        if git_obs_rest(sub[1:])[:1] == ["api"]:
+            wide = " ".join(["git-obs", *sub[1:], *expansions(sub[1:], ctx, cwd)])
+            auth_rules("git-obs api", sub[1:], wide)
+    if sub[:2] == ["credential", "fill"]:
+        block("secret-git", "git credential fill")
+    if sub[:1] and sub[0].startswith("credential-") and "get" in sub[1:]:
+        block("secret-git", f"git {sub[0]} get")
+    cfg = [a for a in sub[1:] if a[:1] != "-"] if sub[:1] == ["config"] else []
+    setting = cfg[:1] == ["set"]
+    cfg = cfg[1:] if setting else cfg
+    for a in [*gargs, *cfg[:1]]:
+        m = re.search(r"(?i)core\.askpass", a)
+        if m and (a in gargs or setting or len(cfg) > 1):
+            block("askpass", f"setting {m.group()}")
+        m = AUTH_HEADER.search(a) if a in gargs else None
+        if m:
+            block("auth-header", f"git with a credential header ({m.group(1)})")
+    if any(USERINFO.search(a) for a in argv):
+        block("auth-url", "git with a password in a URL")
+
+
+def git_obs_rest(args):
+    """git-obs arguments past its global options: its subcommand onwards."""
+    i = 0
+    while i < len(args) and args[i][:1] == "-":
+        a = long_prefix(args[i], GIT_OBS_LONG)
+        i += 2 if a in ("-G", "--gitea-login", "--gitea-config") else 1
+    return args[i:]
+
+
+def git_obs_secret(args):
+    """git-obs printing its logins: login list, gitcredentials-helper."""
+    pos = [a for a in git_obs_rest(args) if a[:1] != "-"]
+    if pos[:2] == ["login", "list"]:
+        block("secret-git-obs", "git-obs login list")
+    if "gitcredentials-helper" in pos:
+        block("secret-git-obs", "git-obs gitcredentials-helper")
 
 
 def git_obs_reads(args):
@@ -2180,27 +2236,42 @@ def git_obs_reads(args):
     return args[i : i + 1] != ["api"] or only_reads("git-obs", args, GIT_OBS_LONG)
 
 
-def guess(run, ctx, cwd):
+def guess(run, ctx, cwd, own=False):
     """A command whose name only the shell knows, judged as each guarded tool
     -- as osc only when it could be osc: a value naming osc, or none known and
-    a variable named for it. A refusal names the variable."""
+    a variable named for it. A refusal names the variable. own: a command the
+    agent runs, which the credential rules judge too."""
     rest = run[1:]
     try:
         tool_rules(" ".join(["tea", *rest]), ctx, cwd, argv=True)
         tool_rules(" ".join(["git-obs", *rest]), ctx, cwd)
         api_rules(" ".join(["curl", *rest]), ctx, cwd, reads=False)
-        if rest[:1] in (["push"], ["obs"]):
-            git_command(["git", *rest], ctx, cwd)
+        gparts = None
+        creds = rest[:1] in (["credential"], ["config"], ["-c"]) or (
+            rest[:1] and rest[0].startswith("credential-")
+        )
+        if rest[:1] in (["push"], ["obs"]) or own and creds:
+            gparts = git_command(["git", *rest], ctx, cwd)
         held = substitute(run[0], ctx, cwd)
-        if (
+        osc = (
             held is None
             and re.search(r"(?i)osc", run[0])
             or any(os.path.basename(h) == "osc" for h in held or ())
-        ):
-            osc = ["osc", *rest]
-            request_args(osc, ctx, cwd)
-            request_message(osc, None, ctx, cwd)
-            osc_writes(osc, ctx, cwd)
+        )
+        if osc:
+            request_args(["osc", *rest], ctx, cwd)
+            request_message(["osc", *rest], None, ctx, cwd)
+            osc_writes(["osc", *rest], ctx, cwd)
+        if own:
+            for tool in ("gh", "tea", "git-obs", "secret-tool"):
+                secret_rules(tool, [tool, *rest], ctx, cwd)
+            if osc:
+                osc_secret(["osc", *rest], ctx, cwd)
+            if gparts:
+                git_secrets(["git", *rest], *gparts, ctx, cwd)
+            auth_rules("curl", rest, " ".join(rest))
+            if not re.search(r"(?i)osc|obs|tea", run[0]):
+                direct_api("curl", " ".join(rest))
     except Blocked as b:
         raise Blocked(b.rule, b.kind, f"{run[0]}: {b.detail}") from None
 
@@ -2464,6 +2535,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         if stamp_word(t, ctx, cwd, path=True):
             block("stamp", "a redirection into the stamp directory")
         note_written(t, ctx, cwd)
+    for op, t in redirs:  # the credential rules judge the agent's own commands
+        if depth == 0 and op.lstrip("0123456789") in ("<", "<>"):
+            cred_word(t, "a redirection", False, ctx, cwd)
     run, shell, env, chdir = unwrap(argv)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
@@ -2472,10 +2546,14 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             k = assign(a, la, ctx) if ASSIGN.match(a) else None
             if k and k not in CLEAN_ENV and (k in os.environ or SENSITIVE.fullmatch(k)):
                 ctx.exported.append(k)
+        if depth == 0:
+            assignment_rules(argv)
         return cwd, None
     here = cwd if chdir is None else enter(chdir, ctx, cwd)
     if shell is not None:
         shell_pass(shell, ctx, here, depth)
+        if depth == 0:
+            assignment_rules(argv)
         return cwd, ("unknown", "a wrapper")
     lrun = (
         lit[0][len(argv) - len(run) :] if lit[0] and len(lit[0]) == len(argv) else None
@@ -2512,9 +2590,12 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             words = lrun[3:] if lrun else [None] * len(run[3:])
             ctx.lit_values.setdefault(run[1], []).extend(words)
         return cwd, None
+    if depth == 0:  # before a file is read as a program
+        credential_read(name, argv, run, ctx, here)
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
     note_writes(name, run[1:], ctx, here)
+    gparts = None
     if name in DECLARE or name == "set":
         note_env(run, ctx)
         for k, a in enumerate(run[1:] if name in DECLARE else (), 1):
@@ -2528,7 +2609,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         if held and all("/" in h for h in held):
             scan_file(run[0], "auto", ctx, here, depth, env, run=True)
         else:
-            guess(run, ctx, here)
+            guess(run, ctx, here, depth == 0)
     elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
         pass
     elif name == "tea":
@@ -2545,7 +2626,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
     elif name == "git":
-        git_command(run, ctx, here)
+        gparts = git_command(run, ctx, here)
     elif name == "osc":
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         if osc_sub(run)[0] == "api" and REQUEST_CREATE.search(norm_urls(wide)):
@@ -2578,6 +2659,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         scan_file(run[0], "auto", ctx, here, depth, env, run=True)
     elif name in ("echo", "printf", "cat"):
         out = output(name, run[1:], stdin)
+    if depth == 0:
+        credential_rules(name, argv, run, gparts, ctx, here)
     if any(op in STDOUT or op in (">&", "1>&") and t != "1" for op, t in redirs):
         out = None
     return cwd, out
@@ -2779,6 +2862,359 @@ def lit_output(argv, redirs, out, lit):
         if any(c[1] for c in convs) or len(args) - 1 > len(convs):
             return ("unknown", "a printf width, precision or reused format")
     return output(name, args, lstdin) or ("unknown", "text")
+
+
+# Credential files, as a normalised path (the file, or anything below the
+# directory): tea (git-obs reads it too), osc, gh, netrc, git's store, osc's
+# cookie jar, an MCP server's key.
+CRED_PATH = Rx(
+    r"/\.config/(?:tea|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
+    r"|/\.(?:netrc|oscrc|git-credentials)$|/\.config/mcp-[^/]*/api-key$"
+)
+# The same as a word spells them, for a path the guard cannot place.
+CRED_WORD = Rx(
+    r"(?<![\w.\\-])\.(?:config/+(?:tea|osc|gh|mcp-[^/]*/+api-key)"
+    r"|local/+state/+osc|netrc|oscrc|git-credentials)(?![\w.-])"
+)
+# The same below $HOME, for a recursive read of a directory above them.
+CRED_ROOTS = ("/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc")
+CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/mcp-")
+# Names that are credential files wherever they sit.
+CRED_NAMES = {"oscrc", "cookiejar"}
+# Commands that look at a file without reading it; commands that read a tree.
+NO_READ = {"ls", "stat", "test", "[", "[[", "mkdir", "rmdir", "touch", "chmod"}
+NO_READ |= {"chown", "readlink", "realpath", "dirname", "basename", "du"}
+RECURSIVE = {"grep", "egrep", "fgrep", "rgrep", "zgrep", "ugrep", "rg", "ag", "ack"}
+RECURSIVE |= {"cp", "scp", "rsync", "tar", "bsdtar", "zip", "7z", "7za", "diff", "find"}
+# A search pattern and a sed or awk program are text, not a file. Per tool: the
+# short and long options that take a value, and those that give the pattern
+# (a -f FILE is still read).
+SEARCH = {"egrep": "grep", "fgrep": "grep", "rgrep": "grep", "zgrep": "grep"}
+SEARCH.update({"ugrep": "grep", "ag": "rg", "ack": "rg", "gawk": "awk", "mawk": "awk"})
+GREP_GIVEN = {"-e", "-f", "--regexp", "--file"}
+PATTERN_OPTS = {
+    "grep": (
+        "efmABCdD",
+        ("--regexp", "--file", "--max-count", "--after-context", "--before-context",
+         "--context", "--directories", "--devices", "--include", "--exclude",
+         "--exclude-dir", "--exclude-from", "--label"),
+        GREP_GIVEN,
+    ),
+    "rg": (
+        "ABCEefgjMmrTtd",
+        ("--regexp", "--file", "--glob", "--iglob", "--type", "--type-not",
+         "--max-count", "--after-context", "--before-context", "--context",
+         "--encoding", "--replace", "--threads", "--max-depth", "--max-columns"),
+        GREP_GIVEN,
+    ),
+    "sed": (*SED_OPTS, SED_PROGRAM),
+    "awk": (*AWK_OPTS, AWK_PROGRAM),
+}  # fmt: skip
+# A grep that prints one build-* setting of an INI file (the skill's scripts
+# read build-root from oscrc so): flags that cannot widen the output, and a
+# pattern anchored to the key.
+KEY_GREP_FLAGS = tuple("ehHsEFGiq")
+KEY_GREP_LONG = {"--no-filename", "--with-filename", "--no-messages", "--quiet"}
+KEY_GREP_LONG |= {"--extended-regexp", "--fixed-strings", "--basic-regexp"}
+KEY_GREP_LONG |= {"--ignore-case", "--silent", "--regexp"}
+SPACES = r"(?:\\s\*|\[\[:space:\]\]\*| \*)?"
+KEY_LINE = Rx(rf"\^{SPACES}build-[\w-]+{SPACES}=")
+# git's and ssh's askpass program: set by a variable or git config, or named
+# by the variable.
+ASKPASS_SET = Rx(r"(?:GIT|SSH)_ASKPASS\+?=|\w+\+?=.*(?i:core\.askpass)")
+ASKPASS_REF = Rx(r"\$\{?(?:GIT|SSH)_ASKPASS\b")
+# The tools' own secret printers: gh auth and tea login subcommands, and osc's
+# HTTP debugging (-H, a --setopt or environment key) and token path.
+SECRET_GH = {"token", "status", "git-credential"}
+SECRET_TEA = {"helper", "git-credential", "edit", "e"}
+TEA_VALUED = {"-l", "--login", "-r", "--repo", "-R", "--remote", "-o", "--output"}
+OSC_H = Rx(r"-[vqh]*H\w*")
+HTTP_DEBUG = Rx(r"(?i)\bhttp_(?:full_)?debug\b")
+OSC_DEBUG_ENV = Rx(r"(?i)OSC_HTTP(?:_FULL)?_DEBUG\+?=")
+PERSON_TOKEN = Rx(r"/person/[^/?#\s]+/token(?![\w-])")
+# Header names that carry a credential, a URL's userinfo, wget's password
+# options.
+AUTH_HEADER = Rx(
+    r"(?i)(?<![\w-])((?:proxy-)?authorization|private-token|cookie"
+    r"|x-[\w-]*(?:token|api-?key|auth)[\w-]*|api-?key)\s*:(?!=)"
+)
+USERINFO = Rx(r"://[^/\s:@\"'`]*:[^/\s@\"'`]*@|://[\w-]{20,}@")
+WGET_SECRETS = ("--password", "--http-password", "--http-passwd", "--proxy-password")
+WGET_SECRETS += ("--proxy-passwd", "--ftp-password", "--ftp-passwd")
+# The OBS API: api.opensuse.org, and these first path segments on
+# build.opensuse.org (its web pages are no API). Gitea's: src.opensuse.org/api.
+OBS_ROOTS = r"source|build|published|request(?!/+show\b)|search|person|group"
+OBS_ROOTS += r"|statistics|status|public|trigger|staging|worker|architectures"
+OBS_ROOTS += r"|distributions|attribute|comments|configuration|issue_trackers|about"
+API_HOSTS = (
+    r"api\.opensuse\.org\.?(?::\d+)?(?![\w.-])"
+    rf"|build\.opensuse\.org\.?(?::\d+)?/+(?:{OBS_ROOTS})(?![\w-])"
+    r"|src\.opensuse\.org\.?(?::\d+)?/+api(?![\w-])"
+)
+# One in a command-line word, with or without its scheme.
+API_WORD = Rx(rf"(?i)(?:^|(?<=[\s\"'`=(@])|://)(?:[^\s/\"'`@]*@)?(?:{API_HOSTS})")
+
+
+def homes():
+    home = os.path.expanduser("~")
+    return {home.rstrip("/"), os.path.realpath(home).rstrip("/")} - {""}
+
+
+def tilde(path):
+    """path with the home directory spelled ~."""
+    for home in homes():
+        if path == home or path.startswith(home + "/"):
+            return "~" + path[len(home) :]
+    return path
+
+
+def above_creds(path):
+    """Whether a recursive read of path reaches a credential file."""
+    if re.fullmatch(r".*/\.config/mcp-[^/]*/?", path):
+        return True
+    top = path.rstrip("/") + "/"
+    return any((h + r).startswith(top) for h in homes() for r in CRED_ROOTS)
+
+
+def cred_word(word, what, deep, ctx, cwd):
+    """Refuse a word that names a credential file: placed in cwd (each
+    directory of a loop) through this call's values, globs, dot segments and
+    symlinks, or as written when it cannot be placed; deep (a recursive
+    reader), a directory above one; or the askpass variables. A word with a
+    space is text, a file that does not exist is not read; an option's value
+    follows its "=", and curl's @FILE its "@"."""
+    if re.search(r"\s", word):
+        return
+    if ASKPASS_REF.search(word):
+        block("askpass", f"{what} runs or reads the askpass program {shown(word)}")
+    parts = [word, word.partition("=")[2], word[1:] if word[:1] == "@" else ""]
+    for p in filter(None, parts):
+        for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
+            paths, why = ([], None) if p[:1] == "-" else locate(p, ctx, d)
+            if paths is None and why and os.path.basename(p) in CRED_NAMES:
+                block("credential-read", f"{what} reads {p} ({why})")
+            for path in filter(os.path.lexists, paths or ()):
+                for x in (path, os.path.realpath(path)):
+                    if CRED_PATH.search(x):
+                        block("credential-read", f"{what} reads {tilde(x)}")
+                    if deep and above_creds(x):
+                        block(
+                            "credential-read",
+                            f"{what} reaches the credential files under {tilde(x)}",
+                        )
+        if CRED_WORD.search(p):
+            block("credential-read", f"{what} reads {shown(p)}")
+
+
+def cred_operands(name, run):
+    """The words of a command that may name a file it reads: all but a search
+    tool's pattern, sed's or awk's program, and osc's or git-obs's own config
+    file, which the tool reads itself. A recursive search with no operand
+    reads the working directory."""
+    base = SEARCH.get(name, name)
+    if base in PATTERN_OPTS:
+        valued, long_valued, given = PATTERN_OPTS[base]
+        opts, pos = parse_opts(run[1:], valued, long_valued)
+        keys = {k for k, _ in opts}
+        files = [v for k, v in opts if k in ("-f", "--file")]
+        pos = pos if keys & given else pos[1:]
+        deep = base == "rg" or name == "rgrep" or keys & {"-r", "-R", "--recursive"}
+        deep = deep or "--dereference-recursive" in keys
+        deep = deep or "recurse" in [v for k, v in opts if k in ("-d", "--directories")]
+        if base in ("grep", "rg") and deep and not pos and not files:
+            pos = ["."]
+        return [*files, *pos]
+    if name not in ("osc", "git-obs"):
+        return run[1:]
+    opt, own, names = (
+        ("--config", r"(?:^|/)\.?oscrc$|/\.config/osc/", long_names(OSC_GLOBAL)[1])
+        if name == "osc"
+        else ("--gitea-config", r"/\.config/tea/", list(GIT_OBS_LONG))
+    )
+    out, i = [], 1
+    while i < len(run):
+        k, eq, v = long_prefix(run[i], names).partition("=")
+        if k == opt and not eq and i + 1 < len(run) and re.search(own, run[i + 1]):
+            i += 2
+            continue
+        if not (k == opt and eq and re.search(own, v)):
+            out.append(run[i])
+        i += 1
+    return out
+
+
+def key_grep(name, args):
+    """Whether a grep prints only a build-* setting's lines (KEY_LINE)."""
+    if name not in ("grep", "egrep"):
+        return False
+    opts, pos = parse_opts(args, "e", ("--regexp",))
+    if any(k not in KEY_GREP_LONG and k[1:] not in KEY_GREP_FLAGS for k, _ in opts):
+        return False
+    pats = [v for k, v in opts if k in ("-e", "--regexp")] or pos[:1]
+    return bool(pats) and all(KEY_LINE.fullmatch(p) for p in pats)
+
+
+def credential_read(name, argv, run, ctx, cwd):
+    """A command that reads a credential file (cred_word): through a wrapper's
+    own words (xargs -a FILE), or its own, unless it only looks (NO_READ, find
+    without an action) or prints only a build-* setting (key_grep)."""
+    wrapped = [w for w in argv[: len(argv) - len(run)] if not ASSIGN.match(w)]
+    for w in wrapped:
+        cred_word(w, os.path.basename(wrapped[0]), False, ctx, cwd)
+    if name in NO_READ or name == "find" and not FIND_ACTS.intersection(run):
+        return
+    if key_grep(name, run[1:]):
+        return
+    path = run[:1] if "/" in run[0] or VARIABLE.search(run[0]) else []
+    for w in path + cred_operands(name, run):
+        cred_word(w, name, name in RECURSIVE, ctx, cwd)
+
+
+def assignment_rules(words):
+    """Assignments that hand git or ssh an askpass program, or turn on osc's
+    HTTP debugging."""
+    for w in words:
+        if ASSIGN.match(w) and ASKPASS_SET.match(w):
+            block("askpass", "setting " + w.split("=", 1)[0].rstrip("+"))
+        if ASSIGN.match(w) and OSC_DEBUG_ENV.match(w):
+            block("secret-osc", "osc HTTP debugging")
+
+
+def tea_words(args):
+    """tea's subcommand words, past its options and their values."""
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a[:1] != "-":
+            out.append(a)
+        elif a in TEA_VALUED:
+            i += 1
+    return out
+
+
+def secret_rules(name, run, ctx, cwd):
+    """The tools' own secret printers: gh auth token|status|git-credential,
+    tea login(s) helper|git-credential|edit|e, git-obs login list and
+    gitcredentials-helper, a git-credential-* helper's get, secret-tool
+    lookup|search, and osc's (osc_secret)."""
+    args = run[1:]
+    pos = [a for a in args if a[:1] != "-"]
+    if name == "gh" and pos[:1] == ["auth"] and pos[1:2] and pos[1] in SECRET_GH:
+        block("secret-gh", "gh auth " + pos[1])
+    if name == "tea":
+        words = tea_words([TEA_LONG.sub("--", a) for a in args])
+        if words[:1] in (["login"], ["logins"]) and words[1:2]:
+            if words[1] in SECRET_TEA:
+                block("secret-tea", " ".join(["tea", *words[:2]]))
+    if name == "git-obs":
+        git_obs_secret(args)
+    if name.startswith("git-credential-") and "get" in pos:
+        block("secret-git", name + " get")
+    if name == "secret-tool" and pos[:1] in (["lookup"], ["search"]):
+        block("secret-tool", "secret-tool " + pos[0])
+    if name == "osc":
+        osc_secret(run, ctx, cwd)
+
+
+def osc_secret(run, ctx, cwd):
+    """osc printing a secret: HTTP debugging (-H, --http-debug,
+    --http-full-debug, http_debug in --setopt), config --dump-full, token,
+    config ... pass|passx, and api on a /person/<login>/token path."""
+    rest = without_message(run)
+    names = long_names(OSC_GLOBAL)[1] + ["--dump", "--dump-full"]
+    for a in rest[1:]:
+        if a == "--":
+            break
+        full = long_prefix(a, names).partition("=")[0]
+        if full in ("--http-debug", "--http-full-debug") or OSC_H.fullmatch(a):
+            block("secret-osc", "osc HTTP debugging")
+        if HTTP_DEBUG.search(a):
+            block("secret-osc", "osc HTTP debugging")
+        if full == "--dump-full":
+            block("secret-osc", "osc config --dump-full")
+    sub, sargs = osc_sub(rest)
+    if sub == "token":
+        block("secret-osc", "osc token")
+    if sub == "config" and {"pass", "passx"} & set(sargs):
+        block("secret-osc", "osc config " + ("passx" if "passx" in sargs else "pass"))
+    if sub == "api":
+        urls = [norm_urls(a) for a in [*sargs, *expansions(sargs, ctx, cwd)]]
+        if any(PERSON_TOKEN.search(u) for u in urls):
+            block("secret-osc", "osc api /person/<login>/token")
+
+
+def auth_rules(what, args, text):
+    """A credential on the command line of an HTTP tool, tea api or git-obs
+    api: a URL's userinfo, a header that carries one, a user:password or
+    bearer token option, a wget password option."""
+    if USERINFO.search(text):
+        block("auth-url", f"{what} with a password in a URL")
+    m = AUTH_HEADER.search(text)
+    if m:
+        block("auth-header", f"{what} with a credential header ({m.group(1)})")
+    if what == "curl":
+        users = ("--user", "--proxy-user", "--oauth2-bearer")
+        for k, v in parse_opts(args, CURL_VALUED, users)[0]:
+            if k in ("-u", "-U", "--user", "--proxy-user") and ":" in v:
+                block("auth-user", f"curl {k} with a password")
+            if k == "--oauth2-bearer":
+                block("auth-user", "curl --oauth2-bearer")
+    if what in HTTPIE:
+        opts = dict(parse_opts(args, "aA", ("--auth", "--auth-type"))[0])
+        auth = opts.get("-a", opts.get("--auth"))
+        bearer = opts.get("-A", opts.get("--auth-type")) == "bearer"
+        if auth is not None and (bearer or ":" in auth):
+            block("auth-user", f"{what} -a with a {'secret' if bearer else 'password'}")
+    if what == "wget":
+        for a in args:
+            k = a.partition("=")[0]
+            if k[:3] == "--p" or k[:4] in ("--ht", "--ft"):
+                if any(w.startswith(k) for w in WGET_SECRETS):
+                    block("auth-user", "wget " + k)
+
+
+def api_shown(m):
+    return re.sub(r"^.*?(?=(?:api|build|src)\.opensuse\.org)", "", m.group(0).lower())
+
+
+def direct_api(what, text):
+    """HTTP to the OBS or Gitea API past osc and git-obs, which hold the login."""
+    m = API_WORD.search(norm_urls(text))
+    if m:
+        block("api-direct", f"{what} to {api_shown(m)}")
+
+
+def credential_rules(name, argv, run, gparts, ctx, cwd):
+    """The credential rules for a command the agent runs, after the pool rules:
+    askpass and osc debug assignments, the tools' secret printers, a credential
+    on an HTTP tool's, tea api's or git-obs api's command line, and HTTP to the
+    OBS or Gitea API past osc and git-obs. gparts: git's options and
+    subcommand, as git_command() parsed them."""
+    assignment_rules(argv[: len(argv) - len(run)])
+    assignment_rules(run[1:] if name in DECLARE else ())
+    if VARIABLE.search(name):
+        return  # guess() judged it
+    if name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
+        return
+    secret_rules(name, run, ctx, cwd)
+    if gparts:
+        git_secrets(run, *gparts, ctx, cwd)
+    args = run[1:]
+    held = [
+        v
+        for k in re.findall(r"\$\{?(\w+)", " ".join(run))
+        for v in ctx.values.get(k, ())
+    ]
+    text = " ".join([*run, *held, *expansions(args, ctx, cwd)])
+    if name in HTTP_TOOLS:
+        auth_rules(name, args, text)
+        direct_api(name, text)
+    tea = [TEA_LONG.sub("--", a) for a in args] if name == "tea" else []
+    if tea_words(tea)[:1] == ["api"]:
+        auth_rules("tea api", args, text)
+    if name == "git-obs" and git_obs_rest(args)[:1] == ["api"]:
+        auth_rules("git-obs api", args, text)
 
 
 def check_write(path, content, ctx):

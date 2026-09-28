@@ -11,7 +11,7 @@ import { join } from "node:path"
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
 // Verbatim copy of PREFILTER in pr-guard.py; tests/test-pr-guard.sh compares them.
-const PREFILTER = new RegExp(String.raw`\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)\s*[\x22']?\$[{A-Za-z_@*]`)
+const PREFILTER = new RegExp(String.raw`\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)\s*[\x22']?\$[{A-Za-z_@*]|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b`)
 // As unquoted() in pr-guard.py: $'...' decoded, then quotes and backslashes dropped.
 const unquoted = (t: string) =>
   t.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_m: string, body: string) =>
@@ -19,8 +19,10 @@ const unquoted = (t: string) =>
       e[0] === "x" && e.length > 1 ? String.fromCharCode(parseInt(e.slice(1), 16))
         : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : e))
     .replace(/["'\\]/g, "")
-// As in pr-guard.py: a call run inside the stamp directory is judged whatever it says.
+// As in pr-guard.py: a call run inside the stamp directory, or a directory of
+// credential files, is judged whatever it says.
 const STAMP_DIR = "target-gate"
+const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)`)
 
 export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
   return {
@@ -49,7 +51,7 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
       } else return
 
       if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text))
-        && !String(workdir ?? "").includes(STAMP_DIR)) return
+        && !String(workdir ?? "").includes(STAMP_DIR) && !CRED_DIR.test(String(workdir ?? ""))) return
       const r = spawnSync("python3", [GUARD], {
         input: JSON.stringify(event),
         encoding: "utf8",

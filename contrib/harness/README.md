@@ -371,6 +371,19 @@ or one it cannot place. A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc`
 judged, and a refusal redacts the credentials it would echo (URL userinfo,
 `Authorization`/`Bearer` values, `token=`).
 
+On the agent's own commands (not the scripts or program code they run) it also refuses
+reading a credential file — tea's, osc's, gh's, netrc, git's credential store, osc's
+cookie jar, an MCP server's `api-key` — other than by `ls`, `stat` or `test` or a grep for
+one `build-*` setting; setting or running an askpass program; the tools' own secret
+printers (`gh auth` token/status/git-credential, `tea login` helper/edit, `git-obs login
+list`, git's credential `fill`/`get`, `secret-tool` lookup/search, osc's `--dump-full`,
+HTTP debugging, `token` and `config … pass`); a credential on the command line of `curl`,
+`wget`, HTTPie, `tea api`, `git-obs api` or git; and `curl`, `wget` or HTTPie calls to the
+OBS or Gitea API, which `osc api` and `git-obs -G src.opensuse.org api` make with their own
+logins. This backs the snippets' deny patterns above with the guard's parsing: a path is
+resolved through the call's cwd, values, globs and symlinks, and a tool through its
+wrappers, variables and options. The Read tool stays with the snippets.
+
 | File | Goes to | Does |
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
@@ -434,12 +447,15 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 ## What reaches the guard
 
 The prefilter matches any path, `tea`, `git-obs` or `git obs`, `src.opensuse.org`, `push`,
-`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and a command named
-by a variable (`$OSC ci`), each also read with its quotes and backslashes dropped
-(`o''sc`): a file a command runs is where a POST hides. A command named by a variable is
-judged as the tool its value names; one only the shell knows as every guarded tool, and as
-osc only when the variable is named for it. A call whose working directory is inside a
-`target-gate` directory is judged too. The rest of the command line decides nothing.
+`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, a command named by a
+variable (`$OSC ci`), and for the credential rules `gh`, `credential`, `secret-tool`,
+`netrc`, `oscrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each
+also read with its quotes and backslashes dropped (`o''sc`): a file a command runs is where
+a POST hides. A command named by a variable is judged as the tool its value names; one
+only the shell knows as every guarded tool, and as osc only when the variable is named for
+it. A call whose working directory is inside a `target-gate` directory, or a directory of
+credential files (tea's, osc's, gh's, an MCP server's, osc's state), is judged too. The
+rest of the command line decides nothing.
 
 A matched command is judged one parsed command at a time: a commit message, a grep
 pattern or an echo that quotes a pool merge is text, not a merge. Program text is read
@@ -477,7 +493,10 @@ Measured on an aarch64 host with Python 3.13, `python3 pr-guard.py < EVENT`:
 - a matched call that needs no lookup takes ~113 ms, most of it compiling
   `_pr_guard.py` (was ~198 ms);
 - a push adds a few git queries and one Gitea lookup;
-- running a skill script adds three git queries.
+- running a skill script adds three git queries;
+- the credential rules left an unmatched call as it was and added ~20 ms to a matched
+  one, measured side by side with the guard before them (~66 ms and ~160 → ~181 ms on
+  that run): `_pr_guard.py` grew by a sixth, and compiling it is most of the cost.
 
 ## Smoke test
 
@@ -558,6 +577,13 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A merge through the pulls API is judged whatever its host; `gh` is not judged, so
   `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
+- The credential rules read the agent's own commands only. A script's body, program code
+  (`python3 -c`, a heredoc fed to Python) and Write/Edit content are not scanned for
+  them, and the Read tool is left to the snippets. Nor are a credential file named by a
+  variable the call does not set, one read where the guard cannot place the directory
+  (but for `oscrc` and `cookiejar`), words `xargs` reads from stdin, an API URL passed
+  through a shell function's arguments, or a recursive search with no path in a call the
+  prefilter lets through.
 - A script that runs its own arguments (`"$@"`) is not followed, and `"$@"` or an array
   in a script's command position is its arguments, not judged; on the call's own command
   line an unknown one is refused.

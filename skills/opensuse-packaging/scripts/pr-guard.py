@@ -16,6 +16,16 @@ call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.
 
+The agent's own commands (not the scripts or program code they run) are also
+refused when they read a credential file (tea's, osc's, gh's, netrc, git's
+credential store, osc's cookie jar, an MCP server's api-key) other than by
+listing it, set or run an askpass program, run one of the tools' own secret
+printers (gh auth, tea login helper/edit, git-obs login list, git credential
+helpers, secret-tool, osc's full config dump, HTTP debugging and tokens),
+put a credential on an HTTP tool's, tea api's or git-obs api's command line,
+or call the OBS or Gitea API with curl, wget or HTTPie instead of osc or
+git-obs.
+
 A command line is judged one parsed command at a time, so what a command only
 carries -- a commit message, a grep pattern, an echo -- is not read as a
 command. Program text is read whole: every script a command runs (its path
@@ -61,7 +71,8 @@ import sys
 # No match, no analysis. The opencode plugin carries a verbatim copy so it
 # spawns this guard only on a match; tests/test-pr-guard.sh compares the two.
 # Any path matches, because a file a command runs is where a POST hides, and
-# so does a command named by a variable.
+# so does a command named by a variable; so do the names the credential rules
+# need where no path shows (gh, a netrc in the cwd, curl -u).
 PREFILTER = re.compile(
     r"\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b"
     r"|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b"
@@ -69,7 +80,11 @@ PREFILTER = re.compile(
     r"|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time"
     r"|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)"
     r"\s*[\x22']?\$[{A-Za-z_@*]"
+    r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
+    r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
 )
+# A call run inside a directory of credential files is judged whatever it says.
+CRED_DIR = re.compile(r"/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)")
 ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)")
 
@@ -131,9 +146,9 @@ def main(argv):
     except ValueError:
         ev, text = None, raw
     cwd = ev.get("cwd") if isinstance(ev, dict) else None
-    in_stamps = isinstance(cwd, str) and STAMP_DIR in cwd
+    watched = isinstance(cwd, str) and (STAMP_DIR in cwd or CRED_DIR.search(cwd))
     if text is None or not (
-        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or in_stamps
+        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or watched
     ):
         return 0
     mod = {}
