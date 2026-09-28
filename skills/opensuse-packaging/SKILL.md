@@ -30,7 +30,7 @@ Run `scripts/preflight.sh` first (HARD RULE — never repackage what devel alrea
 
 **HARD RULE — the VUL-bug check runs BEFORE the `.changes` is written.** Item 7 below sweeps a package's bugs for what is *broken*; this is the other direction — **does this version FIX an open VUL bug?** Upstream often names no CVE even when it ships a security fix, so mining the upstream range structurally cannot find those; only the bug list can, and the answer must come from a diff of the specific code path rather than release-note wording. → `references/changelog-rules.md` "CVEs and security bullets"
 
-**The gate to leave this block — and the gate before any commit to a devel project and any SR (an OBS-ONLY commit to your own branch or scratch project comes first: that is how it builds). All six, every package, every arch the repo enables (`i586` included), every multibuild flavor:**
+**The gate to leave this block — and the gate before any commit to a devel project and any SR. All six, every package, every arch the repo enables (`i586` included), every multibuild flavor; in OBS-ONLY mode gates 2–6 run in the checkout BEFORE the commit to your own branch or scratch project (`osc ci` rewrites the committed copy they compare against), and only gate 1 waits for the OBS build:**
 1. a clean `osc build` of the spec and sources you commit (local, or its OBS log in OBS-ONLY mode — `references/update-build.md` "Build modes"; outside a Leap pool tree a `.changes`-only edit keeps the last green one) — `scripts/build-summary.sh`'s exit code *is* the verdict; **for a Leap pool branch, `scripts/target-gate.sh --build` (or `--remote`) in the pool clone itself — a green build of any other checkout is not evidence**;
 2. a green `osc service run source_validator` — never read through a pipe;
 3. `scripts/changes-lint.sh --entries <n-new> <pkg>.changes` — `source_validator` does not check `.changes` *format*;
@@ -74,7 +74,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME.
 - `cone-status.sh` — per-package build-status table for a whole project with a loopable exit code.
 - `obs-wait.py` — one bounded wait (~80 s) for one OBS build or request, woken by OBS's event stream, verdict from osc; exit 1 = repeat the call. Never a `sleep` loop.
-- `leap-sync.sh` — content-sync a Leap pool branch up to Factory and run `target-gate.sh` on it; pushes nothing.
+- `leap-sync.sh` — content-sync a Leap pool branch up to Factory and run `target-gate.sh` on it; pushes no PR head (`--remote` pushes a fork build branch).
 - `target-gate.sh` — build the exact pool tree against its Leap base (`openSUSE:Backports:SLE-16.x standard`) and stamp it; `--review FILE` records the PASS for that tree.
 - `pool-pr.sh` — the only route that opens or updates a pool PR; refuses (exit 7, nothing pushed) without a GREEN + PASS stamp for HEAD's tree.
 - `pr-guard.py` — the harness hook that refuses pool PR creates and head pushes outside `pool-pr.sh`, merges of src.opensuse.org PRs (`tea`, `git-obs`, Gitea API; `gh` is not judged), direct writes into `:Update`/`:Maintenance:` projects, and on an agent's own commands credential-file reads, the tools' secret printers and `curl`/`wget` to the OBS or Gitea API (use `osc api`, `git-obs -G src.opensuse.org api`); the harness runs it, never an agent.

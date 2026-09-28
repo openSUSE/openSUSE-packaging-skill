@@ -21,7 +21,8 @@
 # errors out in that case. See references/leap-slfo.md.
 #
 # Requires: a git-obs login for src.opensuse.org (git-obs reads its own
-# credentials: this script reads none), git-lfs.
+# credentials: this script reads none), git-lfs, and for --remote an SSH key
+# there (target-gate.sh pushes the build branch over SSH).
 #
 # Usage: leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]   (branch default: leap-16.0)
 #   --dir     where the clone and the per-branch worktrees go (default: .)

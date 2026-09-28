@@ -37,7 +37,7 @@ the completion result. This applies to you if you delegate, and it is what made
 several agents assert verdicts they had never read.
 
 **Gather the evidence** in the package checkout:
-- the real change — `osc diff` (or `git diff`): every spec edit, `Source`/`Version` change, added/removed patch files, `_service` / `_servicedata` moves, `baselibs.conf`/subpackage/soname changes;
+- the real change — `osc diff` (or `git diff`): every spec edit, `Source`/`Version` change, added/removed patch files, `_service` / `_servicedata` moves, `baselibs.conf`/subpackage/soname changes. In a checkout already committed (an OBS-ONLY branch) `osc diff` is empty: diff the branch against its origin instead, `osc rdiff <origin> <pkg> <branch-prj> <pkg>`;
 - the build outcome — rpmlint badness + items, `%check`/ctest pass count, disabled/loosened checks (`scripts/build-summary.sh`);
 - upstream reality — the release notes / `CHANGELOG` / `NEWS` (or the commit range) for **every** version crossed, and the upstream build/patch context when a patch changed;
 - the new entry/entries this submission adds (the top N blocks of `<pkg>.changes`).
