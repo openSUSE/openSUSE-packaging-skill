@@ -69,20 +69,20 @@ Every snippet denies, as far as its harness can express it:
 The rules match the mechanism, not the word, where the two differ: work on the
 openssh-askpass and git-credential-* packages, a grep for `api-key` or `Authorization:` in
 a source tree, `osc config --dump`, `tea logins list`, and a commit or request message
-that mentions a token or a config pass still run. The Claude Code,
-opencode, grok and Codex blocks are meant to match the openQA skill's rule for rule where
-the two overlap, and the opencode 2.x block the opencode 1.x one; the Gemini CLI and
-Antigravity snippets cover the same set in their own form. The opencode snippets also deny
-`.env` files but allow `.env.example`, and ask before a PR create. `tests/test-harness.sh`
-checks that every snippet parses, names the whole set and every path it claims for its read
-tool, has the command globs of Claude Code, grok and both opencode snippets refuse its
-probes and leave packaging commands alone, runs the Gemini CLI rules and the Kimi hook
-against probes and against 64 KB of pathological input, and, where
-codex and kimi are installed, has `codex execpolicy check` and `kimi doctor config` judge
-theirs. One shared list of commands to refuse and to let through goes through the globs,
-the Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
-alternative and every Kimi rule and credential path must be the only one to refuse
-some probe, so deleting any of them turns the suite red.
+that mentions a token or a config pass still run. The Claude Code, opencode, grok and
+Codex blocks are meant to match the openQA skill's rule for rule where the two overlap,
+and the opencode 2.x block the opencode 1.x one, plus denies for what only 2.x offers; the
+Gemini CLI and Antigravity snippets cover the same set in their own form. The opencode
+snippets also deny `.env` files but allow `.env.example`, and ask before a PR create.
+`tests/test-harness.sh` checks that every snippet parses, names the whole set and every
+path it claims for its read tool, has the command globs of Claude Code, grok and both
+opencode snippets refuse its probes and leave packaging commands alone, runs the Gemini
+CLI rules and the Kimi hook against probes and against 64 KB of pathological input, and,
+where codex and kimi are installed, has `codex execpolicy check` and `kimi doctor config`
+judge theirs. One shared list of commands to refuse and to let through goes through the
+globs, the Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
+alternative and every Kimi rule and credential path must be the only one to refuse some
+probe, so deleting any of them turns the suite red.
 
 These are pattern lists, and no pattern list is complete. Limits every harness shares:
 
@@ -184,12 +184,14 @@ project.
 ### opencode 2.x
 
 Checked on 2.0.21 in a throw-away home with dummy credential files, under a bare
-environment with D-Bus disabled. There is no `debug agent --tool`, so a local
-OpenAI-compatible stub returned scripted tool calls to `opencode run --standalone`, and
-every verdict below is the tool's own. `opencode debug agents` lists all 102 entries of
-`opencode-v2/opencode.jsonc` (5 `external_directory`, 86 `shell`, 11 `read`) after the base
-policy. A second opencode service needs its own port (`opencode service set port N` in the
-throw-away home); on the default one every command hung.
+environment with D-Bus disabled, and again on 2.0.18 for the guard plugin and the `edit`
+and `execute` entries (the code these notes rest on is the same in both). There is no
+`debug agent --tool`, so a local OpenAI-compatible stub returned scripted tool calls to
+`opencode run --standalone`, and every verdict below is the tool's own. `opencode debug
+agents` lists all 111 entries of `opencode-v2/opencode.jsonc` (5 `external_directory`, 86
+`shell`, 11 `read`, 8 `edit`, 1 `execute`) after the base policy. A second opencode service
+needs its own port (`opencode service set port N` in the throw-away home); on the default
+one every command hung.
 
 - opencode 2.x still loads the 1.x snippet: `permission.bash` becomes `shell`, in key
   order, so its `"*"` allow stays first. A `permissions` array in the same file is
@@ -229,10 +231,33 @@ throw-away home); on the default one every command hung.
   `--auto` it found the credential files there. The grep resource is the regex, not the
   path, so no rule can name it. With the home directory as the worktree, both find the
   credential files with no ask at all.
-- A project's own `opencode.json` can re-allow what the global file denies;
-  `OPENCODE_DISABLE_PROJECT_CONFIG=1` prevents that. An `experimental.policies` deny in the
-  global file (`shell:*gh auth token*`, `read:*.netrc`) held against that project file and
-  `--auto` ("Blocked by configuration policy"); a policy in a project file: not run here.
+- A project's own `opencode.json`, in any directory above the session too or in its
+  `.opencode/`, can re-allow what the global file denies and unload the guard plugin by its
+  id (`"plugins": ["-opensuse-packaging.pool-pr-guard"]`). Setting
+  `OPENCODE_DISABLE_PROJECT_CONFIG=1` ignores project files. The background service reads
+  it only when it starts, so persist it there and restart:
+  `opencode service set env OPENCODE_DISABLE_PROJECT_CONFIG 1`, then
+  `opencode service restart`. A `--standalone` run starts its own server from the calling
+  shell's environment, so export the variable in the shell profile as well: without it a
+  standalone run loaded the project file, and an `env tea pulls merge` the guard refuses
+  ran (measured). An `experimental.policies` deny in the global file
+  (`shell:*gh auth token*`, `read:*.netrc`) held against that project file and `--auto`
+  ("Blocked by configuration policy"); a policy in a project file: not run here.
+- The snippet's `edit` denies keep the write, edit and patch tools off those files, the
+  global config, the guard and the stamps; the Plan agent's `.opencode/plan/` stays
+  writable, and a shell command can still write any of them. They match by name: they miss
+  a file reached from a session started inside `~/.config/opencode`, `~/.claude` or a
+  `.opencode/` directory, and they also block files of those names in a source tree, this
+  repository's own `contrib/harness/opencode*/opencode.jsonc` included.
+- Per-agent `permissions` (`agents.<name>.permissions`, or a 1.x `agent.<name>.permission`)
+  are applied after this array and win over it: keep `"*"` allows out of them.
+- The `execute` tool (Code Mode) is offered to every model. It runs model-written
+  JavaScript whose `fetch` takes any method, header and body, which no plugin hook or
+  permission sees, and its `opencode.session_move` moves the session to any directory
+  without an ask. With the guard plugin and every other entry installed, a merge POST to a
+  pool repository went out from it (measured, against a stub). The snippet's `execute` deny
+  removes the tool and every Code Mode tool with it, MCP tools included: give an MCP
+  server you need `"codemode": false` to have its tools offered directly.
 - `--auto` keeps every deny and turns the PR-create asks into runs.
 - The 2.x guard plugin, with the pinned guard in the same home: `true || tea pulls merge
   --repo AI/zzz 1` and the `pool/zzz` create are refused with the guard's own message, the
@@ -460,7 +485,7 @@ options. The Read tool stays with the snippets.
 | `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
 | `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools) |
 | `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
-| `opencode-v2/opencode.jsonc` | appended to the `permissions` array of the same file, instead of the 1.x block | the same backstop in 2.x's array form |
+| `opencode-v2/opencode.jsonc` | appended to the `permissions` array of the same file, instead of the 1.x block | the same backstop in 2.x's array form, plus `edit` denies for the guard, the harness configs and the stamps, and an `execute` deny |
 
 Both harnesses run one **pinned copy** of the guard. It is not updated with the skill:
 the guard polices the skill's own scripts, so a change to it is a decision, not a pull.
@@ -635,8 +660,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
-- The Claude Edit and Write denies stop those tools, not a shell command that edits the
-  same files.
+- The Claude Edit and Write denies and the opencode 2.x `edit` denies stop those tools,
+  not a shell command that edits the same files.
 - A push through a helper is not seen: a Python `def git(*a)`, a shell function
   `g() { git "$@"; }`, `git -c alias.x=push x`.
 - A pulls URL assembled without a literal `/pulls` (`base + 'pulls'`, `urljoin`,
@@ -668,10 +693,14 @@ create must be refused too, the `AI/zzz` create must run, and so must
   added to that list later (`cmd += ["--json", body]`) is not seen.
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is.
-- The opencode plugins do not send `patch`/`apply_patch` tool calls to the guard. On 2.x the
-  model ids `gpt-5` and `gpt-5.1-codex` were offered `patch` (one `patchText` argument) in
-  place of `write` and `edit` (measured with a stub provider), so for such a model nothing
-  of the Write and Edit judgement applies.
+- The opencode plugins do not send `patch`/`apply_patch` tool calls to the guard.
+  opencode 2.x offers `patch` (one `patchText` argument) in place of `write` and `edit` to
+  every model whose id contains `gpt-` but neither `gpt-4` nor `oss` (`gpt-5`,
+  `gpt-5.1-codex`, …; those two measured with a stub provider). For those models only the
+  2.x snippet's `edit` denies keep `patch` off the stamps, the guard and the harness
+  configs; nothing else of the Write and Edit judgement applies.
+- On opencode 2.x without the snippet's `execute` deny, Code Mode's `fetch` sends any
+  request unjudged, a pulls API merge included.
 - A merge through the pulls API is judged whatever its host; `gh` is not judged, so
   `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.

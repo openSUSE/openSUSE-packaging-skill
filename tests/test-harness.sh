@@ -178,17 +178,51 @@ no_legacy(list(perm["bash"]), "opencode")
 
 # opencode 2.x: an ordered array of {action, resource, effect}, last match wins, over a
 # base policy that already allows everything, so the snippet carries no "*" allow. It
-# must say what the 1.x snippet says, in the same order.
+# must say what the 1.x snippet says, in the same order, then deny what only 2.x offers.
 v2 = load("opencode-v2/opencode.jsonc")["permissions"]
 check(all(set(r) == {"action", "resource", "effect"} and all(isinstance(v, str) for v in r.values())
-          and r["action"] in ("external_directory", "shell", "read") and r["effect"] in ("allow", "deny", "ask")
+          and r["action"] in ("external_directory", "shell", "read", "edit", "execute")
+          and r["effect"] in ("allow", "deny", "ask")
           for r in v2), "opencode-v2: every entry has exactly an action, a resource and an effect, with known values")
 # 2.x reads "x *" as also matching the bare x, so a 1.x pattern whose "x *" twin has its effect adds nothing.
 v1_as_v2 = [{"action": {"bash": "shell"}.get(sec, sec), "resource": p, "effect": e}
             for sec, rules in perm.items() for p, e in rules.items()
             if not (sec == "bash" and (p == "*" or rules.get(p + " *") == e))]
-check(v2 == v1_as_v2, "opencode-v2: the same rules as opencode, in the same order, minus the bash '*' allow"
-      " and the patterns that a ' *' twin covers")
+check(v2[:len(v1_as_v2)] == v1_as_v2, "opencode-v2: the same rules as opencode, in the same order, minus the bash"
+      " '*' allow and the patterns that a ' *' twin covers")
+# Past them only 2.x entries: edit (the write, edit and patch tools) off the guard, the harness
+# configs and the stamps, but for the Plan agent's directory, and Code Mode's execute tool,
+# whose fetch no hook sees, removed.
+v2_tail = v2[len(v1_as_v2):]
+PLAN = {"action": "edit", "resource": "*.opencode/plan/*", "effect": "allow"}
+check(all(r["action"] in ("edit", "execute") and (r["effect"] == "deny" or r == PLAN) for r in v2_tail),
+      "opencode-v2: past the 1.x rules only edit and execute denies, and the plan directory's allow")
+check({"action": "execute", "resource": "*", "effect": "deny"} in v2_tail,
+      "opencode-v2: denies execute with resource '*', which removes the tool")
+v2_edit = [(r["resource"], r["effect"]) for r in v2_tail if r["action"] == "edit"]
+STAMP = "target-" + "gate"
+EDIT_PATHS = [".claude/hooks/pr-guard.py", "/home/user/.claude/hooks/_pr_guard.py", "/home/user/.claude/settings.json",
+              "/home/user/.config/opencode/plugins/pool-pr-guard.ts", "opencode.json", "sub/opencode.jsonc",
+              ".opencode/plugins/x.ts", f".git/{STAMP}/t-b.json", f"/w/pool/x/.git/{STAMP}/t-b.json"]
+EDIT_OK = ["foo.spec", "foo.changes", "_service", "README.md", "opencode.spec", "opencode.changes",
+           f"skills/opensuse-packaging/scripts/{STAMP}.sh", ".opencode/plan/x.md", "/home/user/.opencode/plan/x.md"]
+
+
+def edit_denied(path, skip=None):
+    verdict = "allow"
+    for pat, effect in v2_edit:
+        if pat != skip and fnmatch.fnmatchcase(path, pat):
+            verdict = effect
+    return verdict == "deny"
+
+
+missed = [p for p in EDIT_PATHS if not edit_denied(p)]
+check(not missed, "opencode-v2: edit denied on the guard, the harness configs and the stamps"
+      + (f" -- not {missed}" if missed else ""))
+hit = [p for p in EDIT_OK if edit_denied(p)]
+check(not hit, "opencode-v2: the edit denies leave packaging files alone" + (f" -- {hit}" if hit else ""))
+idle = [s for s, _ in v2_edit if not any(edit_denied(p) != edit_denied(p, s) for p in EDIT_PATHS + EDIT_OK)]
+check(not idle, "opencode-v2: every edit entry decides some path" + (f" -- not {idle}" if idle else ""))
 check(not [r for r in v2 if r["resource"] == "*" and r["effect"] == "allow"],
       "opencode-v2: no '*' allow, which appended after another entry would undo its denies")
 v2_read = [r["resource"] for r in v2 if r["action"] == "read"]

@@ -121,12 +121,12 @@
     // Build roots are entered with osc chroot.
     { "action": "shell", "resource": "sudo chroot *", "effect": "deny" },
 
-    // The read tool matches the path relative to the project worktree inside it, or
-    // the canonical absolute path outside it, so every pattern starts with "*": a
-    // "~/..." or absolute pattern only matches outside both, never with the home
-    // directory as the worktree. The built-in .env rules only ask; these deny. No
-    // "*" here: allow is the default, and a "*" appended after another snippet's
-    // denies would undo them.
+    // The read tool matches the path relative to the session's directory when it lies
+    // inside that directory or the project worktree, else the absolute path ("~"
+    // expanded, symlinks not resolved), so every pattern starts with "*": a "~/..." or
+    // absolute pattern only matches outside both, never with the home directory as the
+    // worktree. The built-in .env rules only ask; these deny. No "*" here: allow is the
+    // default, and a "*" appended after another snippet's denies would undo them.
     { "action": "read", "resource": "*.env", "effect": "deny" },
     { "action": "read", "resource": "*.env.*", "effect": "deny" },
     { "action": "read", "resource": "*.env.example", "effect": "allow" },
@@ -137,6 +137,25 @@
     { "action": "read", "resource": "*.netrc", "effect": "deny" },
     { "action": "read", "resource": "*.git-credentials", "effect": "deny" },
     { "action": "read", "resource": "*.local/state/osc/*", "effect": "deny" },
-    { "action": "read", "resource": "*.config/mcp-bugzilla/*", "effect": "deny" }
+    { "action": "read", "resource": "*.config/mcp-bugzilla/*", "effect": "deny" },
+
+    // 2.x only. The edit action covers the write, edit and patch tools, and patch never
+    // reaches the guard plugin: keep them off the guard, the harness configs, a project's
+    // opencode config (which can unload the plugin by its id) and the build stamps. The
+    // Plan agent's plan directory is never loaded as config and stays writable.
+    { "action": "edit", "resource": "*.claude/hooks/*", "effect": "deny" },
+    { "action": "edit", "resource": "*.claude/settings.json", "effect": "deny" },
+    { "action": "edit", "resource": "*.config/opencode/*", "effect": "deny" },
+    { "action": "edit", "resource": "*opencode.json", "effect": "deny" },
+    { "action": "edit", "resource": "*opencode.jsonc", "effect": "deny" },
+    { "action": "edit", "resource": "*.opencode/*", "effect": "deny" },
+    { "action": "edit", "resource": "*.opencode/plan/*", "effect": "allow" },
+    { "action": "edit", "resource": "*target-gate/*", "effect": "deny" },
+
+    // Code Mode's execute tool runs JavaScript whose fetch takes any method, header and
+    // body, seen by no hook or permission, and its opencode.session_move moves the
+    // session into any directory. Resource "*" removes it and every Code Mode tool; an
+    // MCP server whose tools you need then wants "codemode": false.
+    { "action": "execute", "resource": "*", "effect": "deny" }
   ]
 }
