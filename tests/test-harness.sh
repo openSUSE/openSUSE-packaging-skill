@@ -24,8 +24,7 @@
 # (Python 3.11+); older Pythons skip them. Exit 0 = all assertions hold.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-work="$(mktemp -d /var/tmp/test-harness.XXXXXX)"
-trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d /var/tmp/test-harness.XXXXXX)"; trap 'rm -rf "$work"' EXIT
 python3 - "$HERE/../contrib/harness" "$HERE/fixtures/harness" "$work" <<'PY'
 import fnmatch, json, os, re, shutil, subprocess, sys, time
 
@@ -184,10 +183,10 @@ v2 = load("opencode-v2/opencode.jsonc")["permissions"]
 check(all(set(r) == {"action", "resource", "effect"} and all(isinstance(v, str) for v in r.values())
           and r["action"] in ("external_directory", "shell", "read") and r["effect"] in ("allow", "deny", "ask")
           for r in v2), "opencode-v2: every entry has exactly an action, a resource and an effect, with known values")
-# 2.x reads "x *" as also matching the bare x, so a 1.x pattern whose "x *" twin is there is dead.
+# 2.x reads "x *" as also matching the bare x, so a 1.x pattern whose "x *" twin has its effect adds nothing.
 v1_as_v2 = [{"action": {"bash": "shell"}.get(sec, sec), "resource": p, "effect": e}
             for sec, rules in perm.items() for p, e in rules.items()
-            if not (sec == "bash" and (p == "*" or p + " *" in rules))]
+            if not (sec == "bash" and (p == "*" or rules.get(p + " *") == e))]
 check(v2 == v1_as_v2, "opencode-v2: the same rules as opencode, in the same order, minus the bash '*' allow"
       " and the patterns that a ' *' twin covers")
 check(not [r for r in v2 if r["resource"] == "*" and r["effect"] == "allow"],

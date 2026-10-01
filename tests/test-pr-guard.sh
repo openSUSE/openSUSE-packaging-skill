@@ -13,7 +13,8 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/.." && pwd)"
 GUARD=$REPO/skills/opensuse-packaging/scripts/pr-guard.py
-PLUGINS="$REPO/contrib/harness/opencode/pool-pr-guard.ts $REPO/contrib/harness/opencode-v2/pool-pr-guard.ts"
+V1PLUGIN=$REPO/contrib/harness/opencode/pool-pr-guard.ts
+V2PLUGIN=$REPO/contrib/harness/opencode-v2/pool-pr-guard.ts
 PERMS=$REPO/contrib/harness/opencode/opencode.jsonc
 FX=$HERE/fixtures/pr-guard
 fails=0; used=" "
@@ -1308,7 +1309,7 @@ spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)' "$GUARD")"
 { IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; } <<<"$py"
-for PLUGIN in $PLUGINS; do
+for PLUGIN in "$V1PLUGIN" "$V2PLUGIN"; do
   v=${PLUGIN%/pool-pr-guard.ts}; v=${v##*/}
   # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
   ts="$(sed -n 's/^const PREFILTER = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
@@ -1327,12 +1328,11 @@ for PLUGIN in $PLUGINS; do
     || fail "$v: the plugin's CRED_DIR differs or is unused: guard '$py_cred' plugin '$ts'"
 done
 # Each plugin is wired to its own plugin API: 1.x never runs a 2.x file nor the reverse.
-grep -qF '"tool.execute.before"' "${PLUGINS%% *}" && ! grep -qF 'ctx.tool.hook' "${PLUGINS%% *}" \
+grep -qF '"tool.execute.before"' "$V1PLUGIN" && ! grep -qF 'ctx.tool.hook' "$V1PLUGIN" \
   && pass "opencode: the 1.x plugin hooks tool.execute.before" \
   || fail "opencode: the 1.x plugin is not wired to tool.execute.before"
-v2plugin=${PLUGINS##* }
-grep -qF 'ctx.tool.hook("execute.before"' "$v2plugin" && ! grep -qF '"tool.execute.before"' "$v2plugin" \
-  && grep -qF 'export default' "$v2plugin" && ! grep -qF 'Plugin.define' "$v2plugin" \
+grep -qF 'ctx.tool.hook("execute.before"' "$V2PLUGIN" && ! grep -qF '"tool.execute.before"' "$V2PLUGIN" \
+  && grep -qF 'export default' "$V2PLUGIN" && ! grep -qF 'Plugin.define' "$V2PLUGIN" \
   && pass "opencode-v2: the 2.x plugin registers execute.before from a default export" \
   || fail "opencode-v2: the 2.x plugin is not wired to ctx.tool.hook execute.before"
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
