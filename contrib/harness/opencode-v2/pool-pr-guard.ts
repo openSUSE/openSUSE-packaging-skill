@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode/plugin"
-import { spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -25,45 +25,67 @@ const unquoted = (t: string) =>
 const STAMP_DIR = "target-gate"
 const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)`)
 
+// As opencode reads a path argument: "~" is the home directory.
+const home = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
+
+// The guard's verdict on one event, without blocking the service the sessions share:
+// undefined lets the call run, anything else is why it is refused.
+const judge = (event: Record<string, unknown>) =>
+  new Promise<string | undefined>((done) => {
+    let err = ""
+    const child = spawn("python3", [GUARD], { stdio: ["pipe", "ignore", "pipe"] })
+    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000)
+    child.stderr.setEncoding("utf8").on("data", (d: string) => (err += d))
+    child.stdin.on("error", () => {})
+    child.on("error", (e) => {
+      clearTimeout(timer)
+      done(`pr-guard could not run: ${e.message}`)
+    })
+    child.on("close", (code, signal) => {
+      clearTimeout(timer)
+      done(code === 0 ? undefined : err.trim() || `pr-guard exited ${code ?? signal}`)
+    })
+    child.stdin.end(JSON.stringify(event))
+  })
+
 const plugin: Plugin.Plugin = {
   id: "opensuse-packaging.pool-pr-guard",
   async setup(ctx) {
-    await ctx.tool.hook("execute.before", (event) => {
+    await ctx.tool.hook("execute.before", async (event) => {
       const tool = String(event.tool ?? "").toLowerCase()
+      if (tool !== "shell" && tool !== "write" && tool !== "edit") return
+      // A guarded tool whose input this file cannot read is refused, not waved through.
       const args = event.input as Record<string, unknown> | undefined
-      if (!args || typeof args !== "object") return
-      const workdir = resolve(ctx.location.directory, typeof args.workdir === "string" ? args.workdir : "")
+      if (!args || typeof args !== "object") throw new Error(`pool-pr-guard: ${tool} call without input`)
+      // Relative paths are relative to the session's directory, as opencode reads them.
+      const dir = ctx.location.directory
+      const workdir = resolve(dir, typeof args.workdir === "string" ? home(args.workdir) : "")
 
-      // The same event shape Claude Code hands its PreToolUse hooks.
+      // The event Claude Code hands its PreToolUse hooks, file_path absolute.
       let text: string
       let guardEvent: Record<string, unknown>
       if (tool === "shell") {
         const command = args.command
-        if (typeof command !== "string" || !command) return
+        if (typeof command !== "string") throw new Error("pool-pr-guard: shell call without a command")
+        if (!command) return
         text = command
         guardEvent = { tool_name: "Bash", tool_input: { command }, cwd: workdir }
-      } else if (tool === "write" || tool === "edit") {
-        const file_path = String(args.path ?? args.filePath ?? args.file_path ?? "")
-        const body = tool === "write" ? args.content : (args.newString ?? args.new_string)
-        const content = typeof body === "string" ? body : ""
-        text = file_path + "\n" + content
+      } else {
+        const path = args.path
+        const body = tool === "write" ? args.content : args.newString
+        if (typeof path !== "string" || !path || typeof body !== "string")
+          throw new Error(`pool-pr-guard: ${tool} call without a path or text`)
+        const file_path = resolve(dir, home(path))
+        text = file_path + "\n" + body
         guardEvent = tool === "write"
-          ? { tool_name: "Write", tool_input: { file_path, content }, cwd: workdir }
-          : { tool_name: "Edit", tool_input: { file_path, new_string: content }, cwd: workdir }
-      } else return
+          ? { tool_name: "Write", tool_input: { file_path, content: body }, cwd: workdir }
+          : { tool_name: "Edit", tool_input: { file_path, new_string: body }, cwd: workdir }
+      }
 
       if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text))
         && !workdir.includes(STAMP_DIR) && !CRED_DIR.test(workdir)) return
-      const r = spawnSync("python3", [GUARD], {
-        input: JSON.stringify(guardEvent),
-        encoding: "utf8",
-        timeout: 60_000,
-      })
-      if (r.error || r.status !== 0) {
-        const why = (r.stderr || "").trim()
-          || (r.error ? `pr-guard could not run: ${r.error.message}` : `pr-guard exited ${r.status ?? r.signal}`)
-        throw new Error(why)
-      }
+      const why = await judge(guardEvent)
+      if (why !== undefined) throw new Error(why)
     })
   },
 }

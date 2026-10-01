@@ -1331,10 +1331,61 @@ done
 grep -qF '"tool.execute.before"' "$V1PLUGIN" && ! grep -qF 'ctx.tool.hook' "$V1PLUGIN" \
   && pass "opencode: the 1.x plugin hooks tool.execute.before" \
   || fail "opencode: the 1.x plugin is not wired to tool.execute.before"
-grep -qF 'ctx.tool.hook("execute.before"' "$V2PLUGIN" && ! grep -qF '"tool.execute.before"' "$V2PLUGIN" \
+grep -qF 'ctx.tool.hook("execute.before", async (event) => {' "$V2PLUGIN" && ! grep -qF '"tool.execute.before"' "$V2PLUGIN" \
   && grep -qF 'export default' "$V2PLUGIN" && ! grep -qF 'Plugin.define' "$V2PLUGIN" \
   && pass "opencode-v2: the 2.x plugin registers execute.before from a default export" \
   || fail "opencode-v2: the 2.x plugin is not wired to ctx.tool.hook execute.before"
+# Any of these changed lets a guarded call through: the tool ids, their 2.x fields, the
+# refusal of an input the plugin cannot read, the absolute path, the throw.
+# shellcheck disable=SC2016  # the backticks are TypeScript's, not the shell's
+grep -qF 'if (tool !== "shell" && tool !== "write" && tool !== "edit") return' "$V2PLUGIN" \
+  && grep -qF 'const command = args.command' "$V2PLUGIN" && grep -qF 'const path = args.path' "$V2PLUGIN" \
+  && grep -qF 'const body = tool === "write" ? args.content : args.newString' "$V2PLUGIN" \
+  && grep -qF 'throw new Error(`pool-pr-guard: ${tool} call without input`)' "$V2PLUGIN" \
+  && grep -qF 'const file_path = resolve(dir, home(path))' "$V2PLUGIN" \
+  && grep -qF 'if (why !== undefined) throw new Error(why)' "$V2PLUGIN" \
+  && grep -qxF 'import type { Plugin } from "@opencode/plugin"' "$V2PLUGIN" \
+  && pass "opencode-v2: the plugin judges shell, write and edit by their 2.x fields and throws to refuse" \
+  || fail "opencode-v2: the plugin's tool ids, input fields or refusal changed"
+grep -qF 'setTimeout(() => child.kill("SIGKILL"), 60_000)' "$V2PLUGIN" \
+  && pass "opencode-v2: the guard is killed at 60 s, and a kill refuses" || fail "opencode-v2: the 60 s kill changed"
+# The 2.x plugin run, where bun or a node that strips types is at hand, with a fake ctx as
+# the 2.x promise adapter drives it: guarded calls refused, ls and an AI push run.
+tsrun=""
+if command -v bun >/dev/null; then tsrun=$(command -v bun)
+elif node --experimental-strip-types -e '' 2>/dev/null; then tsrun="$(command -v node) --experimental-strip-types --no-warnings"; fi
+if [ -z "$tsrun" ]; then echo "SKIP: opencode-v2 plugin run (no bun, no node that strips types)"; else
+  mkdir -p "$HOME/.claude/hooks" && cp "$GUARD" "${GUARD%/*}/_pr_guard.py" "$HOME/.claude/hooks/"
+  cp "$V2PLUGIN" "$work/v2.mts"
+  for d in pool AI; do
+    git init -q -b main "$work/v2-$d" && git -C "$work/v2-$d" remote add origin "https://src.opensuse.org/$d/x.git"
+  done
+  cat >"$work/drive.mjs" <<'JS'
+const [plugin, loc, pool] = process.argv.slice(-3)
+let fire
+await (await import(plugin)).default.setup({ location: { directory: loc }, tool: { hook: async (_n, f) => { fire = f } } })
+const run = async (e) => { try { await Promise.resolve(fire(e)); return "run" } catch { return "refused" } }
+const merge = ["tea", "pulls", "mer" + "ge", "1"].join(" ")
+const push = "git " + "pu" + "sh origin HEAD:refs/heads/x"
+console.log([
+  await run({ tool: "shell", input: { command: merge } }),
+  await run({ tool: "shell", input: { command: "ls" } }),
+  await run({ tool: "write", input: { path: ".git/target-" + "gate/t-b.json", content: "{}" } }),
+  await run({ tool: "shell", input: { command: push, workdir: pool } }),
+  await run({ tool: "shell", input: { command: push } }),
+  await run({ tool: "shell", input: "x" }),
+].join(" "))
+JS
+  # shellcheck disable=SC2086  # tsrun is a command line
+  out="$($tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
+  [ "$out" = "refused run refused refused run refused" ] \
+    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push and unreadable input" \
+    || fail "opencode-v2: the plugin run gave '$out'"
+  # shellcheck disable=SC2086  # tsrun is a command line
+  out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"
+  [ "${out%% *}" = refused ] && pass "opencode-v2: the plugin refuses a guarded call when python3 is missing" \
+    || fail "opencode-v2: with no python3 the plugin gave '$out'"
+fi
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
 miss="$(sed -n 's/^ *"\(git-obs [^"]*\)": "\([a-z]*\)",\{0,1\}$/\1\t\2/p' "$PERMS" | while IFS=$'\t' read -r pat act; do
   grep -qF "\"git obs ${pat#git-obs }\": \"$act\"" "$PERMS" || printf '%s ' "$pat"; done)"

@@ -239,9 +239,10 @@ throw-away home); on the default one every command hung.
   `AI/zzz` create and an `echo` of a merge command run, and a write under `target-gate/` and
   a `cat` of the tea config are refused. The `execute.before` event carries `tool` and
   `input`: `shell` takes `command` and `workdir`, `write` `path` and `content`, `edit`
-  `path`, `oldString` and `newString`. The hook runs before the permission check, and a
-  relative `workdir` is relative to the project, so the plugin resolves it against its
-  location.
+  `path`, `oldString` and `newString`. The hook runs before the permission check and is
+  awaited, so the plugin runs the guard without blocking the service. A relative `workdir`
+  or `path` is relative to the session's directory, `~` expanded; the plugin resolves both
+  the same way, so the guard sees absolute paths.
 
 ### grok
 
@@ -613,7 +614,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
   `python3` or the pinned guard cannot be spawned: they fail closed. On 2.x the thrown
   message reaches the model verbatim, and a missing `python3` and a missing guard script
   were both refused (measured). That refuses only calls that matched the prefilter; the
-  rest never reach the guard.
+  rest never reach the guard. The 2.x plugin also refuses a `shell`, `write` or `edit`
+  call whose input it cannot read.
 
 ## Limits
 
