@@ -7,7 +7,8 @@ Drafts, installed by hand, one directory per harness:
   tea or gh credential file or `.netrc`, prints a token, passes a key on a command line or
   talks to the OBS or Gitea API past osc, tea and git-obs. They also refuse a PR merge on
   src.opensuse.org, a Factory request with `--nodevelproject` and `sudo chroot`.
-- **The pool PR guard**, for Claude Code and opencode (1.x and 2.x): `scripts/pr-guard.py` as a hook.
+- **The pool PR guard**, for Claude Code and opencode (1.x and 2.x): `scripts/pr-guard.py`
+  as a hook.
 
 **You install them yourself.** An agent must not change its own permissions, and Claude
 Code's auto mode refuses the edit as self-modification. **Merge, do not replace**: each
@@ -74,8 +75,9 @@ the two overlap, and the opencode 2.x block the opencode 1.x one; the Gemini CLI
 Antigravity snippets cover the same set in their own form. The opencode snippets also deny
 `.env` files but allow `.env.example`, and ask before a PR create. `tests/test-harness.sh`
 checks that every snippet parses, names the whole set and every path it claims for its read
-tool, has the command globs of Claude Code, grok and both opencode snippets refuse its probes
-and leave packaging commands alone, runs the Gemini CLI rules and the Kimi hook against probes and against 64 KB of pathological input, and, where
+tool, has the command globs of Claude Code, grok and both opencode snippets refuse its
+probes and leave packaging commands alone, runs the Gemini CLI rules and the Kimi hook
+against probes and against 64 KB of pathological input, and, where
 codex and kimi are installed, has `codex execpolicy check` and `kimi doctor config` judge
 theirs. One shared list of commands to refuse and to let through goes through the globs,
 the Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
@@ -146,7 +148,7 @@ path has both.
 - A deny cannot be narrowed by an allow here, so `osc token` is refused whole, and `tea
   pr *merge *` also refuses a PR create whose title holds the word "merge".
 
-### opencode
+### opencode 1.x
 
 Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
 D-Bus disabled. `opencode debug config` loaded all 103 rules then (5 `external_directory`,
@@ -179,7 +181,7 @@ project.
   credential files (measured).
 - Patterns that start with a command miss it behind `env`, `command` or `A=1` (measured).
 
-### opencode V2
+### opencode 2.x
 
 Checked on 2.0.21 in a throw-away home with dummy credential files, under a bare
 environment with D-Bus disabled. There is no `debug agent --tool`, so a local
@@ -195,7 +197,8 @@ throw-away home); on the default one every command hung.
   running service within seconds; `opencode reload` answered 503 here.
 - The 1.x plugin does not run. A 1.x `pool-pr-guard.ts` in the plugins directory logs
   "Plugin must export a default definition with an id and an effect or setup function",
-  `opencode plugin list` shows nothing, and a `tea pulls merge` ran unrefused.
+  `opencode plugin list` lists the file with the ID `-`, a plugin that failed to load
+  (right after a restart, nothing at all), and a `tea pulls merge` ran unrefused.
 - The last matching entry wins, in array order, over a base policy whose first entry allows
   everything. There is no `"*"` allow in the 2.x snippet: one appended after other entries
   would undo them.
@@ -206,8 +209,9 @@ throw-away home); on the default one every command hung.
   in `( )`, `$( )` or backquotes is refused. All 111 refuse probes of the suite's fixtures
   are (two that `cd` into `~/.config` or `~/.local/state` first ask about that directory,
   then the deny holds), and the 58 ordinary commands run (a non-interactive `run`
-  rejects the PR-create asks unless it has `--auto`). `echo "tea pulls merge --repo pool/x 1"` and `git commit -m 'tea pr merge 3'`
-  run, `echo "gh auth token"` is refused. `bash -c '...'` is not unwrapped.
+  rejects the PR-create asks unless it has `--auto`). `echo "tea pulls merge --repo
+  pool/x 1"` and `git commit -m 'tea pr merge 3'` run, `echo "gh auth token"` is
+  refused. `bash -c '...'` is not unwrapped.
 - Patterns that start with a command miss it behind `env`, `command` or `A=1`: `env tea
   pulls merge`, `command tea pr merge 3`, `A=1 osc sr --nodevelproject` and `env osc token`
   ran. `*`-prefixed ones (`gh auth token`) hold behind `env` and `A=1`. The global-option
@@ -221,10 +225,10 @@ throw-away home); on the default one every command hung.
   `~/.netrc`, `~/.git-credentials`); `.env` is refused, `.env.example` read. Without
   `--auto`, an external path asks first, and a non-interactive run rejects the ask.
 - The grep and glob tools, aimed at the tea config directory from a project, are refused by
-  `external_directory`; aimed at its parent, `~/.config`, grep is only asked, and with `--auto` it
-  found the credential files there. The grep resource is the regex, not the path, so no rule can
-  name it. With the home directory as the worktree, both find the credential files with no ask
-  at all.
+  `external_directory`; aimed at its parent, `~/.config`, grep is only asked, and with
+  `--auto` it found the credential files there. The grep resource is the regex, not the
+  path, so no rule can name it. With the home directory as the worktree, both find the
+  credential files with no ask at all.
 - A project's own `opencode.json` can re-allow what the global file denies;
   `OPENCODE_DISABLE_PROJECT_CONFIG=1` prevents that. An `experimental.policies` deny in the
   global file (`shell:*gh auth token*`, `read:*.netrc`) held against that project file and
@@ -487,21 +491,27 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
    exactly the guarded call says the opposite of the policy.
 
 3. opencode: take the files for your version (`opencode --version`), 1.x or 2.x, never
-   both: a 1.x plugin does not run on 2.x, and both go to the same target.
+   both: neither version loads the other's plugin, and both go to the same target. On 1.x:
 
    ```
    install -D -m 0444 contrib/harness/opencode/pool-pr-guard.ts "$HOME/.config/opencode/plugins/pool-pr-guard.ts"
+   ```
+
+   On 2.x:
+
+   ```
    install -D -m 0444 contrib/harness/opencode-v2/pool-pr-guard.ts "$HOME/.config/opencode/plugins/pool-pr-guard.ts"
    ```
 
-   The first line is for 1.x, the second for 2.x. Merge the matching snippet into
-   `~/.config/opencode/opencode.jsonc`: its `permission` block on 1.x, its `permissions`
-   entries at the end of that array on 2.x. On 1.x, restart every running opencode TUI: a
-   running one keeps the plugins it started with. On 2.x the service holds the plugins:
-   `opencode service restart`. A plugin file removed from the plugins directory was still
-   listed 12 s later, and right after a restart `opencode plugin list` says "No plugins
-   found" for several seconds (measured), so ask again until it lists
-   `opensuse-packaging.pool-pr-guard`. If it never does, the guard is not wired.
+   Merge the matching snippet into `~/.config/opencode/opencode.jsonc`: its `permission`
+   block on 1.x, its `permissions` entries at the end of that array on 2.x. On 1.x,
+   restart every running opencode TUI: a running one keeps the plugins it started with. On
+   2.x the service holds the plugins: `opencode service restart`. A plugin file removed
+   from the plugins directory was still listed 12 s later, and right after a restart
+   `opencode plugin list` says "No plugins found" for several seconds (measured), so ask
+   again until it lists the ID `opensuse-packaging.pool-pr-guard`. If it never does, or
+   lists the file with the ID `-` (a plugin that failed to load, such as the 1.x file),
+   the guard is not wired.
 
 4. The guard runs the scripts of the skill checkout's `scripts/` unread only **as
    merged**. Every file that `scripts/` tracks, in the index or at the pinned ref, must
@@ -600,16 +610,16 @@ create must be refused too, the `AI/zzz` create must run, and so must
   non-blocking error, as the Kimi hook fails open on its timeout. So the open-PR lookups
   of one call stop at 40 s in all and refuse the call past that.
 - The opencode plugins throw on any non-zero exit, on their own 60 s timeout, and when
-  `python3` or the pinned guard cannot be spawned: they fail closed. On 2.x the thrown message
-  reaches the model verbatim, and a missing `python3` and a missing guard script were both
-  refused (measured). That refuses only
-  calls that matched the prefilter; the rest never reach the guard.
+  `python3` or the pinned guard cannot be spawned: they fail closed. On 2.x the thrown
+  message reaches the model verbatim, and a missing `python3` and a missing guard script
+  were both refused (measured). That refuses only calls that matched the prefilter; the
+  rest never reach the guard.
 
 ## Limits
 
 - In Claude Code a hook killed at its 60 s timeout, or a missing `python3`, lets the call
   run unjudged. Only the open-PR lookups share a 40 s budget; the git queries a push
-  needs (10 s each) are not budgeted. The opencode plugin refuses in both cases.
+  needs (10 s each) are not budgeted. The opencode plugins refuse in both cases.
 - Trust in the skill's scripts is trust in the checkout's `origin/main`: moving that ref
   by hand (`update-ref`, a fetch from another remote) re-blesses whatever it names.
 - A script run by bare name from `PATH` is not read, nor a program held in a variable
