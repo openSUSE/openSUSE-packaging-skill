@@ -1,0 +1,142 @@
+// Append these entries to the "permissions" array of ~/.config/opencode/opencode.jsonc
+// (opencode 2.x), after the entries already there. Use this snippet or
+// ../opencode/opencode.jsonc, not both.
+// A backstop for pr-guard.py, not a replacement: these patterns see one command
+// at a time and cannot resolve a push destination or read a script. The last
+// matching entry wins, in file order, over a base policy that already allows
+// everything else, so there is no "*" allow here: one appended after another
+// entry would undo it. git runs "git obs" as git-obs, so each git-obs pattern
+// comes in both spellings.
+{
+  "permissions": [
+    // Absolute or ~ directory globs, checked when a tool (read, grep, glob) reaches
+    // outside the project directory, and for a directory the shell scanner infers
+    // from a command (cd).
+    { "action": "external_directory", "resource": "~/.config/osc/*", "effect": "deny" },
+    { "action": "external_directory", "resource": "~/.config/tea/*", "effect": "deny" },
+    { "action": "external_directory", "resource": "~/.config/gh/*", "effect": "deny" },
+    { "action": "external_directory", "resource": "~/.local/state/osc/*", "effect": "deny" },
+    { "action": "external_directory", "resource": "~/.config/mcp-bugzilla/*", "effect": "deny" },
+
+    // Matched against each simple command the scanner cuts out of a shell call,
+    // unexpanded; a trailing " *" also matches the bare command.
+
+    // Pool PRs are opened by pool-pr.sh; a direct create gets a human look.
+    { "action": "shell", "resource": "tea pr create *", "effect": "ask" },
+    { "action": "shell", "resource": "tea pr c *", "effect": "ask" },
+    { "action": "shell", "resource": "tea pulls create *", "effect": "ask" },
+    { "action": "shell", "resource": "tea pulls c *", "effect": "ask" },
+    { "action": "shell", "resource": "git-obs *pr create*", "effect": "ask" },
+    { "action": "shell", "resource": "git obs *pr create*", "effect": "ask" },
+    { "action": "shell", "resource": "git-obs *pr forward*", "effect": "ask" },
+    { "action": "shell", "resource": "git obs *pr forward*", "effect": "ask" },
+    { "action": "shell", "resource": "*-X POST*repos/pool/*/pulls*", "effect": "ask" },
+    { "action": "shell", "resource": "*repos/pool/*/pulls*-X POST*", "effect": "ask" },
+
+    // Merging a PR on src.opensuse.org is never an agent's job, pool or
+    // not, and comes after the asks so that a merge POST is denied, not
+    // asked. gh is not matched: GitHub merges stay the maintainer's call there.
+    { "action": "shell", "resource": "tea pr *merge *", "effect": "deny" },
+    { "action": "shell", "resource": "tea pr m *", "effect": "deny" },
+    { "action": "shell", "resource": "tea pulls *merge *", "effect": "deny" },
+    { "action": "shell", "resource": "tea pulls m *", "effect": "deny" },
+    { "action": "shell", "resource": "tea pull *merge *", "effect": "deny" },
+    { "action": "shell", "resource": "tea pull m *", "effect": "deny" },
+    { "action": "shell", "resource": "tea api */pulls/*/merge*", "effect": "deny" },
+    { "action": "shell", "resource": "git-obs *pr merge*", "effect": "deny" },
+    { "action": "shell", "resource": "git obs *pr merge*", "effect": "deny" },
+    { "action": "shell", "resource": "git-obs *api*/pulls/*/merge*", "effect": "deny" },
+    { "action": "shell", "resource": "git obs *api*/pulls/*/merge*", "effect": "deny" },
+    { "action": "shell", "resource": "*src.opensuse.org*/pulls/*/merge*", "effect": "deny" },
+    { "action": "shell", "resource": "*repos/pool/*/pulls/*/merge*", "effect": "deny" },
+
+    // Tool discipline (references/osc-usage.md "Tool discipline"): the
+    // credentials stay inside osc/tea/git-obs, nothing prints them, and OBS
+    // and the Gitea API are reached only through them.
+    { "action": "shell", "resource": "*.config/osc*", "effect": "deny" },
+    { "action": "shell", "resource": "*oscrc*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/tea*", "effect": "deny" },
+    { "action": "shell", "resource": "*gh/hosts.yml*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/gh/*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/gh *", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/gh\"*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/gh'*", "effect": "deny" },
+    { "action": "shell", "resource": "*.netrc*", "effect": "deny" },
+    { "action": "shell", "resource": "*.git-credentials*", "effect": "deny" },
+    { "action": "shell", "resource": "*gh auth token*", "effect": "deny" },
+    { "action": "shell", "resource": "*gh auth status*", "effect": "deny" },
+    { "action": "shell", "resource": "*gh auth git-credential*", "effect": "deny" },
+    { "action": "shell", "resource": "*-H*uthorization*", "effect": "deny" },
+    { "action": "shell", "resource": "*-*H *uthorization*", "effect": "deny" },
+    { "action": "shell", "resource": "*--header*uthorization*", "effect": "deny" },
+    { "action": "shell", "resource": "*--apikey*", "effect": "deny" },
+    { "action": "shell", "resource": "*--apisecret*", "effect": "deny" },
+    { "action": "shell", "resource": "*://*:*@*", "effect": "deny" },
+    { "action": "shell", "resource": "git-obs *login list*", "effect": "deny" },
+    { "action": "shell", "resource": "git obs *login list*", "effect": "deny" },
+    { "action": "shell", "resource": "*gitcredentials-helper*", "effect": "deny" },
+    { "action": "shell", "resource": "*login helper*", "effect": "deny" },
+    { "action": "shell", "resource": "*logins helper*", "effect": "deny" },
+    { "action": "shell", "resource": "*login git-credential*", "effect": "deny" },
+    { "action": "shell", "resource": "*logins git-credential*", "effect": "deny" },
+    { "action": "shell", "resource": "tea login e*", "effect": "deny" },
+    { "action": "shell", "resource": "tea logins e*", "effect": "deny" },
+    { "action": "shell", "resource": "osc *--dump-*", "effect": "deny" },
+    { "action": "shell", "resource": "*--http-d*", "effect": "deny" },
+    { "action": "shell", "resource": "*--http-f*", "effect": "deny" },
+    { "action": "shell", "resource": "*http_debug*", "effect": "deny" },
+    { "action": "shell", "resource": "*http_full_debug*", "effect": "deny" },
+    { "action": "shell", "resource": "*HTTP_DEBUG*", "effect": "deny" },
+    { "action": "shell", "resource": "*HTTP_FULL_DEBUG*", "effect": "deny" },
+    { "action": "shell", "resource": "osc -H*", "effect": "deny" },
+    { "action": "shell", "resource": "osc * -H*", "effect": "deny" },
+    { "action": "shell", "resource": "osc -*H *", "effect": "deny" },
+    { "action": "shell", "resource": "osc token*", "effect": "deny" },
+    { "action": "shell", "resource": "osc config * pass*", "effect": "deny" },
+    { "action": "shell", "resource": "osc *api*/person/*/token*", "effect": "deny" },
+    { "action": "shell", "resource": "*credential fill*", "effect": "deny" },
+    { "action": "shell", "resource": "*secret-tool lookup*", "effect": "deny" },
+    { "action": "shell", "resource": "*secret-tool search*", "effect": "deny" },
+    { "action": "shell", "resource": "*git credential-* get*", "effect": "deny" },
+    { "action": "shell", "resource": "*git-credential-* get *", "effect": "deny" },
+    { "action": "shell", "resource": "*osc/cookiejar*", "effect": "deny" },
+    { "action": "shell", "resource": "*.local/state/osc*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/mcp-bugzilla*", "effect": "deny" },
+    { "action": "shell", "resource": "*GIT_ASKPASS=*", "effect": "deny" },
+    { "action": "shell", "resource": "*SSH_ASKPASS=*", "effect": "deny" },
+    { "action": "shell", "resource": "*core.askPass*", "effect": "deny" },
+    { "action": "shell", "resource": "*core.askpass*", "effect": "deny" },
+    { "action": "shell", "resource": "curl *api.opensuse.org*", "effect": "deny" },
+    { "action": "shell", "resource": "curl *build.opensuse.org*", "effect": "deny" },
+    { "action": "shell", "resource": "curl *src.opensuse.org/api*", "effect": "deny" },
+
+    // A Factory request comes from the registered devel project.
+    { "action": "shell", "resource": "osc sr *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "osc submitreq *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "osc submitrequest *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "osc submitpac *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "osc creq *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "osc createrequest *--nodevelproject*", "effect": "deny" },
+
+    // Build roots are entered with osc chroot.
+    { "action": "shell", "resource": "sudo chroot *", "effect": "deny" },
+
+    // The read tool matches the path relative to the project worktree inside it, or
+    // the canonical absolute path outside it, so every pattern starts with "*": a
+    // "~/..." or absolute pattern only matches outside both, never with the home
+    // directory as the worktree. The built-in .env rules only ask; these deny. No
+    // "*" here: allow is the default, and a "*" appended after another snippet's
+    // denies would undo them.
+    { "action": "read", "resource": "*.env", "effect": "deny" },
+    { "action": "read", "resource": "*.env.*", "effect": "deny" },
+    { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    { "action": "read", "resource": "*.config/osc/*", "effect": "deny" },
+    { "action": "read", "resource": "*oscrc*", "effect": "deny" },
+    { "action": "read", "resource": "*.config/tea/*", "effect": "deny" },
+    { "action": "read", "resource": "*.config/gh/hosts.yml", "effect": "deny" },
+    { "action": "read", "resource": "*.netrc", "effect": "deny" },
+    { "action": "read", "resource": "*.git-credentials", "effect": "deny" },
+    { "action": "read", "resource": "*.local/state/osc/*", "effect": "deny" },
+    { "action": "read", "resource": "*.config/mcp-bugzilla/*", "effect": "deny" }
+  ]
+}

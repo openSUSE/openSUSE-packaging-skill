@@ -5,7 +5,8 @@
 # the harnesses designed out (a Claude Read rule does not stop cat, opencode read
 # patterns are relative, a grok "~/" is literal); every snippet with a read tool
 # names every read path the README claims; every git-obs rule has its "git obs"
-# twin. The Claude Code, grok and opencode command globs go through an fnmatch
+# twin. The opencode 2.x snippet must carry the 1.x rules in the same order, with no
+# "*" allow. The Claude Code, grok and opencode command globs go through an fnmatch
 # stand-in for their matchers: they must catch the refuse probes and leave real
 # packaging work alone. One shared list of commands goes through the globs, the
 # Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
@@ -23,7 +24,8 @@
 # (Python 3.11+); older Pythons skip them. Exit 0 = all assertions hold.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-work="$(mktemp -d /var/tmp/test-harness.XXXXXX)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d /var/tmp/test-harness.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
 python3 - "$HERE/../contrib/harness" "$HERE/fixtures/harness" "$work" <<'PY'
 import fnmatch, json, os, re, shutil, subprocess, sys, time
 
@@ -175,6 +177,51 @@ def opencode_without(skip, cmd):
 load_bearing("opencode", [p for p, a in perm["bash"].items() if a == "deny"], opencode_without)
 no_legacy(list(perm["bash"]), "opencode")
 
+# opencode 2.x: an ordered array of {action, resource, effect}, last match wins, over a
+# base policy that already allows everything, so the snippet carries no "*" allow. It
+# must say what the 1.x snippet says, in the same order.
+v2 = load("opencode-v2/opencode.jsonc")["permissions"]
+check(all(set(r) == {"action", "resource", "effect"} and all(isinstance(v, str) for v in r.values())
+          and r["action"] in ("external_directory", "shell", "read") and r["effect"] in ("allow", "deny", "ask")
+          for r in v2), "opencode-v2: every entry has exactly an action, a resource and an effect, with known values")
+# 2.x reads "x *" as also matching the bare x, so a 1.x pattern whose "x *" twin is there is dead.
+v1_as_v2 = [{"action": {"bash": "shell"}.get(sec, sec), "resource": p, "effect": e}
+            for sec, rules in perm.items() for p, e in rules.items()
+            if not (sec == "bash" and (p == "*" or p + " *" in rules))]
+check(v2 == v1_as_v2, "opencode-v2: the same rules as opencode, in the same order, minus the bash '*' allow"
+      " and the patterns that a ' *' twin covers")
+check(not [r for r in v2 if r["resource"] == "*" and r["effect"] == "allow"],
+      "opencode-v2: no '*' allow, which appended after another entry would undo its denies")
+v2_read = [r["resource"] for r in v2 if r["action"] == "read"]
+bad = [p for p in v2_read if not p.startswith("*") or p.startswith("*/") or p == "*"]
+check(not bad, "opencode-v2: every read pattern starts with '*' but not '*/', and none is a bare '*'"
+      + (f" -- {bad}" if bad else ""))
+covers([r["resource"] for r in v2 if r["action"] == "read" and r["effect"] == "deny"], READ_PATHS, "read", "opencode-v2")
+v2_deny = [r["resource"] for r in v2 if r["action"] == "shell" and r["effect"] == "deny"]
+covers(v2_deny, PATHS + COMMANDS + EXTRAS, "shell", "opencode-v2")
+check(all(r["resource"].startswith(("~/", "/")) for r in v2 if r["action"] == "external_directory"),
+      "opencode-v2: external_directory patterns are absolute or ~")
+
+
+def v2_hit(cmd, pat):
+    # A pattern ending in " *" also matches the bare command.
+    return fnmatch.fnmatchcase(cmd, pat) or (pat.endswith(" *") and fnmatch.fnmatchcase(cmd, pat[:-2]))
+
+
+def v2_verdict(cmd, skip=None):
+    verdict = "allow"
+    for r in v2:
+        if r["action"] == "shell" and r["resource"] != skip and v2_hit(cmd, r["resource"]):
+            verdict = r["effect"]
+    return verdict
+
+
+glob_verdicts("opencode-v2", v2_verdict)
+load_bearing("opencode-v2", v2_deny, lambda skip, cmd: v2_verdict(cmd, skip) == "deny")
+no_legacy(v2_deny, "opencode-v2")
+check(v2_verdict("sudo chroot") == "deny" and v2_verdict("sudo chroot x") == "deny" and v2_verdict("sudo chrootx") == "allow",
+      "opencode-v2: a trailing ' *' pattern also matches the bare command")
+
 if tomllib is None:
     print("SKIP: grok and gemini (no tomllib before Python 3.11)")
 else:
@@ -297,6 +344,7 @@ def attribution(name, caught):
 
 attribution("claude", lambda c: CLAUDE(c) == "deny")
 attribution("opencode", lambda c: last_match(c) == "deny")
+attribution("opencode-v2", lambda c: v2_verdict(c) == "deny")
 if tomllib is not None:
     attribution("grok", lambda c: GROK(c) == "deny")
     attribution("gemini", CAUGHT["gemini"])

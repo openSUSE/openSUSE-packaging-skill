@@ -13,7 +13,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/.." && pwd)"
 GUARD=$REPO/skills/opensuse-packaging/scripts/pr-guard.py
-PLUGIN=$REPO/contrib/harness/opencode/pool-pr-guard.ts
+PLUGINS="$REPO/contrib/harness/opencode/pool-pr-guard.ts $REPO/contrib/harness/opencode-v2/pool-pr-guard.ts"
 PERMS=$REPO/contrib/harness/opencode/opencode.jsonc
 FX=$HERE/fixtures/pr-guard
 fails=0; used=" "
@@ -1302,27 +1302,39 @@ for f in "$REPO"/skills/opensuse-packaging/scripts/*.sh "$REPO"/skills/opensuse-
   [ "$got" = 0 ] && pass "runs unrefused: ${f##*/}" || { fail "${f##*/} is refused: $out"; }
 done
 
-echo "--- the opencode plugin carries the same prefilter"
+echo "--- the opencode plugins carry the same prefilter"
 py="$(python3 -c 'import importlib.util, sys
 spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)' "$GUARD")"
 { IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; } <<<"$py"
-# shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
-ts="$(sed -n 's/^const PREFILTER = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
-[ -n "$ts" ] && [ "$py_pre" = "$ts" ] && pass "prefilter identical in the plugin" \
-  || fail "prefilter differs: guard '$py_pre' plugin '$ts'"
-grep -qF 'PREFILTER.test(unquoted(text))' "$PLUGIN" && pass "plugin also reads the text unquoted" \
-  || fail "the plugin does not apply the prefilter to the unquoted text"
-ts="$(sed -n 's/^const STAMP_DIR = "\(.*\)"$/\1/p' "$PLUGIN")"
-[ -n "$ts" ] && [ "$py_stamp" = "$ts" ] && grep -qF 'includes(STAMP_DIR)' "$PLUGIN" \
-  && pass "plugin also judges a call run inside the stamp directory" \
-  || fail "the plugin does not send a call run inside '$py_stamp' to the guard"
-# shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
-ts="$(sed -n 's/^const CRED_DIR = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
-[ -n "$ts" ] && [ "$py_cred" = "$ts" ] && grep -qF 'CRED_DIR.test(' "$PLUGIN" \
-  && pass "plugin also judges a call run among the credential files" \
-  || fail "the plugin's CRED_DIR differs or is unused: guard '$py_cred' plugin '$ts'"
+for PLUGIN in $PLUGINS; do
+  v=${PLUGIN%/pool-pr-guard.ts}; v=${v##*/}
+  # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
+  ts="$(sed -n 's/^const PREFILTER = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
+  [ -n "$ts" ] && [ "$py_pre" = "$ts" ] && pass "$v: prefilter identical in the plugin" \
+    || fail "$v: prefilter differs: guard '$py_pre' plugin '$ts'"
+  grep -qF 'PREFILTER.test(unquoted(text))' "$PLUGIN" && pass "$v: plugin also reads the text unquoted" \
+    || fail "$v: the plugin does not apply the prefilter to the unquoted text"
+  ts="$(sed -n 's/^const STAMP_DIR = "\(.*\)"$/\1/p' "$PLUGIN")"
+  [ -n "$ts" ] && [ "$py_stamp" = "$ts" ] && grep -qF 'includes(STAMP_DIR)' "$PLUGIN" \
+    && pass "$v: plugin also judges a call run inside the stamp directory" \
+    || fail "$v: the plugin does not send a call run inside '$py_stamp' to the guard"
+  # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
+  ts="$(sed -n 's/^const CRED_DIR = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
+  [ -n "$ts" ] && [ "$py_cred" = "$ts" ] && grep -qF 'CRED_DIR.test(' "$PLUGIN" \
+    && pass "$v: plugin also judges a call run among the credential files" \
+    || fail "$v: the plugin's CRED_DIR differs or is unused: guard '$py_cred' plugin '$ts'"
+done
+# Each plugin is wired to its own plugin API: 1.x never runs a 2.x file nor the reverse.
+grep -qF '"tool.execute.before"' "${PLUGINS%% *}" && ! grep -qF 'ctx.tool.hook' "${PLUGINS%% *}" \
+  && pass "opencode: the 1.x plugin hooks tool.execute.before" \
+  || fail "opencode: the 1.x plugin is not wired to tool.execute.before"
+v2plugin=${PLUGINS##* }
+grep -qF 'ctx.tool.hook("execute.before"' "$v2plugin" && ! grep -qF '"tool.execute.before"' "$v2plugin" \
+  && grep -qF 'export default' "$v2plugin" && ! grep -qF 'Plugin.define' "$v2plugin" \
+  && pass "opencode-v2: the 2.x plugin registers execute.before from a default export" \
+  || fail "opencode-v2: the 2.x plugin is not wired to ctx.tool.hook execute.before"
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
 miss="$(sed -n 's/^ *"\(git-obs [^"]*\)": "\([a-z]*\)",\{0,1\}$/\1\t\2/p' "$PERMS" | while IFS=$'\t' read -r pat act; do
   grep -qF "\"git obs ${pat#git-obs }\": \"$act\"" "$PERMS" || printf '%s ' "$pat"; done)"
