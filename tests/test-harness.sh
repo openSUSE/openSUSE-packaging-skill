@@ -197,8 +197,10 @@ v2_tail = v2[len(v1_as_v2):]
 PLAN = {"action": "edit", "resource": "*.opencode/plan/*", "effect": "allow"}
 check(all(r["action"] in ("edit", "execute") and (r["effect"] == "deny" or r == PLAN) for r in v2_tail),
       "opencode-v2: past the 1.x rules only edit and execute denies, and the plan directory's allow")
-check({"action": "execute", "resource": "*", "effect": "deny"} in v2_tail,
-      "opencode-v2: denies execute with resource '*', which removes the tool")
+# opencode drops a tool only when the last entry whose action matches it ("*" does too) is a "*" deny.
+last_execute = [r for r in v2 if r["action"] in ("execute", "*")][-1:]
+check(last_execute == [{"action": "execute", "resource": "*", "effect": "deny"}],
+      "opencode-v2: the last entry that matches execute is its '*' deny, which removes the tool")
 v2_edit = [(r["resource"], r["effect"]) for r in v2_tail if r["action"] == "edit"]
 STAMP = "target-" + "gate"
 EDIT_PATHS = [".claude/hooks/pr-guard.py", "/home/user/.claude/hooks/_pr_guard.py", "/home/user/.claude/settings.json",
