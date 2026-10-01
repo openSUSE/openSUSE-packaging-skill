@@ -248,9 +248,15 @@ one every command hung.
   writable, and a shell command can still write any of them. They match by name: they miss
   a file reached from a session started inside `~/.config/opencode`, `~/.claude` or a
   `.opencode/` directory, and they also block files of those names in a source tree, this
-  repository's own `contrib/harness/opencode*/opencode.jsonc` included.
+  repository's own `contrib/harness/opencode*/opencode.jsonc` included. Coming after the
+  Explore, Title and Summary agents' own deny of every action, they also bring write, edit
+  and patch back to those agents; any path but `.opencode/plan/` is still refused. The
+  `shell` entries do the same for the shell tool: those agents are then asked about the
+  PR-create commands, which `--auto` runs, and refused every other command.
 - Per-agent `permissions` (`agents.<name>.permissions`, or a 1.x `agent.<name>.permission`)
-  are applied after this array and win over it: keep `"*"` allows out of them.
+  are applied after this array and win over it. Keep `"*"` allows out of them, and any
+  `"*"` or `execute` entry other than a `"*"` deny: it brings Code Mode back to that agent,
+  and a 1.x `"*": "ask"` migrates to exactly such an entry.
 - The `execute` tool (Code Mode) is offered to every model. It runs model-written
   JavaScript whose `fetch` takes any method, header and body, which no plugin hook or
   permission sees, and its `opencode.session_move` moves the session to any directory
