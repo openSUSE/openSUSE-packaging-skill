@@ -53,7 +53,7 @@
     "api.opensuse.org",
     "sr",
     "--nod",
-    "sudo",
+    "echo sudo",
     "chroot",
     "pr",
     "merge",

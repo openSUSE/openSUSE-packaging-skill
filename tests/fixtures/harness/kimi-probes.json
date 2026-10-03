@@ -251,7 +251,12 @@
         "command": "cat te\\\na/config.yml"
       },
       "cwd": "@HOME@/.config"
-    }
+    },
+    "sudo osc chroot",
+    "true && sudo rm -rf /var/tmp/build-root/x",
+    "for m in a b; do sudo umount $m; done",
+    "(sudo chroot /x)",
+    "env sudo chroot /x"
   ],
   "allow": [
     "osc build openSUSE_Tumbleweed x86_64 openssh-askpass-gnome.spec",
@@ -272,7 +277,6 @@
     "gh api -X PUT repos/o/r/pulls/1/merge",
     "cat .env.example",
     "node -e \"console.log(process.env.HOME)\"",
-    "sudo osc chroot",
     "osc config --dump",
     "osc -h",
     "osc co devel:languages:perl perl-HTML-Parser",
@@ -360,6 +364,7 @@
         "path": "@HOME@/work",
         "pattern": "x"
       }
-    }
+    },
+    "git commit -m 'drop the sudo step'"
   ]
 }

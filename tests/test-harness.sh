@@ -70,7 +70,7 @@ COMMANDS = ["gh auth token", "gh auth status", "gh auth git-credential",
             "git-credential-* get", "git credential-* get", ".config/gh/", "-*H *uthorization",
             "osc *--dump-", "osc -*H"]
 EXTRAS = ["api.opensuse.org", "build.opensuse.org", "src.opensuse.org/api", "--nodevelproject",
-          "sudo chroot", "pr merge", "osc/cookiejar", "mcp-bugzilla",
+          "sudo", "pr merge", "osc/cookiejar", "mcp-bugzilla",
           "GIT_ASKPASS=", "SSH_ASKPASS=", "core.askPass"]
 GLOBS = fixture("glob-probes.json")
 SHARED = fixture("shared-probes.json")
@@ -120,7 +120,7 @@ def sole(rules):
 
 
 def no_legacy(rules, name):
-    bad = [r for r in rules if r.endswith(":*") and r != "sudo chroot:*"]  # a genuine prefix
+    bad = [r for r in rules if r.endswith(":*") and r != "sudo:*"]  # a genuine prefix
     check(not bad, f"{name}: no glob ends in ':*', which reads as a literal prefix" + (f" -- {bad}" if bad else ""))
 
 
@@ -254,7 +254,7 @@ def v2_verdict(cmd, skip=None):
 glob_verdicts("opencode-v2", v2_verdict)
 load_bearing("opencode-v2", v2_deny, lambda skip, cmd: v2_verdict(cmd, skip) == "deny")
 no_legacy(v2_deny, "opencode-v2")
-check(v2_verdict("sudo chroot") == "deny" and v2_verdict("sudo chroot x") == "deny" and v2_verdict("sudo chrootx") == "allow",
+check(v2_verdict("sudo") == "deny" and v2_verdict("sudo umount /x") == "deny" and v2_verdict("sudox") == "allow",
       "opencode-v2: a trailing ' *' pattern also matches the bare command")
 
 if tomllib is None:
@@ -517,7 +517,7 @@ worst = {"parts": ";".join(fixture("slow-units.json")["kimi_parts"]) + ";a" * 28
          "separators": ";" * 65000, "one-char segments": "a;" * 32500,
          "osc sr tea pr": "osc sr tea pr " * 4600, "-H and spaces": "-H" + " " * 64000 + "x",
          "git-credential-": "git-credential-" * 4300, "osc global options": "osc -A " * 9200,
-         "first parts everywhere": "osc;tea;git obs;curl;sudo;" * 2500 + ";".join(fixture("slow-units.json")["kimi_parts"]),
+         "first parts everywhere": "osc;tea;git obs;curl;echo sudo;" * 2500 + ";".join(fixture("slow-units.json")["kimi_parts"]),
          "over the cap": "osc sr tea pr " * 5000}
 for name, text in worst.items():
     want = 2 if len(text) > 64 * 1024 else 0

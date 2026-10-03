@@ -59,7 +59,7 @@
       "command(osc submitpac --nodevelproject)",
       "command(osc creq --nodevelproject)",
       "command(osc createrequest --nodevelproject)",
-      "command(sudo chroot)"
+      "command(sudo)"
     ]
   }
 }

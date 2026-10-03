@@ -76,7 +76,8 @@
     "sudo chroot /x",
     "cd ~/.config && cat gh/hosts.yml",
     "wget --post-data x https://src.opensuse.org/api/v1/repos/AI/x/pulls/3/merge",
-    "wget --post-data x https://gitea.example/api/v1/repos/pool/x/pulls/3/merge"
+    "wget --post-data x https://gitea.example/api/v1/repos/pool/x/pulls/3/merge",
+    "sudo umount /var/tmp/build-root/x/proc"
   ],
   "pass": [
     "osc build",
@@ -107,6 +108,7 @@
     "git clone ssh://gitea@src.opensuse.org:3022/pool/x.git",
     "cat README.md",
     "osc chroot",
-    "secret-tool store --label x service y"
+    "secret-tool store --label x service y",
+    "git commit -m 'drop the sudo step'"
   ]
 }

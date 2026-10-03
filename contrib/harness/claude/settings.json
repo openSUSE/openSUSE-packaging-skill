@@ -93,7 +93,7 @@
       "Bash(osc submitpac *--nodevelproject*)",
       "Bash(osc creq *--nodevelproject*)",
       "Bash(osc createrequest *--nodevelproject*)",
-      "Bash(sudo chroot:*)"
+      "Bash(sudo:*)"
     ]
   }
 }

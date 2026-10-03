@@ -10,8 +10,8 @@ mechanics for a classic `osc co` or a git clone (`references/git-workflow.md`).
 
 **HARD RULE — check `command -v quilt` before using anything here; never
 assume it's installed** (not in a base openSUSE install). If missing:
-- Offer to install (`sudo zypper install quilt`) — get explicit confirmation
-  first, like any other system-affecting command.
+- Ask the user to install it (`sudo zypper install quilt`) — never run sudo
+  yourself; the harness snippets refuse it.
 - Otherwise fall back to the manual diff-tool method in
   `references/patches.md` "Patches" (pre-edit tree in `a/`, edited
   copy in `b/`, `diff -u a/<path> b/<path>`) — slower, but produces an

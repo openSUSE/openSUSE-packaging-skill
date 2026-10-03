@@ -39,7 +39,7 @@ denyMessage = "Merging a pull request on src.opensuse.org is the maintainer's ca
 
 [[rule]]
 toolName = "run_shell_command"
-commandRegex = '(?:[^\x00]*\bsudo\s+chroot\b|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bosc\s)(?=[^\x00;&|]*?\b(sr|submitreq|submitrequest|submitpac|creq|createrequest)\b)(?=[^\x00;&|]*?--nod))'
+commandRegex = '(?:[^\x00]*\bsudo\s+chroot\b|[^\x00]*?(?:(?<=[;&|])|(?<=\\n)|(?<=command":")|(?<=\bdo )|(?<=\bthen ))\s*sudo\b|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bosc\s)(?=[^\x00;&|]*?\b(sr|submitreq|submitrequest|submitpac|creq|createrequest)\b)(?=[^\x00;&|]*?--nod))'
 decision = "deny"
 priority = 999
-denyMessage = "A Factory request comes from the registered devel project, and build roots are entered with osc chroot."
+denyMessage = "A Factory request comes from the registered devel project, and an agent never runs sudo: osc runs its own, build roots are entered with osc chroot and removed with osc wipe."

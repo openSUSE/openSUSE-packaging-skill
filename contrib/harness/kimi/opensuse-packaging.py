@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Kimi Code PreToolUse hook: refuse tool calls that read credential files, print secrets, call
 # the OBS or Gitea API past osc/tea/git-obs, merge a PR on src.opensuse.org, file a
-# --nodevelproject request or run sudo chroot.
+# --nodevelproject request or run sudo.
 """Exit 2 blocks the call and its stderr becomes the tool result; exit 0 lets it run.
 
 Any error inside the hook blocks too (fail closed). It matches text, so a path built at run time,
@@ -68,6 +68,10 @@ COMMANDS = [
         r"--nod",
     ),
     (r"\bsudo\b", r"(?<!osc )\bchroot\b"),
+    (
+        r"\bsudo\b",
+        r"(?:^|(?<=[;&|\n]))\s*(?:(?:do|then|else|exec|command|nohup|time|xargs|\w+=\S*)\s+)*sudo\b",
+    ),
     (r"\btea\b", r"\b(?:pr|pulls?)\b", r"\bmerge\b"),
     (r"\btea\s+(?:pr|pulls?)\s+m\b",),
     (r"\bgit[\s-]obs\b", r"\bpr\b", r"\bmerge\b"),
