@@ -45,7 +45,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 ## Build
 
 - `osc build [--alternative-project PRJ] REPO ARCH PKG.spec` — local build; `REPO` is a repository of the checkout's project (`osc repos PRJ`), `ARCH` the host's. Flags used here: `--clean`, `-k DIR` (keep RPMs), `-p DIR` (prefer packages), `--trust-all-projects`, `-M FLAVOR` (multibuild), `--noinit`, `--release N`, `--root ROOT` (a build root of its own instead of the oscrc one; `scripts/target-gate.sh` uses one per package and base). Never bind-mount host paths into the root. For a Leap pool PR, `scripts/target-gate.sh --build` runs this build — never hand-run it as the proof.
-- `osc chroot [--alternative-project PRJ] REPO ARCH PKG.spec` (build alias) — enter the preserved build root of the last build; `--shell-cmd CMD` runs one command.
+- `osc chroot [--alternative-project PRJ] REPO ARCH PKG.spec` (build alias) — enter the preserved build root of the last build; outside a VM it ignores `--shell-cmd`, so pipe commands in on stdin.
 - `osc wipe --force [--alternative-project PRJ] REPO ARCH PKG.spec` (build alias) — delete that build root after unmounting every mount whose path starts with the root's (a sibling root `<root>-…` included); `--force` skips the confirmation, and the root must be named by the build's own options (`--root`, `-M`).
 - `osc buildinfo [--alternative-project PRJ] REPO ARCH PKG.spec` — the resolved build deps, without building.
 - `osc lbl` (localbuildlog) — log of the last local build.
