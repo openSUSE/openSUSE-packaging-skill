@@ -242,4 +242,4 @@ Then, in this order — `osc wipe` runs from the checkout:
 4. **Its fork branch** — once its PR is merged or closed, `git push <fork> --delete <branch>`. The fork itself (`osc fork`, `tea repos fork`) only when none of its branches has an open PR: `git-obs -G src.opensuse.org api -X DELETE /repos/<you>/<pkg>`.
 5. **Its checkout or workdir** — only when nothing is left in it: `osc status` empty for an osc checkout; for a git one `git status --porcelain`, `git log --branches --not --remotes` and `git stash list` all empty (uncommitted, unpushed and stashed work). Then remove the package directory.
 
-Scratch trees — clones, unpacked sources, build logs — live on disk (`/var/tmp` or the osc working area), never on a tmpfs `/tmp`: they can exhaust its inodes, which the whole host shares.
+Scratch trees — clones, unpacked sources, build logs — live under `/tmp` or `/var/tmp` (or the osc working area), never in the home directory; a pool clone goes under `/var/tmp`, as `target-gate.sh` and `leap-sync.sh` refuse `/tmp`.
