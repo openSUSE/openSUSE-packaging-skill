@@ -143,9 +143,46 @@ def _uniq(seq):
 
 
 # ---------- spec / URL parsing ------------------------------------------------
+MACRO_DEF = re.compile(r"^%(?:global|define)\s+(\w+)\s+(\S.*?)\s*$")
+MACRO_USE = re.compile(r"%%|%(?:\{(\?)?(\w+)\}|(\w+))")
+
+
+def expand_macros(value, defs):
+    """Expand the spec's own %define/%global, %{name} and %{url} in a tag value.
+
+    Text only, nothing is evaluated. %{version} is left as written: tag_prefix()
+    reads the tag scheme from it. Without this, a Source0 like
+    registry.npmjs.org/%{npm_scope}/%{npm_name}/-/... has no registry identity
+    and the sweep falls back to a forge whose tags may have stopped.
+    """
+
+    def sub(m):
+        key = m.group(2) or m.group(3)
+        if not key or key == "version":
+            return m.group(0)  # %% is a literal %
+        if key not in defs:
+            return "" if m.group(1) else m.group(0)
+        val = defs[key]
+        if val is None or "%(" in val or "%{lua" in val:
+            return m.group(0)  # defined twice (an %if branch) or evaluated by rpm
+        return val
+
+    for _ in range(5):
+        new = MACRO_USE.sub(sub, value)
+        if new == value:
+            break
+        value = new
+    return value
+
+
 def spec_facts(text):
     name = ver = url = src = None
+    defs = {}
     for line in text.splitlines():
+        m = MACRO_DEF.match(line)
+        if m:
+            k, v = m.groups()
+            defs[k] = v if defs.get(k, v) == v else None
         m = re.match(r"^Name:\s*(\S+)", line, re.I)
         if m and not name:
             name = m.group(1)
@@ -158,6 +195,12 @@ def spec_facts(text):
         m = re.match(r"^Source0?:\s*(\S+)", line, re.I)
         if m and not src:
             src = m.group(1)
+    if name:
+        defs["name"] = name = expand_macros(name, defs)
+    if url:
+        defs["url"] = url = expand_macros(url, defs)
+    ver = ver and expand_macros(ver, defs)
+    src = src and expand_macros(src, defs)
     return name, ver, url, src
 
 
