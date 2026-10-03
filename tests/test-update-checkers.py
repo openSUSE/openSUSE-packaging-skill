@@ -289,6 +289,68 @@ class MacroSourceTests(unittest.TestCase):
             ("pypi", None, "foo"),
         )
 
+    def test_spec_defines_expand_into_a_registry_identity(self):
+        # picsart-gen-ai: its Source0 named npm only through %define, so the
+        # sweep fell back to GitHub tags that had stopped at 2.77.0.
+        _n, ver, url, src = _forges.spec_facts(
+            "%define npm_name gen-ai\n%define npm_scope @picsart\n"
+            "Name:           picsart-gen-ai\nVersion:        2.78.0\n"
+            "URL:            https://github.com/PicsArt/gen-ai-cli\n"
+            "Source0:        https://registry.npmjs.org/%{npm_scope}/%{npm_name}"
+            "/-/%{npm_name}-%{version}.tgz\n"
+        )
+        self.assertEqual(
+            src, "https://registry.npmjs.org/@picsart/gen-ai/-/gen-ai-%{version}.tgz"
+        )
+        self.assertEqual(_forges.source_registry(src), ("npm", None, "@picsart/gen-ai"))
+
+    def test_url_and_name_expand_but_version_stays_for_the_tag_prefix(self):
+        _n, _v, url, src = _forges.spec_facts(
+            "Name:           thing\nVersion:        1.2\n"
+            "URL:            https://github.com/someone/%{name}\n"
+            "Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz\n"
+        )
+        self.assertEqual(url, "https://github.com/someone/thing")
+        self.assertEqual(
+            src, "https://github.com/someone/thing/archive/refs/tags/v%{version}.tar.gz"
+        )
+        self.assertEqual(_forges.tag_prefix(src), "v")
+
+    def test_a_defined_version_macro_still_stays_for_the_tag_prefix(self):
+        _n, _v, _u, src = _forges.spec_facts(
+            "%global version 2.0\nName: thing\nVersion: %{version}\n"
+            "Source0: https://github.com/someone/thing/archive/v%{version}.tar.gz\n"
+        )
+        self.assertEqual(_forges.tag_prefix(src), "v")
+
+    def test_a_define_rpm_evaluates_is_not_pasted_as_text(self):
+        _n, _v, _u, src = _forges.spec_facts(
+            "%global tarver %(echo %{version} | tr . _)\nName: thing\nVersion: 1.2\n"
+            "Source0: https://github.com/someone/thing/archive/release-%{tarver}.tar.gz\n"
+        )
+        self.assertIn("%{tarver}", src)
+        self.assertIsNone(_forges.tag_prefix(src))
+
+    def test_a_name_defined_twice_stays_unexpanded(self):
+        name, _v, _u, _s = _forges.spec_facts(
+            "%if 0\n%define psuffix -test\n%else\n%define psuffix %{nil}\n%endif\n"
+            "Name: python-foo%{psuffix}\nVersion: 1.0\n"
+        )
+        self.assertEqual(name, "python-foo%{psuffix}")
+
+    def test_double_percent_is_a_literal(self):
+        _n, _v, url, _s = _forges.spec_facts(
+            "Name: thing\nVersion: 1.0\nURL: https://example.org/%%{name}\n"
+        )
+        self.assertEqual(url, "https://example.org/%%{name}")
+
+    def test_unknown_macro_stays_and_an_unset_conditional_is_empty(self):
+        _n, ver, _u, src = _forges.spec_facts(
+            "Name: x\nVersion: 1.0%{?pre}\nSource0: https://example.org/%{mystery}.tgz\n"
+        )
+        self.assertEqual(ver, "1.0")
+        self.assertEqual(src, "https://example.org/%{mystery}.tgz")
+
 
 class SweepCoverageTests(unittest.TestCase):
     """outdated.py must report what did NOT run, and say so in its exit code."""
@@ -479,11 +541,43 @@ def _urlopen(req, *a, **k):
         return _R(json.dumps({"info": {"version": "1.0"}, "releases": {}}).encode())
     if "registry.npmjs.org" in url and MODE == "npm_down":
         raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+    if "registry.npmjs.org" in url and MODE == "anitya_behind_current":
+        return _R(json.dumps({"dist-tags": {"latest": "2.78.0"},
+                              "time": {"2.78.0": "2026-09-17T12:08:00Z"},
+                              "versions": {"2.78.0": {}}}).encode())
+    if "registry.npmjs.org" in url and MODE in ("npm_ahead", "anitya_behind"):
+        return _R(json.dumps({"dist-tags": {"latest": "2.79.1"},
+                              "time": {"2.78.0": "2026-09-17T12:08:00Z",
+                                       "2.79.1": "2026-09-30T11:07:12Z"},
+                              "versions": {"2.78.0": {}, "2.79.1": {}}}).encode())
     if "release-monitoring.org" in url:
         if MODE == "anitya_down":
             raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        if MODE == "hp_behind":
+            # two same-named projects: only the homepage retry can pick one
+            if "/packages/" in url:
+                return _R(json.dumps({"items": []}).encode())
+            return _R(json.dumps({"items": [
+                {"id": 1, "name": "pkg-h", "homepage": "https://example.org/thing",
+                 "backend": "custom", "version": "2.77.0", "stable_versions": ["2.77.0"]},
+                {"id": 2, "name": "pkg-h", "homepage": "https://pypi.org/project/pkg-h",
+                 "backend": "PyPI", "version": "9.0", "stable_versions": ["9.0"]}]}).encode())
+        if MODE in ("anitya_behind", "anitya_behind_current"):
+            # a mapping that follows the repo's tags, which stopped at 2.77.0
+            return _R(json.dumps({"items": [{"id": 1, "name": "pkg-n",
+                "homepage": "https://github.com/someone/thing", "backend": "GitHub",
+                "version": "2.77.0", "stable_versions": ["2.77.0"]}]}).encode())
         return _R(json.dumps({"items": []}).encode())
     if "api.github.com" in url:
+        if MODE in ("npm_ahead", "tags_behind", "anitya_behind", "anitya_behind_current"):
+            if "/releases" in url:
+                return _R(json.dumps([{"tag_name": "v2.77.0", "prerelease": False,
+                                       "draft": False,
+                                       "published_at": "2026-09-17T11:47:00Z"}]).encode())
+            if "/commits/" in url:
+                return _R(json.dumps({"commit": {"committer": {
+                    "date": "2026-09-17T11:47:00Z"}}}).encode())
+            return _R(b"[]")
         if MODE == "authority_404":
             if "/releases" in url:
                 return _R(json.dumps([{ "tag_name": "v2.0",
@@ -649,6 +743,78 @@ urllib.request.urlopen = _urlopen
         # 2 = probe failed; never 0 (CURRENT) or 1 (UPDATE-CANDIDATE)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("serves Source0", r.stderr)
+
+    SPEC_NPM_MACRO = (
+        "%define npm_name gen-ai\n%define npm_scope @picsart\n"
+        "Name:           pkg-n\n"
+        "Version:        2.78.0\n"
+        "URL:            https://github.com/someone/thing\n"
+        "Source0:        https://registry.npmjs.org/%{npm_scope}/%{npm_name}/-/"
+        "%{npm_name}-%{version}.tgz\n"
+    )
+    SPEC_AHEAD = SPEC.replace("Version:        1.0", "Version:        2.78.0")
+
+    def test_registry_named_through_macros_decides(self):
+        r = self._sweep("npm_ahead", spec=self.SPEC_NPM_MACRO, names=("pkg-n",))
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertRegex(
+            r.stdout, r"pkg-n +2\.78\.0 +-> 2\.79\.1 \[npm:@picsart/gen-ai\]"
+        )
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_mapping_behind_the_package_falls_through_to_the_registry(self):
+        r = self._sweep(
+            "anitya_behind",
+            spec=self.SPEC_NPM_MACRO,
+            names=("pkg-n",),
+            flags=("--no-repology",),
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertRegex(
+            r.stdout, r"pkg-n +2\.78\.0 +-> 2\.79\.1 \[npm:@picsart/gen-ai\]"
+        )
+
+    def test_a_lagging_mapping_with_no_forge_is_undetermined(self):
+        r = self._sweep(
+            "anitya_behind",
+            spec="Name:           pkg-n\nVersion:        2.78.0\n",
+            names=("pkg-n",),
+            flags=("--no-repology",),
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("pkg-n(2.78.0 > 2.77.0", r.stdout)
+        self.assertIn("1 name(s) UNDETERMINED", r.stdout.strip().splitlines()[-1])
+
+    def test_a_lagging_mapping_the_registry_finds_current_is_not_undetermined(self):
+        r = self._sweep(
+            "anitya_behind_current",
+            spec=self.SPEC_NPM_MACRO,
+            names=("pkg-n",),
+            flags=("--no-repology",),
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("packaged AHEAD", r.stdout)
+        self.assertNotIn("UNDETERMINED", r.stdout.strip().splitlines()[-1])
+
+    def test_an_older_homepage_answer_with_no_forge_is_undetermined(self):
+        r = self._sweep(
+            "hp_behind",
+            spec="Name:           pkg-h\nVersion:        2.78.0\n"
+            "URL:            https://example.org/thing\n",
+            names=("pkg-h",),
+            flags=("--no-repology",),
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("pkg-h(2.78.0 > 2.77.0 [anitya:homepage])", r.stdout)
+
+    def test_upstream_behind_the_package_is_reported_not_dropped(self):
+        r = self._sweep("tags_behind", spec=self.SPEC_AHEAD)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("packaged AHEAD of every upstream answer", r.stdout)
+        self.assertIn("pkg-a(2.78.0 > v2.77.0", r.stdout)
+        last = r.stdout.strip().splitlines()[-1]
+        self.assertIn("1 name(s) UNDETERMINED", last)
+        self.assertEqual(r.returncode, 0, r.stdout)
 
 
 class GhLaunderingTests(unittest.TestCase):

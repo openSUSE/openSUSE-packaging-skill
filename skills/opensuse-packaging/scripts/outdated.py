@@ -41,7 +41,13 @@ when Source0 is served by a package registry (pythonhosted/npm/crates), that
 registry decides the candidate version and a newer git tag elsewhere is ignored
 -- it is not a release the package can consume. This is what keeps a structural
 PyPI lag, or a monorepo carrying parallel artefact tag streams, from being
-reported as an update every single sweep.
+reported as an update every single sweep. Source0 and URL are read with the
+spec's own %define/%global, %{name} and %{url} expanded, so a registry named
+through macros still decides. A source that answers with a version OLDER than
+the packaged one decides nothing (its channel stopped): the name falls through
+to the next pass, and when no later pass finds it current or newer it is listed
+as packaged AHEAD and counted UNDETERMINED on the COVERAGE line instead of
+vanishing.
 
 Anitya has no release DATES; forge hits are still candidates to verify, never
 confirmed updates. --no-anitya skips Anitya and the homepage retry (it needs
@@ -389,6 +395,10 @@ if do_check and suppressed:
 # Anitya tracks upstreams directly, so check every name Repology did NOT flag —
 # including the suppressed ones (Repology's "newest" itself may be stale).
 lookups, a_hits, a_odd, failed = {}, [], [], []
+# Names whose answering source is OLDER than the packaged version: that channel
+# stopped (a repo no longer tagged, a stale mapping), so it decides nothing. They
+# go on to the next pass, and are reported if no pass can do better.
+a_behind = {}
 anitya_pass_ran = False
 if do_check and not args.no_anitya:
     if _anitya is None:
@@ -426,6 +436,8 @@ if do_check and not args.no_anitya:
             cmp = _anitya.vercmp(raw, fv)
             if cmp == 1:
                 a_hits.append((pkg, fv, raw, how))
+            elif cmp == -1:
+                a_behind[pkg] = (fv, raw, f"anitya:{how}")
             elif cmp is None and _anitya.norm(raw) != _anitya.norm(fv):
                 a_odd.append((pkg, fv, raw))
 
@@ -463,6 +475,8 @@ elif anitya_futs:
 # already hit. One spec cat per remaining name (Version/URL/Source0 together).
 hp_hits, forge_hits = [], []
 forge_failed, forge_nodata, forge_authority, forge_unmapped = [], [], [], []
+forge_behind = []
+mapped_current, forge_current = set(), set()
 do_homepage = do_check and not args.no_anitya and _anitya is not None
 do_forge = do_check and not args.no_forge and _forges is not None
 if do_check and not args.no_forge and _forges is None:
@@ -471,7 +485,7 @@ if do_check and not args.no_forge and _forges is None:
     )
 forge_pass_ran = bool((do_homepage or do_forge) and mine)
 if forge_pass_ran:
-    anitya_resolved = set(lookups)
+    anitya_resolved = set(lookups) - set(a_behind)
     remaining = sorted(set(mine) - {c[0] for c in candidates} - anitya_resolved)
     need_ref = [p for p in remaining if p not in refv]
     if need_ref:
@@ -499,7 +513,6 @@ if forge_pass_ran:
 
         with ThreadPoolExecutor(max_workers=6) as ex:
             hp_res = dict(zip(still, ex.map(_hp_lookup, still)))
-        mapped_current = set()
         for pkg in still:
             raw, how = hp_res.get(pkg, (None, None))
             if raw == "__failed__":
@@ -511,6 +524,10 @@ if forge_pass_ran:
             if cmp == 1:
                 hp_hits.append((pkg, ref.version, raw, how or "homepage"))
                 mapped_current.add(pkg)
+            elif cmp == -1:
+                a_behind.setdefault(
+                    pkg, (ref.version, raw, f"anitya:{how or 'homepage'}")
+                )
             else:
                 # mapping exists (current or incomparable) — not a forge target
                 mapped_current.add(pkg)
@@ -587,6 +604,10 @@ if forge_pass_ran:
             if raw == "__authority__":
                 forge_authority.append(pkg)
                 continue
+            if raw in ("__nodata__", "__unmapped__") and pkg in a_behind:
+                # Anitya answered older and no forge does better.
+                forge_behind.append((pkg, *a_behind[pkg]))
+                continue
             if raw == "__nodata__":
                 # The source answered — "no releases and no datable tags", a
                 # 404 for that name. A fact about the package, not an outage.
@@ -603,6 +624,17 @@ if forge_pass_ran:
             cmp = _anitya.vercmp(raw, ref.version)
             if cmp == 1:
                 forge_hits.append((pkg, ref.version, raw, how))
+            elif cmp == -1:
+                forge_behind.append((pkg, ref.version, raw, how))
+            elif cmp == 0:
+                forge_current.add(pkg)
+
+    # An Anitya answer older than the package that no later pass replaced — no
+    # URL:/Source0:, --no-forge, an incomparable answer — is still undetermined.
+    placed = mapped_current | forge_current
+    placed |= set(forge_failed + forge_authority + forge_nodata + forge_unmapped)
+    placed |= {row[0] for row in hp_hits + forge_hits + forge_behind}
+    forge_behind += [(pkg, *row) for pkg, row in a_behind.items() if pkg not in placed]
 
     print(
         f"# forge/homepage pass over {len(remaining)} unmapped name(s): "
@@ -634,6 +666,17 @@ if forge_pass_ran:
             f"# forge: {len(forge_nodata)} name(s) the source answered with "
             f"no usable release (tagless/absent upstream, not an outage): "
             + " ".join(forge_nodata)
+        )
+    if forge_behind:
+        print(
+            _sanitize.sanitize(
+                f"# forge: {len(forge_behind)} name(s) packaged AHEAD of every upstream "
+                f"answer — the watched channel stopped (tags no longer cut, or the "
+                f"release moved to a registry), so NOT determined: "
+                + " ".join(
+                    f"{p}({fv} > {raw} [{how}])" for p, fv, raw, how in forge_behind
+                )
+            )
         )
     if forge_unmapped:
         print(
@@ -711,10 +754,17 @@ if down:
     print(
         "# COVERAGE: DEGRADED (exit 3) — lost: "
         + ", ".join(s for s, _ in down)
+        + (f"; {len(forge_behind)} UNDETERMINED" if forge_behind else "")
         + "; results above are partial"
     )
     sys.exit(3)
 print(
     "# COVERAGE: complete"
     + (" except, on purpose: " + "; ".join(skipped) if skipped else "")
+    + (
+        f"; {len(forge_behind)} name(s) UNDETERMINED (packaged ahead of upstream, "
+        "listed above)"
+        if forge_behind
+        else ""
+    )
 )
