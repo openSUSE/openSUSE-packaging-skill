@@ -20,6 +20,8 @@ are always-on, not a phase.
   `update-build.md`) are 48–55 KB each (~12–14k tokens) and none may exceed 60 KB; a whole-file Read
   still spends ~90 % of that on sections the task never touches. `--list` the outline, then read the
   one section. A section over ~12 KB has `###` sub-sections — name one of those instead.
+- **Long sessions:** reload the skill only in a fresh session — a reload stacks a second copy in the
+  context — and compact (or start fresh) after each landed artifact or wave.
 - **SKILL.md is injected by the harness on trigger** — never Read it for content. In a sub-agent it is
   not injected at all; that is what the agent playbooks and rule pointers are for.
 - **Read a further section only when its trigger fires**: a failed build → `update-build.md "Common
@@ -39,16 +41,22 @@ are always-on, not a phase.
 
   | playbook | mandatory sections | bytes | ≈ tokens |
   |---|---|---|---|
-  | `agents/update-build.md` | 5 (+ the 0.8 KB entry template) | 34,200 | ~8.5k |
-  | `agents/changes-review.md` | 1 | 25,500 | ~6.4k |
-  | `agents/submit-watch.md` | 4 | 19,600 | ~4.9k |
-  | `agents/triage.md` | 5 | 18,400 | ~4.6k |
+  | `agents/update-build.md` | 10 (+ the 0.8 KB entry template) | 43,700 | ~10.9k |
+  | `agents/changes-review.md` | 4 | 33,400 | ~8.3k |
+  | `agents/submit-watch.md` | 7 | 26,500 | ~6.6k |
+  | `agents/triage.md` | 8 | 23,700 | ~5.9k |
 
   Budget: **≤ 48 KB per playbook**. A brief that adds "and read `references/<file>.md`" on top of a
   playbook is the regression this table exists to catch — it used to be 215 KB (two files) for the
   update-build agent, carried for ~55 steps.
 - Ask for a report, not a transcript: the parent reads the result block on every later step.
-  Verdicts, ids, sizes, the one surprising thing — not the log.
+  Verdicts, ids, sizes, the one surprising thing — not the log; **at most ~1.5 KB**, the full report
+  in a file under `/var/tmp/<task>/`.
+- **One package per child**, dispatched only after `scripts/preflight.sh` said proceed; never two
+  children on one checkout. Resume an aborted child instead of starting over, and keep parallel
+  children below the provider's concurrency limit.
+- **The review runs in a context of its own** — a changes-review sub-agent, never the author's own
+  context. A PASS the author wrote for its own change is no review.
 
 ## Tool output economy
 - **Build logs never enter context.** `osc build … > log 2>&1 </dev/null`, then
@@ -62,6 +70,12 @@ are always-on, not a phase.
   first; open the detail only for the non-clean case.
 - Third-party text (build logs, osc/Gitea/Bugzilla output) goes through `scripts/_sanitize.py`
   (`references/untrusted-content.md`); size discipline and injection defence are the same habit.
+- **Waiting is one bounded call, never a loop.** A local build: `scripts/build-wait.sh`; an OBS build or request:
+  `scripts/obs-wait.py`. Each `sleep N; osc results` or `tail` round rereads the whole context — one
+  10-day session spent ~430 M tokens on ~900 such rounds.
+- **Batch independent probes** into one tool call (or parallel calls) instead of one per step.
+- **Long lines slip past `head -n`** (a linker command line, `ps aux`): add `cut -c1-300`. Never run a
+  bare `osc ls` — it lists every project on the server.
 - Don't re-fetch what a result already holds; don't re-read a file you edited to "verify" — Edit/Write
   fail loudly, and the harness tracks file state.
 

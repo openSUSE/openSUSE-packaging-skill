@@ -14,6 +14,7 @@ Rules for authoring, modifying, and building RPM packages for openSUSE / SUSE vi
 
 - **Ask, don't assume.** Unclear intent, or an open-ended request ("restructure it", "clean it up") that could go several ways, gets a question before a line is written — surface the fork in the road, never a silent assumption.
 - **Simplest fit, uncertainty flagged.** Match effort to the problem and say so when unsure; settle it with a small localised low-risk experiment (a dry-run patch apply, a single-arch test build) brought back for discussion rather than committed silently.
+- **Scratch outside the home directory.** Clones, unpacked sources, build trees, logs and reports go under `/tmp` or `/var/tmp`; osc checkouts stay in the osc working area, and a pool clone for `target-gate.sh` or `leap-sync.sh` under `/var/tmp`, as both refuse `/tmp`.
 - **Suggest better ways** when you see them, preferring lasting impact over tactical one-offs. **The bug and cross-distro reflexes are hard rules** — core directive items 7–8.
 
 ## How to use this skill — the three-block pipeline
@@ -71,8 +72,8 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `autoforward-gate.sh` — may **your own** accepted request be forwarded onward unattended? `--batch <file>` for a set.
 - `gpg-verify.sh` — verify a signed source tarball against a package keyring.
 - `build-summary.sh` — the last `osc build`'s verdict, `%check` count, rpmlint badness, produced RPMs. **Its exit code IS the verdict** — gate on it instead of eyeballing a tail.
-- `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME.
 - `build-wait.sh` — one bounded wait for a local build started with `set +m; setsid -w`, then `build-summary.sh`'s verdict on its log; repeat while it exits 4 — never a `sleep` loop.
+- `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME.
 - `cone-status.sh` — per-package build-status table for a whole project with a loopable exit code.
 - `obs-wait.py` — one bounded wait (~80 s) for one OBS build or request, woken by OBS's event stream, verdict from osc; exit 1 = repeat the call. Never a `sleep` loop.
 - `leap-sync.sh` — content-sync a Leap pool branch up to Factory and run `target-gate.sh` on it; pushes no PR head (`--remote` pushes a fork build branch).
