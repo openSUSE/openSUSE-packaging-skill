@@ -24,7 +24,7 @@
     "git-obs pr merge",
     "git obs pr merge",
     "osc sr --nodevelproject",
-    "sudo chroot",
+    "sudo",
     "osc -Hq",
     "osc -qvH",
     "secret-tool lookup",

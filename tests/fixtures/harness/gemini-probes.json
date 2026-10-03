@@ -97,7 +97,12 @@
     "osc ls && osc token",
     "osc -A x config y pass",
     "osc ls -qvH",
-    "osc -A https://x -qvH ls"
+    "osc -A https://x -qvH ls",
+    "true && sudo rm -rf /var/tmp/build-root/x",
+    "for m in a b; do sudo umount $m; done",
+    "(sudo chroot /x)",
+    "env sudo chroot /x",
+    "true\nsudo umount x"
   ],
   "shell_allowed": [
     "osc build openSUSE_Tumbleweed x86_64 openssh-askpass-gnome.spec",
@@ -139,7 +144,8 @@
     "git obs pr list; echo merge",
     "curl https://example.org; echo api.opensuse.org",
     "git obs pr list; echo login list",
-    "osc -A https://api.suse.de vc -m 'Update to OpenSSH 9.9'"
+    "osc -A https://api.suse.de vc -m 'Update to OpenSSH 9.9'",
+    "git commit -m 'drop the sudo step'"
   ],
   "shell_missed": [
     "osc sr -m \"fix; see bug\" --nodevelproject"

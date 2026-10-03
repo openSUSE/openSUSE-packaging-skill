@@ -458,6 +458,26 @@
       "osc",
       "-dH",
       "ls"
+    ],
+    [
+      "forbidden",
+      "sudo",
+      "umount",
+      "/var/tmp/build-root/x/proc"
+    ],
+    [
+      "forbidden",
+      "sudo",
+      "-E",
+      "chroot",
+      "/x"
+    ],
+    [
+      "none",
+      "git",
+      "commit",
+      "-m",
+      "drop the sudo step"
     ]
   ]
 }

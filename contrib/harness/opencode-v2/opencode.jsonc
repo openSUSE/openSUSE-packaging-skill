@@ -118,8 +118,9 @@
     { "action": "shell", "resource": "osc creq *--nodevelproject*", "effect": "deny" },
     { "action": "shell", "resource": "osc createrequest *--nodevelproject*", "effect": "deny" },
 
-    // Build roots are entered with osc chroot.
-    { "action": "shell", "resource": "sudo chroot *", "effect": "deny" },
+    // An agent never runs sudo: osc runs its own, and build roots are entered with
+    // osc chroot and removed with osc wipe.
+    { "action": "shell", "resource": "sudo *", "effect": "deny" },
 
     // The read tool matches the path relative to the session's directory when it lies
     // inside that directory or the project worktree, else the absolute path ("~"

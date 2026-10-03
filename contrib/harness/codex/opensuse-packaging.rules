@@ -68,10 +68,10 @@ prefix_rule(
     not_match = [["osc", "sr", "-m", "x"]],
 )
 prefix_rule(
-    pattern = ["sudo", "chroot"],
+    pattern = ["sudo"],
     decision = "forbidden",
-    justification = "build roots are entered with osc chroot",
-    match = [["sudo", "chroot", "/var/tmp/build-root"]],
+    justification = "osc runs its own sudo: build roots are entered with osc chroot and removed with osc wipe",
+    match = [["sudo", "chroot", "/var/tmp/build-root"], ["sudo", "umount", "/var/tmp/build-root/x/proc"]],
     not_match = [["osc", "chroot"]],
 )
 prefix_rule(

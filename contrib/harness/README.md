@@ -6,7 +6,7 @@ Drafts, installed by hand, one directory per harness:
   rule of the skill's `references/osc-usage.md` "Tool discipline": no agent reads an osc,
   tea or gh credential file or `.netrc`, prints a token, passes a key on a command line or
   talks to the OBS or Gitea API past osc, tea and git-obs. They also refuse a PR merge on
-  src.opensuse.org, a Factory request with `--nodevelproject` and `sudo chroot`.
+  src.opensuse.org, a Factory request with `--nodevelproject` and `sudo`.
 - **The pool PR guard**, for Claude Code and opencode (1.x and 2.x): `scripts/pr-guard.py`
   as a hook.
 
@@ -64,7 +64,9 @@ Every snippet denies, as far as its harness can express it:
   `curl` to `api.opensuse.org`, `build.opensuse.org` or `src.opensuse.org/api`;
 - merging a PR on src.opensuse.org, pool or not, with `tea`, `git-obs` or `git obs` or
   through the API (`gh` is not matched), `osc sr`/`creq` with `--nodevelproject`, and
-  `sudo chroot`.
+  `sudo` where a command starts (the Kimi hook and the Gemini CLI rules also anywhere before
+  `chroot`): osc runs its own, build roots are entered with `osc chroot` and removed with
+  `osc wipe`.
 
 The rules match the mechanism, not the word, where the two differ: work on the
 openssh-askpass and git-credential-* packages, a grep for `api-key` or `Authorization:` in
@@ -86,6 +88,11 @@ probe, so deleting any of them turns the suite red.
 
 These are pattern lists, and no pattern list is complete. Limits every harness shares:
 
+- `sudo` is refused only where a command starts: a path to it (`/usr/bin/sudo`), a wrapper
+  (`env`, `timeout`, `nice`), a subshell or substitution, `if sudo`, and doas, pkexec or
+  run0 get past every snippet. The Kimi hook and the Gemini CLI rules also refuse a `sudo`
+  with `chroot` after it anywhere; matching text, they also refuse a quoted `; sudo`, as in
+  a commit message.
 - A global option before the subcommand hides it from a rule that expects the
   subcommand next: `tea --login x pr merge 3`, `tea logins --output simple e`, `git -C
   dir obs pr merge`, `osc -A URL sr --nodevelproject`, `osc -A URL token`. The Claude
@@ -204,7 +211,7 @@ one every command hung.
 - The last matching entry wins, in array order, over a base policy whose first entry allows
   everything. There is no `"*"` allow in the 2.x snippet: one appended after other entries
   would undo them.
-- A `shell` pattern ending in ` *` also matches the bare command (`sudo chroot`, `tea pr m`,
+- A `shell` pattern ending in ` *` also matches the bare command (`sudo`, `tea pr m`,
   a bare `tea pr create` asks). Three 1.x patterns, `*.config/gh`, `osc -*H` and
   `*git-credential-* get`, are therefore left out: their ` *` twins cover them.
 - The shell scanner cuts a call into simple commands: a merge after `||`, `;`, `&&` or `|`,
@@ -331,7 +338,7 @@ not that each rule is valid. Check `/permissions`, Global, deny after merging.
 - Targets are absolute: replace `/home/USER` with your home directory.
 - `command()` rules match a command prefix, so the snippet lists the prefixes the set has:
   the gh, git-obs, tea, osc and git printers, the known `git-credential-<helper> get`
-  forms, the merges and `--nodevelproject` right after the subcommand, and `sudo chroot`.
+  forms, the merges and `--nodevelproject` right after the subcommand, and `sudo`.
   They cannot catch a path anywhere in a command, an option before the subcommand, a
   header or a key in a URL, `osc config <apiurl> pass`, the HTTP-debug environment and
   config forms, or a `curl` to the APIs.
@@ -383,7 +390,7 @@ opt-in `credentials-strict` profile denies them to every process.
   `.git/hooks` and `.git/config`, which run outside the sandbox on your next git command.
   Weigh that before enabling it.
 - Rules are exact argv prefixes, and a `bash -lc` script is split only when it is plain
-  words: `cat -n FILE`, a path spelled with `~`, `FOO=1 cat FILE`, `sudo -E chroot`,
+  words: `cat -n FILE`, a path spelled with `~`, `FOO=1 cat FILE`,
   `osc -A URL sr --nodevelproject`, `osc sr -m x --nodevelproject` (the flag not right
   after the subcommand), `osc -A URL token`, `osc config <apiurl> pass`, `tea pr --repo X
   merge 3` and `git-obs -G x pr merge` get past them. A header, a key in a URL, the
