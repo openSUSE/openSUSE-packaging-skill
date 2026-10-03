@@ -14,6 +14,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 - `preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U]` — exit 0 PROCEED · 3 STOP · 4 FORWARD · 2 a check failed
 - `build-summary.sh [repo-arch | flavor | root-name | root-path | logfile | --list]` — exit 0 green · 1 failed · 2 no log · 3 no verdict
+- `build-wait.sh [--max SEC] PGID LOG` — one bounded wait for a build started with `set +m; setsid -w osc build … </dev/null >LOG 2>&1 &` (`$!` is PGID); `--max` default 540 (a 10-minute tool call; pass less under a shorter one), 0 checks once; then `build-summary.sh LOG`; exit 0 green · 1 failed · 2 no log · 3 no verdict · 4 still running: repeat the call · 5 usage, or PGID is not a group id
 - `soname-check.sh [file.rpm ... | --build-root DIR]` — no args: the last osc build; exit 0 clean · 3 findings · 2 usage or no RPMs
 - `scm-snapshot.sh [git-url] [--rev SHA|BRANCH] [--base X.Y.Z] [--pkg NAME] [--update]` — url required unless `--update`, which re-pins `./_service` in place; exit 0 verified · 1 mismatch · 2 usage or a step failed
 - `rdeps.sh <pkg-or-substring> [project] [repo] [arch]` — exit 0 listed · 1 no _builddepinfo · 2 usage
