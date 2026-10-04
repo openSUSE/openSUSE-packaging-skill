@@ -3136,20 +3136,23 @@ def lit_output(argv, redirs, out, lit):
 
 
 # Credential files, as a normalised path (the file, or anything below the
-# directory): tea (git-obs reads it too), osc, gh, netrc, git's store, osc's
+# directory): tea (git-obs reads it too), osc, gh, netrc, git's two stores, osc's
 # cookie jar, an MCP server's key.
 CRED_PATH = Rx(
     r"/\.config/(?:tea|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
-    r"|/\.(?:netrc|oscrc|git-credentials)$|/\.config/mcp-[^/]*/api-key$"
+    r"|/\.(?:netrc|oscrc|git-credentials|config/git/credentials)$"
+    r"|/\.config/mcp-[^/]*/api-key$"
 )
 # The same as a word spells them, for a path the guard cannot place.
 CRED_WORD = Rx(
-    r"(?<![\w.\\-])\.(?:config/+(?:tea|osc|gh|mcp-[^/]*/+api-key)"
+    r"(?<![\w.\\-])\.(?:config\}?/+(?:tea|osc|gh|git/+credentials|mcp-[^/]*/+api-key)"
     r"|local/+state/+osc|netrc|oscrc|git-credentials)(?![\w.-])"
+    r"|\$\{?XDG_CONFIG_HOME\}?/+(?:tea|osc|gh|git/+credentials)(?![\w.-])"
 )
 # The same below $HOME, for a recursive read of a directory above them.
 CRED_ROOTS = ("/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc")
-CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/mcp-")
+CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/git/credentials")
+CRED_ROOTS += ("/.config/mcp-",)
 # Names that are credential files wherever they sit.
 CRED_NAMES = {"oscrc", "cookiejar"}
 # Commands that look at a file without reading it; commands that read a tree.

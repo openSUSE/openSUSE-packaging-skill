@@ -6409,6 +6409,55 @@
     },
     "cwd": "@PLAIN@"
   },
+  "cred-xdg-git-credentials": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cut -d: -f3 ~/.config/git/credentials"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xdg-config-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "head -1 \"$XDG_CONFIG_HOME/git/credentials\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xdg-git-dir-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "head -1 cred*"
+    },
+    "cwd": "@HOME@/.config/git"
+  },
+  "cred-xdg-git-unplaced": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat \"$D/.config/git/credentials\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xdg-git-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -r token ~/.config/git"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xdg-default-form": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-xdg-git-config-ok": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
+    },
+    "cwd": "@PLAIN@"
+  },
   "prefilter-parent-dir": {
     "tool_name": "Bash",
     "tool_input": {

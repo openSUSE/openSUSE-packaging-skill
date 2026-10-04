@@ -63,6 +63,8 @@
     { "action": "shell", "resource": "*.config/gh'*", "effect": "deny" },
     { "action": "shell", "resource": "*.netrc*", "effect": "deny" },
     { "action": "shell", "resource": "*.git-credentials*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config*git/credentials*", "effect": "deny" },
+    { "action": "shell", "resource": "*CONFIG_HOME*git/credentials*", "effect": "deny" },
     { "action": "shell", "resource": "*gh auth token*", "effect": "deny" },
     { "action": "shell", "resource": "*gh auth status*", "effect": "deny" },
     { "action": "shell", "resource": "*gh auth git-credential*", "effect": "deny" },
@@ -137,6 +139,7 @@
     { "action": "read", "resource": "*.config/gh/hosts.yml", "effect": "deny" },
     { "action": "read", "resource": "*.netrc", "effect": "deny" },
     { "action": "read", "resource": "*.git-credentials", "effect": "deny" },
+    { "action": "read", "resource": "*.config/git/credentials", "effect": "deny" },
     { "action": "read", "resource": "*.local/state/osc/*", "effect": "deny" },
     { "action": "read", "resource": "*.config/mcp-bugzilla/*", "effect": "deny" },
 

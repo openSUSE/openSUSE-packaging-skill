@@ -5,6 +5,7 @@
     ".oscrc",
     ".netrc",
     ".git-credentials",
+    ".config/git/credentials",
     ".config/gh/hosts.yml",
     ".local/state/osc/cookiejar",
     ".config/mcp-bugzilla/api-key"

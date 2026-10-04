@@ -5,7 +5,7 @@
 # plain words, so ~, $VAR, redirects, $(...) and globs go unmatched. The tool configs are
 # covered here only for a reader below given the exact absolute path; grep, sed, python and a
 # path with ~ get past, and the default profile in config.toml denies only .netrc,
-# .git-credentials, the bugzilla key and .env.
+# git's two credential stores, the bugzilla key and .env.
 # A parse error or a failing match example in ANY rules file disables all of them; after every
 # edit run: codex execpolicy check --rules <file> <argv...>
 HOME = "/home/USER"
@@ -17,6 +17,7 @@ CRED_FILES = [
     HOME + "/.config/tea/config.yml",
     HOME + "/.netrc",
     HOME + "/.git-credentials",
+    HOME + "/.config/git/credentials",
     HOME + "/.local/state/osc/cookiejar",
     HOME + "/.config/mcp-bugzilla/api-key",
 ]

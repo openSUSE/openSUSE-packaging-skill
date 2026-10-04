@@ -23,7 +23,7 @@ const unquoted = (t: string) =>
 // As in pr-guard.py: a call run inside the stamp directory, or a directory of
 // credential files, is judged whatever it says.
 const STAMP_DIR = "target-gate"
-const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)`)
+const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc)(?:/|$)`)
 const CRED_HOMES = ["/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc", "/.config/mcp-"]
 const real = (p: string) => {
   try {

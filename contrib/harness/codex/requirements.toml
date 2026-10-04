@@ -4,4 +4,4 @@
 # danger-full-access falls back to read-only with the list.
 # Absolute paths: replace /home/USER.
 [permissions.filesystem]
-deny_read = ["/home/USER/.netrc", "/home/USER/.git-credentials", "/home/USER/.config/mcp-bugzilla"]
+deny_read = ["/home/USER/.netrc", "/home/USER/.git-credentials", "/home/USER/.config/git/credentials", "/home/USER/.config/mcp-bugzilla"]

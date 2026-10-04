@@ -11,14 +11,14 @@
 
 [[rule]]
 toolName = ["read_file", "read_many_files", "list_directory", "glob", "grep_search"]
-argsPattern = '\.config/(gh|osc|tea|mcp-bugzilla)\b|gh/hosts\.yml|oscrc|\.netrc|\.git-credentials|\.local/state/osc\b'
+argsPattern = '\.config/(gh|osc|tea|mcp-bugzilla)\b|gh/hosts\.yml|oscrc|\.netrc|\.git-credentials|\.config/git/credentials|\.local/state/osc\b'
 decision = "deny"
 priority = 999
 denyMessage = "Credential files (osc, tea, gh, netrc, git credentials, API keys) are off limits: the CLIs read their own config."
 
 [[rule]]
 toolName = "run_shell_command"
-commandRegex = '(?:[^\x00]*\.config/(gh|osc|tea|mcp-bugzilla)\b|[^\x00]*gh/hosts\.yml|[^\x00]*oscrc|[^\x00]*\.netrc|[^\x00]*\.git-credentials|[^\x00]*osc/cookiejar|[^\x00]*\b(GIT|SSH)_ASKPASS\s*=|[^\x00]*core\.ask[Pp]ass|[^\x00]*(-[a-zA-Z]*H|--header)[\s=]*\\?[\x27"]?[Aa]uthorization\s*:|[^\x00]*--api(key|secret)|[^\x00]*://[^\s/:@]+:[^\s/@]+@|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bcurl\s)(?=[^\x00;&|]*?(api\.opensuse\.org|build\.opensuse\.org|src\.opensuse\.org/api)))'
+commandRegex = '(?:[^\x00]*\.config/(gh|osc|tea|mcp-bugzilla)\b|[^\x00]*gh/hosts\.yml|[^\x00]*oscrc|[^\x00]*\.netrc|[^\x00]*\.git-credentials|[^\x00]*\.config\}?/git/credentials|[^\x00]*CONFIG_HOME\}?/git/credentials|[^\x00]*osc/cookiejar|[^\x00]*\b(GIT|SSH)_ASKPASS\s*=|[^\x00]*core\.ask[Pp]ass|[^\x00]*(-[a-zA-Z]*H|--header)[\s=]*\\?[\x27"]?[Aa]uthorization\s*:|[^\x00]*--api(key|secret)|[^\x00]*://[^\s/:@]+:[^\s/@]+@|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bcurl\s)(?=[^\x00;&|]*?(api\.opensuse\.org|build\.opensuse\.org|src\.opensuse\.org/api)))'
 decision = "deny"
 priority = 999
 denyMessage = "Credentials stay inside osc, tea and git-obs, and OBS and the Gitea API are reached only through them."

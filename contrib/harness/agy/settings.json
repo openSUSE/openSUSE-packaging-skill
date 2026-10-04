@@ -9,6 +9,7 @@
       "read_file(/home/USER/.config/gh/hosts.yml)",
       "read_file(/home/USER/.netrc)",
       "read_file(/home/USER/.git-credentials)",
+      "read_file(/home/USER/.config/git/credentials)",
       "read_file(/home/USER/.local/state/osc)",
       "read_file(/home/USER/.config/mcp-bugzilla)",
       "command(gh auth token)",

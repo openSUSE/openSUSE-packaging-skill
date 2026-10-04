@@ -35,7 +35,8 @@ or container that does not mount these files.
 Every snippet denies, as far as its harness can express it:
 
 - the credential files `~/.config/osc/`, `~/.oscrc`, `~/.config/tea/`,
-  `~/.config/gh/hosts.yml`, `~/.netrc` and `~/.git-credentials`, osc's cookie jar
+  `~/.config/gh/hosts.yml`, `~/.netrc`, git's `~/.git-credentials` and
+  `~/.config/git/credentials`, osc's cookie jar
   (`~/.local/state/osc/`) and the bugzilla MCP key (`~/.config/mcp-bugzilla/`), to the
   read tool and on a command line, where all of `~/.config/gh/` counts (not
   `~/.config/ghostty`);
@@ -159,14 +160,14 @@ path has both.
 
 Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
 D-Bus disabled. `opencode debug config` loaded all 103 rules then (5 `external_directory`,
-87 `bash`, 11 `read`); the three `bash` rules added since, for a quoted `~/.config/gh` and
-for `~/.local/state/osc`, are checked by the suite's matcher only. `opencode debug agent
-build --tool read` refuses every credential path of the set from a git worktree, from
-outside git and with the home directory as the worktree, with the `read` rules alone as
-well, and reads an openssh-askpass spec; `--tool bash` refuses every command of the set
-and the secret printers as text behind `echo`, and lets packaging commands and greps of
-source trees run; `--tool grep` is refused a search of the tea config directory from a
-project.
+87 `bash`, 11 `read`); the rules added since, for a quoted `~/.config/gh`, for
+`~/.local/state/osc` and for `~/.config/git/credentials`, are checked by the suite's matcher
+only. `opencode debug agent build --tool read` refuses every credential path of the set from
+a git worktree, from outside git and with the home directory as the worktree, with the
+`read` rules alone as well, and reads an openssh-askpass spec; `--tool bash` refuses every
+command of the set and the secret printers as text behind `echo`, and lets packaging
+commands and greps of source trees run; `--tool grep` is refused a search of the tea config
+directory from a project.
 
 - The last matching rule wins, in file order. The `bash` block's `"*": "allow"` must be
   its first key, also when the openQA skill's snippet is merged beside this one; leave it
@@ -195,8 +196,8 @@ environment with D-Bus disabled, and again on 2.0.18 for the guard plugin and th
 and `execute` entries (the code these notes rest on is the same in both). There is no
 `debug agent --tool`, so a local OpenAI-compatible stub returned scripted tool calls to
 `opencode run --standalone`, and every verdict below is the tool's own. `opencode debug
-agents` lists all 111 entries of `opencode-v2/opencode.jsonc` (5 `external_directory`, 86
-`shell`, 11 `read`, 8 `edit`, 1 `execute`) after the base policy. A second opencode service
+agents` lists all 114 entries of `opencode-v2/opencode.jsonc` (5 `external_directory`, 88
+`shell`, 12 `read`, 8 `edit`, 1 `execute`) after the base policy. A second opencode service
 needs its own port (`opencode service set port N` in the throw-away home); on the default
 one every command hung.
 
@@ -230,9 +231,10 @@ one every command hung.
   as the worktree. `~/`, `$HOME/` and absolute patterns now match, but only a path outside
   both the project and its git worktree: never with the home directory as the worktree. The
   `*` prefix works in all three, so the snippet keeps it. With the whole snippet,
-  `external_directory` refuses five of the paths and `read` the other three (`~/.oscrc`,
-  `~/.netrc`, `~/.git-credentials`); `.env` is refused, `.env.example` read. Without
-  `--auto`, an external path asks first, and a non-interactive run rejects the ask.
+  `external_directory` refuses five of the paths and `read` the other four (`~/.oscrc`,
+  `~/.netrc`, `~/.git-credentials`, `~/.config/git/credentials`); `.env` is refused,
+  `.env.example` read. Without `--auto`, an external path asks first, and a
+  non-interactive run rejects the ask.
 - The grep and glob tools, aimed at the tea config directory from a project, are refused by
   `external_directory`; aimed at its parent, `~/.config`, grep is only asked, and with
   `--auto` it found the credential files there. The grep resource is the regex, not the
@@ -284,7 +286,7 @@ one every command hung.
 
 ### grok
 
-Checked on 1.0.32: `grok inspect --json` loads all 91 rules with none skipped. An unknown
+Checked on 1.0.38: `grok inspect --json` loads all 94 rules with none skipped. An unknown
 rule is dropped silently (a planted `Frob(x)` counted 0), so compare the count after
 merging. Matching was not run here (it needs a model call); the openQA skill measured it:
 a deny beats every allow and ask and holds under always-approve, command globs match the
@@ -293,7 +295,7 @@ whole command and each segment, and `*` crosses spaces and `/`.
 - A leading `~/` is literal text, so home paths use `**/`, and `X/**` does not match `X`,
   so a directory is listed both ways.
 - grok also reads `~/.claude/settings.json`: with the Claude snippet merged it loads those
-  93 rules too (184), whose `Read(~/...)` rules do not match in grok. It lists the guard's
+  96 rules too (190), whose `Read(~/...)` rules do not match in grok. It lists the guard's
   PreToolUse hook as enabled once `claude/pr-guard-hook.json` is merged; whether grok
   hands the guard an event it can judge is not verified, so do not count on the guard in
   grok.
@@ -331,8 +333,8 @@ for all future sessions" answers; only the admin tier outranks it.
 ### Antigravity CLI (`agy`)
 
 Written from the permissions documentation of antigravity.google, as the openQA skill's
-was. On 1.2.5, in a throw-away home, `agy --log-file F agents` logs "CLI settings
-initialized" with all 57 deny entries; it logs any string, so that shows the file is read,
+was. On 1.2.16, in a throw-away home, `agy --log-file F agents` logs "CLI settings
+initialized" with all 58 deny entries; it logs any string, so that shows the file is read,
 not that each rule is valid. Check `/permissions`, Global, deny after merging.
 
 - Targets are absolute: replace `/home/USER` with your home directory.
@@ -355,7 +357,7 @@ not that each rule is valid. Check `/permissions`, Global, deny after merging.
 ### Codex CLI
 
 Checked on 0.154.0 in a throw-away home under `env -i` with D-Bus disabled: `codex
-execpolicy check --resolve-host-executables` decides all 72 probes as intended, gaps
+execpolicy check --resolve-host-executables` decides all 76 probes as intended, gaps
 included, and exits 1 with "failed to parse policy" on a failing `match` example or a
 syntax error (both tried). `codex sandbox -P <profile> -C <dir> -- <command>` gives the
 sandbox's verdict on dummy files and a dummy osc config. The profile names match the
@@ -363,12 +365,13 @@ openQA skill's: if its snippet is merged already, add these keys to the same tab
 refuses a table twice).
 
 What the default `credentials` profile covers is narrow. It denies `.netrc`,
-`~/.git-credentials`, the bugzilla key, and `.env` and `.env.local` at the workspace root,
-to every sandboxed process; `.env.example`, an openssh-askpass spec and project files
-stay readable (measured). The tool configs and the cookie jar are covered only by the
-rules, and there only for a reader given the exact absolute path: `grep`, `sed`, `python3`,
-a path with `~`, `cat -n` or a relative path in another `workdir` get past. Only the
-opt-in `credentials-strict` profile denies them to every process.
+`~/.git-credentials`, `~/.config/git/credentials`, the bugzilla key, and `.env` and
+`.env.local` at the workspace root, to every sandboxed process; `.env.example`, an
+openssh-askpass spec and project files stay readable (measured). The tool configs and the
+cookie jar are covered only by the rules, and there only for a reader given the exact
+absolute path: `grep`, `sed`, `python3`, a path with `~`, `cat -n` or a relative path in
+another `workdir` get past. Only the opt-in `credentials-strict` profile denies them to
+every process.
 
 - The profile runs every command in a workspace-write sandbox with no-new-privileges:
   only the workspace and `/tmp` are writable, `/var/tmp` is not, and `sudo` refuses to
@@ -419,7 +422,7 @@ Kimi 0.42.0 parses `[permission]` rules but does not enforce them, so the snippe
 PreToolUse hook. Checked on 0.42.0 in a throw-away home under `env -i`: `kimi doctor
 config` accepts the entry and rejects an unknown key or event name (both tried), but does
 not compile the matcher, so `tests/test-harness.sh` does, and checks it selects Bash,
-Read, Grep, Write and MCP tools. The suite feeds the hook 277 events on stdin: it refuses
+Read, Grep, Write and MCP tools. The suite feeds the hook 289 events on stdin: it refuses
 the set, including a `;` inside a quoted message, a continued line, `$(osc token)`, an
 abbreviated `--api` before `token`, an MCP search scoped to the home directory, a
 relative path resolved against an ACP session's `workDir`, the process directory or the
@@ -478,7 +481,7 @@ judged, and a refusal redacts the credentials it would echo (URL userinfo,
 `Authorization`/`Bearer` values, `token=`).
 
 On the agent's own commands (not the scripts or program code they run) it also refuses
-reading a credential file — tea's, osc's, gh's, netrc, git's credential store, osc's
+reading a credential file — tea's, osc's, gh's, netrc, git's credential stores, osc's
 cookie jar, an MCP server's `api-key` — other than by `ls`, `stat` or `test` or a grep for
 one `build-*` setting; setting or running an askpass program; the tools' own secret
 printers (`gh auth` token/status/git-credential, `tea login` helper/edit, `git-obs login
