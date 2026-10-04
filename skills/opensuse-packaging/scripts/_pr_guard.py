@@ -614,11 +614,20 @@ def pool_or_unknown(text, ctx, cwd, cmd=False, extra=None):
 
 
 def code_lines(text):
-    return [
-        ln
-        for ln in text.replace("\\\n", " ").split("\n")
-        if not ln.lstrip().startswith("#")
-    ]
+    """A program's lines, a backslash-newline joining two as the shell, Python
+    and Perl do -- not after a comment line, which its newline ends."""
+    out, cur = [], ""
+    for ln in text.split("\n"):
+        if not cur and ln.lstrip().startswith("#"):
+            continue
+        if (len(ln) - len(ln.rstrip("\\"))) % 2:
+            cur += ln[:-1]
+            continue
+        out.append(cur + ln)
+        cur = ""
+    if cur:
+        out.append(cur)
+    return out
 
 
 def tool_rules(ln, ctx, cwd, argv=False):
@@ -1332,19 +1341,13 @@ def other_forge(text, m, ctx, cwd):
 
 
 def quoted(line, end):
-    """Whether line[end] sits inside quotes opened earlier on the line."""
-    q, i = None, 0
-    while i < end:
-        c = line[i]
-        if c == "\\" and q != "'":
-            i += 2
-            continue
-        if q:
-            q = None if c == q else q
-        elif c in "'\"":
-            q = c
-        i += 1
-    return q is not None
+    """Whether line[end] sits inside quotes, ${...} or a comment opened
+    earlier on the line -- not in a $(...) or (...), where a << is one."""
+    head = line[:end]
+    if (len(head) - len(head.rstrip("\\"))) % 2:  # \<< is a < and a <
+        return True
+    _, frames, open_span = shell_read(head)
+    return bool(open_span) or bool(frames) and frames[-1] in ('"', "${")
 
 
 def split_heredocs(text, ctx):
@@ -1373,27 +1376,162 @@ def split_heredocs(text, ctx):
     return "\n".join(out)
 
 
-def strip_comments(text):
-    """Drop shell comments: a # that starts a word, outside quotes."""
-    out, q, i, n = [], None, 0, len(text)
+# What a # must follow to start a comment: an unescaped blank or operator, not
+# the space of "a\\ #", nor the ) that closes a $(...) inside the word.
+WORD_BREAK = frozenset(" \t\n;&|()")
+SUB_OPEN = (["$"], ["<"], [">"])
+CODE = (None, "(", "$(")  # where quotes, comments and parens are the shell's
+CASE = re.compile(r"case[ \t\n]")
+
+
+def shell_read(text):
+    """(text as bash reads it, the frames still open at its end, the quote,
+    backtick or # whose span the text ends in). Each backslash-newline is
+    removed, not in single quotes; each $'...' spelled in plain single quotes,
+    decoded; each comment dropped. Nesting is followed as bash does -- "...",
+    $(...), (...), ${...}, and `...`, which ends at the next backtick whatever
+    it holds -- so a quote or # inside one is not the outer one's. A case
+    inside (...) is refused: its pattern's ) would end the parenthesis."""
+    return lex(text, 0, [])[:3]
+
+
+def sub_end(text, i):
+    """The index of the ) that ends the $(...), <(...) or >(...) whose ( is at
+    text[i], nested as shell_read() does; len(text) when none does."""
+    return lex(text, i + 1, ["$("], stop=0)[3]
+
+
+def lex(text, i, st, stop=None):
+    """shell_read() from text[i] inside the frames st, and the index it ended
+    at: the ) that leaves stop frames open, or len(text). A command's first
+    word after its keywords that is case or esac only once its quotes or
+    backslashes are gone is refused: the shell runs it as a command, the
+    rules would read the lines after it as case patterns."""
+    out, n = [], len(text)
+    dollar = glued = False
+    inner = sum(f != "(" for f in st)  # open frames but (: no words tracked in them
+    word, wq, cmd, target, in_dq = None, False, True, False, False
+
+    def end_word():
+        nonlocal word, wq, cmd, target
+        if word is None:
+            return
+        w = "".join(word)
+        if target:
+            target = False
+        elif cmd:
+            if wq and w in ("case", "esac"):
+                raise ValueError(f"a quoted {w} runs as a command, not the keyword")
+            cmd = w in KEYWORDS
+        word, wq = None, False
+
+    def add(chars, quoting=False):
+        nonlocal word, wq
+        if inner == 0 or in_dq and inner == 1 and st[-1] == '"':
+            word = word if word is not None else []
+            word.extend(chars)
+            wq = wq or quoting
+        elif word is not None:
+            word.append("\0")  # a substitution or ${...}: no keyword
+
     while i < n:
-        c = text[i]
-        if c == "\\" and q != "'" and i + 1 < n:
-            out.append(text[i : i + 2])
+        c, top = text[i], (st[-1] if st else None)
+        if c == "\\" and i + 1 < n:
+            if text[i + 1] != "\n":  # a removed one keeps $ next to its ', ) to its #
+                out.append(text[i : i + 2])
+                add(text[i + 1], True)
+                dollar = glued = False
             i += 2
             continue
-        if q:
-            if c == q:
-                q = None
-        elif c in "'\"":
-            q = c
-        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
+        if c == "`" or c == "'" and top != '"':
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" and (c == "`" or dollar) else 1
+            if j >= n:
+                end_word()
+                return "".join(out) + text[i:], st, c, n
+            if c == "'" and dollar:
+                body = ansi_c(text[i + 1 : j])
+                out[-1] = "'" + body.replace("'", "'\\''") + "'"
+                if word:
+                    word.pop()  # its $
+                add(body, True)
+            else:
+                out.append(text[i : j + 1])
+                add(text[i + 1 : j] if c == "'" else "\0", True)
+            i, dollar, glued = j + 1, False, False
             continue
+        closes = False
+        if top in CODE:
+            if c == "#" and not glued and (not out or out[-1] in WORD_BREAK):
+                j = text.find("\n", i)
+                if j < 0:
+                    end_word()
+                    return "".join(out), st, "#", n
+                i, dollar = j, False
+                continue
+            if inner == 0 and c in " \t\r;&|<>\n":
+                if c in "<>" and word and not wq and "".join(word).isdigit():
+                    word = None  # the fd of 2>: no argument
+                end_word()
+                if c in "<>":
+                    target = True
+                elif c in "&|" and out[-1:] in (["<"], [">"]):
+                    pass  # >&, <&, >|: still the redirection
+                elif c not in " \t\r":
+                    cmd, target = True, False
+            if c == '"':
+                in_dq = inner == 0
+                add("", True)
+                st.append(c)
+                inner += 1
+            elif c == "(":
+                sub = out[-1:] in SUB_OPEN
+                if not sub and inner == 0:
+                    end_word()
+                    cmd, target = True, False
+                elif inner == 0 and word is None:
+                    add("\0")  # <(...) is a word, as $(...) is
+                st.append("$(" if sub else "(")
+                inner += sub
+            elif c == ")":
+                if top:  # with none open, a case pattern's
+                    st.pop()
+                    inner -= top == "$("
+                    closes = top == "$("
+                    if len(st) == stop:
+                        return "".join(out), st, None, i
+                if not closes and inner == 0:
+                    end_word()
+                    cmd, target = True, False
+            elif top and CASE.match(text, i) and (not out or out[-1] in WORD_BREAK):
+                raise ValueError(
+                    "a case inside (...) or $(...) is not read, its pattern's ) "
+                    "would end it: run the case outside"
+                )
+            elif c not in " \t\r;&|<>\n":
+                add(c)
+        elif c == "(" and out[-1:] == ["$"]:
+            add(c)
+            st.append("$(")
+            inner += 1
+        elif top == '"' and c == '"' or top == "${" and c == "}":
+            st.pop()
+            inner -= 1
+        else:
+            if top == "${" and c == '"':
+                st.append(c)
+                inner += 1
+            add(c)
+        if c == "{" and out[-1:] == ["$"]:
+            st.append("${")
+            inner += 1
         out.append(c)
+        dollar = c == "$" and not dollar  # $$ is the PID: $$'...' is plain
+        glued = closes
         i += 1
-    return "".join(out)
+    end_word()
+    return "".join(out), st, None, n
 
 
 def substitutions(text, quotes=True, base=0, lit=False):
@@ -1444,12 +1582,7 @@ def substitutions(text, quotes=True, base=0, lit=False):
             i = j + 1
             continue
         elif text.startswith("$(", i) or (not q and text.startswith(("<(", ">("), i)):
-            depth, j = 0, i + 1
-            while j < n:
-                depth += {"(": 1, ")": -1}.get(text[j], 0)
-                if depth == 0:
-                    break
-                j += 1
+            j = sub_end(text, i + 1)
             if text.startswith("$((", i):  # $((...)) is arithmetic
                 out.append("$__sub")
             else:
@@ -2902,7 +3035,7 @@ def shell_pass(text, ctx, cwd, depth):
             for inner in substitutions(doc, quotes=False)[1]:
                 shell_pass(inner, ctx, cwd, depth)
     base = len(ctx.subs)
-    body = strip_comments(body.replace("\\\n", " "))
+    body = shell_read(body)[0]
     lit = substitutions(body, base=base, lit=True)[0]
     body, inners = substitutions(body, base=base)
     ctx.subs += [None] * len(inners)
@@ -3090,7 +3223,9 @@ API_HOSTS = (
     r"|src\.opensuse\.org\.?(?::\d+)?/+api(?![\w-])"
 )
 # One in a command-line word, with or without its scheme.
-API_WORD = Rx(rf"(?i)(?:^|(?<=[\s\"'`=(@])|://)(?:[^\s/\"'`@]*@)?(?:{API_HOSTS})")
+# The userinfo stops at = and (: each is a start of its own, and a run of them
+# rescanned from every one was quadratic (100 kB took 50 s).
+API_WORD = Rx(rf"(?i)(?:^|(?<=[\s\"'`=(@])|://)(?:[^\s/\"'`@=(]*@)?(?:{API_HOSTS})")
 
 
 def homes():

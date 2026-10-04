@@ -1,7 +1,8 @@
 import type { Plugin } from "@opencode/plugin"
 import { spawn } from "node:child_process"
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, normalize, resolve } from "node:path"
 
 // Pool PR guard for opencode 2.x: hands a matching shell, write or edit call to
 // the pinned pr-guard.py (and the _pr_guard.py beside it) and refuses the call
@@ -12,18 +13,35 @@ import { join, resolve } from "node:path"
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
 // Verbatim copy of PREFILTER in pr-guard.py; tests/test-pr-guard.sh compares them.
-const PREFILTER = new RegExp(String.raw`\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)\s*[\x22']?\$[{A-Za-z_@*]|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b`)
+const PREFILTER = new RegExp(String.raw`\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b`)
 // As unquoted() in pr-guard.py: $'...' decoded, then quotes and backslashes dropped.
 const unquoted = (t: string) =>
   t.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_m: string, body: string) =>
-    body.replace(/\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)/g, (_e: string, e: string) =>
-      e[0] === "x" && e.length > 1 ? String.fromCharCode(parseInt(e.slice(1), 16))
+    body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)/g, (_e: string, e: string) =>
+      "xuU".includes(e[0]) && e.length > 1 ? String.fromCodePoint(Math.min(parseInt(e.slice(1), 16), 0x10ffff))
         : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : e))
     .replace(/["'\\]/g, "")
 // As in pr-guard.py: a call run inside the stamp directory, or a directory of
 // credential files, is judged whatever it says.
 const STAMP_DIR = "target-gate"
 const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)`)
+const CRED_HOMES = ["/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc", "/.config/mcp-"]
+const real = (p: string) => {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
+  }
+}
+const above = (dir: string) => {
+  const top = normalize(dir).replace(/\/+$/, "") + "/"
+  return [homedir(), real(homedir())].some((h) =>
+    CRED_HOMES.some((r) => (h.replace(/\/+$/, "") + r + "/").startsWith(top)))
+}
+// As watched() in pr-guard.py: that directory or one above the credential
+// files, as written or resolved (a symlink, a leading //), is judged too.
+const watched = (dir: string) =>
+  dir !== "" && [dir, real(dir)].some((d) => d.includes(STAMP_DIR) || CRED_DIR.test(d) || above(d))
 
 // As opencode reads a path argument: "~" is the home directory.
 const home = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
@@ -82,8 +100,7 @@ const plugin: Plugin.Plugin = {
           : { tool_name: "Edit", tool_input: { file_path, new_string: body }, cwd: workdir }
       }
 
-      if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text))
-        && !workdir.includes(STAMP_DIR) && !CRED_DIR.test(workdir)) return
+      if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text)) && !watched(workdir)) return
       const why = await judge(guardEvent)
       if (why !== undefined) throw new Error(why)
     })
