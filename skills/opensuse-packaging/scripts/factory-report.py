@@ -332,6 +332,7 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
 
 def main():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         epilog="Exit: 0 = report written, 1 = osc api failed or no accepted SRs in "
         "the window, 2 = usage.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

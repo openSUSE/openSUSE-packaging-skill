@@ -103,6 +103,7 @@ def die(msg, code=2):
 # ---------- main ---------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         description=__doc__.splitlines()[0],
         epilog="Exit: 0 = CURRENT, 1 = UPDATE-CANDIDATE, 3 = SUSPECT (renumbering),\n"
         "      2 = usage or no verdict (Source0 registry down, undatable).",

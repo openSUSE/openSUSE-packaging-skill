@@ -87,6 +87,8 @@ case_ help-prints-nothing 1 "scripts/gpg-verify.sh:0: --help prints nothing" \
   "sed -i 's/^  -h|--help) .*exit 0;;\$/  -h|--help) exit 0;;/' $SK/scripts/gpg-verify.sh && grep -qx '  -h|--help) exit 0;;' $SK/scripts/gpg-verify.sh"
 case_ help-unusable 1 "gpg-verify.sh has no usable --help" \
   "sed -i 's/^  -h|--help) .*exit 0;;\$/  -h|--help) exit 0;;/' $SK/scripts/gpg-verify.sh && grep -qx '  -h|--help) exit 0;;' $SK/scripts/gpg-verify.sh"
+case_ option-prefix 1 "scripts/factory-report.py:0: takes --hel for --help: set allow_abbrev=False" \
+  "sed -i '/^ *allow_abbrev=False,\$/d' $SK/scripts/factory-report.py && ! grep -q allow_abbrev $SK/scripts/factory-report.py"
 
 [ "$fails" -eq 0 ] && { echo "OK: check-flags.py catches every mutation"; exit 0; }
 echo "$fails failure(s)"; exit 1

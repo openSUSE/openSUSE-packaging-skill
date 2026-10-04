@@ -115,13 +115,13 @@ def spans(path):
 
 
 @functools.lru_cache(maxsize=None)
-def run_help(script_path):
-    """(exit code, output) of `<script> --help`; the exit code is None and the
+def run_help(script_path, flag="--help"):
+    """(exit code, output) of `<script> FLAG` (--help); the exit code is None and the
     output the error when it could not run."""
     if script_path.endswith(".py"):
-        cmd = [sys.executable, script_path, "--help"]
+        cmd = [sys.executable, script_path, flag]
     else:
-        cmd = ["bash", script_path, "--help"]
+        cmd = ["bash", script_path, flag]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=ROOT)
     except (OSError, subprocess.SubprocessError) as e:
@@ -357,6 +357,19 @@ def main(argv=None):
                 findings.append((f"scripts/{fn}", 0, f"--help exits {rc}, want 0"))
             elif not out.strip():
                 findings.append((f"scripts/{fn}", 0, "--help prints nothing"))
+            # argparse takes a unique prefix of an option (--gitea-h for
+            # --gitea-host), which a rule matching the full name misses.
+            elif (
+                fn.endswith(".py")
+                and run_help(os.path.join(scripts, fn), "--hel")[0] == 0
+            ):
+                findings.append(
+                    (
+                        f"scripts/{fn}",
+                        0,
+                        "takes --hel for --help: set allow_abbrev=False",
+                    )
+                )
 
         runnable = [
             fn
