@@ -287,6 +287,7 @@ def run_rules(nums):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         prog="refsection.py",
         description="Print one section of a skill doc.",
         epilog='refsection.py specfile-guidelines.md "Patches" | --list <file> | '

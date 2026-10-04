@@ -558,6 +558,7 @@ def fetch_prs(state, brief, leg):
 
 def main():
     ap = argparse.ArgumentParser(
+        allow_abbrev=False,
         epilog="Exit:\n"
         "  0 = printed (a PR-leg failure only warns); --pr: green at the PR head, "
         "or merged\n"

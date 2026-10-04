@@ -128,6 +128,7 @@ except ImportError:
     _forges = None
 
 ap = argparse.ArgumentParser(
+    allow_abbrev=False,
     epilog="Exit: 0 = every source answered or was skipped on purpose,\n"
     "      3 = a source was lost or a pass never ran,\n"
     "      2 = usage or no package names.",

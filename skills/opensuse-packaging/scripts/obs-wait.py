@@ -402,18 +402,19 @@ def seconds(minimum):
 def main(argv=None):
     ap = Parser(
         prog="obs-wait.py",
+        allow_abbrev=False,
         usage="obs-wait.py build PRJ PKG [--repo R] [--arch A] [--timeout S] [--recheck S]\n"
         "       obs-wait.py request ID [--timeout S] [--recheck S]",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = ap.add_subparsers(dest="mode", required=True, metavar="{build,request}")
-    b = sub.add_parser("build", prog="obs-wait.py build")
+    b = sub.add_parser("build", prog="obs-wait.py build", allow_abbrev=False)
     b.add_argument("prj")
     b.add_argument("pkg")
     b.add_argument("--repo", metavar="R")
     b.add_argument("--arch", metavar="A")
-    r = sub.add_parser("request", prog="obs-wait.py request")
+    r = sub.add_parser("request", prog="obs-wait.py request", allow_abbrev=False)
     r.add_argument("id")
     for p in (b, r):
         p.add_argument("--timeout", metavar="S", type=seconds(0), default=80)

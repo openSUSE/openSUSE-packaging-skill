@@ -406,7 +406,9 @@ def render_ascii(rows):
 
 def main():
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        allow_abbrev=False,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--user")
     ap.add_argument(
