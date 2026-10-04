@@ -24,7 +24,13 @@ printf '[  1s] compiling foo.c\n' > running.log
 printf '[  1s] \033[31mred\033[0m text\n' > escape.log
 
 run() { out="$(bash "$BW" "$@" 2>&1)"; rc=$?; }
-group() { setsid bash -c "$1" </dev/null >/dev/null 2>&1 & echo $!; }
+# $! is known before the child's setsid() runs: wait until its group exists.
+group() {
+  setsid bash -c "$1" </dev/null >/dev/null 2>&1 &
+  local p=$! i=0
+  until pgrep -g "$p" >/dev/null || [ $((i += 1)) -gt 50 ]; do sleep 0.1; done
+  echo "$p"
+}
 
 echo "--- usage"
 for args in "" "1" "abc running.log" "0 running.log" "--max x 1 running.log" "--max 08 1 running.log" \
