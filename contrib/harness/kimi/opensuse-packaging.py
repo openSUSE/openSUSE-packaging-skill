@@ -30,6 +30,8 @@ PATHS = [
     r"\.config/tea\b",
     r"\.netrc\b",
     r"\.git-credentials\b",
+    r"\.config\}?/git/credentials\b",
+    r"CONFIG_HOME\}?/git/credentials\b",
     r"(?:^|[\s/\"'=:<>(|;&])\.env(?:\.(?!example\b)[\w.-]+)?(?=$|[\s\"'/;|&)<>,*?\[])",
     r"\.local/state/osc/cookiejar",
     r"\.config/mcp-bugzilla\b",
@@ -88,6 +90,7 @@ SECRET_ROOTS = [
     f"{HOME}/.config/tea",
     f"{HOME}/.netrc",
     f"{HOME}/.git-credentials",
+    f"{HOME}/.config/git/credentials",
     f"{HOME}/.local/state/osc",
     f"{HOME}/.config/mcp-bugzilla",
 ]

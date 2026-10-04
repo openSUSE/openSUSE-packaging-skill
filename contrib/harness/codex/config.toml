@@ -19,6 +19,7 @@ enabled = true
 # directory under its root, or more than 8192 matches, then fails every command.
 "~/.netrc" = "deny"
 "~/.git-credentials" = "deny"
+"~/.config/git/credentials" = "deny"
 "~/.config/mcp-bugzilla" = "deny"
 # osc takes a lock beside its cookie jar on every call; the directory must exist already.
 "~/.local/state/osc" = "write"

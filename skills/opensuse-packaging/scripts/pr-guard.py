@@ -18,7 +18,7 @@ once a call matches the prefilter.
 
 The agent's own commands (not the scripts or program code they run) are also
 refused when they read a credential file (tea's, osc's, gh's, netrc, git's
-credential store, osc's cookie jar, an MCP server's api-key) other than by
+credential stores, osc's cookie jar, an MCP server's api-key) other than by
 listing it, set or run an askpass program, run one of the tools' own secret
 printers (gh auth, tea login helper/edit, git-obs login list, git credential
 helpers, secret-tool, osc's full config dump, HTTP debugging and tokens),
@@ -85,7 +85,9 @@ PREFILTER = re.compile(
 )
 # A call run inside a directory of credential files, or in one above them, is
 # judged whatever it says: a bare `.` or a relative name reaches them from there.
-CRED_DIR = re.compile(r"/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)")
+CRED_DIR = re.compile(
+    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc)(?:/|$)"
+)
 CRED_HOMES = (
     "/.config/tea",
     "/.config/osc",

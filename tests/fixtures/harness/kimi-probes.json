@@ -53,6 +53,7 @@
     "osc sr -m x --nodevelproject devel:x pkg",
     "sudo chroot /x",
     "cat ~/.git-credentials",
+    "cat ~/.config/git/credentials",
     "git-obs login gitcredentials-helper get",
     "git-obs login list",
     "git obs login list --show-t",

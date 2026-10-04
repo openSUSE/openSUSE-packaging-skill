@@ -62,6 +62,8 @@
       "*.config/gh'*": "deny",
       "*.netrc*": "deny",
       "*.git-credentials*": "deny",
+      "*.config*git/credentials*": "deny",
+      "*CONFIG_HOME*git/credentials*": "deny",
       "*gh auth token*": "deny",
       "*gh auth status*": "deny",
       "*gh auth git-credential*": "deny",
@@ -138,6 +140,7 @@
       "*.config/gh/hosts.yml": "deny",
       "*.netrc": "deny",
       "*.git-credentials": "deny",
+      "*.config/git/credentials": "deny",
       "*.local/state/osc/*": "deny",
       "*.config/mcp-bugzilla/*": "deny"
     }

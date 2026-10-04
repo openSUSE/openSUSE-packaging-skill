@@ -10,6 +10,9 @@
     "ls ~/.config/gh",
     "cat ~/.netrc",
     "cat ~/.git-credentials",
+    "cat ~/.config/git/credentials",
+    "cat ${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials",
+    "cat $XDG_CONFIG_HOME/git/credentials",
     "cat ~/.local/state/osc/cookiejar",
     "cat ~/.config/mcp-bugzilla/api-key",
     "gh auth token",
@@ -80,6 +83,7 @@
     "sudo umount /var/tmp/build-root/x/proc"
   ],
   "pass": [
+    "pytest src/scmrepo/git/credentials.py",
     "osc build",
     "osc sr -m x",
     "osc ci -m 'fix token handling'",

@@ -344,6 +344,11 @@
       "/home/USER/.git-credentials"
     ],
     [
+      "forbidden",
+      "cat",
+      "/home/USER/.config/git/credentials"
+    ],
+    [
       "none",
       "osc",
       "config",

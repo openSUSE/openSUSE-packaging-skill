@@ -58,7 +58,8 @@ def fixture(name):
 
 
 # The shared set, the tools' secret printers, and the paths every read tool denies.
-PATHS = [".config/osc", "oscrc", ".config/tea", "gh/hosts.yml", ".netrc", ".git-credentials"]
+PATHS = [".config/osc", "oscrc", ".config/tea", "gh/hosts.yml", ".netrc", ".git-credentials",
+         "git/credentials"]
 READ_PATHS = PATHS + [".local/state/osc", ".config/mcp-bugzilla"]
 COMMANDS = ["gh auth token", "gh auth status", "gh auth git-credential",
             "-H*uthorization", "--header*uthorization", "--apikey", "--apisecret", "://*:*@",
