@@ -66,27 +66,40 @@ Exit: 0 = allowed · 2 = refused, reason on stderr
 import json
 import os
 import re
+import signal
 import sys
 
-# No match, no analysis. The opencode plugin carries a verbatim copy so it
-# spawns this guard only on a match; tests/test-pr-guard.sh compares the two.
-# Any path matches, because a file a command runs is where a POST hides, and
-# so does a command named by a variable; so do the names the credential rules
-# need where no path shows (gh, a netrc in the cwd, curl -u).
+# No match, no analysis -- so the prefilter may only skip a call the rules would
+# let through; tests/test-pr-guard.sh checks that over every fixture event. The
+# opencode plugins carry a verbatim copy so they spawn this guard only on a
+# match; the suite compares them. Any path matches, because a file a command
+# runs is where a POST hides; so does anything that can name a path or a
+# program without one: ~, .., a variable, a substitution, $'...', cd; and the
+# names the credential rules need where no path shows (gh, a netrc, curl -u).
 PREFILTER = re.compile(
-    r"\/|tea\b|git-obs|\bgit\b[^\n;&|]*\bobs\b|src\.opensuse\.org|\bpush\b|\bosc\b"
-    r"|\b(?:python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval)\b"
+    r"\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b"
+    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd)\b"
     r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b"
-    r"|(?:^|[;&|(\n!{]|\b(?:do|then|else|elif|if|while|until|command|exec|nohup|time"
-    r"|builtin|setsid|stdbuf|nice|ionice|sudo|doas|xargs|timeout|watch|parallel)\b)"
-    r"\s*[\x22']?\$[{A-Za-z_@*]"
     r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
     r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
 )
-# A call run inside a directory of credential files is judged whatever it says.
+# A call run inside a directory of credential files, or in one above them, is
+# judged whatever it says: a bare `.` or a relative name reaches them from there.
 CRED_DIR = re.compile(r"/\.(?:config/(?:tea|osc|gh|mcp-[^/]*)|local/state/osc)(?:/|$)")
+CRED_HOMES = (
+    "/.config/tea",
+    "/.config/osc",
+    "/.config/gh",
+    "/.local/state/osc",
+    "/.config/mcp-",
+)
 ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
-ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)")
+ESCAPE = re.compile(
+    r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)"
+)
+# Claude Code runs a call unjudged when it kills the hook at its 60 s timeout:
+# a call not decided by then is refused instead.
+DEADLINE = 50
 
 
 def unquoted(text):
@@ -96,8 +109,8 @@ def unquoted(text):
 
     def esc(m):
         e = m.group(1)
-        if e[0] == "x" and len(e) > 1:
-            return chr(int(e[1:], 16))
+        if e[0] in "xuU" and len(e) > 1:
+            return chr(min(int(e[1:], 16), 0x10FFFF))
         return chr(int(e, 8)) if e[0] in "01234567" else e
 
     text = ANSI_C.sub(lambda m: ESCAPE.sub(esc, m.group(1)), text)
@@ -122,6 +135,42 @@ def text_of(ev):
     return None
 
 
+def watched(cwd):
+    """A cwd the call is judged in whatever it says: the stamp directory, a
+    directory of credential files, or one above them -- as written or resolved,
+    as the rules place it (a symlink, a leading //)."""
+    if not isinstance(cwd, str) or not cwd:
+        return False
+    home = os.path.expanduser("~")
+    homes = {home.rstrip("/"), os.path.realpath(home).rstrip("/")}
+    for d in (cwd, os.path.realpath(cwd)):
+        top = os.path.normpath(d).rstrip("/") + "/"
+        if (
+            STAMP_DIR in d
+            or CRED_DIR.search(d)
+            or any((h + r + "/").startswith(top) for h in homes for r in CRED_HOMES)
+        ):
+            return True
+    return False
+
+
+def skip(ev, text):
+    """True when the rules cannot refuse the call: no prefilter match."""
+    cwd = ev.get("cwd") if isinstance(ev, dict) else None
+    return text is None or not (
+        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or watched(cwd)
+    )
+
+
+class Late(BaseException):
+    """The deadline: not an OSError, as TimeoutError is, so no handler in the
+    rules takes it for a failed read and judges on."""
+
+
+def late(*_):
+    raise Late
+
+
 def rules():
     """_pr_guard.py, compiled from its source: no bytecode cache to trust."""
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "_pr_guard.py")
@@ -139,17 +188,15 @@ def main(argv):
     if len(argv) > 1:
         sys.stderr.write("usage: pr-guard.py < EVENT (see --help)\n")
         return 2
-    raw = sys.stdin.read()
+    signal.signal(signal.SIGALRM, late)
+    signal.alarm(DEADLINE)
+    raw = sys.stdin.buffer.read().decode("utf-8", "replace")
     try:
         ev = json.loads(raw)
         text = text_of(ev)
     except ValueError:
         ev, text = None, raw
-    cwd = ev.get("cwd") if isinstance(ev, dict) else None
-    watched = isinstance(cwd, str) and (STAMP_DIR in cwd or CRED_DIR.search(cwd))
-    if text is None or not (
-        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or watched
-    ):
+    if skip(ev, text):
         return 0
     mod = {}
     try:
@@ -171,4 +218,21 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        try:
+            code = main(sys.argv)
+        finally:
+            signal.alarm(0)
+    except Late:
+        sys.stderr.write(
+            f"pr-guard: BLOCKED [undecided] no verdict within {DEADLINE} s, "
+            "so the call is refused.\n"
+        )
+        code = 2
+    except Exception as e:  # never exit 1: Claude Code would run the call
+        sys.stderr.write(
+            f"pr-guard: BLOCKED [undecided] the guard failed ({type(e).__name__}), "
+            "so the call is refused.\n"
+        )
+        code = 2
+    sys.exit(code)

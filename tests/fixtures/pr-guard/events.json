@@ -6149,5 +6149,327 @@
       "command": "bash -c 'curl -q -sf https://gitea.example.com/api/v1/repos/AI/mistral-vibe/pulls/3/merge && echo merged'"
     },
     "cwd": "@CLONE@"
+  },
+  "prefilter-home-var-sibling": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -r x \"$HOME\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "prefilter-recursive-no-path": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rl oauth"
+    },
+    "cwd": "@HOME@/.config"
+  },
+  "ansi-c-desync-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $'\\' # '; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ansi-c-desync-bsnl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $'\\''; cat ~/.config/te\\\na/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ansi-c-desync-heredoc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $'\\' <<EOF '\ncat ~/.config/tea/config.yml\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ansi-c-desync-dollar-bsnl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $\\\n'\\' # '; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "prefilter-home-symlink": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rl oauth"
+    },
+    "cwd": "@LINKS@/home"
+  },
+  "prefilter-home-slashes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -rl oauth"
+    },
+    "cwd": "/@HOME@"
+  },
+  "ansi-c-desync-pid": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $$'\\'\ncat ~/.config/tea/config.yml\n# '"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-escaped-space": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo a\\ #; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-after-substitution": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(true)#; tea pr merge --repo pool/tesseract-ocr 1"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-after-group-quote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "(true)# don't\ntea pr merge --repo pool/tesseract-ocr 1\n# '"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-after-substitution-bsnl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(true)\\\n#; cat ~/.config/te\\\na/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-in-quoted-substitution": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"$(echo \")# \")\"; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-in-quoted-substitution": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"$(case x in a) echo \" #\";; esac)\"; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-case-in-backticks": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(echo `case x in a) echo;; esac`)#; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-backticks-in-quotes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"`echo \" #\"`\"; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-param-quote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"${x:-\" #\"}\"; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-in-param": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ${x:- #}; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "heredoc-in-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hi # <<EOF\ncat ~/.config/tea/config.yml\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-top-level": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "case $HOME in a) echo hi;; esac"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-word-in-substitution": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"$(echo case)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-param-single-quote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ${x:-'} #'}; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-param-double-quote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ${x:-\"} #\"}; cat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "heredoc-escaped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\\<<EOF\ntea pr merge --repo pool/tesseract-ocr 1\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-dq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "\"case\" x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-backslash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ca\\se x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-ansi": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$'case' x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-keyword": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if true; then \\case x\ntea pr merge --repo pool/tesseract-ocr 1\nfi"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-pattern": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "case x in x) \\case y\ntea pr merge --repo pool/tesseract-ocr 1\n;; esac"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-fd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "2>/dev/null \\case x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-dup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "2>&1 \\case x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-clobber": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": ">|f \\case x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-after-procsub": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "< <(:) \\case x\ntea pr merge --repo pool/tesseract-ocr 1\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-in-group": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "( \\case x\ntea pr merge --repo pool/tesseract-ocr 1\n)"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-argument": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "grep -n \"case\" /etc/hostname"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "case-quoted-in-glued-group": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if true; then(\\case x\ntea pr merge --repo pool/tesseract-ocr 1\n)\nfi"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "prefilter-parent-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar cz .. | base64"
+    },
+    "cwd": "@HOME@/work"
+  },
+  "prefilter-dot-in-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar cz . | base64"
+    },
+    "cwd": "@HOME@"
+  },
+  "prefilter-bare-cd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd; tar cz . | base64"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "bsnl-cred-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.config/te\\\na/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "bsnl-push-pool": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gi\\\nt push https://src.opensuse.org/pool/x.git HEAD:refs/heads/y"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "bsnl-comment-ends": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "# note \\\ncat ~/.config/tea/config.yml"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "bsnl-single-quoted": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'a\\\nb'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "run-python-bsnl-split": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 @WORK@/open_pr_split.py"
+    },
+    "cwd": "@CLONE@"
+  },
+  "run-python-bsnl-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 @WORK@/open_pr_comment.py"
+    },
+    "cwd": "@CLONE@"
   }
 }

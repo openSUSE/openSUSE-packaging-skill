@@ -569,19 +569,24 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 
 ## What reaches the guard
 
-The prefilter matches any path, `tea`, `git-obs` or `git obs`, `src.opensuse.org`, `push`,
-`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, a command named by a
-variable (`$OSC ci`), and for the credential rules `gh`, `credential`, `secret-tool`,
+The prefilter matches any path, `~`, `..`, a variable or substitution anywhere (`$X`,
+`$(…)`, backquotes, `$'…'`), `cd`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
+`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and for the credential
+rules `gh`, `credential`, `secret-tool`,
 `netrc`, `oscrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each
 also read with its quotes and backslashes dropped (`o''sc`): a file a command runs is where
 a POST hides. A command named by a variable is judged as the tool its value names; one
 only the shell knows as every guarded tool, and as osc only when the variable is named for
-it. A call whose working directory is inside a `target-gate` directory, or a directory of
-credential files (tea's, osc's, gh's, an MCP server's, osc's state), is judged too. The
+it. A call whose working directory is inside a `target-gate` directory, a directory of
+credential files (tea's, osc's, gh's, an MCP server's, osc's state), or one above them (the
+home directory, `~/.config`, `/`), is judged too. The prefilter may only skip a call the
+rules would let through: the suite checks that over every fixture event. The
 rest of the command line decides nothing.
 
 A matched command is judged one parsed command at a time: a commit message, a grep
-pattern or an echo that quotes a pool merge is text, not a merge. Program text is read
+pattern or an echo that quotes a pool merge is text, not a merge. Quotes, comments,
+heredoc markers and line continuations are read as bash reads them, nested in `$(…)`,
+`(…)`, `"…"`, `${…}` and backquotes. Program text is read
 whole: every script a command runs, inline code (`-c`, `-e`), and text fed to a shell or
 interpreter (heredoc, here-string, `< FILE`, a pipe from `echo`, `printf` or `cat`). A
 program piped in from anything else is refused. `tea` and `git-obs` without a repository
@@ -643,11 +648,12 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - Claude Code blocks a call only on **exit 2** and hands the model the guard's stderr.
   Any other non-zero exit is a non-blocking error, so the guard turns every failure
   after a match (an unresolvable remote, a failed PR lookup, a missing `_pr_guard.py`,
-  a crash) into exit 2.
+  a crash), and an event it cannot parse, into exit 2.
 - Claude Code runs a call unjudged when the hook is killed at its `timeout` (60 s in
   `claude/pr-guard-hook.json`) or cannot start: `python3` missing is exit 127, a
   non-blocking error, as the Kimi hook fails open on its timeout. So the open-PR lookups
-  of one call stop at 40 s in all and refuse the call past that.
+  of one call stop at 40 s in all and refuse the call past that, and a call the guard has
+  not decided after 50 s is refused.
 - The opencode plugins throw on any non-zero exit, on their own 60 s timeout, and when
   `python3` or the pinned guard cannot be spawned: they fail closed. On 2.x the thrown
   message reaches the model verbatim, and a missing `python3` and a missing guard script
@@ -657,11 +663,17 @@ create must be refused too, the `AI/zzz` create must run, and so must
 
 ## Limits
 
-- In Claude Code a hook killed at its 60 s timeout, or a missing `python3`, lets the call
-  run unjudged. Only the open-PR lookups share a 40 s budget; the git queries a push
-  needs (10 s each) are not budgeted. The opencode plugins refuse in both cases.
+- In Claude Code a missing `python3` lets the call run unjudged; the opencode plugins
+  refuse. A call the guard has not decided after 50 s is refused before the hook's 60 s
+  timeout: the open-PR lookups share a 40 s budget, the git queries a push needs (10 s
+  each) are not budgeted, and one word of several hundred kB takes the tokenizer tens of
+  seconds.
 - Trust in the skill's scripts is trust in the checkout's `origin/main`: moving that ref
   by hand (`update-ref`, a fetch from another remote) re-blesses whatever it names.
+- A `case` statement inside `(…)` or `$(…)` is refused, in the command or in a script
+  it runs by path (`/usr/bin/zgrep`): the guard would take a pattern's `)` for the end
+  of the parenthesis. So is a quoted or escaped `case` or `esac` where a command's
+  name stands (`\case`, `"esac"`), which the shell runs as a command.
 - A script run by bare name from `PATH` is not read, nor a program held in a variable
   the call does not set or made by a substitution (`$CMD`, `eval "$CMD"`,
   `bash -c "$(cat F)"`).
@@ -725,13 +737,10 @@ create must be refused too, the `AI/zzz` create must run, and so must
   them, and the Read tool is left to the snippets. Nor are a credential file named by a
   variable the call does not set, one read where the guard cannot place the directory
   (but for `oscrc` and `cookiejar`), words `xargs` reads from stdin, an API URL passed
-  through a shell function's arguments, or a recursive search with no path in a call the
-  prefilter lets through.
+  through a shell function's arguments.
 - A script that runs its own arguments (`"$@"`) is not followed, and `"$@"` or an array
   in a script's command position is its arguments, not judged; on the call's own command
   line an unknown one is refused.
-- The prefilter reads the text as written and with its quotes and backslashes dropped:
-  a command name only an expansion spells (`${X:-osc}`, `$(echo osc)`) is not seen.
 - Request messages are measured on osc command lines only: not in program code running
   osc, and not in PR descriptions (`tea`, `git-obs`). A message another program writes, a
   printf width or reused format, or a brace expansion is refused as unknown.

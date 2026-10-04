@@ -29,7 +29,7 @@ export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs"
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 unset PR_GUARD_SKILL_DIR
-mkdir -p "$HOME" "$work/plain" "$work/scripts"
+mkdir -p "$HOME/work" "$work/plain" "$work/scripts" "$work/links" && ln -s "$HOME" "$work/links/home"
 cp -r "$FX/prs" "$work/prs"
 python3 -c 'import json, sys
 prs = [{"number": n, "head": {"ref": "b%d" % n, "repo": {"owner": {"login": "x"}}}} for n in range(50)]
@@ -84,7 +84,7 @@ W=$work/scripts
 # The canonical script, byte-identical and same-named but outside the checkout; and linked to.
 mkdir -p "$W/elsewhere" && cp "$S/scripts/pool-pr.sh" "$W/elsewhere/"; ln -s "$S/scripts/pool-pr.sh" "$W/pool-pr-link.sh"
 cp "$FX/open-pr.sh" "$FX/open_pr.py" "$FX/open-pr.js" "$FX/open-pr.pl" "$FX/agit.sh" "$FX/land.sh" "$FX/quoting.sh" "$FX/stamp.py" "$FX/kpi.py" "$W/"
-cp "$FX/scrape-token.sh" "$FX/obs-api.sh" "$W/"
+cp "$FX/scrape-token.sh" "$FX/obs-api.sh" "$FX/open_pr_split.py" "$FX/open_pr_comment.py" "$W/"
 # Stand-in credential files under the suite's HOME, and a link to one; their
 # names live in a fixture, since the guard reads this suite.
 python3 -c 'import json, os, sys
@@ -140,7 +140,7 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
     WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
-    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME"
+    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME" LINKS="$work/links"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -528,6 +528,8 @@ case_ run-dot-slash             2 create-api      "a write to pool pulls"
 case_ run-source                2 create-api      "a write to pool pulls"
 case_ run-env                   2 create-api      "a write to pool pulls"
 case_ run-python                2 create-api      "a write to pool pulls"
+case_ run-python-bsnl-split     2 create-api      "a write to pool pulls"
+case_ run-python-bsnl-comment   2 create-api      "a write to pool pulls"
 case_ run-uv                    2 create-api      "a write to pool pulls"
 case_ run-node                  2 create-api      "a write to pool pulls"
 case_ run-nested                2 create-api      "a write to pool pulls"
@@ -1241,6 +1243,91 @@ echo "--- the prefilter sends them without a path: a keyword, or a cwd among the
 case_ prefilter-netrc-cwd        2 credential-read "cat reads ~/.netrc"
 case_ prefilter-cred-dir-cwd     2 credential-read "cat reads ~/.config/gh/hosts.yml"
 case_ prefilter-askpass-no-slash 2 askpass "SSH_ASKPASS"
+# ... a variable, .., or a cwd above the credential files: no / needed to reach them.
+case_ prefilter-home-var-sibling 2 credential-read "grep reaches the credential files under ~"
+case_ prefilter-parent-dir       2 credential-read "tar reaches the credential files under ~"
+case_ prefilter-recursive-no-path 2 credential-read "grep reaches the credential files under ~"
+case_ prefilter-home-symlink    2 credential-read "grep reaches the credential files under ~"
+case_ prefilter-home-slashes    2 credential-read "grep reaches the credential files under ~"
+# In $'...' a \' closes nothing: read as a closing quote, the rest of the line
+# became a comment, a quoted continuation or a heredoc.
+case_ ansi-c-desync-comment     2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ ansi-c-desync-bsnl        2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ ansi-c-desync-heredoc     2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ ansi-c-desync-dollar-bsnl 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ ansi-c-desync-pid        2 credential-read "cat reads ~/.config/tea/config.yml"
+# An escaped space, or the ) of a $(...), is part of a word: a # after it starts
+# no comment. After a group's ) it does, and a quote in that comment quotes nothing.
+case_ comment-escaped-space     2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-after-substitution 2 merge-tea    "not even their own"
+case_ comment-after-substitution-bsnl 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-after-group-quote 2 merge-tea     "not even their own"
+case_ comment-in-quoted-substitution 2 credential-read "cat reads ~/.config/tea/config.yml"
+# Nesting as bash reads it: a backtick ends at the next one, ${...} at its },
+# a # in either is no comment, nor a << after a # a heredoc.
+case_ comment-case-in-backticks 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-backticks-in-quotes 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-param-quote       2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-param-single-quote 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-param-double-quote 2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ comment-in-param          2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ heredoc-in-comment        2 credential-read "cat reads ~/.config/tea/config.yml"
+# A case pattern's ) would end a (...) it sits in: refused there, read elsewhere.
+case_ case-in-quoted-substitution 2 undecided   "a case inside (...) or \$(...) is not read"
+case_ case-top-level            0 - ""
+case_ case-word-in-substitution 0 - ""
+case_ heredoc-escaped           2 merge-tea     "not even their own"
+# A quoted case or esac is a command, not the keyword: the rules would read the
+# lines after it as patterns. Refused where a command's name stands.
+case_ case-quoted-dq            2 undecided     "a quoted case runs as a command"
+case_ case-quoted-backslash     2 undecided     "a quoted case runs as a command"
+case_ case-quoted-ansi          2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-keyword 2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-pattern 2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-fd      2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-dup     2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-clobber 2 undecided     "a quoted case runs as a command"
+case_ case-quoted-after-procsub 2 undecided     "a quoted case runs as a command"
+case_ case-quoted-in-group      2 undecided     "a quoted case runs as a command"
+case_ case-quoted-in-glued-group 2 undecided   "a quoted case runs as a command"
+case_ case-quoted-argument      0 - ""
+case_ prefilter-dot-in-home      2 credential-read "tar reaches the credential files under ~"
+case_ prefilter-bare-cd          2 credential-read "tar reaches the credential files under ~"
+
+echo "--- a backslash-newline joins the word around it, as bash reads it"
+case_ bsnl-cred-read     2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ bsnl-push-pool     2 push-pool "pool/"
+case_ bsnl-comment-ends  2 credential-read "cat reads ~/.config/tea/config.yml"
+case_ bsnl-single-quoted 0 - ""
+
+echo "--- the prefilter skips only calls the rules let through, over every event"
+skipped="$(python3 - "$GUARD" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
+    OTHER="$work/other" BROKEN="$work/broken" MANY="$work/many" ODD="$work/odd" \
+    GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
+    REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
+    WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
+    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+judge = g.rules()["judge"]
+subs = [kv.split("=", 1) for kv in sys.argv[3:]]
+bad, n = [], 0
+for name, ev in json.load(open(sys.argv[2])).items():
+    text = json.dumps(ev)
+    for k, v in subs:
+        text = text.replace("@%s@" % k, v)
+    ev = json.loads(text)
+    if g.skip(ev, g.text_of(ev)):
+        n += 1
+        if judge(ev):
+            bad.append(name)
+print(n, " ".join(bad))
+PY
+)"
+[ -n "$skipped" ] && [ "${skipped#* }" = "" ] && pass "no skipped event is one the rules refuse (${skipped%% *} skipped)" \
+  || fail "the prefilter skips events the rules refuse: ${skipped#* }"
 
 echo "--- plumbing: fail closed only after a match"
 case_ nothing-guarded     0 - ""
@@ -1254,6 +1341,43 @@ out="$(printf '{"tool_name": "Bash", "tool_input": {"command": "tea pr merge' | 
 out="$(printf '{"tool_name": "Bash", "tool_input": {"command": "ls' | python3 "$GUARD" 2>&1)"; got=$?
 [ "$got" = 0 ] && [ -z "$out" ] && pass "malformed event, nothing guarded (allowed)" \
   || fail "malformed event, nothing guarded: rc=$got $out"
+# Exit 1 is a non-blocking error to Claude Code: nothing the guard meets may end in one.
+# 200000 deep, as Python 3.14+ checks the C stack and parses 20000.
+out="$(python3 -c 'import sys; d = 200000; sys.stdout.write("{\"tool_name\": \"Bash\", \"tool_input\": {\"z\": " + "[" * d + "]" * d + "}}")' \
+  | python3 "$GUARD" 2>&1)"; got=$?
+[ "$got" = 2 ] && grep -qF "BLOCKED [undecided]" <<<"$out" && grep -qF RecursionError <<<"$out" \
+  && pass "an event nested past the parser's depth refuses (rc=2)" || fail "deep nesting: rc=$got $out"
+out="$(ev merge-gitoxide | sed 's/"}/ \xff"}/' | python3 "$GUARD" 2>&1)"; got=$?
+[ "$got" = 2 ] && grep -qF "BLOCKED [merge-" <<<"$out" && pass "bytes that are not UTF-8 are judged, not a crash (rc=2)" \
+  || fail "non-UTF-8 input: rc=$got $out"
+# A call the guard has not decided by its deadline is refused, before Claude Code's
+# hook timeout would run it unjudged.
+mkdir -p "$work/late/prs" && sed 's/^DEADLINE = .*/DEADLINE = 1/' "$GUARD" > "$work/late/pr-guard.py"
+{ cat "${GUARD%/*}/_pr_guard.py"; printf '\nNET_BUDGET = 30\n'; } > "$work/late/_pr_guard.py"
+mkfifo "$work/late/prs/tesseract-ocr.json"
+t0=$(date +%s)
+out="$(ev push-wip | PR_GUARD_PULLS_DIR="$work/late/prs" timeout 30 python3 "$work/late/pr-guard.py" 2>&1)"; got=$?
+took=$(( $(date +%s) - t0 ))
+[ "$got" = 2 ] && grep -qF "BLOCKED [undecided] no verdict within 1 s" <<<"$out" && [ "$took" -lt 10 ] \
+  && pass "a call past the guard's deadline refuses (rc=2, ${took}s)" || fail "past the deadline: rc=$got after ${took}s $out"
+# Also where the rules take an OSError for a failed lookup: a git that hangs.
+mkdir -p "$work/late/bin" && printf '#!/bin/sh\nexec sleep 30\n' > "$work/late/bin/git" && chmod +x "$work/late/bin/git"
+t0=$(date +%s)
+out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": "git pu" + "sh origin HEAD:refs/heads/x"}}))' "$work/plain" \
+  | PATH="$work/late/bin:$PATH" timeout 60 python3 "$work/late/pr-guard.py" 2>&1)"; got=$?
+took=$(( $(date +%s) - t0 ))
+[ "$got" = 2 ] && grep -qF "BLOCKED [undecided] no verdict within 1 s" <<<"$out" && [ "$took" -lt 10 ] \
+  && pass "a deadline inside an OSError handler still refuses (rc=2, ${took}s)" || fail "deadline in a hung git: rc=$got after ${took}s $out"
+deadline=$(sed -n 's/^DEADLINE = \([0-9]*\).*/\1/p' "$GUARD")
+[ -n "$deadline" ] && [ $((deadline + 5)) -le "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"])' "$REPO/contrib/harness/claude/pr-guard-hook.json")" ] \
+  && pass "the deadline (${deadline} s) refuses before the hook's timeout" || fail "deadline ${deadline:-unset} s against the hook timeout"
+# Long input stays linear: 100 kB of = (the API-host pattern once rescanned from each).
+t0=$(date +%s)
+out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": "curl https://example.org -d " + "=a" * 50000 + "; cat " + "~/.ne" + "trc"}}))' "$work/plain" \
+  | python3 "$GUARD" 2>&1)"; got=$?
+took=$(( $(date +%s) - t0 ))
+[ "$got" = 2 ] && grep -qF "BLOCKED [credential-read]" <<<"$out" && [ "$took" -lt 10 ] \
+  && pass "100 kB of = is judged in ${took}s (rc=2)" || fail "100 kB of =: rc=$got after ${took}s"
 # The rules load only once a call matched; without them it fails closed.
 mkdir -p "$work/bare" && cp "$GUARD" "$work/bare/"
 out="$(ev nothing-guarded | python3 "$work/bare/pr-guard.py" 2>&1)"; got=$?
@@ -1307,8 +1431,9 @@ echo "--- the opencode plugins carry the same prefilter"
 py="$(python3 -c 'import importlib.util, sys
 spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)' "$GUARD")"
-{ IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; } <<<"$py"
+print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)
+print(",".join(mod.CRED_HOMES))' "$GUARD")"
+{ IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; IFS= read -r py_homes; } <<<"$py"
 for PLUGIN in "$V1PLUGIN" "$V2PLUGIN"; do
   v=${PLUGIN%/pool-pr-guard.ts}; v=${v##*/}
   # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
@@ -1326,6 +1451,10 @@ for PLUGIN in "$V1PLUGIN" "$V2PLUGIN"; do
   [ -n "$ts" ] && [ "$py_cred" = "$ts" ] && grep -qF 'CRED_DIR.test(' "$PLUGIN" \
     && pass "$v: plugin also judges a call run among the credential files" \
     || fail "$v: the plugin's CRED_DIR differs or is unused: guard '$py_cred' plugin '$ts'"
+  ts="$(sed -n 's/^const CRED_HOMES = \[\(.*\)\]$/\1/p' "$PLUGIN" | tr -d ' "')"
+  [ -n "$ts" ] && [ "$py_homes" = "$ts" ] && grep -qF 'above(' "$PLUGIN" \
+    && pass "$v: plugin also judges a call run above the credential files" \
+    || fail "$v: the plugin's CRED_HOMES differs or is unused: guard '$py_homes' plugin '$ts'"
 done
 # Each plugin is wired to its own plugin API: 1.x never runs a 2.x file nor the reverse.
 grep -qF '"tool.execute.before"' "$V1PLUGIN" && ! grep -qF 'ctx.tool.hook' "$V1PLUGIN" \
