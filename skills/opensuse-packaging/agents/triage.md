@@ -1,7 +1,7 @@
 ---
 name: osc-triage
 description: Block 1 of the openSUSE-packaging pipeline. Use to find out whether a package (or all of a maintainer's packages) is out of date, before any update work. Enumerates maintained packages, compares against upstream, and returns a verified candidate list with false positives filtered out.
-tools: Bash, Read, WebFetch
+tools: Bash, Read, WebFetch, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug_info, mcp__bugzilla__bug_comments, mcp__bugzilla__bug_history
 ---
 
 > Role prompt — usable by any harness that supports delegating to sub-agents, or directly as a standalone session prompt. The YAML frontmatter above is sub-agent metadata for harnesses that register agents from files; elsewhere it's inert.

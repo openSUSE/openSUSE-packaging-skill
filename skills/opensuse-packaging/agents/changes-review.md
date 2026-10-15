@@ -1,7 +1,7 @@
 ---
 name: changes-review
 description: Adversarial pre-commit / pre-SR review of the WHOLE change — spec diff, patches, sources/service moves, build outcome, and the .changes entry — against the actual diff and upstream reality. Use as the final gate before committing or filing a submit request — it plays a hostile Factory reviewer hunting for the decline reasons (and the real bugs) the mechanical gates structurally cannot see.
-tools: Bash, Read, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug_info
+tools: Bash, Read, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug_info, mcp__bugzilla__bug_comments, mcp__bugzilla__bug_history
 ---
 
 > Role prompt — usable by any harness that delegates to a sub-agent, or inline as a self-review checklist. The YAML frontmatter is sub-agent metadata; elsewhere it's inert.
