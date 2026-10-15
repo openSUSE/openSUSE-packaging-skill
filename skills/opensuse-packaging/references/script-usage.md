@@ -50,4 +50,5 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 - `refsection.py [--lines] FILE SECTION | --list FILE | --anchor FILE ID | --rule N...` — exit 0 printed · 1 no such section · 2 ambiguous · 3 usage or no file
 - `wiki-drift.sh [--diff] [--page TITLE]... [--update]` — exit 0 no drift · 1 drift · 2 error
+- `bug-guard.py < EVENT` — the harness hook on the bugzilla MCP server's tools, run by Claude Code or opencode, never by an agent; env `BUG_GUARD_OBS_USER` (default `osc whois`); prints `allow` for a proven security hand-back, `ask` for any other write, nothing for a read; exit 0 answered · 2 usage
 - `pr-guard.py < EVENT` — the harness hook, run by Claude Code or opencode on each tool call, never by an agent; env `PR_GUARD_SKILL_DIR`, `PR_GUARD_PIN_REF` (default `refs/remotes/origin/main`), `PR_GUARD_ARCH`, `PR_GUARD_PULLS_DIR`; exit 0 allowed · 2 refused
