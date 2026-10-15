@@ -141,6 +141,25 @@ CLAUDE = any_glob(bash_rules(deny))
 no_legacy(bash_rules(deny), "claude")
 check("hooks" not in load("claude/settings.json"), "claude: the deny snippet carries no hook")
 
+# The bugzilla MCP server: bug-guard.py lets only the proven security hand-back through, so
+# no snippet may allow a write tool outright, and the reads they allow must be ones the
+# guard leaves alone. Its READ set is read from the script, not copied here.
+import ast
+guard = ast.parse(open(os.path.join(H, "..", "..", "skills", "opensuse-packaging",
+                                    "scripts", "bug-guard.py"), encoding="utf-8").read())
+BUG_READ = next(ast.literal_eval(n.value) for n in guard.body
+                if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "READ")
+bg = load("claude/bug-guard-hook.json")
+bg_hooks = bg["hooks"]["PreToolUse"]
+check(len(bg_hooks) == 1 and bg_hooks[0]["matcher"] == "mcp__bugzilla__.*"
+      and [h["command"] for h in bg_hooks[0]["hooks"]] == ['python3 "$HOME/.claude/hooks/bug-guard.py"'],
+      "claude: the bug-guard hook runs the pinned guard on every bugzilla MCP tool")
+bg_allow = bg["permissions"]["allow"]
+check(bg_allow and all(r.startswith("mcp__bugzilla__") and r[len("mcp__bugzilla__"):] in BUG_READ for r in bg_allow),
+      "claude: the bug-guard snippet allows bugzilla read tools only")
+check(not any("mcp__bugzilla__" in r for r in deny) and not bg["permissions"].get("ask"),
+      "claude: no deny or ask rule names a bugzilla tool (either would override the guard's allow)")
+
 # opencode: read patterns match the path relative to the worktree, so one that
 # does not start with "*" never fires, and "*/" misses when HOME is the worktree.
 perm = load("opencode/opencode.jsonc")["permission"]
@@ -182,7 +201,8 @@ no_legacy(list(perm["bash"]), "opencode")
 # must say what the 1.x snippet says, in the same order, then deny what only 2.x offers.
 v2 = load("opencode-v2/opencode.jsonc")["permissions"]
 check(all(set(r) == {"action", "resource", "effect"} and all(isinstance(v, str) for v in r.values())
-          and r["action"] in ("external_directory", "shell", "read", "edit", "execute")
+          and (r["action"] in ("external_directory", "shell", "read", "edit", "execute")
+               or r["action"].startswith("bugzilla_"))
           and r["effect"] in ("allow", "deny", "ask")
           for r in v2), "opencode-v2: every entry has exactly an action, a resource and an effect, with known values")
 # 2.x reads "x *" as also matching the bare x, so a 1.x pattern whose "x *" twin has its effect adds nothing.
@@ -196,8 +216,16 @@ check(v2[:len(v1_as_v2)] == v1_as_v2, "opencode-v2: the same rules as opencode, 
 # whose fetch no hook sees, removed.
 v2_tail = v2[len(v1_as_v2):]
 PLAN = {"action": "edit", "resource": "*.opencode/plan/*", "effect": "allow"}
-check(all(r["action"] in ("edit", "execute") and (r["effect"] == "deny" or r == PLAN) for r in v2_tail),
-      "opencode-v2: past the 1.x rules only edit and execute denies, and the plan directory's allow")
+v2_bug = [r for r in v2_tail if r["action"].startswith("bugzilla_")]
+check(all(r["action"] in ("edit", "execute") and (r["effect"] == "deny" or r == PLAN)
+          for r in v2_tail if r not in v2_bug),
+      "opencode-v2: past the 1.x rules only edit and execute denies, the plan directory's allow and the bugzilla block")
+# The bugzilla block: every tool asks, then reads only are allowed; bug-guard.ts turns the
+# proven hand-back's ask into an allow, so no write is allowed here.
+check(v2_bug[:1] == [{"action": "bugzilla_*", "resource": "*", "effect": "ask"}]
+      and all(r["effect"] == "allow" and r["resource"] == "*" and r["action"][len("bugzilla_"):] in BUG_READ
+              for r in v2_bug[1:]) and len(v2_bug) > 1 and v2_tail[-len(v2_bug):] == v2_bug,
+      "opencode-v2: the bugzilla block comes last, asks for every tool, then allows reads only")
 # opencode drops a tool only when the last entry whose action matches it ("*" does too) is a "*" deny.
 last_execute = [r for r in v2 if r["action"] in ("execute", "*")][-1:]
 check(last_execute == [{"action": "execute", "resource": "*", "effect": "deny"}],
@@ -226,7 +254,9 @@ hit = [p for p in EDIT_OK if edit_denied(p)]
 check(not hit, "opencode-v2: the edit denies leave packaging files alone" + (f" -- {hit}" if hit else ""))
 idle = [s for s, _ in v2_edit if not any(edit_denied(p) != edit_denied(p, s) for p in EDIT_PATHS + EDIT_OK)]
 check(not idle, "opencode-v2: every edit entry decides some path" + (f" -- not {idle}" if idle else ""))
-check(not [r for r in v2 if r["resource"] == "*" and r["effect"] == "allow"],
+# A bugzilla read's allow names one tool exactly, so it undoes nothing but the block's own ask.
+check(not [r for r in v2 if r["resource"] == "*" and r["effect"] == "allow"
+           and not (r["action"].startswith("bugzilla_") and "*" not in r["action"])],
       "opencode-v2: no '*' allow, which appended after another entry would undo its denies")
 v2_read = [r["resource"] for r in v2 if r["action"] == "read"]
 bad = [p for p in v2_read if not p.startswith("*") or p.startswith("*/") or p == "*"]

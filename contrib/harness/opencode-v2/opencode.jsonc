@@ -160,6 +160,18 @@
     // body, seen by no hook or permission, and its opencode.session_move moves the
     // session into any directory. Resource "*" removes it and every Code Mode tool; an
     // MCP server whose tools you need then wants "codemode": false.
-    { "action": "execute", "resource": "*", "effect": "deny" }
+    { "action": "execute", "resource": "*", "effect": "deny" },
+
+    // The bugzilla MCP server's tools are actions named bugzilla_<tool>. Every one asks,
+    // then the reads are allowed; bug-guard.ts lets the one proven write through: the
+    // security hand-back of a bug your own Factory SR fixes.
+    { "action": "bugzilla_*", "resource": "*", "effect": "ask" },
+    { "action": "bugzilla_bugs_quicksearch", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_quicksearch_syntax", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_bug_info", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_bug_comments", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_bug_history", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_summarize_bug", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_bug_url", "resource": "*", "effect": "allow" }
   ]
 }

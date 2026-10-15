@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__bugzilla__bugs_quicksearch",
+      "mcp__bugzilla__quicksearch_syntax",
+      "mcp__bugzilla__bug_info",
+      "mcp__bugzilla__bug_comments",
+      "mcp__bugzilla__bug_history",
+      "mcp__bugzilla__summarize_bug",
+      "mcp__bugzilla__bug_url"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__bugzilla__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/bug-guard.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -9,6 +9,9 @@ Drafts, installed by hand, one directory per harness:
   src.opensuse.org, a Factory request with `--nodevelproject` and `sudo`.
 - **The pool PR guard**, for Claude Code and opencode (1.x and 2.x): `scripts/pr-guard.py`
   as a hook.
+- **The bugzilla hand-back guard**, for Claude Code and opencode 2.x:
+  `scripts/bug-guard.py` as a hook on the bugzilla MCP server's tools, plus the allow rules
+  for its reads ("The bugzilla hand-back guard" below).
 
 **You install them yourself.** An agent must not change its own permissions, and Claude
 Code's auto mode refuses the edit as self-modification. **Merge, do not replace**: each
@@ -751,3 +754,57 @@ create must be refused too, the `AI/zzz` create must run, and so must
   covers the direct writes it names, not every osc subcommand that writes: `rebuild`,
   `restartbuild`/`abortbuild`, `service remoterun` and `meta prjconf`/`attribute`/`pattern`
   are among those it does not judge.
+
+## The bugzilla hand-back guard
+
+Sub-agents read bugzilla freely, and Block 3 (`agents/submit-watch.md`) hands a security
+bug back to the security team once your own Factory SR fixes it and factory-auto has passed
+it. That one write runs without a prompt; every other bugzilla write still asks. A
+sub-agent reads bug comments that anyone can write, so the unprompted write is tied to
+something only you can create: `bug-guard.py` allows an `assign_bug` only when the assignee
+is `security-team@suse.de` and its comment cites exactly one request that `osc whois`
+created, that submits only to `openSUSE:Factory`, that factory-auto has accepted, and whose
+`.changes` files add a line naming the bug (`boo#`, `bsc#` or `bnc#`). It answers `ask` for
+anything else and for any lookup it cannot complete, and gives no answer for the read tools,
+which the allow rules below decide. Details: the skill's `scripts/README.md` "`bug-guard.py`".
+
+| File | Goes to | Does |
+|---|---|---|
+| `scripts/bug-guard.py` | `~/.claude/hooks/` | the guard; both harnesses run this one pinned copy |
+| `claude/bug-guard-hook.json` | its `hooks` entry and its `permissions.allow` rules into `~/.claude/settings.json` | a PreToolUse hook on `mcp__bugzilla__.*`, and allow rules for the read tools |
+| `opencode-v2/bug-guard.ts` | `~/.config/opencode/plugins/bug-guard.ts` | for opencode 2.x: keeps a bugzilla call's input from `execute.before` and, when its permission check would ask, sets it to allow on the guard's `allow` |
+| `opencode-v2/opencode.jsonc` | its bugzilla block, the last entries, into the same `permissions` array | every `bugzilla_*` tool asks, then the reads are allowed |
+
+Install, once the change is merged:
+
+1. `install -D -m 0444 -t "$HOME/.claude/hooks" skills/opensuse-packaging/scripts/bug-guard.py`
+   (to update: `diff -u` the installed copy against the skill's first, then re-run it).
+2. Claude Code: merge `claude/bug-guard-hook.json` into `~/.claude/settings.json`. **Add no
+   allow and no ask rule for a bugzilla write tool**: an allow rule lets every write through
+   whenever the hook is missing, and an ask rule overrides the hook's allow, so the
+   hand-back would prompt again. With the entry merged and the guard missing, `python3`
+   exits 2 and Claude Code refuses every bugzilla call, reads included.
+3. opencode 2.x: `install -D -m 0444 contrib/harness/opencode-v2/bug-guard.ts
+   "$HOME/.config/opencode/plugins/bug-guard.ts"`, append the bugzilla block of
+   `opencode-v2/opencode.jsonc` to your `permissions` array (after every other entry), then
+   `opencode service restart` and ask `opencode plugin list` until it lists
+   `opensuse-packaging.bug-guard`. Without that block opencode's base policy allows every
+   bugzilla write, from sub-agents too. The guard is not wired for opencode 1.x.
+
+opencode 2.0.29, measured in a throw-away home in its own network namespace with a stub
+model, a stub `bugzilla` MCP server (`"codemode": false`) and a stub guard: a read ran with
+no guard call; an `assign_bug` the guard allowed ran, from the main session and from a
+sub-agent (the `subagent` tool, agent `general`); one it answered `ask` for, and an
+`add_comment`, were asked, which a non-interactive `run` rejects; with the plugin file
+removed the allowed call was asked too. The guard always received the call's input, so
+`execute.before` runs before the permission check, and setting `effect` in the `evaluate`
+hook takes effect. `opencode plugin list` printed "No plugins found" right after a service
+start and listed the plugin about 3 s later.
+
+Claude Code, from its hooks and sub-agents documentation (not measured here): a hook's
+`allow` skips the permission prompt for an MCP tool that is in no allow rule; deny and ask
+rules still apply over it; hooks run inside sub-agents too; and a background sub-agent's
+prompt is shown in the main session, so an `ask` there waits for you rather than failing.
+A sub-agent whose frontmatter `tools:` names an MCP tool calls it directly, without
+`ToolSearch` (measured).
+
