@@ -3041,13 +3041,6 @@
     },
     "cwd": "@CLONE@"
   },
-  "osc-sr-message-301": {
-    "tool_name": "Bash",
-    "tool_input": {
-      "command": "osc submitreq -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream and raised the leptonica BuildRequires floor to 1.85.0. Split out the training tools. Built green on aarch64 and x86_64, all tests pass.' devel:tools tesseract-ocr openSUSE:Factory"
-    },
-    "cwd": "@CLONE@"
-  },
   "osc-mr-long-message-eq": {
     "tool_name": "Bash",
     "tool_input": {
@@ -3059,20 +3052,6 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "osc creq -a submit devel:tools tesseract-ocr openSUSE:Factory '-mUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream, refreshed the leptonica BuildRequires floor to 1.85.0, split the training tools into their own subpackage and moved the language data to noarch. Built green on aarch64 and x86_64, all 312 tests pass, rpmlint clean.'"
-    },
-    "cwd": "@CLONE@"
-  },
-  "osc-sr-message-200": {
-    "tool_name": "Bash",
-    "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased one patch and dropped two that were merged upstream. Built green on aarch64 and x86_64, rpmlint clean.'"
-    },
-    "cwd": "@CLONE@"
-  },
-  "osc-sr-message-300": {
-    "tool_name": "Bash",
-    "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes. Rebased tesseract-fix-gcc16.patch, dropped the two patches merged upstream and raised the leptonica BuildRequires floor to 1.85.0. Split out the training tools. Built green on aarch64 and x86_64, all tests pass'"
     },
     "cwd": "@CLONE@"
   },
@@ -3767,21 +3746,21 @@
   "msg-long-list-line": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\n\n- consumer: ocrmypdf, gimagereader, paperwork, python-pytesseract, kraken, scantailor and gscan2pdf all build against the new soname\nEOF"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\n\n- consumer: ocrmypdf, gimagereader, paperwork, python-pytesseract, kraken, scantailor and gscan2pdf all build against the new soname\nEOF"
     },
     "cwd": "@CLONE@"
   },
   "msg-list-over-1000": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\n\n- consumer: python-consumer-number-00 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-01 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-02 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-03 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-04 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-05 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-06 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-07 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-08 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-09 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-10 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-11 builds against the new soname, rebuilt locally ok\nEOF"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\n\n- consumer: python-consumer-number-00 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-01 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-02 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-03 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-04 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-05 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-06 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-07 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-08 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-09 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-10 builds against the new soname, rebuilt locally ok\n- consumer: python-consumer-number-11 builds against the new soname, rebuilt locally ok\nEOF"
     },
     "cwd": "@CLONE@"
   },
   "msg-star-list": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\n\n* consumer: gimagereader builds against the new soname, rebuilt locally ok\n* consumer: ocrmypdf builds against the new soname, rebuilt locally ok\n* consumer: paperwork builds against the new soname, rebuilt locally ok\n* consumer: kraken builds against the new soname, rebuilt locally ok\n* consumer: scantailor builds against the new soname, rebuilt locally ok\n* consumer: gscan2pdf builds against the new soname, rebuilt locally ok\nEOF"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\n\n* consumer: gimagereader builds against the new soname, rebuilt locally ok\n* consumer: ocrmypdf builds against the new soname, rebuilt locally ok\n* consumer: paperwork builds against the new soname, rebuilt locally ok\n* consumer: kraken builds against the new soname, rebuilt locally ok\n* consumer: scantailor builds against the new soname, rebuilt locally ok\n* consumer: gscan2pdf builds against the new soname, rebuilt locally ok\nEOF"
     },
     "cwd": "@CLONE@"
   },
@@ -3851,7 +3830,7 @@
   "msg-subst-heredoc-short": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$(cat <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\nEOF\n)\""
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$(cat <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\nEOF\n)\""
     },
     "cwd": "@CLONE@"
   },
@@ -3879,7 +3858,7 @@
   "msg-file-stdin-short": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\nEOF"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F - <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\nEOF"
     },
     "cwd": "@CLONE@"
   },
@@ -3893,7 +3872,7 @@
   "msg-var-short": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "MSG='Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.'; osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$MSG\""
+      "command": "MSG='Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.'; osc sr devel:tools tesseract-ocr openSUSE:Factory -m \"$MSG\""
     },
     "cwd": "@CLONE@"
   },
@@ -3921,7 +3900,7 @@
   "msg-prefix-short": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory --mess='Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.'"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory --mess='Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.'"
     },
     "cwd": "@CLONE@"
   },
@@ -3935,7 +3914,7 @@
   "msg-inline-prose-then-list": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\n\n- consumer: gimagereader builds against the new soname and was rebuilt locally\n- consumer: ocrmypdf builds against the new soname and was rebuilt locally\n- consumer: paperwork builds against the new soname and was rebuilt locally\n- consumer: tesseract-langpack builds against the new soname and was rebuilt locally\n- consumer: python-pytesseract builds against the new soname and was rebuilt locally\n- consumer: kraken builds against the new soname and was rebuilt locally\n- consumer: scantailor builds against the new soname and was rebuilt locally\n- consumer: gscan2pdf builds against the new soname and was rebuilt locally'"
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\n\n- consumer: gimagereader builds against the new soname and was rebuilt locally\n- consumer: ocrmypdf builds against the new soname and was rebuilt locally\n- consumer: paperwork builds against the new soname and was rebuilt locally\n- consumer: tesseract-langpack builds against the new soname and was rebuilt locally\n- consumer: python-pytesseract builds against the new soname and was rebuilt locally\n- consumer: kraken builds against the new soname and was rebuilt locally\n- consumer: scantailor builds against the new soname and was rebuilt locally\n- consumer: gscan2pdf builds against the new soname and was rebuilt locally'"
     },
     "cwd": "@CLONE@"
   },
@@ -3963,7 +3942,7 @@
   "msg-dr-short": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc dr openSUSE:Factory tesseract-ocr -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.'"
+      "command": "osc dr openSUSE:Factory tesseract-ocr -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.'"
     },
     "cwd": "@CLONE@"
   },
@@ -3984,7 +3963,7 @@
   "msg-file-written": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "cat > @WORK@/msg-new.txt <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623). Built green on aarch64 and x86_64.\nEOF\nosc sr devel:tools tesseract-ocr openSUSE:Factory -F @WORK@/msg-new.txt"
+      "command": "cat > @WORK@/msg-new.txt <<'EOF'\nUpdate to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes.\nEOF\nosc sr devel:tools tesseract-ocr openSUSE:Factory -F @WORK@/msg-new.txt"
     },
     "cwd": "@CLONE@"
   },
@@ -6520,5 +6499,101 @@
       "command": "python3 @WORK@/open_pr_comment.py"
     },
     "cwd": "@CLONE@"
+  },
+  "osc-sr-message-160": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes; rebased one patch, dropped two merged upstream........................'"
+    }
+  },
+  "osc-sr-message-161": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitreq -m 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes; rebased one patch, dropped two merged upstream.........................' devel:tools tesseract-ocr openSUSE:Factory"
+    }
+  },
+  "msg-headline-real": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update opencode to 2.0.30: elicitation patch now in-tree (dropped), re-vendored, licences re-derived, no copyleft.'"
+    }
+  },
+  "msg-headline-stage-with": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update python-comfyui-workflow-templates to 0.11.85: pins core 0.3.376, json 0.1.111.\n- Stage with sr#1385054 (core) and sr#1385055 (json).'"
+    }
+  },
+  "msg-note-decoys": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: notdone-parser fix; greenbuild tool and agentic-env helpers renamed.'"
+    }
+  },
+  "msg-note-not-done": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes. VUL check not done.'"
+    }
+  },
+  "msg-note-bugwarden": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes (no bugwarden here).'"
+    }
+  },
+  "msg-note-vul-sweep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes. VUL sweep skipped.'"
+    }
+  },
+  "msg-note-built-green": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes. Built green, rpmlint clean.'"
+    }
+  },
+  "msg-note-still-building": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes; s390x still building.'"
+    }
+  },
+  "msg-note-this-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes, untested in this environment.'"
+    }
+  },
+  "msg-note-subagent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes, prepared by a sub-agent.'"
+    }
+  },
+  "msg-note-no-access": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes; no bugzilla access for the CVE check.'"
+    }
+  },
+  "msg-note-in-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes.\n- Stage with sr#1385054\n- builds green on aarch64'"
+    }
+  },
+  "msg-forward-bare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Forward tesseract-ocr update to Factory.'"
+    }
+  },
+  "msg-forward-with-content": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Forward tesseract-ocr 5.5.3 to Factory: parser crash fixes.'"
+    }
   }
 }

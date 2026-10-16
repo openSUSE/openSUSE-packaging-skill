@@ -474,8 +474,9 @@ call provably only reads), pushing to a branch that heads an open pool PR, writi
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
 `--nodevelproject`, a request through the API (`/request?cmd=create`) or one whose message
-has over 300 characters of prose (every line but a `- ` list item), a list line over 100
-characters or over 1000 in all (read from `-m`, `-F`, stdin, a variable or an
+has over 160 characters of prose (every line but a `- ` list item), a list line over 100
+characters or over 1000 in all, a work note for the user (build or sweep status, the
+session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
 `echo`/`printf`/`cat` substitution; one it cannot read is refused), or writing into a
 `*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
 another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)

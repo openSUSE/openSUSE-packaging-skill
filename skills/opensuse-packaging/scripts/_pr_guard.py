@@ -458,8 +458,9 @@ MESSAGES = {
     "osc mbranch + osc mr.",
     "maintenance-unknown": "cannot tell where {0} lands, so it is refused. Run it in "
     "the checkout, or name the checkout or the project literally.",
-    "request-message": "{0}: keep it to 1–3 sentences (≤300 characters of prose); "
-    'a list may follow as "- " lines of ≤100 characters, 1000 in all.',
+    "request-message": "{0}: one headline of ≤160 characters of prose saying what it "
+    'does; what the reviewer needs may follow as "- " lines of ≤100 characters, 1000 in '
+    'all ("- Stage with sr#N"). Build, sweep and session status go to the user, not here.',
     "request-unknown": "cannot tell where {0} goes, so it is refused. Name its "
     "projects literally, or set them in this call.",
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
@@ -776,19 +777,35 @@ def request_message(run, lit, ctx, cwd):
             block("request-message", f"an osc {sub} message {fault}")
 
 
+# Status meant for the user that keeps landing in requests: never a reviewer's business.
+WORK_NOTE = re.compile(
+    r"\b(?:not done|bugwarden|vul[- ](?:sweep|bug cross-check)|(?:builds?|built) green"
+    r"|still building|this env(?:ironment)?|sub-?agents?|no (?:bugzilla )?access)\b",
+    re.I,
+)
+BARE_FORWARD = re.compile(r"forward\b[^\n]*?\bto (?:openSUSE:)?Factory\.?", re.I)
+
+
 def message_fault(text):
-    """Why a request message is too long for its reviewers, or None: over 300
+    """Why a request message is wrong for its reviewers, or None: over 160
     characters of prose (every line that is not a "- " list item, wherever it
-    sits), a list item over 100, or over 1000 characters in all."""
+    sits), a list item over 100, over 1000 characters in all, a work note for
+    the user (build or sweep status, the session's tools), or a forward that
+    says only that it forwards."""
     lines = text.strip().split("\n")
     prose = "\n".join(ln for ln in lines if not ln.startswith("- ")).strip()
-    if len(prose) > 300:
+    if len(prose) > 160:
         return f"with {len(prose)} characters of prose"
     item = max((len(ln) for ln in lines if ln.startswith("- ")), default=0)
     if item > 100:
         return f"with a {item}-character list line"
     if len(text.strip()) > 1000:
         return f"of {len(text.strip())} characters"
+    note = WORK_NOTE.search(text)
+    if note:
+        return f'with a work note ("{note.group(0)}")'
+    if BARE_FORWARD.fullmatch(prose):
+        return "that only says it forwards"
     return None
 
 

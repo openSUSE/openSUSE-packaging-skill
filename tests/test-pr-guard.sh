@@ -967,13 +967,29 @@ case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 c
 case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"
 case_ var-osc-ci-devel           0 - ""
-# A request message is 1-3 sentences: over 300 characters it is refused.
+# A request message is one headline: over 160 characters of prose it is refused.
 case_ osc-sr-long-message        2 request-message "an osc sr message with 380 characters of prose"
-case_ osc-sr-message-301         2 request-message "an osc submitreq message with 301 characters of prose"
+case_ osc-sr-message-161         2 request-message "an osc submitreq message with 161 characters of prose"
 case_ osc-mr-long-message-eq     2 request-message "an osc mr message with 380 characters of prose"
 case_ osc-creq-long-message-attached 2 request-message "an osc creq message with 380 characters of prose"
-case_ osc-sr-message-200         0 - ""
-case_ osc-sr-message-300         0 - ""
+case_ osc-sr-message-160         0 - ""
+case_ msg-headline-real          0 - ""
+case_ msg-headline-stage-with    0 - ""
+# Build, sweep and session status is the user's, not the reviewer's: refused in
+# the prose or a list line, by word, so a word that only contains one passes.
+case_ msg-note-decoys            0 - ""
+case_ msg-note-not-done          2 request-message 'with a work note ("not done")'
+case_ msg-note-bugwarden         2 request-message 'with a work note ("bugwarden")'
+case_ msg-note-vul-sweep         2 request-message 'with a work note ("VUL sweep")'
+case_ msg-note-built-green       2 request-message 'with a work note ("Built green")'
+case_ msg-note-still-building    2 request-message 'with a work note ("still building")'
+case_ msg-note-this-env          2 request-message 'with a work note ("this environment")'
+case_ msg-note-subagent          2 request-message 'with a work note ("sub-agent")'
+case_ msg-note-no-access         2 request-message 'with a work note ("no bugzilla access")'
+case_ msg-note-in-list           2 request-message 'with a work note ("builds green")'
+# A forward says what it forwards.
+case_ msg-forward-bare           2 request-message "that only says it forwards"
+case_ msg-forward-with-content   0 - ""
 case_ osc-ci-long-message        0 - ""
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.
@@ -1009,8 +1025,8 @@ case_ msg-changes-bullets        2 request-message "characters of prose"
 case_ msg-changes-entries        2 request-message "characters of prose"
 case_ msg-prose-after-list       2 request-message "an osc sr message with 306 characters of prose"
 case_ msg-long-list-line         2 request-message "an osc sr message with a 132-character list line"
-case_ msg-list-over-1000         2 request-message "an osc sr message of 1144 characters"
-case_ msg-star-list              2 request-message "an osc sr message with 520 characters of prose"
+case_ msg-list-over-1000         2 request-message "an osc sr message of 1146 characters"
+case_ msg-star-list              2 request-message "an osc sr message with 522 characters of prose"
 # Single quotes, $'...' and \$ are literal; $(<FILE) reads FILE.
 case_ msg-single-quoted-dollar   0 - ""
 case_ msg-ansi-c-quoted          0 - ""

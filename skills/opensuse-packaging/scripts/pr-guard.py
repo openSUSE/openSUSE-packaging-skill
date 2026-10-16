@@ -8,9 +8,10 @@ provably only read; gh is not judged), push to a branch that heads an open pool
 PR, write a target-gate.sh stamp, run an emulated osc build, file a request
 against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
-file a request whose message is too long (over 300 characters of prose, which
-is every line but a "- " list item; a list line over 100; over 1000 in all) or
-cannot be read, or write into a *:Update or *:Maintenance:* project outside
+file a request whose message is too long (over 160 characters of prose, which
+is every line but a "- " list item; a list line over 100; over 1000 in all),
+carries a work note for the user (build or sweep status, the session's tools),
+only says it forwards, or cannot be read, or write into a *:Update or *:Maintenance:* project outside
 home: (commit, api, and osc's other writes) or one it cannot place. A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
