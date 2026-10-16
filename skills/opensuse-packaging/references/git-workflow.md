@@ -120,7 +120,7 @@ git-obs -G src.opensuse.org pr create --title "..." --description "..." --target
 # or the Gitea web UI.
 ```
 
-The description is 1–3 sentences: `references/submit-watch.md` "Filing an SR".
+The description follows the SR message rule: `references/request-text.md` "SR and PR messages".
 
 If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `git-obs -G src.opensuse.org pr create`. Never fall back to curl with a token taken from the tea config; `git-obs -G src.opensuse.org api -X POST /repos/<devel-project>/<pkg>/pulls --data "$(python3 -c 'import json; print(json.dumps({"head": "<you>:<branch>", "base": "main", "title": "<title>", "body": open("body.txt").read()}))')"` covers what the CLIs lack. **Build that JSON with `json.dumps`, as here, never by pasting the text into a quoted string** — a literal `"`, a backtick or a newline breaks it after the branch is already pushed, and you get `invalid character '…'` and *no PR*.
 

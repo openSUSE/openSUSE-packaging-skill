@@ -59,7 +59,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 ## Requests
 
-- `osc sr SRC_PRJ SRC_PKG DST_PRJ [DST_PKG] -m MSG` (submitrequest) — file a submit request; `-m "$(cat FILE)"` for shell safety (quotes, `$` and backticks in the text), with FILE written in an earlier call: the pr-guard hook reads it and holds its prose to the 300-character cap (`references/submit-watch.md` "Filing an SR"); `-s ID` / `--supersede ID` replaces exactly that one; never `--yes` ("Tool discipline" above). From a checkout, `osc sr DST_PRJ -m MSG`.
+- `osc sr SRC_PRJ SRC_PKG DST_PRJ [DST_PKG] -m MSG` (submitrequest) — file a submit request; `-m "$(cat FILE)"` for shell safety (quotes, `$` and backticks in the text), with FILE written in an earlier call: the pr-guard hook reads it and holds it to one headline of ≤160 characters of prose with no work notes (`references/request-text.md` "SR and PR messages"); `-s ID` / `--supersede ID` replaces exactly that one; never `--yes` ("Tool discipline" above). From a checkout, `osc sr DST_PRJ -m MSG`.
 - `osc creq -a change_devel PRJ PKG DEVEL_PRJ [DEVEL_PKG] -m MSG` (createrequest) · `osc changedevelrequest PRJ PKG DEVEL_PRJ -m MSG` — change a package's devel project.
 - `osc deletereq PRJ PKG -m MSG` (deleterequest) — request deletion.
 - `osc mr [SRC_PRJ [PKGS RELEASE_PRJ]] -m MSG` (maintenancerequest) — maintenance incident request; `-s ID` supersedes exactly that one.
@@ -67,6 +67,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc mbranch PKG` — branch every maintained product's copy of the package.
 - `osc rq list -U USER -s new,review -t submit [PRJ [PKG]]` (request) — list requests.
 - `osc rq show ID` (`-d` adds the diff) · `osc rq log ID` — one request · its history.
+- `osc comment list request ID` — a request's comments, each headed `( COMMENT_ID ) On … USER wrote:` · `osc comment create [-p COMMENT_ID] -c TEXT request ID` — post one, `-p` as a reply in that thread; `-c "$(cat FILE)"` for the same shell safety as `-m` (`references/request-text.md` "Answering a reviewer").
 - `osc rq accept -m MSG ID` · `osc rq decline -m MSG ID` · `osc rq revoke -m MSG ID` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: after a devel accept, file the onward `osc sr` yourself.
 
 ## Lookup
