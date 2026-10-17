@@ -5,6 +5,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 ## Triage
 
 - `my-packages.sh [--project PRJ] [--user OBSUSER] [--source obs|git|both] [--all-projects] [--show-source]` — `--all-projects` keeps Backports/Leap/SLFO/ALP; exit 0 listed · 2 usage or query failed
+- `devel-packages.sh <devel-project> [<devel-project> ...]` — the Factory packages a devel project develops, `<package> <devel-project>` per line (names: `| cut -d' ' -f1`); exit 0 listed · 3 none · 5 search failed · 2 usage
 - `outdated.py [--names FILE] [--project PRJ] [--repo REPO] [--ua UA] [--no-factory-check] [--no-anitya] [--no-forge] [--no-repology]` — names on stdin by default; exit 0 full coverage · 3 a source lost · 2 usage or no names
 - `upstream-probe.py [pkg] [--spec FILE] [--url URL --version V] [--project PRJ]` — exit 0 CURRENT · 1 UPDATE-CANDIDATE · 3 SUSPECT · 2 usage or no verdict
 - `distro-survey.sh <pkg> [factory-version]` — env `DISTRO_SURVEY_BUDGET`, `DISTRO_SURVEY_TIMEOUT`; exit 0 printed · 2 usage
@@ -24,7 +25,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 ## Changelog and gates
 
-- `gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]] [--git-base REF] [--build-log FILE] [--full]` — exit 0 green · 1 red · 2 usage or not a package checkout (no `*.spec`, no `.osc/_package`)
+- `gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]] [--git-base REF] [--build-log FILE] [--cleaner-deviation REASON] [--full]` — runs spec-cleaner with the four policy flags on every spec (a diff is red unless `--cleaner-deviation` names a documented deviation; the diff is kept under `$TMPDIR/gate-<pkg>/`); exit 0 green · 1 red · 2 usage or not a package checkout (no `*.spec`, no `.osc/_package`)
 - `changes-prepend.sh <name>.changes [--author 'Name <email>']` — bullets on stdin; author falls back to `$CHANGES_AUTHOR`, then git `user.name`/`user.email`; exit 0 verified · 1 verification failed (restored) · 2 usage or no author · 3 refused: the file already differs from its committed version (edit the top entry instead)
 - `changes-lint.sh [--entries N | --all] <file>.changes [...]` — N ≥ 1, `--all` for every entry; exit 0 clean · 1 findings · 2 usage · 3 unreadable file (wins over 1)
 - `changes-guard.sh [--base FILE] [--amend-top AUTHOR] <pkg>.changes [...]` — exit 0 insertion-only · 1 prior entry changed · 2 usage · 3 unreadable input (wins over 1)
@@ -51,4 +52,4 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 - `refsection.py [--lines] FILE SECTION | --list FILE | --anchor FILE ID | --rule N...` — exit 0 printed · 1 no such section · 2 ambiguous · 3 usage or no file
 - `wiki-drift.sh [--diff] [--page TITLE]... [--update]` — exit 0 no drift · 1 drift · 2 error
 - `bug-guard.py < EVENT` — the harness hook on the bugzilla MCP server's tools, run by Claude Code or opencode, never by an agent; env `BUG_GUARD_OBS_USER` (default `osc whois`); prints `allow` for a proven security hand-back, `ask` for any other write, nothing for a read; exit 0 answered · 2 usage
-- `pr-guard.py < EVENT` — the harness hook, run by Claude Code or opencode on each tool call, never by an agent; env `PR_GUARD_SKILL_DIR`, `PR_GUARD_PIN_REF` (default `refs/remotes/origin/main`), `PR_GUARD_ARCH`, `PR_GUARD_PULLS_DIR`; exit 0 allowed · 2 refused
+- `pr-guard.py < EVENT` — the harness hook, run by Claude Code or opencode on each tool call, never by an agent; env `PR_GUARD_SKILL_DIR`, `PR_GUARD_PIN_REF` (default `refs/remotes/origin/main`), `PR_GUARD_ARCH`, `PR_GUARD_PULLS_DIR`, `PR_GUARD_META_DIR`; exit 0 allowed · 2 refused

@@ -137,5 +137,50 @@ out="$(bash "$GATE" "$work/notice-sub" 2>&1)"
 grep -qF "## spec-notices: rc=0" <<<"$out" && pass "one notice per subpackage License tag: green" \
   || { fail "one notice per subpackage License tag"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# spec-cleaner runs in the gate, every time: a fake on PATH stands in for it.
+# SC_MODE: same (writes the spec back unchanged), group (adds a Group: line),
+# fail (exits 1). An absent tool is red, never a pass.
+mkdir -p "$work/scbin" "$work/sc"
+cat > "$work/scbin/spec-cleaner" <<'EOF'
+#!/bin/bash
+out=; spec=
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) spec=$1; shift;; esac; done
+[ -e "$out" ] && { echo "ERROR: $out already exists." >&2; exit 1; }
+case "${SC_MODE:-same}" in
+  fail) echo "Traceback: boom" >&2; exit 1;;
+  group) { cat "$spec"; echo 'Group:          Development/Tools'; } > "$out";;
+  *) cat "$spec" > "$out";;
+esac
+EOF
+chmod +x "$work/scbin/spec-cleaner"
+printf 'Name: p\nLicense: MIT\n' > "$work/sc/p.spec"
+sc() { out="$(PATH="$work/scbin:$PATH" SC_MODE="$1" bash "$GATE" "$work/sc" "${@:2}" 2>&1)"; }
+sc same
+grep -qF "## spec-cleaner: rc=0" <<<"$out" && grep -qF "OK: spec-cleaner leaves every spec as it is" <<<"$out" \
+  && pass "spec-cleaner: a clean spec is green" || { fail "spec-cleaner clean"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sc group
+grep -qF "## spec-cleaner: rc=1" <<<"$out" && grep -qF "spec-cleaner would change 1 line(s) in 1 spec(s)" <<<"$out" \
+  && grep -qF "+Group:" <<<"$out" && grep -q "^VERDICT: RED — .*spec-cleaner" <<<"$out" \
+  && pass "spec-cleaner: a pending cleanup is red, with the lines" || { fail "spec-cleaner pending"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sc group --cleaner-deviation "keeps uthash-devel, no .pc"
+grep -qF "## spec-cleaner: rc=0" <<<"$out" && grep -qF "DEVIATION: 1 changed line(s) kept on purpose — keeps uthash-devel, no .pc" <<<"$out" \
+  && grep -qF "spec-cleaner.diff" <<<"$out" \
+  && pass "spec-cleaner: a named deviation passes and keeps the diff" || { fail "spec-cleaner deviation"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sc fail
+grep -qF "## spec-cleaner: rc=1" <<<"$out" && grep -qF "UNKNOWN: spec-cleaner failed on p.spec" <<<"$out" \
+  && pass "spec-cleaner: a failed run is red, not 'no diff'" || { fail "spec-cleaner failed run"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sc fail --cleaner-deviation "anything"
+grep -qF "## spec-cleaner: rc=1" <<<"$out" \
+  && pass "spec-cleaner: a deviation never excuses a failed run" || { fail "spec-cleaner failed run with deviation"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/nosc"
+for t in bash cat tail head grep basename dirname tr rm mkdir awk sed env diff python3 osc git; do
+  p=$(command -v "$t") && ln -sf "$p" "$work/nosc/$t"
+done
+out="$(PATH="$work/nosc" bash "$GATE" "$work/sc" 2>&1)"
+grep -qF "## spec-cleaner: SKIPPED (not installed)" <<<"$out" && grep -q "^VERDICT: RED — .*spec-cleaner" <<<"$out" \
+  && pass "spec-cleaner: not installed is red" || { fail "spec-cleaner missing"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(bash "$GATE" "$work/sc" --cleaner-deviation "" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && pass "--cleaner-deviation needs a reason" || fail "--cleaner-deviation empty: rc=$rc"
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

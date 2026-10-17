@@ -68,6 +68,29 @@ def _fake_anitya_get(url):
     return {"items": []}
 
 
+class NextMajorLineTests(unittest.TestCase):
+    """A name that carries its major (ffmpeg-4) is not updated to another major."""
+
+    def test_versioned_names_on_their_major_skip_another_major(self):
+        for name, cur, new in [
+            ("ffmpeg-4", "4.4.6", "8.0"),
+            ("libplacebo5", "5.264.1", "7.360.1"),
+            ("gcc13", "13.3.0+git1", "16.2.0"),
+        ]:
+            self.assertTrue(_forges.next_major_line(name, cur, new), name)
+
+    def test_same_major_and_unversioned_names_stay_candidates(self):
+        for name, cur, new in [
+            ("ffmpeg-4", "4.4.6", "4.4.7"),  # a bump on its own line
+            ("x264", "0.164", "0.165"),  # 264 is not the version
+            ("galera-4", "26.4.24", "26.4.25"),  # the 4 is the minor
+            ("fftw3", "3.3.10", "3.3.11"),
+            ("ffnvcodec", "13.0.19.0", "13.1.15.0"),
+            ("ffmpeg-4", None, "8.0"),
+        ]:
+            self.assertFalse(_forges.next_major_line(name, cur, new), name)
+
+
 class TagPrefixTests(unittest.TestCase):
     SRC = (
         "https://github.com/openai/codex/archive/refs/tags/"

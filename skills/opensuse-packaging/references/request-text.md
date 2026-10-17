@@ -34,7 +34,8 @@ The request you file second can name the first; add a one-line comment on the fi
 the second ("Stage with sr#N."), since its message cannot be edited.
 
 **A forward carries the same headline as its devel request**, never "Forward X update to
-Factory" — the Factory reviewer sees only this one.
+Factory" (refused) — the Factory reviewer sees only this one; "Forward X BR cleanup to
+Factory." passes, but the devel headline says it better.
 
 **Never in a message:** build or rpmlint status, test counts, whether a VUL sweep or bug
 check ran, what tools the session had, how you verified something, a paste of the

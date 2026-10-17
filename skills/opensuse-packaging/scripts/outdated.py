@@ -351,12 +351,16 @@ if do_check and hits:
     with ThreadPoolExecutor(max_workers=8) as ex:
         refv = dict(zip((h[0] for h in hits), ex.map(ref_spec, (h[0] for h in hits))))
 
-candidates, suppressed = [], []
+candidates, suppressed, next_major = [], [], []
 for s, cur, new, new_disp in hits:
     ref = refv.get(s)
     status, fv = (ref.status, ref.version) if ref else (None, None)
     if do_check and status == "ok" and new != "?" and fv == new:
         suppressed.append((s, fv))  # reference already at newest -> Repology lag
+    elif _forges is not None and _forges.next_major_line(
+        s, fv if status == "ok" else cur, new
+    ):
+        next_major.append((s, fv if status == "ok" else cur, new_disp))
     else:
         candidates.append((s, cur, new_disp, status, fv))
 
@@ -435,7 +439,13 @@ if do_check and not args.no_anitya:
                 continue  # absent from / unreadable in the reference project
             fv = ref.version
             cmp = _anitya.vercmp(raw, fv)
-            if cmp == 1:
+            if (
+                cmp == 1
+                and _forges is not None
+                and _forges.next_major_line(pkg, fv, raw)
+            ):
+                next_major.append((pkg, fv, _anitya.norm(raw)))
+            elif cmp == 1:
                 a_hits.append((pkg, fv, raw, how))
             elif cmp == -1:
                 a_behind[pkg] = (fv, raw, f"anitya:{how}")
@@ -686,6 +696,15 @@ if forge_pass_ran:
             f"can see them — check by hand or on a cadence): "
             + " ".join(forge_unmapped)
         )
+
+if next_major:
+    print(
+        _sanitize.sanitize(
+            "# next-major (the name carries its major; the newer one is another "
+            "package's line, not this update): "
+            + " ".join(f"{s}({c}->{n})" for s, c, n in sorted(set(next_major)))
+        )
+    )
 
 # ---- coverage verdict -------------------------------------------------------
 # A sweep that lost a source must never read as a clean bill of health: the

@@ -133,6 +133,19 @@ def norm(v):
     return re.sub(r"^[^0-9]*", "", v or "")
 
 
+def next_major_line(name, cur, new):
+    """True when the name carries its major version (ffmpeg-4, libplacebo5,
+    gcc13), the packaged version is on that major, and the newer one is not: the
+    newer major is another package's line, not this package's update."""
+    m = re.search(r"(?<![0-9])([0-9]+)$", name)
+    a = re.match(r"([0-9]+)", str(cur or ""))
+    b = re.match(r"([0-9]+)", str(new or ""))
+    if not (m and a and b):
+        return False
+    n = int(m.group(1))
+    return int(a.group(1)) == n and int(b.group(1)) != n
+
+
 def _uniq(seq):
     seen, out = set(), []
     for x in seq:
