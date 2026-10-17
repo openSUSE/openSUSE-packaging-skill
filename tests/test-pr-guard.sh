@@ -25,7 +25,7 @@ work="$(mktemp -d /var/tmp/test-pr-guard.XXXXXX)"; trap 'rm -rf "$work"' EXIT
 # Nothing from the machine running the suite: no git config, no skill checkout,
 # no network, and an aarch64 host whatever the runner is.
 export HOME="$work/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs"
+export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs" PR_GUARD_META_DIR="$FX/meta"
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 unset PR_GUARD_SKILL_DIR
@@ -990,6 +990,27 @@ case_ msg-note-in-list           2 request-message 'with a work note ("builds gr
 # A forward says what it forwards.
 case_ msg-forward-bare           2 request-message "that only says it forwards"
 case_ msg-forward-with-content   0 - ""
+case_ msg-forward-described     0 - ""
+# A message file the same call writes cannot be read yet: the refusal says so.
+case_ msg-same-call-file         2 request-message-unknown "/var/tmp/sr-msg.txt is written by this same call"
+
+echo "--- a submit request goes to the devel project Factory's _meta names"
+case_ sr-target-swept            2 request-target "libpqxx's devel project is server:database:postgresql (Factory _meta), not server:database"
+case_ sr-target-aggregate        2 request-target "python-lxml's devel project is devel:languages:python (Factory _meta), not Application:Geo"
+case_ sr-target-slash-form       2 request-target "not server:database"
+case_ sr-target-var              2 request-target "not server:database"
+case_ sr-target-garbled          2 request-target-unknown "openSUSE:Factory/garbled/_meta (the answer did not parse)"
+case_ sr-target-devel            0 - ""
+case_ sr-target-factory          0 - ""
+case_ sr-target-home             0 - ""
+case_ sr-target-not-in-factory   0 - ""
+case_ sr-target-no-devel         0 - ""
+# Not developed for Factory: the target package itself says when it only mirrors.
+case_ sr-target-link-factory-devel 2 request-target "apache-arrow's devel project is science (Factory _meta), not Application:Geo"
+case_ sr-target-link-foreign     2 request-target "devel:tools/gotool is a _link to devel:languages:go/gotool"
+case_ sr-target-aggregate-nonfactory 2 request-target "Application:Geo/python-geobar is an _aggregate of another project's binaries"
+case_ sr-target-link-same-project 0 - ""
+case_ sr-target-link-to-factory  0 - ""
 case_ osc-ci-long-message        0 - ""
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.
@@ -1055,7 +1076,7 @@ case_ msg-deletereq-long         2 request-message "an osc deletereq message wit
 case_ msg-changedevel-long       2 request-message "an osc changedevelrequest message with 380 characters of prose"
 case_ msg-dr-short               0 - ""
 # A message it cannot read now is refused.
-case_ msg-var-unset              2 request-message-unknown "Pass the message inline or from a readable file"
+case_ msg-var-unset              2 request-message-unknown "Pass the message inline, or write its file in one call"
 case_ msg-file-missing           2 request-message-unknown "/nonexistent/message.txt"
 case_ msg-file-written           2 request-message-unknown "msg-new.txt"
 case_ msg-stdin-unknown          2 request-message-unknown "stdin"

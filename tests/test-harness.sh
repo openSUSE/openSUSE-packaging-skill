@@ -157,6 +157,11 @@ check(len(bg_hooks) == 1 and bg_hooks[0]["matcher"] == "mcp__bugzilla__.*"
 bg_allow = bg["permissions"]["allow"]
 check(bg_allow and all(r.startswith("mcp__bugzilla__") and r[len("mcp__bugzilla__"):] in BUG_READ for r in bg_allow),
       "claude: the bug-guard snippet allows bugzilla read tools only")
+# The opencode plugin judges each call's own arguments: all the inner calls of one Code
+# Mode execute share a call id, and a cache keyed by it let one call ride another's allow.
+bgts = open(os.path.join(H, "opencode-v2", "bug-guard.ts"), encoding="utf-8").read()
+check("metadata?.input" in bgts and "execute.before" not in bgts and "new Map" not in bgts,
+      "opencode-v2: bug-guard.ts reads metadata.input per check and caches nothing by call id")
 check(not any("mcp__bugzilla__" in r for r in deny) and not bg["permissions"].get("ask"),
       "claude: no deny or ask rule names a bugzilla tool (either would override the guard's allow)")
 

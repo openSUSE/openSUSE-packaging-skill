@@ -6595,5 +6595,107 @@
     "tool_input": {
       "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Forward tesseract-ocr 5.5.3 to Factory: parser crash fixes.'"
     }
+  },
+  "sr-target-swept": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark libpqxx server:database -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-aggregate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark python-lxml Application:Geo -m 'Update python-lxml to 6.1.0'"
+    }
+  },
+  "sr-target-slash-form": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark/libpqxx server:database -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "P=server:database; osc sr home:pluskalm:spark libpqxx \"$P\" -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr server:database:postgresql libpqxx openSUSE:Factory -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark libpqxx home:pluskalm:other -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-target-not-in-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark open-scion devel:tools:scm -m 'New package open-scion 0.1.0: monorepo version control.'"
+    }
+  },
+  "sr-target-no-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark aaa_base devel:tools -m 'Update aaa_base to 1.0: fixes.'"
+    }
+  },
+  "sr-target-garbled": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark garbled devel:tools -m 'Update garbled to 1.0: fixes.'"
+    }
+  },
+  "msg-same-call-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'Update libpqxx to 8.0.2' > /var/tmp/sr-msg.txt && osc sr home:pluskalm:spark libpqxx server:database:postgresql -F /var/tmp/sr-msg.txt"
+    }
+  },
+  "msg-forward-described": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr Publishing tesseract-ocr openSUSE:Factory -m 'Forward tesseract-ocr BR cleanup to Factory.'"
+    }
+  },
+  "sr-target-link-factory-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark apache-arrow Application:Geo -m 'Update apache-arrow to 26.0.0'"
+    }
+  },
+  "sr-target-link-foreign": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark gotool devel:tools -m 'Update gotool to 2.0: fixes.'"
+    }
+  },
+  "sr-target-aggregate-nonfactory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark python-geobar Application:Geo -m 'Update python-geobar to 1.1: fixes.'"
+    }
+  },
+  "sr-target-link-same-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark multi-flavor devel:tools -m 'Update multi-flavor to 1.1: fixes.'"
+    }
+  },
+  "sr-target-link-to-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:pluskalm:spark factorylinked science -m 'Update factorylinked to 1.1: fixes.'"
+    }
   }
 }

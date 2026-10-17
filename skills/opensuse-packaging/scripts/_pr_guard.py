@@ -466,7 +466,12 @@ MESSAGES = {
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
     "the command literally.",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
-    "message inline or from a readable file.",
+    "message inline, or write its file in one call and file the request in the next.",
+    "request-target": "{0}: submit to the devel project Factory names for the package "
+    "(scripts/devel-packages.sh lists it beside each name), or to the project a link "
+    "points at, never to the project a sweep went through.",
+    "request-target-unknown": "cannot read {0}, so it is refused. Retry, or name the "
+    "source and target literally: osc sr SRC_PRJ PKG DST_PRJ.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -546,6 +551,7 @@ class Ctx:
         self.cwd = cwd
         self.remotes = {}
         self.prs = {}
+        self.devel = {}  # Factory's devel project per package, "" for none
         self.deadline = time.monotonic() + NET_BUDGET  # of the open-PR lookups
         self.owners = {}
         self.scanned = set()
@@ -772,9 +778,28 @@ def request_message(run, lit, ctx, cwd):
             what = "a command substitution" if SUB_WORD.search(word) else word
             what = ("stdin" if word in STDIN else f"-F {word}") if is_file else what
             what = what.translate(UNLITERAL)
+            fresh = written_by_call(word.translate(UNLITERAL), ctx, cwd)
+            if fresh:
+                what += f": {fresh} is written by this same call"
+            elif (
+                ctx.written
+            ):  # a substitution hides its file: name what the call writes
+                what += "; this call also writes " + ", ".join(sorted(ctx.written)[:2])
             block("request-message-unknown", f"the osc {sub} message ({what})")
         for fault in filter(None, map(message_fault, texts)):
             block("request-message", f"an osc {sub} message {fault}")
+
+
+def written_by_call(word, ctx, cwd):
+    """A path named in word that this call writes, as written, or None."""
+    base = cwd if isinstance(cwd, str) and not isinstance(cwd, Dirs) else "/"
+    for tok in re.findall(r"[\w./~+@-]+", word):
+        if "/" not in tok and "." not in tok:
+            continue
+        path = os.path.realpath(os.path.join(base, os.path.expanduser(tok)))
+        if path in ctx.written:
+            return tok
+    return None
 
 
 # Status meant for the user that keeps landing in requests: never a reviewer's business.
@@ -783,7 +808,9 @@ WORK_NOTE = re.compile(
     r"|still building|this env(?:ironment)?|sub-?agents?|no (?:bugzilla )?access)\b",
     re.I,
 )
-BARE_FORWARD = re.compile(r"forward\b[^\n]*?\bto (?:openSUSE:)?Factory\.?", re.I)
+BARE_FORWARD = re.compile(
+    r"forward\s+\S+(?:\s+update)?\s+to (?:openSUSE:)?Factory\.?", re.I
+)
 
 
 def message_fault(text):
@@ -996,6 +1023,171 @@ def osc_writes(run, ctx, cwd):
                     block("maintenance-unknown", f"osc api {method} {shown(a)}")
                 if MAINT_PRJ.fullmatch(prj):
                     block("maintenance-api", f"an osc api {method} into {prj}")
+
+
+SUBMITS = {"sr", "submitreq", "submitrequest", "submitpac"}
+# Targets the devel-project rule leaves to the others: Factory and the products,
+# SUSE's, and home: branches.
+OWN_RULES = re.compile(r"(?:openSUSE|SUSE|home)(?::|$)")
+PKG_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*")
+
+
+def request_target(run, ctx, cwd):
+    """A submit request to a project other than the one Factory's _meta names
+    as the package's devel project: a sweep through a project lists its
+    aggregates, links and siblings' packages, and an SR filed to it for one of
+    those goes to the wrong project."""
+    sub, args = osc_sub(run)
+    if sub not in SUBMITS:
+        return
+    args = [long_prefix(a, ("--message", "--file")) for a in args]
+    pos = parse_opts(args, "mFrsaA", REQUEST_VALUED)[1]
+    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
+    if len(words) >= 3:
+        dsts, pkgs = [words[2]], [words[3] if len(words) > 3 else words[1]]
+    elif words:
+        dsts = [words[0]]
+        pkgs = [words[1]] if len(words) == 2 else [checkout_package(ctx, cwd)]
+    else:
+        return  # osc picks the link's or devel project's target itself
+
+    def spell(w):  # a word's values, as the call sets them
+        return (substitute(w, ctx, cwd) or []) if VARIABLE.search(w or "") else [w]
+
+    for dst in (d for w in dsts for d in spell(w)):
+        if not dst or OWN_RULES.match(dst):
+            continue
+        for pkg in (p for w in pkgs for p in spell(w)):
+            if not pkg or not PKG_NAME.fullmatch(pkg):
+                block(
+                    "request-target-unknown",
+                    f"which package osc {sub} to {dst} submits",
+                )
+            devel = factory_devel(pkg, ctx)
+            if devel and devel != dst:
+                block(
+                    "request-target",
+                    f"{pkg}'s devel project is {devel} (Factory _meta), not {dst}",
+                )
+            if not devel:  # not developed for Factory: the target package says where
+                kind, origin = target_kind(dst, pkg, ctx)
+                if kind == "aggregate":
+                    block(
+                        "request-target",
+                        f"{dst}/{pkg} is an _aggregate of another project's binaries",
+                    )
+                if kind == "link":
+                    block("request-target", f"{dst}/{pkg} is a _link to {origin}")
+
+
+def checkout_package(ctx, cwd):
+    """The package of the checkout osc runs in, or None."""
+    if not isinstance(cwd, str) or isinstance(cwd, Dirs):
+        return None
+    try:
+        with open(os.path.join(cwd, ".osc", "_package"), encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def factory_devel(pkg, ctx):
+    """The devel project openSUSE:Factory's _meta names for pkg; "" when it
+    names none or Factory has no such package. A failed, slow or unreadable
+    lookup refuses: it must not read as "no devel project"."""
+    import subprocess
+    import time
+    import xml.etree.ElementTree as ET
+
+    if pkg in ctx.devel:
+        return ctx.devel[pkg]
+    what = f"openSUSE:Factory/{pkg}/_meta"
+    stub = os.environ.get("PR_GUARD_META_DIR")
+    if stub:
+        path = os.path.join(stub, pkg + ".xml")
+        text = open(path, encoding="utf-8").read() if os.path.exists(path) else None
+    else:
+        left = ctx.deadline - time.monotonic()
+        if left <= 0:
+            block(
+                "request-target-unknown",
+                f"{what} (the lookups of this call ran past {NET_BUDGET} s)",
+            )
+        try:
+            r = subprocess.run(
+                ["osc", "api", f"/source/openSUSE:Factory/{pkg}/_meta"],
+                capture_output=True,
+                text=True,
+                timeout=left,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            block("request-target-unknown", f"{what} ({type(e).__name__})")
+        if r.returncode != 0 and "HTTP Error 404" not in r.stderr:
+            block("request-target-unknown", f"{what} (osc exited {r.returncode})")
+        text = r.stdout if r.returncode == 0 else None
+    devel = ""
+    if text is not None:
+        try:
+            el = ET.fromstring(text).find("devel")
+        except ET.ParseError:
+            block("request-target-unknown", f"{what} (the answer did not parse)")
+        devel = (el.get("project") or "") if el is not None else ""
+    ctx.devel[pkg] = devel
+    return devel
+
+
+def target_kind(dst, pkg, ctx):
+    """("aggregate", None) or ("link", "PRJ/PKG") when dst/pkg only mirrors
+    another project's package (a _link within dst, or to Factory or SUSE, is
+    its own source), else (None, None). A 404 is a package dst does not carry
+    yet. A failed or unreadable lookup refuses."""
+    import subprocess
+    import time
+    import xml.etree.ElementTree as ET
+
+    key = (dst, pkg)
+    if key in ctx.devel:
+        return ctx.devel[key]
+    what = f"{dst}/{pkg}"
+    stub = os.environ.get("PR_GUARD_META_DIR")
+    if stub:
+        path = os.path.join(stub, "src", dst, pkg + ".xml")
+        text = open(path, encoding="utf-8").read() if os.path.exists(path) else None
+    else:
+        left = ctx.deadline - time.monotonic()
+        if left <= 0:
+            block(
+                "request-target-unknown",
+                f"{what} (the lookups of this call ran past {NET_BUDGET} s)",
+            )
+        try:
+            r = subprocess.run(
+                ["osc", "api", f"/source/{dst}/{pkg}"],
+                capture_output=True,
+                text=True,
+                timeout=left,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            block("request-target-unknown", f"{what} ({type(e).__name__})")
+        if r.returncode != 0 and "HTTP Error 404" not in r.stderr:
+            block("request-target-unknown", f"{what} (osc exited {r.returncode})")
+        text = r.stdout if r.returncode == 0 else None
+    got = (None, None)
+    if text is not None:
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError:
+            block("request-target-unknown", f"{what} (the answer did not parse)")
+        names = {e.get("name") for e in root.findall("entry")}
+        link = root.find("linkinfo")
+        if "_aggregate" in names:
+            got = ("aggregate", None)
+        elif link is not None and link.get("project") not in (None, dst):
+            lp = link.get("project")
+            if not OWN_RULES.match(lp):
+                got = ("link", f"{lp}/{link.get('package') or pkg}")
+    ctx.devel[key] = got
+    return got
 
 
 def osc_targets(sub, pos, opts):
@@ -2544,6 +2736,7 @@ def guess(run, ctx, cwd, own=False):
             request_args(["osc", *rest], ctx, cwd)
             request_message(["osc", *rest], None, ctx, cwd)
             osc_writes(["osc", *rest], ctx, cwd)
+            request_target(["osc", *rest], ctx, cwd)
         if own:
             for tool in ("gh", "tea", "git-obs", "secret-tool"):
                 secret_rules(tool, [tool, *rest], ctx, cwd)
@@ -2922,6 +3115,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         request_args(run, ctx, here)
         request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
+        request_target(run, ctx, here)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
         held = [

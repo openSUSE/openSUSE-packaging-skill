@@ -8,6 +8,8 @@ provably only read; gh is not judged), push to a branch that heads an open pool
 PR, write a target-gate.sh stamp, run an emulated osc build, file a request
 against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
+file a submit request to a project other than the package's devel project in
+Factory's _meta, or into an _aggregate or a _link of another project,
 file a request whose message is too long (over 160 characters of prose, which
 is every line but a "- " list item; a list line over 100; over 1000 in all),
 carries a work note for the user (build or sweep status, the session's tools),
@@ -52,6 +54,9 @@ Environment:
   PR_GUARD_ARCH       the native architecture (default: this machine's)
   PR_GUARD_PULLS_DIR  offline stand-in for the open-PR lookup, for tests: <repo>.json
                       holds the Gitea response, a missing file reads as a 404
+  PR_GUARD_META_DIR   offline stand-in for the submit-target lookups, for tests:
+                      <pkg>.xml is Factory's _meta, src/<prj>/<pkg>.xml the
+                      target's source listing; a missing file reads as a 404
 
 A call that matches nothing guarded is allowed without a lookup. Once one
 matches, anything the guard cannot establish -- a remote, branch or repository

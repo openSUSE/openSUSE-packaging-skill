@@ -473,7 +473,9 @@ pool or unnamed repository is refused however it is sent, and elsewhere counts u
 call provably only reads), pushing to a branch that heads an open pool PR, writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject`, a request through the API (`/request?cmd=create`) or one whose message
+`--nodevelproject`, a request through the API (`/request?cmd=create`) , a submit request to a project other
+than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
+of another project, or one whose message
 has over 160 characters of prose (every line but a `- ` list item), a list line over 100
 characters or over 1000 in all, a work note for the user (build or sweep status, the
 session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
@@ -773,7 +775,7 @@ which the allow rules below decide. Details: the skill's `scripts/README.md` "`b
 |---|---|---|
 | `scripts/bug-guard.py` | `~/.claude/hooks/` | the guard; both harnesses run this one pinned copy |
 | `claude/bug-guard-hook.json` | its `hooks` entry and its `permissions.allow` rules into `~/.claude/settings.json` | a PreToolUse hook on `mcp__bugzilla__.*`, and allow rules for the read tools |
-| `opencode-v2/bug-guard.ts` | `~/.config/opencode/plugins/bug-guard.ts` | for opencode 2.x: keeps a bugzilla call's input from `execute.before` and, when its permission check would ask, sets it to allow on the guard's `allow` |
+| `opencode-v2/bug-guard.ts` | `~/.config/opencode/plugins/bug-guard.ts` | for opencode 2.x: when a bugzilla call's permission check would ask, judges that call's own arguments (`metadata.input`) with the guard and sets it to allow on the guard's `allow` |
 | `opencode-v2/opencode.jsonc` | its bugzilla block, the last entries, into the same `permissions` array | every `bugzilla_*` tool asks, then the reads are allowed |
 
 Install, once the change is merged:
@@ -792,15 +794,21 @@ Install, once the change is merged:
    `opensuse-packaging.bug-guard`. Without that block opencode's base policy allows every
    bugzilla write, from sub-agents too. The guard is not wired for opencode 1.x.
 
-opencode 2.0.29, measured in a throw-away home in its own network namespace with a stub
-model, a stub `bugzilla` MCP server (`"codemode": false`) and a stub guard: a read ran with
-no guard call; an `assign_bug` the guard allowed ran, from the main session and from a
-sub-agent (the `subagent` tool, agent `general`); one it answered `ask` for, and an
-`add_comment`, were asked, which a non-interactive `run` rejects; with the plugin file
-removed the allowed call was asked too. The guard always received the call's input, so
-`execute.before` runs before the permission check, and setting `effect` in the `evaluate`
-hook takes effect. `opencode plugin list` printed "No plugins found" right after a service
-start and listed the plugin about 3 s later.
+opencode 2.0.32, measured in a throw-away home in its own network namespace with a stub
+model, a stub `bugzilla` MCP server and a stub guard, with direct tools (`"codemode": false`)
+and with Code Mode. Every bugzilla call, a Code Mode `tools.bugzilla.…` call inside
+`execute` included, gets a permission check as `bugzilla_<tool>` whose `metadata.input`
+holds that call's own arguments, and setting `effect` in the `evaluate` hook takes effect:
+an `assign_bug` the guard allowed ran, from the main session and from a sub-agent; one it
+answered `ask` for, and an `add_comment`, were asked, which a non-interactive `run`
+rejects; with the plugin file removed the allowed call was asked too. **All the inner calls
+of one Code Mode `execute` share that call's id**, so the plugin keys nothing by it: an
+earlier version cached arguments by call id, and two concurrent `assign_bug`s in one
+`execute` let the unproven one run on the other's allow. 2.0.29 passed an empty
+`metadata`, where every call stays asked. In 2.x a server's `"codemode": false` takes
+effect only in the `"mcp": {"servers": {…}}` form, not in the legacy `"mcp": {…}` one.
+`opencode plugin list` printed "No plugins found" right after a service start and listed
+the plugin about 3 s later.
 
 Claude Code, from its hooks and sub-agents documentation (not measured here): a hook's
 `allow` skips the permission prompt for an MCP tool that is in no allow rule; deny and ask

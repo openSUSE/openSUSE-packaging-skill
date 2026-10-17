@@ -7,14 +7,11 @@ import { join } from "node:path"
 // hands it to the pinned bug-guard.py and lets it run unasked only on that
 // guard's "allow" -- the security hand-back of a bug your own Factory SR fixes.
 // Every other write keeps its ask. Install: contrib/harness/README.md. A missing
-// guard or python3 leaves every call asked.
+// guard or python3, or an opencode that does not pass the call's arguments,
+// leaves every call asked.
 
 const GUARD = join(homedir(), ".claude", "hooks", "bug-guard.py")
 const PREFIX = "bugzilla_"
-
-// The permission check names the call, not its input: keep the input from
-// execute.before, which runs first, until that check takes it.
-const inputs = new Map<string, unknown>()
 
 // The guard's decision on one event; anything but a clean "allow" reads as ask.
 const decide = (event: Record<string, unknown>) =>
@@ -43,18 +40,12 @@ const decide = (event: Record<string, unknown>) =>
 const plugin: Plugin.Plugin = {
   id: "opensuse-packaging.bug-guard",
   async setup(ctx) {
-    await ctx.tool.hook("execute.before", async (event) => {
-      const tool = String(event.tool ?? "")
-      if (!tool.startsWith(PREFIX) || !event.id) return
-      if (inputs.size > 256) inputs.clear()
-      inputs.set(String(event.id), event.input)
-    })
+    // The MCP tool puts its own call's arguments in metadata.input; a Code Mode
+    // execute shares one call id across all its inner calls, so nothing keyed by id.
     await ctx.permission.hook("evaluate", async (event) => {
       const action = String(event.action ?? "")
-      if (!action.startsWith(PREFIX)) return
-      const id = event.source?.type === "tool" ? String(event.source.id ?? "") : ""
-      const input = inputs.get(id)
-      inputs.delete(id)
+      if (!action.startsWith(PREFIX) || event.source?.type !== "tool") return
+      const input = event.metadata?.input
       if (event.effect !== "ask" || input === undefined) return
       if ((await decide({ tool_name: action, tool_input: input })) === "allow") event.effect = "allow"
     })
