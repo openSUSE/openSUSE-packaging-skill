@@ -129,7 +129,7 @@ Verified `.changes` prepend (separator-count + insertion-only checks; restores o
 
 ## `changes-lint.sh`
 
-Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines. Also flags a bullet that names a CVE id as not fixed (`not (yet) fixed`, `unpatched`, `does not address`, `tracked separately`, `remains open` and kin) unless the bullet states that fix (`Fix CVE-…`, `CVE-…: fixed`, a patch named for the id): any CVE id in `.changes` reads as fixed by that update.
+Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines. Also flags a bullet that names a CVE id as not fixed (`not (yet) fixed`, `unpatched`, `does not address`, `tracked separately`, `remains open` and kin) unless the bullet states that fix (`Fix CVE-…`, `CVE-…: fixed`, a patch named for the id): any CVE id in `.changes` reads as fixed by that update. And a bullet that names an OBS request (`sr#N`, `SR N`, `rq N`, `request #N`; not `pull request #N`) or a staging order (`lands after`, `stage together`): those go in the SR message, the `.changes` ships in the RPM. Real case: sr#1385697, "lands after SR 1385569".
 
 ## `changes-patches.sh`
 

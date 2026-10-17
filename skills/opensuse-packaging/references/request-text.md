@@ -30,6 +30,9 @@ Update python-comfyui-workflow-templates to 0.11.85: pins core 0.3.376, json 0.1
 - `- Rebuilds: <pkg>, <pkg>` — consumers a soname or ABI move breaks.
 - a dropped architecture, or a question for a named reviewer.
 
+These lines go in the message only, never in the `.changes` entry, which ships in the RPM
+(`changes-lint.sh` refuses a request number or a staging order there).
+
 The request you file second can name the first; add a one-line comment on the first naming
 the second ("Stage with sr#N."), since its message cannot be edited.
 

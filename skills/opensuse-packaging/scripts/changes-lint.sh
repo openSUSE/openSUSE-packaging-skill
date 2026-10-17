@@ -37,6 +37,10 @@
 #       states that this update fixes that id: reviewers read any CVE id in
 #       .changes as fixed here (references/changelog-rules.md "CVEs and
 #       security bullets")
+#     - no bullet names an OBS request ('sr#N', 'SR N', 'rq N', 'request #N')
+#       or a staging order ('lands after', 'stage together'): the SR
+#       message carries those, the .changes ships in the RPM
+#       (references/changelog-rules.md "Curate the entry")
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
 #         3 = a file is unreadable (wins over 1: the other files are still
 #         linted and printed, but the run is incomplete).
@@ -126,6 +130,13 @@ FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+
 FIXED = re.compile(r"(?P<id>CVE-\d{4}-\d{4,})\)?:?\s+(?:is\s+|was\s+|now\s+)?(?:fixed|addressed)\b", re.I)
 NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
 PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
+REQUEST_ID = re.compile(r"\b(?:sr|rq|request)\s*#?\s*\d{6,}\b", re.I)
+UPSTREAM_PR = re.compile(r"\b(?:pull|merge)[\s-]*$", re.I)    # "pull request #N" is upstream's
+STAGING = re.compile(r"\b(?:lands?|landing|goes\s+in)\s+(?:after|before|together)\b"
+                     r"|\bstage[ds]?\s+(?:together|after|before)\b", re.I)
+def names_request(t):
+    return bool(STAGING.search(t)) or any(not UPSTREAM_PR.search(t[:m.start()])
+                                          for m in REQUEST_ID.finditer(t))
 def stated_fixed(t):
     ids = {m.group("id").upper() for m in FIXED.finditer(t)}
     ids.update(i.upper() for i in PATCHED.findall(t))
@@ -162,6 +173,9 @@ for k in range(ncheck):
             bad.append((n, "bullet names a CVE id as not fixed — if this update fixes it, "
                            "say so without the not-fixed phrase; if it does not, leave the "
                            "id out (any CVE id in .changes reads as fixed here)"))
+        if names_request(t):
+            bad.append((n, "bullet names a submit request or a staging order — put it in "
+                           "the SR message (- Stage with sr#N), not in .changes"))
 for i, msg in sorted(set(bad)):
     print(f"{f}:{i}: {msg}")
 sys.exit(1 if bad else 0)

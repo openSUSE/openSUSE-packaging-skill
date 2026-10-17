@@ -123,5 +123,45 @@ entry cve-not-affected.changes "- Refresh the vendored dependencies:" \
   "  * CVE-2025-1111 (boo#2): is not affected by this, ships foo 1.2"
 case_ cve-not-affected-clean 0 "OK: clean" --entries 1 "$work/cve-not-affected.changes"
 
+# Request ids and staging order belong in the SR message, not in .changes.
+# Real case: sr#1385697, wrapped over a continuation line.
+entry req-lands-after.changes "- Update to 5.1.15 (requires fcitx5 >= 5.1.22 and libime >= 1.1.14;" \
+  "  lands after SR 1385569):" "  * Pinyin: keep typed context for prediction"
+case_ req-lands-after 1 "req-lands-after.changes:4: bullet names a submit request or a staging order" --entries 1 "$work/req-lands-after.changes"
+grep -qF -- "put it in the SR message (- Stage with sr#N), not in .changes" <<<"$LAST" \
+  && pass "request message says where it goes" || fail "request message: $LAST"
+while IFS='|' read -r name text <&3; do
+  entry "req-$name.changes" "- Update to 1.2:" "  * Fix a crash on empty input" "$text"
+  case_ "req-$name" 1 "req-$name.changes:6: bullet names a submit request or a staging order" \
+    --entries 1 "$work/req-$name.changes"
+done 3<<'EOF'
+stage-with|- Stage with sr#1385054 (core)
+rq-glued|- Needs rq1385569 first
+request-hash|- Goes with request #1385569
+lands-together|- Lands together with the fcitx5 update
+staged-together|- Must be staged together with libime
+lands-after-pkg|- Lands after the fcitx5 5.1.23 update
+EOF
+while IFS='|' read -r name text <&3; do
+  entry "req-ok-$name.changes" "- Update to 1.2:" "$text"
+  case_ "req-ok-$name" 0 "OK: clean" --entries 1 "$work/req-ok-$name.changes"
+done 3<<'EOF'
+boo|  * Fix a crash on a crafted header (boo#1234567)
+gh|  * Fix a crash on empty input (gh#fcitx/fcitx5#1234)
+pull-request|  * Fix the parser regression from pull request #123456
+merge-request|  * Revert merge request 123456, it broke the ARM build
+pull-hyphen|  * Fix the regression from pull-request 123456
+http|  * Faster HTTP request handling for 1000000 requests
+floor|  * Build: requires fcitx5 >= 5.1.22
+git-staged|  * Show the files staged with --cached
+lands-with|  * The Qt6 port lands with this release
+EOF
+# Continuation lines join their bullet, so a wrapped "pull request" stays upstream's.
+entry req-ok-pull-wrapped.changes "- Update to 1.2:" "  * Fix the regression from pull" "    request #123456"
+case_ req-ok-pull-wrapped 0 "OK: clean" --entries 1 "$work/req-ok-pull-wrapped.changes"
+{ printf '%s\nTue Sep 15 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Update to 1.3\n  * Fix the crash\n\n' "$SEP"
+  cat "$work/req-stage-with.changes"; } > "$work/req-old.changes"
+case_ req-old-entry-not-linted 0 "OK: clean" --entries 1 "$work/req-old.changes"
+
 echo "---"; [ "$fails" = 0 ] && echo "all changes-lint checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
