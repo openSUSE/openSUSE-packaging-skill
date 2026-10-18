@@ -73,6 +73,7 @@ case "$1" in
          && { echo '<directory name="foo"><entry name="foo.changes"/><entry name="foo.spec"/></directory>'; exit 0; } ;;
   cat) [ "$2 $3" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$4" ] && { cat "$FACTORY/$4"; exit 0; } ;;
   status) exit 0 ;;
+  whois) echo 'jpackager: "Jane Packager" <jane@example.com>'; exit 0 ;;
 esac
 echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
 EOF
@@ -100,6 +101,22 @@ out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-
 grep -qF "foo.changes: 3 new entries vs openSUSE:Factory/foo" <<<"$out" \
   && pass "non-link checkout, explicit --target: counted against the target" \
   || { fail "non-link checkout, explicit --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+# --amend-top reaches changes-guard, which asks Factory whether the committed
+# top entry is still a draft: devel's own unaccepted entry is, Factory's is not.
+devel "$work/amend-draft" 1; cp "$work/amend-draft/.osc/sources/foo.changes" "$work/amend-draft/foo.changes"
+sed -i 's/^- Fix the man page$/- Fix the man page and its examples/' "$work/amend-draft/foo.changes"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/amend-draft" --amend-top 'Jane Packager' 2>&1)"
+grep -qF "## changes-guard: rc=0" <<<"$out" && pass "--amend-top on devel's unaccepted top entry: guard green" \
+  || { fail "--amend-top on devel's unaccepted top entry"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/amend-released/.osc/sources" && printf 'foo\n' > "$work/amend-released/.osc/_package"
+printf 'Name: foo\nVersion: 1.0\n' > "$work/amend-released/foo.spec"
+cp "$work/factory/foo.changes" "$work/amend-released/.osc/sources/foo.changes"
+sed 's/^- Initial package$/- Initial package, reworded/' "$work/factory/foo.changes" > "$work/amend-released/foo.changes"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/amend-released" --amend-top 'Jane Packager' 2>&1)"
+grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "already in openSUSE:Factory" <<<"$out" \
+  && pass "--amend-top on an entry Factory already has: guard red" \
+  || { fail "--amend-top on an entry Factory already has"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # A fork-PR clone tracks the pushed fork branch, which already holds the
 # change, so changes-patches compares clean against it; --git-base names the

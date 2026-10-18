@@ -89,7 +89,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
 - `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline. Every `references/<file>.md "<Section>"` pointer here is its argument.
 - `gate.sh` — gates 2–5 of the Block-2 gate (source_validator, changes-lint, changes-guard, changes-patches; `--build-log` adds build-summary) in one call, one VERDICT line.
-- `changes-guard.sh` — integrity gate: a `.changes` edit must be *insertion-only*. `--amend-top "<Name> <mail>"` permits amending your OWN not-yet-accepted top entry and nothing below it.
+- `changes-guard.sh` — integrity gate: a `.changes` edit must be *insertion-only*. `--amend-top "<Name> <mail>"` permits amending your OWN (`osc whois`) not-yet-accepted top entry and nothing below it; an added bug/CVE reference to an older entry passes only with a new entry on top.
 - Bugzilla has **no bundled access script** — all access goes through the bugwarden MCP server (core directive 7); `bug-guard.py` only judges its write calls.
 - `distro-survey.sh` — version (+ Fedora patch-count hint) across all 11 surveyed distros in one call (core directive 8–9).
 - `rdeps.sh` — reverse build-deps via `_builddepinfo`: who a soname bump touches (in Factory only a spec naming `lib<name><sover>` needs an edit).

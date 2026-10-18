@@ -85,9 +85,12 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
 - **`changes-guard.sh --amend-top "<Your Name> <you@example.com>"`** is how you legitimately edit
   your OWN top entry while it is committed to devel (or pushed to an open PR/SR branch) but **not
   yet accepted into Factory** — on a git branch the auto-detected baseline is the *branch HEAD*,
-  which already contains your unmerged entry. It still refuses any change from the second entry
-  down, a foreign top entry, and emptying the entry. Stop using it once the submission is accepted;
-  the entry is history then.
+  which already contains your unmerged entry. AUTHOR is always your own name: the guard checks the
+  entry against `osc whois` and Factory's copy, and refuses another packager's entry, an entry
+  Factory already has, any change from the second entry down, and emptying the entry. Stop using
+  it once the submission is accepted; the entry is history then.
+- **A bug/CVE reference added to an older entry** passes the guard only when that is the entry's
+  only change and a new entry on top carries it (e.g. `- Reference boo#N for CVE-…`).
 - Full flag/exit-code detail and the one sanctioned override (a `check_dates_in_changes` header
   repair): `scripts/README.md` "`changes-guard.sh`" and `references/changelog-rules.md`
   "Sanctioned exception 2".

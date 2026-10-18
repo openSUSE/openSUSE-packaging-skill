@@ -150,10 +150,18 @@ Factory**: on a git branch the auto-detected baseline is the *branch HEAD*, whic
 contains your own unmerged entry, so reworking it after review feedback trips the guard even
 though nothing published was touched. That entry is a draft describing an unreleased revision,
 and one coherent entry per submission beats stacking fixup bullets, so `--amend-top` permits
-exactly that edit — grow, reword, rewrite, refresh the date. It still refuses any change from
-the second entry down, a foreign top entry (in the baseline *or* the replacement), and emptying
-the entry. Stop using it once the submission is accepted: the entry is history then — write a
-new one.
+exactly that edit — grow, reword, rewrite, refresh the date. AUTHOR is your own name, never
+another packager's: the committed top entry must also name the `osc whois` user, and Factory's
+copy (`osc cat`, or `--released DIR` offline) must not hold it yet — sr#1385744 passed
+`--amend-top` another packager's name and rewrote that packager's devel entry. It still refuses
+any change from the second entry down, a foreign top entry (in the baseline *or* the
+replacement), and emptying the entry; exit 3 when it cannot tell whose the entry is or whether
+Factory has it. Stop using it once the submission is accepted: the entry is history then —
+write a new one.
+
+**A bug/CVE reference added to an older entry** (`boo#`/`bsc#`/`bnc#`/`CVE-…`, brackets and
+separators, line wrapping may move) passes when that is the entry's only change and at least one
+new entry is prepended to carry it; the same reference without a new entry is red.
 
 **The one sanctioned override** is a header `check_dates_in_changes` rejects: the guard goes red
 and you proceed anyway, but only with the evidence the rule demands — `references/changelog-rules.md`

@@ -14,50 +14,63 @@
 # file. That holds iff all new bytes are prepended above the old content —
 # a deletion or a mid-file insertion shifts the suffix and trips it.
 #
-# Usage: changes-guard.sh [--base FILE] [--amend-top AUTHOR] <pkg>.changes [...]
+# Usage: changes-guard.sh [--base FILE] [--amend-top AUTHOR] [--released DIR] <pkg>.changes [...]
 #   --base FILE  compare against FILE instead of the auto-detected baseline
 #                (useful outside a checkout, or to diff two arbitrary versions)
 #   --amend-top AUTHOR
 #                Also allow the TOPMOST committed entry to be amended — grown,
 #                reworded, or rewritten, date refreshed — provided BOTH the
-#                committed top entry and its replacement carry AUTHOR (e.g.
-#                'Jane Packager') in the header. Use this only for an update
-#                already committed to the devel project but NOT yet accepted
-#                into openSUSE:Factory: that entry describes an unreleased
-#                revision, so it is a draft, not history, and keeping ONE
-#                coherent entry per submission beats stacking fixup bullets.
-#                Everything BELOW the top entry is still required to be
-#                byte-for-byte identical, and a foreign top entry is still
-#                refused. Once the SR is accepted, stop using it — the entry
-#                became history; write a new one.
+#                committed top entry and its replacement carry AUTHOR (YOUR own
+#                name, e.g. 'Jane Packager'; never another packager's) in the
+#                header, the committed one names the `osc whois` user, and
+#                openSUSE:Factory's copy of the .changes does not hold that entry
+#                yet. Use this only for an update already committed to the devel
+#                project but NOT yet accepted into openSUSE:Factory: that entry
+#                describes an unreleased revision, so it is a draft, not history,
+#                and keeping ONE coherent entry per submission beats stacking
+#                fixup bullets. Everything BELOW the top entry is still required
+#                to be byte-for-byte identical, and a foreign or released top
+#                entry is still refused (real breach: sr#1385744 passed
+#                --amend-top another packager's name and rewrote that packager's
+#                entry in the devel project).
+#   --released DIR
+#                openSUSE:Factory's copy of each .changes, by file name, for the
+#                --amend-top check (offline/tests; a file missing there = not in
+#                Factory; the `osc whois` check still runs). Default: `osc cat openSUSE:Factory <pkg> <file>`, the
+#                package from .osc/_package or the git checkout's directory name;
+#                a 404 means a new package.
 #   Baseline auto-detection order: .osc/sources/<name> (classic osc checkout),
 #   .osc/<name> (older osc), then `git show HEAD:<name>` (scmsync/git package).
 #   A package with no prior committed .changes (new package) passes trivially.
 #
-# The one sanctioned exception — adding a boo#/CVE ref to an OLD entry — is a
-# deliberate human edit and is expected to fail this guard; do it consciously,
-# do not wire an override into the automated flow.
+# Adding a boo#/bsc#/bnc#/CVE reference to an OLDER entry passes when that is
+# the only change to it (line wrapping may move) AND a new entry is prepended
+# on top to carry the edit; the same references without a new entry fail.
 #
-#   Exit: 0 = insertion-only (or an allowed --amend-top edit, or new file),
+#   Exit: 0 = insertion-only (or an allowed --amend-top or reference edit, or new file),
 #         1 = a prior entry was modified, 2 = usage error,
-#         3 = an input (a .changes file or the --base FILE) is unreadable
-#         (wins over 1: the run is incomplete).
+#         3 = an input (a .changes file or the --base FILE) is unreadable, or
+#         --amend-top cannot tell whose the top entry is or whether Factory
+#         has it (wins over 1: the run is incomplete).
 set -euo pipefail
 
 base_override=""
 amend_author=""
+released_dir=""
 while :; do
-  case "${1:-}" in --base|--amend-top) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "${1:-}" in --base|--amend-top|--released) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "${1:-}" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     --base) base_override=$2; shift 2 ;;
     --amend-top) amend_author=$2; shift 2 ;;
+    --released) released_dir=$2; shift 2 ;;
     *) break ;;
   esac
 done
 [ $# -gt 0 ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [ -z "$base_override" ] || [ -r "$base_override" ] || { echo "$base_override: unreadable" >&2; exit 3; }
+[ -z "$released_dir" ] || [ -d "$released_dir" ] || { echo "$released_dir: not a directory" >&2; exit 3; }
 
 find_base() {                      # $1 = working .changes path; echoes baseline to stdout
   local work=$1 dir bn
@@ -109,6 +122,86 @@ amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
        >/dev/null 2>&1
 }
 
+# Is the baseline's top entry the OBS user's own? AUTHOR is the caller's word;
+# `osc whois` is the login's. 0 = yes, 1 = no, 3 = cannot tell (said on stderr).
+top_mine() {                       # $1 = work, $2 = base
+  local me name mail bh
+  me=$(osc whois 2>/dev/null | head -n1) || me=""
+  name=$(sed -n 's/^[^:]*: *"\(.*\)".*/\1/p' <<<"$me"); mail=$(sed -n 's/.*<\(.*\)>.*/\1/p' <<<"$me")
+  if [ -z "$name$mail" ]; then
+    echo "$1: cannot tell whether the top entry is yours: osc whois failed" >&2; return 3
+  fi
+  bh=$(first_entry_header "$2")
+  if { [ -n "$name" ] && [[ $bh == *" - $name <"* ]]; } || { [ -n "$mail" ] && [[ $bh == *"<$mail>"* ]]; }; then
+    return 0
+  fi
+  echo "$1: ERROR — the top entry is not yours ('$bh'; osc whois: $me): another" \
+       "packager's entry is history, never a draft. Restore it byte-for-byte and write" \
+       "a new entry on top." >&2
+  return 1
+}
+
+# Is the baseline's top entry already in openSUSE:Factory? 0 = no, 1 = yes,
+# 3 = cannot tell (said on stderr). Its header line is the entry's identity.
+top_released() {                   # $1 = work, $2 = base
+  local bn pkg dir top fac err r=0
+  bn=$(basename -- "$1"); fac=$(mktemp); err=$(mktemp)
+  if [ -n "$released_dir" ]; then
+    [ ! -r "$released_dir/$bn" ] || cat -- "$released_dir/$bn" > "$fac"
+  else
+    dir=$(dirname -- "$1"); pkg=""
+    if [ -r "$dir/.osc/_package" ]; then pkg=$(tr -d '\n' < "$dir/.osc/_package")
+    elif top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null); then pkg=$(basename -- "$top"); fi
+    if [ -z "$pkg" ]; then
+      echo "$1: cannot tell whether openSUSE:Factory has the top entry: no package name" \
+           "(no .osc/_package, not a git checkout) — pass --released DIR" >&2; r=3
+    elif ! osc cat openSUSE:Factory "$pkg" "$bn" > "$fac" 2> "$err"; then
+      grep -q '404' "$err" || { echo "$1: cannot tell whether openSUSE:Factory has the top entry:" \
+        "osc cat openSUSE:Factory $pkg $bn failed: $(head -n1 "$err")" >&2; r=3; }
+      : > "$fac"
+    fi
+  fi
+  if [ $r = 0 ] && grep -qxF -- "$(first_entry_header "$2")" "$fac"; then
+    echo "$1: ERROR — the top entry is already in openSUSE:Factory (released): it is" \
+         "history, not a draft. Restore it byte-for-byte and write a new entry on top." >&2
+    r=1
+  fi
+  rm -f "$fac" "$err"; return $r
+}
+
+# Every baseline entry survives below the new ones, byte-for-byte or changed
+# only by inserted bug/CVE references (whitespace may reflow within such an
+# entry). Prints "<new entries> <entries given references>"; exit 1 otherwise.
+refs_only() {                      # $1 = work, $2 = base
+  python3 -I - "$1" "$2" <<'PY'
+import difflib, re, sys
+SEP = "-" * 67
+def entries(path):
+    out = []
+    for line in open(path, encoding="utf-8", errors="surrogateescape").read().split("\n"):
+        if line == SEP: out.append([line])
+        elif not out: return None
+        else: out[-1].append(line)
+    return out
+work, base = entries(sys.argv[1]), entries(sys.argv[2])
+if not work or not base or len(work) < len(base): sys.exit(1)
+new = len(work) - len(base)
+REF, GLUE = r"(?:(?:boo|bsc|bnc)#\d+|CVE-\d{4}-\d{4,})", r"[\s()\[\],;:/.]*"
+added = re.compile(rf"{GLUE}(?:{REF}{GLUE})+")
+refs = 0
+for b, w in zip(base, work[new:]):
+    if b == w: continue
+    if b[:2] != w[:2]: sys.exit(1)                    # separator and header
+    bs, ws = (" ".join(" ".join(e[2:]).split()) for e in (b, w))
+    if bs == ws: sys.exit(1)                          # a reflow, not a reference
+    for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, bs, ws, autojunk=False).get_opcodes():
+        if tag != "equal" and (tag != "insert" or not added.fullmatch(ws[j1:j2])): sys.exit(1)
+    refs += 1
+print(new, refs)
+sys.exit(0 if refs else 1)
+PY
+}
+
 rc=0; unreadable=0
 for work in "$@"; do
   [ -r "$work" ] || { echo "$work: unreadable" >&2; unreadable=1; continue; }
@@ -122,8 +215,20 @@ for work in "$@"; do
   if tail -c "$bsize" -- "$work" | cmp -s - "$base"; then
     echo "$work: OK — all pre-existing entries byte-for-byte intact (insertion-only)"
   elif [ -n "$amend_author" ] && amend_top_ok "$work" "$base" "$amend_author"; then
-    echo "$work: OK — everything below the top entry is intact; the top entry is" \
-         "yours (--amend-top: amendable while the update is not yet accepted)"
+    r=0; { top_mine "$work" "$base" && top_released "$work" "$base"; } || r=$?
+    if [ $r = 0 ]; then
+      echo "$work: OK — everything below the top entry is intact; the top entry is" \
+           "yours (--amend-top: amendable while the update is not yet accepted)"
+    elif [ $r = 1 ]; then rc=1
+    else unreadable=1; fi
+  elif counts=$(refs_only "$work" "$base"); then
+    if [ "${counts%% *}" -gt 0 ]; then
+      echo "$work: OK — new entry on top; older entries changed only by added bug/CVE references"
+    else
+      echo "$work: ERROR — older entries gained bug/CVE references but nothing new is on top:" \
+           "also prepend a new entry documenting it (e.g. '- Reference boo#N for CVE-…')." >&2
+      rc=1
+    fi
   else
     echo "$work: ERROR — the committed .changes is not an exact suffix of the new file;" >&2
     echo "  a previously-committed entry was modified, reordered, or deleted." >&2
