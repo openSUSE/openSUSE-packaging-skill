@@ -163,5 +163,25 @@ case_ req-ok-pull-wrapped 0 "OK: clean" --entries 1 "$work/req-ok-pull-wrapped.c
   cat "$work/req-stage-with.changes"; } > "$work/req-old.changes"
 case_ req-old-entry-not-linted 0 "OK: clean" --entries 1 "$work/req-old.changes"
 
+# --author: the identity osc vc writes. An entry that shares its name or its
+# address must carry both (sr#1385844 shipped the git address under the name).
+ME='Jane Packager <jane@suse.example>'
+by() { printf '%s\nSun Oct 18 10:00:00 UTC 2026 - %s\n\n- Update to 2.0:\n  * Fix the crash\n\n' "$SEP" "$1"; cat "$F"; }
+by "Jane Packager <jane@personal.example>" > "$work/au-git.changes"
+case_ author-git-email 1 "is not what osc vc writes ('$ME')" --author "$ME" --entries 1 "$work/au-git.changes"
+by "J. Packager <jane@suse.example>" > "$work/au-name.changes"
+case_ author-other-name 1 "is not what osc vc writes" --author "$ME" --entries 1 "$work/au-name.changes"
+by "Jane Packager <JANE@suse.example>" > "$work/au-case.changes"
+case_ author-email-case 0 "OK: clean" --author "$ME" --entries 1 "$work/au-case.changes"
+by "$ME" > "$work/au-ok.changes"
+case_ author-exact 0 "OK: clean" --author "$ME" --entries 1 "$work/au-ok.changes"
+by "Other Person <other@example.com>" > "$work/au-other.changes"
+case_ author-other-packager 0 "OK: clean" --author "$ME" --entries 1 "$work/au-other.changes"
+{ printf '%s\nMon Oct 19 10:00:00 UTC 2026 - %s\n\n- Fix the build\n\n' "$SEP" "$ME"; cat "$work/au-git.changes"; } > "$work/au-old.changes"
+case_ author-old-entry-not-linted 0 "OK: clean" --author "$ME" --entries 1 "$work/au-old.changes"
+case_ author-old-entry-in-scope 1 "au-old.changes:7: author" --author "$ME" --entries 2 "$work/au-old.changes"
+case_ author-bad-value 2 "--author takes 'Name <email>'" --author "jane@suse.example" --entries 1 "$work/au-ok.changes"
+case_ author-option-order 1 "is not what osc vc writes" --entries 1 --author "$ME" "$work/au-git.changes"
+
 echo "---"; [ "$fails" = 0 ] && echo "all changes-lint checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

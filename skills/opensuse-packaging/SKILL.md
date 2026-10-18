@@ -85,7 +85,8 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `leap-status.sh` — in Leap? at what version per branch? PR already open?
 - `scm-snapshot.sh` — scaffold + verify a pinned-commit `obs_scm` `_service`. **`--update` edits ONLY the obs_scm `revision` param, in place** — sibling services and the declared `versionformat` survive byte-for-byte.
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks); **prefer it over hand-editing**.
-- `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets).
+- `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); with `--author`, your entries carry exactly the name and address `osc vc` writes.
+- `vc-identity.sh` — the `Name <email>` a bare `osc vc` writes; the only author for your entries, never git's identity.
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
 - `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline. Every `references/<file>.md "<Section>"` pointer here is its argument.
 - `gate.sh` — gates 2–5 of the Block-2 gate (source_validator, changes-lint, changes-guard, changes-patches; `--build-log` adds build-summary) in one call, one VERDICT line.

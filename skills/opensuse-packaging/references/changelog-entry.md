@@ -46,8 +46,10 @@ reviewers will reject the entry. (`%_d` is the space-padded day: `Thu Jul  9`, n
 ## Author line — HARD RULE: always the full `Full Name <email>` form
 
 The header line is `<date> - Full Name <email>` (e.g. `Jane Packager <jane@example.com>`), never a
-bare email. Use the packager's own name/email — the one already used in the file's existing
-entries, or known from session context. If a source service (`changesgenerate`) stamps the entry
+bare email. Your own entries carry **exactly what a bare `osc vc` writes** — the same name and the
+same address (`scripts/vc-identity.sh` prints it) — not your git identity, and not an address an
+older entry happens to use (real case: sr#1385844 shipped the git address under the right name).
+`gate.sh`'s changes-lint refuses an entry that shares only the name or only the address. If a source service (`changesgenerate`) stamps the entry
 with just a bare email, rewrite it to the full form before committing.
 
 ## Prepend is an *insertion*, never a rewrite — HARD RULE

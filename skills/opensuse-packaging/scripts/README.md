@@ -125,11 +125,17 @@ Scaffold + verify a pinned-commit `obs_scm` `_service` for tagless upstreams (re
 
 ## `changes-prepend.sh`
 
-Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure). Refuses (exit 3, nothing written) when the file already differs from its committed version (looked up as `changes-guard.sh` does): an entry is already pending, and a second prepend would stack two into one submission — edit that top entry, then `changes-guard.sh --amend-top`.
+Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure). Refuses (exit 3, nothing written) when the file already differs from its committed version (looked up as `changes-guard.sh` does): an entry is already pending, and a second prepend would stack two into one submission — edit that top entry, then `changes-guard.sh --amend-top`. With no `--author` and no `$CHANGES_AUTHOR` the author is what a bare `osc vc` writes (`vc-identity.sh`), never git's identity: sr#1385844 shipped the git address that way.
 
 ## `changes-lint.sh`
 
 Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines. Also flags a bullet that names a CVE id as not fixed (`not (yet) fixed`, `unpatched`, `does not address`, `tracked separately`, `remains open` and kin) unless the bullet states that fix (`Fix CVE-…`, `CVE-…: fixed`, a patch named for the id): any CVE id in `.changes` reads as fixed by that update. And a bullet that names an OBS request (`sr#N`, `SR N`, `rq N`, `request #N`; not `pull request #N`) or a staging order (`lands after`, `stage together`): those go in the SR message, the `.changes` ships in the RPM. Real case: sr#1385697, "lands after SR 1385569".
+
+`--author 'Name <email>'` (`gate.sh` passes what `vc-identity.sh` prints): an entry whose author shares that name *or* that address must carry both exactly; another packager's entry passes, so a forwarded update keeps its author.
+
+## `vc-identity.sh`
+
+Prints the `Name <email>` a bare `osc vc` writes, by letting `osc vc` write a header into a scratch file — osc takes it from oscrc's `realname`/`email`, then `VC_REALNAME`/`VC_MAILADDR`, then the OBS account, and the oscrc holds credentials, so nothing else may read it. Exit 3 when osc vc fails or writes no `Name <email>` header; never a guess, and never git's identity.
 
 ## `changes-patches.sh`
 
@@ -254,6 +260,8 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
                changes-patches, default 1)
+  changes-lint also checks those entries' author against what a bare
+  `osc vc` writes (vc-identity.sh); with no identity from osc vc it is red.
   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
   --target     SR target for changes-patches (default: link origin, else Factory)
   --git-base   git checkout: the target's ref for changes-patches (a fork PR's

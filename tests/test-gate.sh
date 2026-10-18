@@ -74,6 +74,7 @@ case "$1" in
   cat) [ "$2 $3" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$4" ] && { cat "$FACTORY/$4"; exit 0; } ;;
   status) exit 0 ;;
   whois) echo 'jpackager: "Jane Packager" <jane@example.com>'; exit 0 ;;
+  vc) [ -z "${VC_FAIL:-}" ] && printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4" && exit 0 ;;
 esac
 echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
 EOF
@@ -117,6 +118,22 @@ out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/amend-
 grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "already in openSUSE:Factory" <<<"$out" \
   && pass "--amend-top on an entry Factory already has: guard red" \
   || { fail "--amend-top on an entry Factory already has"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+# changes-lint checks the new entry's author against what osc vc writes: the
+# git address under the same name is red (sr#1385844), and an identity osc vc
+# cannot give leaves the author unchecked, which is red too.
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
+grep -qF "## changes-lint: rc=0" <<<"$out" && pass "author as osc vc writes it: changes-lint green" \
+  || { fail "author as osc vc writes it"; printf '%s\n' "$out" | sed 's/^/    /'; }
+devel "$work/git-email" 1; sed -i '2s/<jane@example.com>$/<jane@personal.example>/' "$work/git-email/foo.changes"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/git-email" 2>&1)"
+grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "is not what osc vc writes" <<<"$out" \
+  && pass "git address under the same name: changes-lint red" \
+  || { fail "git address under the same name"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(VC_FAIL=1 FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
+grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "author not checked" <<<"$out" \
+  && pass "osc vc gives no identity: changes-lint red" \
+  || { fail "osc vc gives no identity"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # A fork-PR clone tracks the pushed fork branch, which already holds the
 # change, so changes-patches compares clean against it; --git-base names the

@@ -6,7 +6,7 @@
 # a real decline over "missing newlines") costs a full review round-trip
 # that this catches locally in milliseconds.
 #
-# Usage: changes-lint.sh [--entries N | --all] <file>.changes [more.changes ...]
+# Usage: changes-lint.sh [--entries N | --all] [--author 'Name <email>'] <file>.changes [...]
 #   --entries N  lint only the N >= 1 newest (topmost) entries (default: 1 —
 #                the entry your SR adds; use the number of entries new
 #                to the SR when superseding). Historical entries routinely
@@ -16,10 +16,18 @@
 #                and IS checked (see the comment at `limit`).
 #   --all        lint every entry + file-global checks (EOF newline,
 #                trailing blank lines). For audits, not the gate.
+#   --author 'Name <email>'
+#                the identity a bare `osc vc` writes (vc-identity.sh; gate.sh
+#                passes it): an entry whose author shares its name OR its
+#                address must carry both exactly (address case-insensitive).
+#                Other packagers' entries pass (a forwarded update keeps its
+#                author). Real case: sr#1385844 shipped an entry signed with
+#                the git address under the right name.
 #   Checks per entry:
 #     - separators are exactly 67 dashes; entry starts at one
 #     - separator followed by 'Day Mon DD HH:MM:SS UTC YYYY - Name <email>'
-#     - author is 'Name <email>' form (never a bare email)
+#     - author is 'Name <email>' form (never a bare email); with --author,
+#       the same name and address osc vc writes
 #     - blank line after the header, blank line before the next separator
 #     - body lines are bullets ('- ', nested '* ') or indented continuations
 #     - no trailing whitespace
@@ -46,24 +54,33 @@
 #         linted and printed, but the run is incomplete).
 set -euo pipefail
 
-entries=1
-case "${1:-}" in
-  -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
-  --entries) [ $# -ge 2 ] || { echo "--entries needs a value" >&2; exit 2; }
-    # 0 is --all's internal value: from --entries it would lint released entries
-    [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "--entries takes a positive integer, got '$2' (--all lints every entry)" >&2; exit 2; }
-    entries=$2; shift 2 ;;
-  --all) entries=0; shift ;;
-esac
+entries=1; author=""
+while :; do
+  case "${1:-}" in
+    -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    --entries) [ $# -ge 2 ] || { echo "--entries needs a value" >&2; exit 2; }
+      # 0 is --all's internal value: from --entries it would lint released entries
+      [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "--entries takes a positive integer, got '$2' (--all lints every entry)" >&2; exit 2; }
+      entries=$2; shift 2 ;;
+    --all) entries=0; shift ;;
+    --author) [ $# -ge 2 ] || { echo "--author needs a value" >&2; exit 2; }
+      [[ $2 =~ ^[^\<\>]*[^\<\>\ ]\ \<[^\<\>@\ ]+@[^\<\>@\ ]+\>$ ]] \
+        || { echo "--author takes 'Name <email>', got '$2'" >&2; exit 2; }
+      author=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 
 [ $# -gt 0 ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 rc=0; unreadable=0
 for f in "$@"; do
   [ -r "$f" ] || { echo "$f: unreadable" >&2; unreadable=1; continue; }
-  python3 - "$f" "$entries" <<'PY' || rc=1
+  python3 - "$f" "$entries" "$author" <<'PY' || rc=1
 import re, sys
-f, nent = sys.argv[1], int(sys.argv[2])
+f, nent, me = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+WHO = re.compile(r"^(.*\S) <([^<>]+)>$")
+me_name, me_mail = WHO.match(me).groups() if me else ("", "")
 raw = open(f, encoding="utf-8").read()
 lines = raw.split("\n")
 if raw.endswith("\n"):
@@ -108,6 +125,14 @@ for i, l in enumerate(lines[:limit], 1):
                         "'Day Mon DD HH:MM:SS UTC YYYY - Name <email>' header"))
         elif " - <" in lines[i]:
             bad.append((i + 1, "bare email in author field — use 'Name <email>'"))
+        elif me:
+            who = lines[i].split(" - ", 1)[1]
+            m = WHO.match(who)
+            name, mail = m.groups() if m else ("", "")
+            same_name, same_mail = name == me_name, mail.lower() == me_mail.lower()
+            if (same_name or same_mail) and not (same_name and same_mail):
+                bad.append((i + 1, f"author '{who}' is not what osc vc writes ('{me}'): "
+                            "use the same name and address"))
         if i + 1 < len(lines) and lines[i + 1].strip() != "":
             bad.append((i + 2, "missing blank line after the entry header"))
         if i > 1 and lines[i - 2].strip() != "":

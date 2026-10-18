@@ -11,6 +11,8 @@
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
+#   changes-lint also checks those entries' author against what a bare
+#   `osc vc` writes (vc-identity.sh); with no identity from osc vc it is red.
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
 #   --target     SR target for changes-patches (default: link origin, else Factory)
 #   --git-base   git checkout: the target's ref for changes-patches (a fork PR's
@@ -99,7 +101,14 @@ fi
 
 changes=( *.changes )
 if [ -e "${changes[0]}" ]; then
-  "$HERE/changes-lint.sh" --entries "$entries" "${changes[@]}" > "$log/changes-lint.txt" 2>&1; rc=$?
+  lint=(--entries "$entries")
+  if me=$("$HERE/vc-identity.sh" 2> "$log/vc-identity.txt"); then lint+=(--author "$me"); else me=""; fi
+  "$HERE/changes-lint.sh" "${lint[@]}" "${changes[@]}" > "$log/changes-lint.txt" 2>&1; rc=$?
+  if [ -z "$me" ]; then
+    { cat "$log/vc-identity.txt"; echo "author not checked: no identity from osc vc to compare against"; } \
+      >> "$log/changes-lint.txt"
+    [ $rc != 0 ] || rc=1
+  fi
   show changes-lint $rc "$log/changes-lint.txt"
   if [ -n "$amend" ]; then "$HERE/changes-guard.sh" --amend-top "$amend" "${changes[@]}" > "$log/changes-guard.txt" 2>&1; rc=$?
   else "$HERE/changes-guard.sh" "${changes[@]}" > "$log/changes-guard.txt" 2>&1; rc=$?; fi

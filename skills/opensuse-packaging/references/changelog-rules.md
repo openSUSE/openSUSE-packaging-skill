@@ -13,7 +13,7 @@ https://en.opensuse.org/openSUSE:Creating_a_changes_file_(RPM)
 ### Format and layout
 
 - openSUSE keeps the changelog in a separate `<name>.changes` file, not inside `%changelog` in the spec.
-- Use `osc vc` to add a new entry — it stamps the date/email correctly.
+- Use `osc vc` to add a new entry — it stamps the date/email correctly. Any other route still signs with exactly what `osc vc` would write (`scripts/vc-identity.sh`: same name, same address), never git's identity.
 - Newest entry at the top. Entries are separated by a line of 67 dashes. Wrap text at 67 columns.
 - **First-level bullet `-`, second-level `*`. No third level.** The `/usr/lib/build/changelog2spec` helper specifically recognizes these two symbols for auto-reindenting, and yast2-qt renders deeper levels badly — so never use a third level. **Every item is a bullet** — never write a `.changes` entry body as a bare prose paragraph; a single note still gets a leading `- `, and continuation lines wrap indented under their bullet.
 - **Group related changes thematically.** Related changes go under one first-level `-` bullet with second-level `*` sub-bullets; don't pad with implementation detail. When amending the session's entry with a later change, nest it as an additional `*` under an existing top-level dash if it fits thematically (e.g. another guideline-refresh tweak); otherwise add a new top-level `-`.
