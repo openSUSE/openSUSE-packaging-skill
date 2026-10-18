@@ -762,8 +762,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
 
 Sub-agents read bugzilla freely, and Block 3 (`agents/submit-watch.md`) hands a security
 bug back to the security team once your own Factory SR fixes it, factory-auto has passed
-it and no other affected stream lags (the agent checks that; the guard does not look at
-streams). That one write runs without a prompt; every other bugzilla write still asks. A
+it and no other affected stream you can submit to lags (the agent checks that; the guard
+does not look at streams). That one write runs without a prompt; every other bugzilla write still asks. A
 sub-agent reads bug comments that anyone can write, so the unprompted write is tied to
 something only you can create: `bug-guard.py` allows an `assign_bug` only when the assignee
 is `security-team@suse.de` and its comment cites exactly one request that `osc whois`
