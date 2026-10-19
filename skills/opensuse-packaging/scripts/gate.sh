@@ -66,7 +66,11 @@ show() {   # $1 name, $2 rc, $3 output file
 
 if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
   /usr/lib/obs/service/source_validator --outdir "$log/sv" > "$log/source_validator.txt" 2>&1; rc=$?
+  # factory-auto (check_source.py) declines on these although the validator exits 0
+  na=$(grep -E 'Attention.*not mentioned' "$log/source_validator.txt")
+  [ -z "$na" ] || printf '%s\n' "${na//(W) /ERROR: factory-auto declines this: }" >> "$log/source_validator.txt"
   show source_validator $rc "$log/source_validator.txt"
+  [ -z "$na" ] || [ $rc -ne 0 ] || red+=(source_validator)
 else
   echo "## source_validator: SKIPPED (not installed)"; red+=(source_validator)
 fi

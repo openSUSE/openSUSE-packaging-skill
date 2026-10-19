@@ -199,7 +199,7 @@ A recurring task is "which of my submissions are declined and need attention?" W
 
 1. **List them** with the `roles=creator` API above (`states=declined`), reading each `state/@who` (decliner) and the decline comment. Group by decline reason:
 2. **Bookkeeping declines (quick fixes)** — `factory-auto`/reviewer rejected on a fixable spec/source issue:
-   - *Orphaned source* (`… is not mentioned in spec files as source or patch`): declare the file as `Source`/`Patch`, or `osc rm` it if obsolete (verify which — see Patches section; e.g. an unreferenced `.desktop` used only via `%suse_update_desktop_file -i`).
+   - *Orphaned source* (`… is not mentioned in spec files as source or patch`): declare the file as `Source`/`Patch`, or `osc rm` it if obsolete (verify which — see Patches section; e.g. an unreferenced `.desktop` used only via `%suse_update_desktop_file -i`). An `<pkg>-rpmlintrc` counts too: OBS reads it without a `Source:` line, factory-auto declines it all the same. `scripts/gate.sh` turns this red before you file.
    - *Patch added/deleted without changelog note* (`A patch (X) is being added/deleted without this … being mentioned in the changelog`): add a bullet naming the literal filename on one line — a rename needs both names, a glob or `%{version}` form does not count. `scripts/changes-patches.sh` reproduces the bot's check locally; run it before resubmitting.
    - *License typo* (`invalid-license` / a wrong SPDX token): fix the `License:` tag.
    - *"missing details on why we update"* (human reviewer): write a proper, curated `.changes` entry.

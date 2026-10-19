@@ -216,5 +216,29 @@ grep -qF "## spec-cleaner: SKIPPED (not installed)" <<<"$out" && grep -q "^VERDI
 out="$(bash "$GATE" "$work/sc" --cleaner-deviation "" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && pass "--cleaner-deviation needs a reason" || fail "--cleaner-deviation empty: rc=$rc"
 
+# factory-auto declines on source_validator's "(W) Attention, ... not mentioned"
+# line although the validator exits 0 (sr#1386155: an unlisted rpmlintrc).
+if [ -x /usr/lib/obs/service/source_validator ]; then
+  mkdir -p "$work/lintrc"
+  printf -- '-------------------------------------------------------------------\nThu Sep 17 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Initial package\n\n' \
+    > "$work/lintrc/lintrc.changes"
+  printf 'Name:           lintrc\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
+    > "$work/lintrc/lintrc.spec"
+  printf 'addFilter("no-documentation")\n' > "$work/lintrc/lintrc-rpmlintrc"
+  out="$(bash "$GATE" "$work/lintrc" 2>&1)"
+  grep -qF '## source_validator: rc=0' <<<"$out" && grep -qF 'factory-auto declines' <<<"$out" \
+    && grep -q '^VERDICT: RED — .*source_validator' <<<"$out" \
+    && pass "source_validator: an unlisted rpmlintrc is red although the validator exits 0" \
+    || { fail "source_validator: unlisted rpmlintrc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  sed -i 's/^License:.*/&\nSource99:       lintrc-rpmlintrc/' "$work/lintrc/lintrc.spec"
+  out="$(bash "$GATE" "$work/lintrc" 2>&1)"
+  grep -qF '## source_validator: rc=0' <<<"$out" && ! grep -qF 'factory-auto declines' <<<"$out" \
+    && ! grep -q '^VERDICT: RED — .*source_validator' <<<"$out" \
+    && pass "source_validator: a listed rpmlintrc is green" \
+    || { fail "source_validator: listed rpmlintrc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: source_validator 'not mentioned' rule (no /usr/lib/obs/service/source_validator)"
+fi
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

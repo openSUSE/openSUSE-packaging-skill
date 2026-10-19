@@ -273,3 +273,5 @@ Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage
       or DIR is not a package checkout (no *.spec, no .osc/_package).
 
 It also runs spec-cleaner itself, the canonical four-flag invocation with a fresh `-o` per spec, so the check happens in every build mode (OBS-ONLY included): an empty diff is green, any diff red unless `--cleaner-deviation REASON` names a documented deviation (the gate then passes, prints the reason and keeps the diff for the change review), and a missing or failing spec-cleaner is red, never "no diff".
+
+source_validator's exit code is not factory-auto's verdict: it prints an unreferenced file as a `(W) Attention, "<file>" is not mentioned …` warning and exits 0, and `check_source.py` declines on the first such line. The gate marks source_validator red on it (sr#1386155 went out green with an unlisted `swift-lang-rpmlintrc`).
