@@ -3079,7 +3079,11 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if VARIABLE.search(name):
         words = command_words(run[0], ctx, here, depth)
         if words is not None:  # a command held in words: judge each spelling
-            for w in words:
+            # An array that appends to itself (CURL=("${CURL[@]}" -4)) spells
+            # its own name first: that spelling is each other one plus what it adds.
+            base = [w for w in words if w and w[0] != run[0]]
+            own = [w[1:] for w in words if w and w[0] == run[0]]
+            for w in base + [[*b, *o] for o in own for b in base or [[]]]:
                 if w:
                     one_command([*w, *run[1:]], redirs, stdin, ctx, here, depth)
             return cwd, ("unknown", name)

@@ -83,7 +83,7 @@ W=$work/scripts
 { cat "$FX/pool-pr.sh"; echo 'echo pushed'; } > "$W/pool-pr-copy.sh"
 # The canonical script, byte-identical and same-named but outside the checkout; and linked to.
 mkdir -p "$W/elsewhere" && cp "$S/scripts/pool-pr.sh" "$W/elsewhere/"; ln -s "$S/scripts/pool-pr.sh" "$W/pool-pr-link.sh"
-cp "$FX/open-pr.sh" "$FX/open_pr.py" "$FX/open-pr.js" "$FX/open-pr.pl" "$FX/agit.sh" "$FX/land.sh" "$FX/quoting.sh" "$FX/stamp.py" "$FX/kpi.py" "$W/"
+cp "$FX/open-pr.sh" "$FX/open_pr.py" "$FX/open-pr.js" "$FX/open-pr.pl" "$FX/agit.sh" "$FX/land.sh" "$FX/quoting.sh" "$FX/stamp.py" "$FX/kpi.py" "$FX/self-append.sh" "$FX/self-append-merge.sh" "$W/"
 cp "$FX/scrape-token.sh" "$FX/obs-api.sh" "$FX/open_pr_split.py" "$FX/open_pr_comment.py" "$W/"
 # Stand-in credential files under the suite's HOME, and a link to one; their
 # names live in a fixture, since the guard reads this suite.
@@ -541,6 +541,10 @@ case_ run-bash-option           2 create-api      "a write to pool pulls"
 case_ run-python-option         2 create-api      "a write to pool pulls"
 case_ run-agit-script           2 push-pool       "naming pool/ or AGit refs"
 case_ run-script-merge          2 merge-tea       "tea PR merge"
+# An array that appends to itself spells its own name: no endless re-entry,
+# and what it ends up running is still judged.
+case_ run-self-append           0 - ""
+case_ run-self-append-merge     2 merge-tea       "tea PR merge"
 # A script's quoted strings are data; only the command line itself is read as text.
 case_ run-script-quoting-merge  0 - ""
 case_ run-path-shebang          0 - ""

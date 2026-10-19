@@ -6771,5 +6771,19 @@
     "tool_input": {
       "command": "osc sr server:database:postgresql --cleanup -m 'Update libpqxx to 8.0.2'"
     }
+  },
+  "run-self-append": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/self-append.sh x y"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "run-self-append-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/self-append-merge.sh x y"
+    },
+    "cwd": "@PLAIN@"
   }
 }
