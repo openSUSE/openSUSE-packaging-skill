@@ -279,6 +279,8 @@ osc service run source_validator >/var/tmp/sv.log 2>&1 && osc sr <target-project
 
 If you skip `-m`, `osc sr` opens an editor seeded with the new `.changes` bullets.
 
+**HARD RULE — an SR from a `home:<you>:<sub>` project (scratch, topic, `branches:…`) passes `--cleanup`**, superseding ones too: on accept OBS deletes the branch package, and the subproject with it when that was its last package (top-level `home:<you>` is never deleted). Without it only `home:<you>:branches:…` is cleaned, and the rest pile up as leftovers. Never from a devel project (a Factory forward) or from top-level `home:<you>`. pr-guard refuses the SR without it. A request declined or revoked for good still leaves its branch: `references/update-build.md` "Close-out".
+
 `osc sr` asks a question only when the checkout has uncommitted changes or other requests are already open on the package. The second is all-or-nothing: name the request you replace with `-s <id>` and never pass `--yes` ("Triaging your declined submit requests" above). Run it with `</dev/null`, so an unexpected question aborts instead of hanging.
 
 - **Never `osc sr --nodevelproject` to Factory.** When osc refuses with *"A different project, … is defined as the place where development of the package … primarily takes place"*, submit from that devel project instead — a git (scmsync) one once its scmsync has caught up with your merged change; a classic one by an SR from your branch to it, forwarded once accepted (`references/new-package.md` "Accept-and-forward"). factory-auto declines any other source (`references/decline-catalog.md` "factory-auto declines that point the wrong way").
