@@ -165,6 +165,14 @@ replacement), and emptying the entry; exit 3 when it cannot tell whose the entry
 Factory has it. Stop using it once the submission is accepted: the entry is history then —
 write a new one.
 
+**`--squash-mine "<Your Name>"` — fold your OWN unaccepted entries into one.** For when the user
+asks for a single entry per submission: the new top entry carrying AUTHOR replaces the run of
+entries above the first one you keep. Each entry it replaces passes the `--amend-top` checks
+(`osc whois` names you; Factory lacks it), and everything below the run is byte-identical. A
+foreign or released entry in the run is red. swift-lang's request for "one entry from me" was
+first done by overwriting the whole file, which deleted the other packagers' entries, and then by
+stacking a twentieth entry.
+
 **A bug/CVE reference added to an older entry** (`boo#`/`bsc#`/`bnc#`/`CVE-…`, brackets and
 separators, line wrapping may move) passes when that is the entry's only change and at least one
 new entry is prepended to carry it; the same reference without a new entry is red.

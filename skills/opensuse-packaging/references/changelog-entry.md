@@ -91,6 +91,12 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   entry against `osc whois` and Factory's copy, and refuses another packager's entry, an entry
   Factory already has, any change from the second entry down, and emptying the entry. Stop using
   it once the submission is accepted; the entry is history then.
+- **`changes-guard.sh --squash-mine "<Your Name>"`** (and `gate.sh --squash-mine`) folds the run of
+  YOUR OWN unaccepted entries at the top into ONE new entry, for when the user asks for "one entry
+  from me". Each entry it folds must pass the `--amend-top` checks, and every entry below the run
+  stays byte-identical. Build the file as the new entry followed by the baseline from the first
+  entry you keep, never by rewriting the file: swift-lang's first attempt overwrote the whole
+  `.changes` and deleted the other packagers' entries, and the second stacked a twentieth entry.
 - **A bug/CVE reference added to an older entry** passes the guard only when that is the entry's
   only change and a new entry on top carries it (e.g. `- Reference boo#N for CVE-…`).
 - Full flag/exit-code detail and the one sanctioned override (a `check_dates_in_changes` header
@@ -114,7 +120,8 @@ still open, or declined and being refiled), a later session's fix to the same ch
 feedback, a reword, a forgotten bullet — amends that entry too; `changes-guard.sh --amend-top
 "<Name> <email>"` permits exactly that and nothing below it. Never stack a second entry on your own
 unaccepted one. Only a new upstream version, committed as its own devel revision, starts a new
-entry; a superseding SR may carry several of those.
+entry; a superseding SR may carry several of those. When the user asks for a single entry
+instead, `--squash-mine` folds your own run of them into one; other packagers' entries stay.
 
 ## `.changes` records net change, not the journey
 

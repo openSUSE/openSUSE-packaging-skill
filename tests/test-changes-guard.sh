@@ -119,5 +119,38 @@ mk reflow; { old1; old2; } > "$work/reflow/base/foo.changes"
 { new1; old1 | sed 's/^  \* cramfsck/    * cramfsck/'; old2; } > "$work/reflow/foo.changes"
 case_ old-entry-reindented 1 "not an exact suffix" --base "$work/reflow/base/foo.changes" "$work/reflow/foo.changes"
 
+# --squash-mine: the run of your own unreleased entries on top folds into ONE
+# new entry; every entry below it stays byte-identical (swift-lang: the first
+# attempt rewrote the whole file, the second stacked a 20th entry).
+mine() { entry "$1" "$JANE" "$2"; }
+run3() { mine "Sun Oct 18 21:42:19 UTC 2026" "- Fix the aarch64 rpmlint gate"
+  mine "Sun Oct 18 17:21:04 UTC 2026" "- Strip the installed tree"
+  mine "Sat Oct 17 08:00:00 UTC 2026" "- Update to 2.3"; }
+one() { mine "Mon Oct 19 10:12:43 UTC 2026" "- Update to 2.3: build fixes for aarch64 and rpmlint"; }
+mk squash; mkdir -p "$work/squash/factory"; { old1; old2; } > "$work/squash/factory/foo.changes"
+{ run3; old1; old2; } > "$work/squash/base/foo.changes"; { one; old1; old2; } > "$work/squash/foo.changes"
+case_ squash-own-run 0 "3 of your unreleased entries folded into one" --squash-mine 'Jane Packager' \
+  --released "$work/squash/factory" --base "$work/squash/base/foo.changes" "$work/squash/foo.changes"
+mk squashpart; { run3; old1; old2; } > "$work/squashpart/base/foo.changes"
+{ one; mine "Sat Oct 17 08:00:00 UTC 2026" "- Update to 2.3"; old1; old2; } > "$work/squashpart/foo.changes"
+case_ squash-part-of-run 0 "2 of your unreleased entries folded into one" --squash-mine 'Jane Packager' \
+  --released "$work/squash/factory" --base "$work/squashpart/base/foo.changes" "$work/squashpart/foo.changes"
+mk squashforeign; { run3; old1; old2; } > "$work/squashforeign/base/foo.changes"; { one; old2; } > "$work/squashforeign/foo.changes"
+case_ squash-eats-foreign 1 "is not yours" --squash-mine 'Jane Packager' \
+  --released "$work/squash/factory" --base "$work/squashforeign/base/foo.changes" "$work/squashforeign/foo.changes"
+mk squashrel; mkdir -p "$work/squashrel/factory"
+{ mine "Sat Oct 17 08:00:00 UTC 2026" "- Update to 2.3"; old1; old2; } > "$work/squashrel/factory/foo.changes"
+{ run3; old1; old2; } > "$work/squashrel/base/foo.changes"; { one; old1; old2; } > "$work/squashrel/foo.changes"
+case_ squash-eats-released 1 "already in openSUSE:Factory" --squash-mine 'Jane Packager' \
+  --released "$work/squashrel/factory" --base "$work/squashrel/base/foo.changes" "$work/squashrel/foo.changes"
+mk squashedit; { run3; old1; old2; } > "$work/squashedit/base/foo.changes"
+{ one; old1 | sed 's/(upstreamed)/(upstream)/'; old2; } > "$work/squashedit/foo.changes"
+case_ squash-touches-older 1 "not an exact suffix" --squash-mine 'Jane Packager' \
+  --released "$work/squash/factory" --base "$work/squashedit/base/foo.changes" "$work/squashedit/foo.changes"
+mk squashother; { run3; old1; old2; } > "$work/squashother/base/foo.changes"
+{ entry "Mon Oct 19 10:12:43 UTC 2026" "$OTHER" "- Update to 2.3"; old1; old2; } > "$work/squashother/foo.changes"
+case_ squash-new-entry-not-yours 1 "not an exact suffix" --squash-mine 'Jane Packager' \
+  --released "$work/squash/factory" --base "$work/squashother/base/foo.changes" "$work/squashother/foo.changes"
+
 echo "---"; [ "$fails" = 0 ] && echo "all changes-guard checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

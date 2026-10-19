@@ -7,7 +7,7 @@
 # session; this costs one. The adversarial change review (agents/changes-review.md)
 # still follows — it is a judgement, not a check, and stays outside this script.
 #
-# Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
+# Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
 #                [--git-base REF] [--build-log FILE] [--cleaner-deviation REASON] [--full]
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
@@ -15,6 +15,8 @@
 #   changes-lint also checks those entries' author against what a bare
 #   `osc vc` writes (vc-identity.sh); with no identity from osc vc it is red.
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
+#   --squash-mine  the new top entry folds the run of your own unaccepted entries
+#                under it into one, when the user asks for it (changes-guard)
 #   --target     SR target for changes-patches (default: link origin, else Factory)
 #   --git-base   git checkout: the target's ref for changes-patches (a fork PR's
 #                upstream is the pushed fork branch, which compares clean)
@@ -29,14 +31,15 @@
 #       or DIR is not a package checkout (no *.spec, no .osc/_package).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-dir=.; entries=1; amend=""; target=""; gitbase=""; buildlog=""; deviation=""; full=0
+dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlog=""; deviation=""; full=0
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--target|--git-base|--build-log|--cleaner-deviation) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--cleaner-deviation) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "gate.sh: --entries takes a positive integer, got '$2'" >&2; exit 2; }
                entries=$2; shift 2 ;;
     --amend-top) amend=$2; shift 2 ;;
+    --squash-mine) squash=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;
     --git-base) gitbase=$2; shift 2 ;;
     --build-log) buildlog=$2; shift 2 ;;
@@ -131,8 +134,8 @@ if [ -e "${changes[0]}" ]; then
     [ $rc != 0 ] || rc=1
   fi
   show changes-lint $rc "$log/changes-lint.txt"
-  if [ -n "$amend" ]; then "$HERE/changes-guard.sh" --amend-top "$amend" "${changes[@]}" > "$log/changes-guard.txt" 2>&1; rc=$?
-  else "$HERE/changes-guard.sh" "${changes[@]}" > "$log/changes-guard.txt" 2>&1; rc=$?; fi
+  guard=(); [ -n "$amend" ] && guard+=(--amend-top "$amend"); [ -n "$squash" ] && guard+=(--squash-mine "$squash")
+  "$HERE/changes-guard.sh" "${guard[@]}" "${changes[@]}" > "$log/changes-guard.txt" 2>&1; rc=$?
   show changes-guard $rc "$log/changes-guard.txt"
 else
   echo "## changes-lint / changes-guard: no *.changes in $(pwd)"; red+=(changes)

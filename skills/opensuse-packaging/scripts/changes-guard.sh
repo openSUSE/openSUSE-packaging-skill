@@ -14,7 +14,7 @@
 # file. That holds iff all new bytes are prepended above the old content —
 # a deletion or a mid-file insertion shifts the suffix and trips it.
 #
-# Usage: changes-guard.sh [--base FILE] [--amend-top AUTHOR] [--released DIR] <pkg>.changes [...]
+# Usage: changes-guard.sh [--base FILE] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--released DIR] <pkg>.changes [...]
 #   --base FILE  compare against FILE instead of the auto-detected baseline
 #                (useful outside a checkout, or to diff two arbitrary versions)
 #   --amend-top AUTHOR
@@ -33,9 +33,18 @@
 #                entry is still refused (real breach: sr#1385744 passed
 #                --amend-top another packager's name and rewrote that packager's
 #                entry in the devel project).
+#   --squash-mine AUTHOR
+#                Also allow the run of YOUR OWN entries at the top to be folded
+#                into ONE new entry carrying AUTHOR, when the user asks for one
+#                entry per submission: every entry the new one replaces must
+#                name the `osc whois` user and be absent from openSUSE:Factory
+#                (the --amend-top checks, for each), and every entry below the
+#                folded run stays byte-for-byte identical. Another packager's
+#                entry is never folded (swift-lang: a rewrite of the whole file
+#                deleted them).
 #   --released DIR
 #                openSUSE:Factory's copy of each .changes, by file name, for the
-#                --amend-top check (offline/tests; a file missing there = not in
+#                --amend-top and --squash-mine checks (offline/tests; a file missing there = not in
 #                Factory; the `osc whois` check still runs). Default: `osc cat openSUSE:Factory <pkg> <file>`, the
 #                package from .osc/_package or the git checkout's directory name;
 #                a 404 means a new package.
@@ -47,23 +56,25 @@
 # the only change to it (line wrapping may move) AND a new entry is prepended
 # on top to carry the edit; the same references without a new entry fail.
 #
-#   Exit: 0 = insertion-only (or an allowed --amend-top or reference edit, or new file),
-#         1 = a prior entry was modified, 2 = usage error,
+#   Exit: 0 = insertion-only (or an allowed --amend-top, --squash-mine or reference
+#         edit, or new file), 1 = a prior entry was modified, 2 = usage error,
 #         3 = an input (a .changes file or the --base FILE) is unreadable, or
-#         --amend-top cannot tell whose the top entry is or whether Factory
-#         has it (wins over 1: the run is incomplete).
+#         --amend-top/--squash-mine cannot tell whose an entry is or whether
+#         Factory has it (wins over 1: the run is incomplete).
 set -euo pipefail
 
 base_override=""
 amend_author=""
+squash_author=""
 released_dir=""
 while :; do
-  case "${1:-}" in --base|--amend-top|--released) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "${1:-}" in --base|--amend-top|--squash-mine|--released) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "${1:-}" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "") awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     --base) base_override=$2; shift 2 ;;
     --amend-top) amend_author=$2; shift 2 ;;
+    --squash-mine) squash_author=$2; shift 2 ;;
     --released) released_dir=$2; shift 2 ;;
     *) break ;;
   esac
@@ -122,51 +133,78 @@ amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
        >/dev/null 2>&1
 }
 
-# Is the baseline's top entry the OBS user's own? AUTHOR is the caller's word;
-# `osc whois` is the login's. 0 = yes, 1 = no, 3 = cannot tell (said on stderr).
-top_mine() {                       # $1 = work, $2 = base
-  local me name mail bh
+# Are these baseline entries (by header line) the OBS user's own? AUTHOR is the
+# caller's word; `osc whois` is the login's. 0 = yes, 1 = no, 3 = cannot tell
+# (said on stderr).
+top_mine() {                       # $1 = work, $2 = what ("the top entry"), $3... = header lines
+  local work=$1 what=$2 me name mail bh; shift 2
   me=$(osc whois 2>/dev/null | head -n1) || me=""
   name=$(sed -n 's/^[^:]*: *"\(.*\)".*/\1/p' <<<"$me"); mail=$(sed -n 's/.*<\(.*\)>.*/\1/p' <<<"$me")
   if [ -z "$name$mail" ]; then
-    echo "$1: cannot tell whether the top entry is yours: osc whois failed" >&2; return 3
+    echo "$work: cannot tell whether $what is yours: osc whois failed" >&2; return 3
   fi
-  bh=$(first_entry_header "$2")
-  if { [ -n "$name" ] && [[ $bh == *" - $name <"* ]]; } || { [ -n "$mail" ] && [[ $bh == *"<$mail>"* ]]; }; then
-    return 0
-  fi
-  echo "$1: ERROR — the top entry is not yours ('$bh'; osc whois: $me): another" \
-       "packager's entry is history, never a draft. Restore it byte-for-byte and write" \
-       "a new entry on top." >&2
-  return 1
+  for bh in "$@"; do
+    if { [ -n "$name" ] && [[ $bh == *" - $name <"* ]]; } || { [ -n "$mail" ] && [[ $bh == *"<$mail>"* ]]; }; then
+      continue
+    fi
+    echo "$work: ERROR — $what is not yours ('$bh'; osc whois: $me): another" \
+         "packager's entry is history, never a draft. Restore it byte-for-byte and write" \
+         "a new entry on top." >&2
+    return 1
+  done
 }
 
-# Is the baseline's top entry already in openSUSE:Factory? 0 = no, 1 = yes,
-# 3 = cannot tell (said on stderr). Its header line is the entry's identity.
-top_released() {                   # $1 = work, $2 = base
-  local bn pkg dir top fac err r=0
-  bn=$(basename -- "$1"); fac=$(mktemp); err=$(mktemp)
+# Are any of these baseline entries already in openSUSE:Factory? 0 = no, 1 = yes,
+# 3 = cannot tell (said on stderr). A header line is the entry's identity.
+top_released() {                   # $1 = work, $2 = what, $3... = header lines
+  local work=$1 what=$2 bn pkg dir top fac err h r=0; shift 2
+  bn=$(basename -- "$work"); fac=$(mktemp); err=$(mktemp)
   if [ -n "$released_dir" ]; then
     [ ! -r "$released_dir/$bn" ] || cat -- "$released_dir/$bn" > "$fac"
   else
-    dir=$(dirname -- "$1"); pkg=""
+    dir=$(dirname -- "$work"); pkg=""
     if [ -r "$dir/.osc/_package" ]; then pkg=$(tr -d '\n' < "$dir/.osc/_package")
     elif top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null); then pkg=$(basename -- "$top"); fi
     if [ -z "$pkg" ]; then
-      echo "$1: cannot tell whether openSUSE:Factory has the top entry: no package name" \
+      echo "$work: cannot tell whether openSUSE:Factory has $what: no package name" \
            "(no .osc/_package, not a git checkout) — pass --released DIR" >&2; r=3
     elif ! osc cat openSUSE:Factory "$pkg" "$bn" > "$fac" 2> "$err"; then
-      grep -q '404' "$err" || { echo "$1: cannot tell whether openSUSE:Factory has the top entry:" \
+      grep -q '404' "$err" || { echo "$work: cannot tell whether openSUSE:Factory has $what:" \
         "osc cat openSUSE:Factory $pkg $bn failed: $(head -n1 "$err")" >&2; r=3; }
       : > "$fac"
     fi
   fi
-  if [ $r = 0 ] && grep -qxF -- "$(first_entry_header "$2")" "$fac"; then
-    echo "$1: ERROR — the top entry is already in openSUSE:Factory (released): it is" \
-         "history, not a draft. Restore it byte-for-byte and write a new entry on top." >&2
-    r=1
-  fi
+  for h in "$@"; do
+    if [ $r = 0 ] && grep -qxF -- "$h" "$fac"; then
+      echo "$work: ERROR — $what is already in openSUSE:Factory (released: '$h'): it is" \
+           "history, not a draft. Restore it byte-for-byte and write a new entry on top." >&2
+      r=1
+    fi
+  done
   rm -f "$fac" "$err"; return $r
+}
+
+# The working file is ONE new entry naming $3 over the baseline minus its top k
+# entries (k >= 1), every byte below them identical. Prints the k replaced
+# entries' header lines; exit 1 otherwise.
+squash_run() {                     # $1 = work, $2 = base, $3 = author substring
+  python3 -I - "$1" "$2" "$3" <<'PY'
+import sys
+SEP = "-" * 67
+def entries(path):
+    out = []
+    for line in open(path, encoding="utf-8", errors="surrogateescape").read().split("\n"):
+        if line == SEP: out.append([line])
+        elif not out: return None
+        else: out[-1].append(line)
+    return out
+work, base = entries(sys.argv[1]), entries(sys.argv[2])
+if not work or not base: sys.exit(1)
+k, top = len(base) - (len(work) - 1), work[0]
+if k < 1 or work[1:] != base[k:] or len(top) < 2 or sys.argv[3] not in top[1]: sys.exit(1)
+if not any(line.strip() for line in top[2:]): sys.exit(1)
+for e in base[:k]: print(e[1])
+PY
 }
 
 # Every baseline entry survives below the new ones, byte-for-byte or changed
@@ -215,10 +253,19 @@ for work in "$@"; do
   if tail -c "$bsize" -- "$work" | cmp -s - "$base"; then
     echo "$work: OK — all pre-existing entries byte-for-byte intact (insertion-only)"
   elif [ -n "$amend_author" ] && amend_top_ok "$work" "$base" "$amend_author"; then
-    r=0; { top_mine "$work" "$base" && top_released "$work" "$base"; } || r=$?
+    bh=$(first_entry_header "$base")
+    r=0; { top_mine "$work" "the top entry" "$bh" && top_released "$work" "the top entry" "$bh"; } || r=$?
     if [ $r = 0 ]; then
       echo "$work: OK — everything below the top entry is intact; the top entry is" \
            "yours (--amend-top: amendable while the update is not yet accepted)"
+    elif [ $r = 1 ]; then rc=1
+    else unreadable=1; fi
+  elif [ -n "$squash_author" ] && heads=$(squash_run "$work" "$base" "$squash_author"); then
+    mapfile -t hl <<<"$heads"
+    r=0; { top_mine "$work" "an entry it folds" "${hl[@]}" && top_released "$work" "an entry it folds" "${hl[@]}"; } || r=$?
+    if [ $r = 0 ]; then
+      echo "$work: OK — ${#hl[@]} of your unreleased entries folded into one; everything" \
+           "below them is intact (--squash-mine)"
     elif [ $r = 1 ]; then rc=1
     else unreadable=1; fi
   elif counts=$(refs_only "$work" "$base"); then

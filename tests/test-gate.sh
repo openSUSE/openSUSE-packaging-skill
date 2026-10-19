@@ -118,6 +118,13 @@ out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/amend-
 grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "already in openSUSE:Factory" <<<"$out" \
   && pass "--amend-top on an entry Factory already has: guard red" \
   || { fail "--amend-top on an entry Factory already has"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# --squash-mine reaches changes-guard: devel's two unaccepted entries fold into one.
+devel "$work/squash" 1
+{ entry "Fri Sep 18 10:00:00 UTC 2026" "Fix the man page; drop the obsolete Obsoletes"; cat "$work/factory/foo.changes"; } > "$work/squash/foo.changes"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/squash" --squash-mine 'Jane Packager' 2>&1)"
+grep -qF "## changes-guard: rc=0" <<<"$out" && grep -qF "2 of your unreleased entries folded into one" <<<"$out" \
+  && pass "--squash-mine: devel's own unaccepted entries fold into one" \
+  || { fail "--squash-mine through the gate"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # changes-lint checks the new entry's author against what osc vc writes: the
 # git address under the same name is red (sr#1385844), and an identity osc vc
