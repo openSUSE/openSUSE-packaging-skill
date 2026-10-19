@@ -63,7 +63,7 @@ Verify a signed source tarball against a package keyring (handles the ASCII-armo
 
 ## `build-summary.sh`
 
-The last `osc build`'s verdict, `%check`/ctest pass count, rpmlint badness + E:/W: lines, produced RPMs (no sudo needed — the preserved log is readable). **Its exit code IS the verdict** (0 green / 1 failed / 2 no log / 3 never concluded), so gate on it rather than eyeballing a tail — the mechanical enforcement of "never state a build result you have not read". Resolves the build root from the oscrc template (`--list` shows them newest-first; a bare flavor name works).
+The last `osc build`'s verdict, `%check`/ctest pass count, rpmlint badness + E:/W: lines, produced RPMs (no sudo needed — the preserved log is readable). **Its exit code IS the verdict** (0 green / 1 failed / 2 no log / 3 never concluded), so gate on it rather than eyeballing a tail — the mechanical enforcement of "never state a build result you have not read". Resolves the build root from the oscrc template (`--list` shows them newest-first; a bare flavor name works). A green build is still FAILED when a built RPM requires a `user()`/`group()` that its own scriptlets create (`useradd`/`groupadd`) and no built RPM provides. rpm derives that requires from `%attr` ownership, so the package cannot be installed: owntone sr#1385677 dropped its `Provides: group(…)` and staging declined it with "nothing provides group(owntone)". It queries the built RPMs, so a bare log file reports the check as not run.
 
 ## `build-wait.sh`
 

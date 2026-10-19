@@ -7,7 +7,9 @@
 #
 # Exit code IS the verdict — chain on it, never claim "built green" without it:
 #   0  GREEN     log has `finished "build <spec>"`
-#   1  FAILED    log has `failed "build <spec>"` / RPM build errors / badness abort
+#   1  FAILED    log has `failed "build <spec>"` / RPM build errors / badness abort,
+#                or a built RPM requires a user()/group() its own scriptlets
+#                create and no built RPM provides (it would not install)
 #   2  NO LOG    nothing readable at that path (recent build roots are listed)
 #   3  NO VERDICT  log exists but the build never reached a conclusion
 #                  (still running, or killed — e.g. by a `timeout` wrapper)
@@ -177,6 +179,28 @@ case "$verdict_line" in
 esac
 [ -n "$badness_abort" ] && { rc=1; verdict="FAILED (rpmlint badness over threshold)"; }
 
+# rpm derives user(X)/group(X) requires from %attr ownership; a user the package's
+# own scriptlets create must also be provided (sysusers.d does it, a useradd in
+# %pre needs Provides:), or nothing can install it. System users (root, mail, ...)
+# come from other packages and are left alone.
+users_checked=0; unprovided=""
+if [ -n "${rpms:-}" ] && [ -d "$rpms" ] && command -v rpm >/dev/null 2>&1; then
+  mapfile -t built < <(find "$rpms" -name '*.rpm' ! -name '*debuginfo*' ! -name '*debugsource*' 2>/dev/null)
+  if [ "${#built[@]}" -gt 0 ]; then
+    users_checked=1
+    req=$(rpm -qp --requires "${built[@]}" 2>/dev/null | grep -oE '^(user|group)\([^)]+\)' | sort -u)
+    prov=$(rpm -qp --provides "${built[@]}" 2>/dev/null | grep -oE '^(user|group)\([^)]+\)' | sort -u)
+    made=$(rpm -qp --scripts "${built[@]}" 2>/dev/null | grep -E '(user|group)add')
+    for d in $(comm -23 <(printf '%s\n' "$req") <(printf '%s\n' "$prov")); do
+      n=${d#*(}; n=${n%)}
+      grep -qwF -- "$n" <<<"$made" && unprovided+="${unprovided:+ }$d"
+    done
+  fi
+fi
+if [ -n "$unprovided" ] && [ "$rc" = 0 ]; then
+  rc=1; verdict="FAILED (not installable: nothing provides $unprovided)"
+fi
+
 echo "## Build summary — $arg"
 echo
 echo "### VERDICT: $verdict"
@@ -233,5 +257,15 @@ if [ -n "${rpms:-}" ] && [ -d "$rpms" ]; then
   find "$rpms" -name '*.rpm' ! -name '*debuginfo*' ! -name '*debugsource*' 2>/dev/null | sed 's#.*/##' | sort
 else
   grep -hoE '[^ ]+\.rpm' "$log" | grep -vE 'debuginfo|debugsource|\.src\.rpm' | sed 's#.*/##' | sort -u
+fi
+echo
+echo "### user()/group() dependencies"
+if [ -n "$unprovided" ]; then
+  echo "nothing provides $unprovided, which the package's own scriptlets create: ship a sysusers.d file"
+  echo "(sysuser-tools; it provides them) or add Provides: for each (references/specfile-guidelines.md \"Sysusers / system users\")"
+elif [ "$users_checked" = 1 ]; then
+  echo "OK: every user()/group() a built RPM requires and creates is provided"
+else
+  echo "(not checked: no built RPMs to query)"
 fi
 exit "$rc"
