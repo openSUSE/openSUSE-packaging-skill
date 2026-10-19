@@ -6623,7 +6623,7 @@
   "sr-target-devel": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+      "command": "osc sr --cleanup home:pluskalm:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
     }
   },
   "sr-target-factory": {
@@ -6635,19 +6635,19 @@
   "sr-target-home": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark libpqxx home:pluskalm:other -m 'Update libpqxx to 8.0.2'"
+      "command": "osc sr --cleanup home:pluskalm:spark libpqxx home:pluskalm:other -m 'Update libpqxx to 8.0.2'"
     }
   },
   "sr-target-not-in-factory": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark open-scion devel:tools:scm -m 'New package open-scion 0.1.0: monorepo version control.'"
+      "command": "osc sr --cleanup home:pluskalm:spark open-scion devel:tools:scm -m 'New package open-scion 0.1.0: monorepo version control.'"
     }
   },
   "sr-target-no-devel": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark aaa_base devel:tools -m 'Update aaa_base to 1.0: fixes.'"
+      "command": "osc sr --cleanup home:pluskalm:spark aaa_base devel:tools -m 'Update aaa_base to 1.0: fixes.'"
     }
   },
   "sr-target-garbled": {
@@ -6689,13 +6689,87 @@
   "sr-target-link-same-project": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark multi-flavor devel:tools -m 'Update multi-flavor to 1.1: fixes.'"
+      "command": "osc sr --cleanup home:pluskalm:spark multi-flavor devel:tools -m 'Update multi-flavor to 1.1: fixes.'"
     }
   },
   "sr-target-link-to-factory": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc sr home:pluskalm:spark factorylinked science -m 'Update factorylinked to 1.1: fixes.'"
+      "command": "osc sr --cleanup home:pluskalm:spark factorylinked science -m 'Update factorylinked to 1.1: fixes.'"
+    }
+  },
+  "sr-cleanup-missing": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-given": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-abbrev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:tester:spark libpqxx server:database:postgresql --clean -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-no-cleanup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup --no-cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:tester:scratch/libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-branches": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:tester:branches:server:database:postgresql libpqxx server:database:postgresql -s 1386001 -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-top-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr home:tester libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr server:database:postgresql libpqxx openSUSE:Factory -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-submitpac": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitpac home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-submitpac-no": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitpac --no-cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-checkout": {
+    "tool_name": "Bash",
+    "cwd": "@OSC@/spark/libpqxx",
+    "tool_input": {
+      "command": "osc sr server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "sr-cleanup-checkout-given": {
+    "tool_name": "Bash",
+    "cwd": "@OSC@/spark/libpqxx",
+    "tool_input": {
+      "command": "osc sr server:database:postgresql --cleanup -m 'Update libpqxx to 8.0.2'"
     }
   }
 }

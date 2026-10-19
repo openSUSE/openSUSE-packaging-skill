@@ -472,6 +472,8 @@ MESSAGES = {
     "points at, never to the project a sweep went through.",
     "request-target-unknown": "cannot read {0}, so it is refused. Retry, or name the "
     "source and target literally: osc sr SRC_PRJ PKG DST_PRJ.",
+    "sr-cleanup": "{0} leaves its branch behind once accepted. Pass --cleanup so OBS "
+    "deletes it (and the subproject, if it was the last package there).",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -1080,15 +1082,46 @@ def request_target(run, ctx, cwd):
                     block("request-target", f"{dst}/{pkg} is a _link to {origin}")
 
 
-def checkout_package(ctx, cwd):
-    """The package of the checkout osc runs in, or None."""
+def checkout_package(ctx, cwd, what="_package"):
+    """The package (what="_project": the project) of the checkout osc runs in,
+    or None."""
     if not isinstance(cwd, str) or isinstance(cwd, Dirs):
         return None
     try:
-        with open(os.path.join(cwd, ".osc", "_package"), encoding="utf-8") as fh:
+        with open(os.path.join(cwd, ".osc", what), encoding="utf-8") as fh:
             return fh.read().strip() or None
     except OSError:
         return None
+
+
+HOME_SUB = re.compile(r"home:[^:]+:.+")
+
+
+def request_cleanup(run, ctx, cwd):
+    """A submit request from a home subproject (scratch, topic, branches) that
+    keeps its branch once accepted: osc sr deletes it only with --cleanup,
+    submitpac unless told not to."""
+    sub, args = osc_sub(run)
+    if sub not in SUBMITS:
+        return
+    names = ("--message", "--file", "--cleanup", "--no-cleanup", "--no-update")
+    opts, pos = parse_opts(
+        [long_prefix(a, names) for a in args], "mFrsaA", REQUEST_VALUED
+    )
+    keys = {k for k, _ in opts}
+    if not keys & {"--no-cleanup", "--no-update"} and (
+        "--cleanup" in keys or sub == "submitpac"
+    ):
+        return
+    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
+    if len(words) >= 3:
+        w = words[0]
+        srcs = (substitute(w, ctx, cwd) or []) if VARIABLE.search(w) else [w]
+    else:
+        srcs = [checkout_package(ctx, cwd, "_project")]
+    for src in srcs:
+        if src and HOME_SUB.fullmatch(src):
+            block("sr-cleanup", f"osc {sub} from {src}")
 
 
 def factory_devel(pkg, ctx):
@@ -2737,6 +2770,7 @@ def guess(run, ctx, cwd, own=False):
             request_message(["osc", *rest], None, ctx, cwd)
             osc_writes(["osc", *rest], ctx, cwd)
             request_target(["osc", *rest], ctx, cwd)
+            request_cleanup(["osc", *rest], ctx, cwd)
         if own:
             for tool in ("gh", "tea", "git-obs", "secret-tool"):
                 secret_rules(tool, [tool, *rest], ctx, cwd)
@@ -3116,6 +3150,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
         request_target(run, ctx, here)
+        request_cleanup(run, ctx, here)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
         held = [

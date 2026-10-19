@@ -127,6 +127,7 @@ osc_co_ "$work/osc/incident/x" openSUSE:Maintenance:12345
 osc_co_ "$work/osc/$h:tester:branches:OBS_Maintained:x/x.openSUSE_Backports_SLE-15-SP7_Update" "$h:tester:branches:OBS_Maintained:x"
 osc_co_ "$work/osc/branch/x" "$h:tester:branches:openSUSE:Backports:SLE-15-SP7:Update"
 osc_co_ "$work/osc/devel/x" devel:tools
+osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$work/osc/spark/libpqxx/.osc/_package"
 
 # ev <name>: the fixture event, placeholders filled in.
 ev() {
@@ -1011,6 +1012,20 @@ case_ sr-target-link-foreign     2 request-target "devel:tools/gotool is a _link
 case_ sr-target-aggregate-nonfactory 2 request-target "Application:Geo/python-geobar is an _aggregate of another project's binaries"
 case_ sr-target-link-same-project 0 - ""
 case_ sr-target-link-to-factory  0 - ""
+
+echo "--- a submit request from a home subproject deletes its branch on accept"
+case_ sr-cleanup-missing         2 sr-cleanup "osc sr from $h:tester:spark"
+case_ sr-cleanup-no-cleanup      2 sr-cleanup "osc sr from $h:tester:spark"
+case_ sr-cleanup-slash           2 sr-cleanup "osc sr from $h:tester:scratch"
+case_ sr-cleanup-branches        2 sr-cleanup "osc sr from $h:tester:branches:server:database:postgresql"
+case_ sr-cleanup-checkout        2 sr-cleanup "osc sr from $h:tester:spark"
+case_ sr-cleanup-submitpac-no    2 sr-cleanup "osc submitpac from $h:tester:spark"
+case_ sr-cleanup-given           0 - ""
+case_ sr-cleanup-abbrev          0 - ""
+case_ sr-cleanup-checkout-given  0 - ""
+case_ sr-cleanup-submitpac       0 - ""
+case_ sr-cleanup-top-home        0 - ""
+case_ sr-cleanup-devel           0 - ""
 case_ osc-ci-long-message        0 - ""
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.
