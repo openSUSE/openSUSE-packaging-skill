@@ -49,6 +49,11 @@
 #       or a staging order ('lands after', 'stage together'): the SR
 #       message carries those, the .changes ships in the RPM
 #       (references/changelog-rules.md "Curate the entry")
+#     - no bullet reports submission or review status ('factory-auto', the
+#       source validator or a source-URL validation, the Factory forward),
+#       for the same reason
+#     - no line is over 80 characters when it could be wrapped (osc vc wraps
+#       at 67; a single word longer than that may run over)
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
 #         3 = a file is unreadable (wins over 1: the other files are still
 #         linted and printed, but the run is incomplete).
@@ -157,6 +162,9 @@ NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
 PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
 REQUEST_ID = re.compile(r"\b(?:sr|rq|request)\s*#?\s*\d{6,}\b", re.I)
 UPSTREAM_PR = re.compile(r"\b(?:pull|merge)[\s-]*$", re.I)    # "pull request #N" is upstream's
+# Review and bot status (factory-auto, the source validator, a Factory forward)
+REVIEW = re.compile(r"\bfactory-auto\b|\bsource[-_ ]?(?:url[-_ ]?)?validat"
+                    r"|\bfactory\s+forward|\bforward(?:ed|ing)?\s+to\s+(?:openSUSE:)?factory\b", re.I)
 STAGING = re.compile(r"\b(?:lands?|landing|goes\s+in)\s+(?:after|before|together)\b"
                      r"|\bstage[ds]?\s+(?:together|after|before)\b", re.I)
 def names_request(t):
@@ -186,6 +194,9 @@ for k in range(ncheck):
                     "bare 'Update to <version>' with no summary of upstream "
                     "changes — add substantive bullets, or state "
                     "'* No user-visible changes'"))
+    for n, t in body:                   # osc vc wraps at 67; one long word may overrun
+        if len(t) > 80 and max(map(len, t.split())) + 2 <= 80:
+            bad.append((n, f"line is {len(t)} characters: wrap it (osc vc wraps at 67)"))
     bullets = []                        # (first line no, text joined over continuations)
     for n, t in body:
         if t.strip().startswith(("-", "*", "+")) or not bullets:
@@ -198,6 +209,9 @@ for k in range(ncheck):
             bad.append((n, "bullet names a CVE id as not fixed — if this update fixes it, "
                            "say so without the not-fixed phrase; if it does not, leave the "
                            "id out (any CVE id in .changes reads as fixed here)"))
+        if REVIEW.search(t):
+            bad.append((n, "bullet reports submission or review status — that goes in the "
+                           "SR message, not in .changes, which ships in the RPM"))
         if names_request(t):
             bad.append((n, "bullet names a submit request or a staging order — put it in "
                            "the SR message (- Stage with sr#N), not in .changes"))

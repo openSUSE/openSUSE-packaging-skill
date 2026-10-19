@@ -163,6 +163,33 @@ case_ req-ok-pull-wrapped 0 "OK: clean" --entries 1 "$work/req-ok-pull-wrapped.c
   cat "$work/req-stage-with.changes"; } > "$work/req-old.changes"
 case_ req-old-entry-not-linted 0 "OK: clean" --entries 1 "$work/req-old.changes"
 
+# Review and bot status is the SR's business too (ibus-typing-booster: "failing
+# source-URL validation of the Factory forward"; swift-lang: "factory-auto
+# declines otherwise").
+while IFS='|' read -r name text <&3; do
+  entry "rev-$name.changes" "- Update to 1.2:" "  * Fix a crash on empty input" "$text"
+  case_ "rev-$name" 1 "rev-$name.changes:6: bullet reports submission or review status" \
+    --entries 1 "$work/rev-$name.changes"
+done 3<<'EOF'
+factory-auto|- Name the patch by file: factory-auto declines otherwise
+url-validation|- Drop Source1: its URL 404s, failing source-URL validation of the Factory forward
+source-validator|- Reference the rpmlintrc, so source_validator passes
+factory-forward|- Fix the spec for the Factory forward
+EOF
+while IFS='|' read -r name text <&3; do
+  entry "rev-ok-$name.changes" "- Update to 1.2:" "$text"
+  case_ "rev-ok-$name" 0 "OK: clean" --entries 1 "$work/rev-ok-$name.changes"
+done 3<<'EOF'
+input-validation|  * Add input validation to the source map parser
+factory-reset|  * Fix the factory reset of the settings dialog
+EOF
+
+# A line osc vc would have wrapped is red; one unbreakable word is not.
+entry long-line.changes "- Drop dead Source1 inscript2-20210820.tar.gz: its releases.pagure.org URL 404s, and it was only unpacked for old releases."
+case_ long-line 1 "long-line.changes:4: line is 123 characters: wrap it" --entries 1 "$work/long-line.changes"
+entry long-word.changes "- Add 0001-meson-build-allow-overriding-the-default-plugin-search-path-for-tests.patch:" "  fix the test run"
+case_ long-word-clean 0 "OK: clean" --entries 1 "$work/long-word.changes"
+
 # --author: the identity osc vc writes. An entry that shares its name or its
 # address must carry both (sr#1385844 shipped the git address under the name).
 ME='Jane Packager <jane@suse.example>'
