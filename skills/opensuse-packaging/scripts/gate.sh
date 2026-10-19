@@ -1,5 +1,6 @@
 #!/bin/bash
-# The commit/SR gate chain as ONE tool call: source_validator, spec-cleaner, changes-lint.sh,
+# The commit/SR gate chain as ONE tool call: source_validator, factory-auto's URL check
+# (download_files), spec-cleaner, changes-lint.sh,
 # changes-guard.sh, changes-patches.sh and a one-Legal-Review-Notice-per-License
 # check, each run unpiped with its exit code read directly, then one VERDICT line. Five separate calls cost five provider
 # steps and five result blocks that ride along in context for the rest of the
@@ -73,6 +74,22 @@ if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr
   [ -z "$na" ] || [ $rc -ne 0 ] || red+=(source_validator)
 else
   echo "## source_validator: SKIPPED (not installed)"; red+=(source_validator)
+fi
+
+# factory-auto's check_urls: every remote Source downloads and equals the
+# committed file. The downloads go under /var/tmp, not the /tmp tmpfs.
+if [ -x /usr/lib/obs/service/download_files ]; then
+  if dl=$(mktemp -d -p /var/tmp "gate-dl-$pkg.XXXXXX"); then
+    /usr/lib/obs/service/download_files --enforceupstream yes --enforcelocal yes --outdir "$dl" \
+      > "$log/download_files.txt" 2>&1; rc=$?
+    rm -rf "$dl"
+  else
+    echo "UNKNOWN: no scratch directory under /var/tmp" > "$log/download_files.txt"; rc=1
+  fi
+  [ $rc -eq 0 ] && echo "OK: every remote source downloads and matches the committed file" >> "$log/download_files.txt"
+  show download_files $rc "$log/download_files.txt"
+else
+  echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
 fi
 
 # spec-cleaner as the skill runs it (core directive 3), in every build mode: the

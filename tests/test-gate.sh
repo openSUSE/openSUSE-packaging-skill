@@ -240,5 +240,42 @@ else
   echo "SKIP: source_validator 'not mentioned' rule (no /usr/lib/obs/service/source_validator)"
 fi
 
+# factory-auto's check_urls: every remote Source must download and equal the
+# committed file (sr#1385858 re-rolled tarball, sr#1385979 a 404). A local HTTP
+# server stands in for upstream.
+if [ -x /usr/lib/obs/service/download_files ]; then
+  mkdir -p "$work/up" "$work/urls"
+  printf 'upstream\n' > "$work/up/urls-1.tar"
+  python3 -I -c 'import http.server, functools, sys
+h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+s = http.server.HTTPServer(("127.0.0.1", 0), h)
+open(sys.argv[2], "w").write(str(s.server_port))
+s.serve_forever()' "$work/up" "$work/port" > /dev/null 2>&1 &
+  srv=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$work/port" ] && break; sleep 0.3; done
+  url="http://127.0.0.1:$(cat "$work/port")"
+  printf -- '-------------------------------------------------------------------\nThu Sep 17 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Initial package\n\n' \
+    > "$work/urls/urls.changes"
+  urls_spec() { printf 'Name:           urls\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT\nSource0:        %s\n%%description\nt\n%%files\n%%changelog\n' "$1" > "$work/urls/urls.spec"; }
+  urls_spec "$url/urls-1.tar"; cp "$work/up/urls-1.tar" "$work/urls/"
+  out="$(bash "$GATE" "$work/urls" 2>&1)"
+  grep -qF '## download_files: rc=0' <<<"$out" && pass "download_files: an upstream-identical source is green" \
+    || { fail "download_files: identical source"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  printf 're-rolled\n' > "$work/up/urls-1.tar"
+  out="$(bash "$GATE" "$work/urls" 2>&1)"
+  grep -qF '## download_files: rc=1' <<<"$out" && grep -qF 'differ' <<<"$out" \
+    && grep -q '^VERDICT: RED — .*download_files' <<<"$out" \
+    && pass "download_files: a re-rolled upstream file is red" \
+    || { fail "download_files: re-rolled source"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  urls_spec "$url/v1/urls-1.tar"
+  out="$(bash "$GATE" "$work/urls" 2>&1)"
+  grep -qF '## download_files: rc=1' <<<"$out" && grep -qF 'Failed to download' <<<"$out" \
+    && pass "download_files: a URL that does not download is red" \
+    || { fail "download_files: dead URL"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  kill "$srv" 2>/dev/null
+else
+  echo "SKIP: download_files check (no /usr/lib/obs/service/download_files)"
+fi
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
