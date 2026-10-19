@@ -1030,6 +1030,14 @@ case_ sr-cleanup-checkout-given  0 - ""
 case_ sr-cleanup-submitpac       0 - ""
 case_ sr-cleanup-top-home        0 - ""
 case_ sr-cleanup-devel           0 - ""
+
+echo "--- osc's questions are answered with options, never through a pipe"
+case_ osc-prompt-echo-sr         2 osc-prompt "osc sr with an answer on stdin (y)"
+case_ osc-prompt-yes-sr          2 osc-prompt "osc sr with an answer on stdin"
+case_ osc-prompt-herestring-ci   2 osc-prompt "osc ci with an answer on stdin (y)"
+case_ osc-prompt-echo-accept     2 osc-prompt "osc rq with an answer on stdin (y)"
+case_ osc-prompt-devnull-sr      0 - ""
+case_ osc-prompt-message-stdin-ci 0 - ""
 case_ osc-ci-long-message        0 - ""
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.

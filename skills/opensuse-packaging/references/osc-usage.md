@@ -14,7 +14,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - **Maintained products only through `osc mbranch` + `osc mr`** (or a `home:` branch + `osc sr`) — never a commit, an `osc api` write or another direct write (copypac, linkpac, aggregatepac, rdelete, undelete, a meta `-F`/`-e`) into a `*:Update` or maintenance project: `references/maintenance-updates.md` "Maintenance updates (Backports / Leap)".
 - **Non-interactive forms only** — without a TTY a prompt hangs or takes its default:
   - `osc ci -m MSG`, never a bare `osc ci` (it opens an editor);
-  - `osc sr … -s ID` names the one request to supersede; never `--yes`, which supersedes every open request from the same source, other people's included (`references/submit-watch.md` "Triaging your declined submit requests");
+  - `osc sr … -s ID` names the one request to supersede; never `--yes`, which supersedes every open request from the same source, other people's included (`references/submit-watch.md` "Triaging your declined submit requests"), and never an answer piped in (`echo y | osc sr`): pr-guard refuses it;
   - a long job runs in the background as `CMD </dev/null >LOG 2>&1 &`, so a prompt fails instead of waiting;
   - find a running build with `pgrep -f '[o]sc build'`: the brackets keep the pattern from matching the shell that runs it.
 

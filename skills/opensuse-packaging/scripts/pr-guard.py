@@ -11,7 +11,9 @@ request that overrides osc's devel-project check or create one through the API,
 file a submit request to a project other than the package's devel project in
 Factory's _meta, or into an _aggregate or a _link of another project,
 file a submit request from a home subproject that does not have OBS delete
-its branch once accepted, file a request whose message is too long (over 160 characters of prose, which
+its branch once accepted, feed an osc request or commit an answer on stdin
+(a pipe, here-string or heredoc; < /dev/null and a message read with -F -
+are fine), file a request whose message is too long (over 160 characters of prose, which
 is every line but a "- " list item; a list line over 100; over 1000 in all),
 carries a work note for the user (build or sweep status, the session's tools),
 only says it forwards, or cannot be read, or write into a *:Update or *:Maintenance:* project outside

@@ -474,6 +474,9 @@ MESSAGES = {
     "source and target literally: osc sr SRC_PRJ PKG DST_PRJ.",
     "sr-cleanup": "{0} leaves its branch behind once accepted. Pass --cleanup so OBS "
     "deletes it (and the subproject, if it was the last package there).",
+    "osc-prompt": "{0}: osc asks before it supersedes, forwards or commits past a "
+    "conflict, and an answer through a pipe skips that decision. Name what you "
+    "replace with -s ID, pass -m, run osc with </dev/null, and file a forward by hand.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -1095,6 +1098,28 @@ def checkout_package(ctx, cwd, what="_package"):
 
 
 HOME_SUB = re.compile(r"home:[^:]+:.+")
+PROMPTED = REQUESTS | {"rq", "request", "review", "ci", "commit", "checkin"}
+
+
+def osc_prompt(run, stdin):
+    """An osc request or commit fed an answer on stdin (a pipe, here-string or
+    heredoc); < FILE (/dev/null) and a message read with -F - are fine."""
+    sub, args = osc_sub(run)
+    if sub not in PROMPTED or not stdin or stdin[0] == "files":
+        return
+    args = [long_prefix(a, ("--file",)) for a in args]
+    for i, a in enumerate(args):
+        if (
+            a in ("-F-", "--file=-")
+            or a in ("-F", "--file")
+            and args[i + 1 : i + 2] == ["-"]
+        ):
+            return
+    said = stdin[1].strip()[:20] if stdin[0] == "text" else ""
+    block(
+        "osc-prompt",
+        f"osc {sub} with an answer on stdin" + (f" ({said})" if said else ""),
+    )
 
 
 def request_cleanup(run, ctx, cwd):
@@ -3155,6 +3180,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         osc_writes(run, ctx, here)
         request_target(run, ctx, here)
         request_cleanup(run, ctx, here)
+        osc_prompt(run, stdin)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
         held = [
