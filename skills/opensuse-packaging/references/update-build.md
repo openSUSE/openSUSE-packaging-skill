@@ -12,6 +12,7 @@
   - Python packages: local-build gotchas
   - Checkouts — avoid whole-project ones
 - Gate the SR on the whole branch being green — the commit/SR gate, and why each check exists
+- Lint the built packages with rpmcrab
 - Common build pitfalls
   - Build root and `%check` environment
   - Prove a build/flag fix is actually effective
@@ -170,6 +171,14 @@ something the others structurally cannot:
    result and the `.changes` entry — read against the `osc diff` and the upstream release notes.
    Delegate it to a sub-agent or run its checklist inline; either way it must have **completed** with
    no blockers before anything is committed or submitted.
+
+## Lint the built packages with rpmcrab
+
+**Run `rpmcrab` over every package you build or update, alongside the rpmlint summary** — a separate pass over the built RPMs of every arch and flavor you built, not only the native one; the two linters do not report the same set, and a clean rpmlint summary says nothing about the rpmcrab one.
+
+**Every finding is work.** A genuine finding is fixed in the package, like a genuine rpmlint finding. A finding you believe is wrong is reported as an issue on the rpmcrab tracker (GitHub `plusky/rpmcrab`), naming the package and quoting the finding text, so it can be fixed in the checker — **never silence it in the package**: no filter, config entry or packaging trick whose purpose is to stop the finding appearing while the underlying report stands.
+
+**The package is done when rpmcrab reports no findings** — or when every remaining finding is covered by an open rpmcrab fix or carries an explicit, stated disposition (in the `.changes`, the SR text or your report back): what the finding is, and why it stands. A finding in none of those states means the package is not done, however green the build and the other gates are.
 
 ## Common build pitfalls
 
