@@ -62,8 +62,9 @@ gh skill install openSUSE/openSUSE-packaging-skill opensuse-packaging --agent cl
 Without `-g` / `--scope user` both install into the current project instead.
 
 `gh skill install` copies the scripts without their executable bit, so those that run a
-sibling directly (`gate.sh`, `pool-pr.sh`, `leap-sync.sh`, `target-gate.sh`) fail with
-`Permission denied` (exit 126), which reads like a gate failure. After installing with it,
+sibling directly (`gate.sh`, `changes-prepend.sh`, `my-requests.sh`, `pool-pr.sh`,
+`leap-sync.sh`, `target-gate.sh`) fail with `Permission denied` (exit 126), which reads
+like a gate failure. After installing with it,
 restore the bits:
 
 ```
