@@ -6,6 +6,8 @@ When the user asks "does this spec follow the guidelines?", "is this spec OK?", 
 
 Every behaviour below was checked against **spec-cleaner 1.3.0** (2026-10-17, rpm 4.20). `scripts/gate.sh` runs this invocation itself and goes red on a non-empty diff, so it runs in OBS-ONLY mode too.
 
+**An older spec-cleaner rewrites differently: `gate.sh` prints the version and notes anything but 1.3.0.** openSUSE:Backports:SLE-16.0 ships 1.2.4+2. A hunk only it makes is a version difference — check it against 1.3.0 if you can, and name it with `--cleaner-deviation`. Known one: when Summary and License sit inside a `%if` flavor block (a `_multibuild` spec), 1.2.4+2 inserts a second `License:` after `Release:`; never apply it.
+
 **Canonical invocation — always pass `--remove-groups --pkgconfig --perl --tex`:**
 
 ```

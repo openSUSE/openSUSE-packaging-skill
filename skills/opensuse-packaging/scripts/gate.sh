@@ -97,9 +97,13 @@ fi
 
 # spec-cleaner as the skill runs it (core directive 3), in every build mode: the
 # four policy flags and a fresh -o per spec. A diff is red unless it is named as
-# a documented deviation; a run that fails is red, never "no diff".
+# a documented deviation; a run that fails is red, never "no diff". The version is
+# printed because the references describe 1.3.0 and older ones rewrite differently.
 if command -v spec-cleaner >/dev/null 2>&1; then
-  : > "$log/spec-cleaner.diff"; : > "$log/spec-cleaner.txt"; rc=0; changed=0
+  : > "$log/spec-cleaner.diff"; rc=0; changed=0
+  scv=$(spec-cleaner --version 2>/dev/null | head -n 1); scv=${scv:-unknown}
+  echo "spec-cleaner $scv" > "$log/spec-cleaner.txt"
+  [ "$scv" = 1.3.0 ] || echo "NOTE: spec-cleaner $scv is not the documented 1.3.0: a hunk only it makes may be a version difference (references/spec-cleaner.md \"Checking a spec file\")" >> "$log/spec-cleaner.txt"
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
     if ! spec-cleaner --remove-groups --pkgconfig --perl --tex -o "$log/cleaned.$s" "$s" > "$log/spec-cleaner.err" 2>&1; then

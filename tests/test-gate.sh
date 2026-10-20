@@ -185,6 +185,7 @@ mkdir -p "$work/scbin" "$work/sc"
 cat > "$work/scbin/spec-cleaner" <<'EOF'
 #!/bin/bash
 out=; spec=
+[ "$1" = --version ] && { echo "${SC_VERSION:-1.3.0}"; exit 0; }
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) spec=$1; shift;; esac; done
 [ -e "$out" ] && { echo "ERROR: $out already exists." >&2; exit 1; }
 case "${SC_MODE:-same}" in
@@ -199,6 +200,12 @@ sc() { out="$(PATH="$work/scbin:$PATH" SC_MODE="$1" bash "$GATE" "$work/sc" "${@
 sc same
 grep -qF "## spec-cleaner: rc=0" <<<"$out" && grep -qF "OK: spec-cleaner leaves every spec as it is" <<<"$out" \
   && pass "spec-cleaner: a clean spec is green" || { fail "spec-cleaner clean"; printf '%s\n' "$out" | sed 's/^/    /'; }
+grep -qF "spec-cleaner 1.3.0" <<<"$out" && ! grep -qF "NOTE: spec-cleaner" <<<"$out" \
+  && pass "spec-cleaner: the documented version is named, with no note" || { fail "spec-cleaner version 1.3.0"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(PATH="$work/scbin:$PATH" SC_VERSION=1.2.4+2 bash "$GATE" "$work/sc" 2>&1)"
+grep -qF "## spec-cleaner: rc=0" <<<"$out" && grep -qF "spec-cleaner 1.2.4+2" <<<"$out" \
+  && grep -qF "NOTE: spec-cleaner 1.2.4+2 is not the documented 1.3.0" <<<"$out" \
+  && pass "spec-cleaner: another version is noted, not failed" || { fail "spec-cleaner version 1.2.4"; printf '%s\n' "$out" | sed 's/^/    /'; }
 sc group
 grep -qF "## spec-cleaner: rc=1" <<<"$out" && grep -qF "spec-cleaner would change 1 line(s) in 1 spec(s)" <<<"$out" \
   && grep -qF "+Group:" <<<"$out" && grep -q "^VERDICT: RED — .*spec-cleaner" <<<"$out" \

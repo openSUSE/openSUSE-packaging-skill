@@ -34,6 +34,7 @@ python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 | Rust, Go or npm vendor tree | `language-packaging.md` — that language's section only |
 | Python package | `language-packaging.md` "Python singlespec deep-dive" (and its `###` sub-sections) |
 | a spec using `%cmake_kf6`, or a KF6 / Qt6 / Kirigami app in a KDE:* devel project (`find_package(ECM`, `KDEInstallDirs`) | `kde-packaging.md` "KF6 / ECM packages (Qt6, Kirigami)" |
+| a theme, icon theme, branding or desktop-specific package (SDDM, Plymouth, GNOME Shell, Firefox add-on) | `desktop-themes.md` — the section for the piece: "Branding package or plain theme", "Icon themes", "Links into another package", "Directory owners", "Per-desktop pieces — boolean Supplements", "Defaults — SDDM drop-ins and GSettings overrides", "Plymouth themes", "Firefox add-ons", "One arch-specific piece in a noarch theme" |
 | the package has a `_service` | `source-services.md` "Service modes decide what you run AND what you commit" |
 | patches to rebase, drop or add | `patches.md` "Patches"; creating/refreshing one: `quilt-patches.md` |
 | spec-cleaner disagrees with you | `spec-cleaner.md` "Checking a spec file" |
