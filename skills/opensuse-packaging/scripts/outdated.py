@@ -86,8 +86,9 @@ registry identity and never triggers this.
 Exit codes:
   0  the sweep ran with full coverage (deliberate --no-* skips are named)
   3  COVERAGE DEGRADED — a source was unreachable or missing, a pass never
-     ran, or a pass over 10+ names resolved none of them (wrong input); names
-     only it could have flagged are UNCHECKED
+     ran, or none of 10+ names was found in --project (wrong input: fix it,
+     a re-run cannot clear it); names only a lost source could have flagged
+     are UNCHECKED
   2  usage, including a names file or stdin that holds no names or a line
      that is not a package name
 
@@ -133,7 +134,7 @@ except ImportError:
 ap = argparse.ArgumentParser(
     allow_abbrev=False,
     epilog="Exit: 0 = every source answered or was skipped on purpose,\n"
-    "      3 = a source was lost, a pass never ran or resolved no name,\n"
+    "      3 = a source was lost, a pass never ran, or no name was in --project,\n"
     "      2 = usage, no package names, or a line that is not one.",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
@@ -181,10 +182,12 @@ mine = None
 if src:
     mine = set()
     for lineno, line in enumerate(src, 1):
+        if lineno == 1:
+            line = line.lstrip("\ufeff")
         # my-packages.sh prints <project>\t<package> (after an obs/git column with
         # --show-source): the package is the last field. Fed whole, a line matched
         # nothing anywhere and the sweep read as clean.
-        name = line.split("\t")[-1].strip()
+        name = line.strip().split("\t")[-1].strip()
         if not name:
             continue
         if re.search(r"[\s:/]", name):
@@ -424,8 +427,6 @@ lookups, a_hits, a_odd, failed = {}, [], [], []
 # Names the passes below could not look up in the reference project: absent is
 # the project answering, failed is osc not answering (the name went unchecked).
 ref_absent, ref_failed = set(), set()
-# (pass, names it ran over) for a pass that resolved none of them: wrong input.
-unresolved = []
 # Names whose answering source is OLDER than the packaged version: that channel
 # stopped (a repo no longer tagged, a stale mapping), so it decides nothing. They
 # go on to the next pass, and are reported if no pass can do better.
@@ -485,8 +486,6 @@ if do_check and not args.no_anitya:
             f"anitya has NO dates, so VERIFY each before acting"
         )
         print(f"# anitya: {len(lookups)} of {len(rest)} name(s) known")
-        if len(rest) - len(failed) >= 10 and not lookups:
-            unresolved.append(("anitya", len(rest)))
         for pkg, fv, raw, how in a_hits:
             disp = _anitya.norm(raw)
             rawnote = f" = {raw}" if disp != raw else ""
@@ -533,13 +532,15 @@ if forge_pass_ran:
         with ThreadPoolExecutor(max_workers=8) as ex:
             refv.update(zip(need_ref, ex.map(ref_spec, need_ref)))
 
-    still = []
+    still, no_url = [], []
     for pkg in remaining:
         ref = refv.get(pkg)
         if not ref or ref.status != "ok":
             (ref_failed if ref and ref.status == "failed" else ref_absent).add(pkg)
             continue
         if not (ref.url or ref.src):
+            if pkg not in a_behind:  # an older Anitya answer reports it below
+                no_url.append(pkg)
             continue
         still.append(pkg)
     in_ref = len(remaining) - len(set(remaining) & (ref_absent | ref_failed))
@@ -691,8 +692,6 @@ if forge_pass_ran:
         f"# forge: {mapped} of {len(remaining)} name(s) mapped to an upstream; "
         f"{in_ref} found in {args.project}"
     )
-    if len(remaining) >= 10 and not in_ref:
-        unresolved.append(("forge", len(remaining)))
     for pkg, fv, raw, how in hp_hits:
         disp = _anitya.norm(raw) if _anitya else raw
         rawnote = f" = {raw}" if disp != raw else ""
@@ -730,13 +729,26 @@ if forge_pass_ran:
                 )
             )
         )
-    if forge_unmapped:
+    if forge_unmapped or no_url:
         print(
-            f"# forge: {len(forge_unmapped)} name(s) with no forge "
+            f"# forge: {len(forge_unmapped) + len(no_url)} name(s) with no forge "
             f"resolvable from URL:/Source0: (not an outage, but no tracker "
             f"can see them — check by hand or on a cadence): "
-            + " ".join(forge_unmapped)
+            + " ".join(forge_unmapped + no_url)
         )
+
+# Many names looked up in the reference project and none of them there means the
+# input or --project is wrong (a whole my-packages.sh line once went in as one
+# name), not that every package is current. Only names the project ANSWERED for
+# count: when osc itself is down, the unreadable-spec loss below says so.
+ref_ok = sum(1 for r in refv.values() if r.status == "ok")
+none_found = (
+    len(refv)
+    if len(refv) >= 10
+    and not ref_ok
+    and any(r.status == "absent" for r in refv.values())
+    else 0
+)
 
 if ref_failed:
     print(
@@ -819,14 +831,12 @@ if ref_failed:
             f"{args.project} spec unreadable for {len(ref_failed)} name(s)",
         )
     )
-# A pass that ran over many names and resolved none of them means the input is
-# wrong (a whole my-packages.sh line once went in as one name): not a clean sweep.
-for which, n in unresolved:
+if none_found:
     down.append(
         (
-            f"{which}(none of {n} resolved)",
-            f"{which} resolved none of {n} names; check the input is one "
-            "package name per line",
+            f"input(0 of {none_found} in {args.project})",
+            f"none of {none_found} names found in {args.project} — check the input "
+            "is one package name per line and --project",
         )
     )
 
@@ -836,10 +846,16 @@ if down:
     if skipped:
         print("# skipped on purpose: " + "; ".join(skipped))
     print("# lost: " + "; ".join(d for _, d in down))
-    print(
-        "# names only the lost source(s) could have flagged are UNCHECKED, not "
-        "clean — re-run when they are back before concluding nothing needs updating"
-    )
+    if none_found:
+        print(
+            "# the names or --project are wrong: fix them and re-run — a re-run "
+            "of the same input can never come back clean"
+        )
+    if len(down) > bool(none_found):
+        print(
+            "# names only the lost source(s) could have flagged are UNCHECKED, not "
+            "clean — re-run when they are back before concluding nothing needs updating"
+        )
     print(
         "# COVERAGE: DEGRADED (exit 3) — lost: "
         + ", ".join(s for s, _ in down)
