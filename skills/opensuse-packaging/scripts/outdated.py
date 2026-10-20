@@ -5,9 +5,10 @@ Pulls every project Repology marks outdated in opensuse_tumbleweed (paginated),
 then keeps only those whose TW source-package name is in your set, printing
   <srcname>  <packaged-version> -> <newest-version>
 
-Your package set: pass package names on stdin or via --names FILE (one per line,
-e.g. the second column of my-packages.sh). A names file or stdin that holds no
-names is a usage error (exit 2), not an empty sweep. Run from a terminal with
+Your package set: pass package names on stdin or via --names FILE (one per line;
+my-packages.sh's <project>\\t<package> lines work as they are). A names file or
+stdin that holds no names, or a line that is not a package name (whitespace,
+':' or '/'), is a usage error (exit 2), not an empty sweep. Run from a terminal with
 neither, it prints the full TW outdated list (large) and reports DEGRADED
 coverage: nothing was checked against a package set.
 
@@ -84,16 +85,18 @@ registry identity and never triggers this.
 
 Exit codes:
   0  the sweep ran with full coverage (deliberate --no-* skips are named)
-  3  COVERAGE DEGRADED — a source was unreachable or missing, or a pass never
-     ran; names only it could have flagged are UNCHECKED
-  2  usage, including a names file or stdin that holds no names
+  3  COVERAGE DEGRADED — a source was unreachable or missing, a pass never
+     ran, or a pass over 10+ names resolved none of them (wrong input); names
+     only it could have flagged are UNCHECKED
+  2  usage, including a names file or stdin that holds no names or a line
+     that is not a package name
 
 Surviving candidates are still CANDIDATES, not confirmed updates — verify before
 acting (see references/triage.md): compare by tag/commit DATE not version string,
 watch for multi-track upstreams (LTS lines, parallel sonames) and deliberately
 pinned packages. Known false positives stay flagged here.
 
-Usage: my-packages.sh --... | cut -f2 | outdated.py
+Usage: my-packages.sh --... | outdated.py
        outdated.py --names /tmp/names.txt
        outdated.py --names /tmp/names.txt --no-anitya          # Repology + forge
        outdated.py --names /tmp/names.txt --no-forge           # Repology + Anitya
@@ -130,8 +133,8 @@ except ImportError:
 ap = argparse.ArgumentParser(
     allow_abbrev=False,
     epilog="Exit: 0 = every source answered or was skipped on purpose,\n"
-    "      3 = a source was lost or a pass never ran,\n"
-    "      2 = usage or no package names.",
+    "      3 = a source was lost, a pass never ran or resolved no name,\n"
+    "      2 = usage, no package names, or a line that is not one.",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 ap.add_argument("--names", help="file of package names (default: stdin)")
@@ -174,7 +177,25 @@ try:
 except OSError as e:
     print(f"outdated.py: cannot read --names: {e}", file=sys.stderr)
     sys.exit(2)
-mine = set(line.strip() for line in src if line.strip()) if src else None
+mine = None
+if src:
+    mine = set()
+    for lineno, line in enumerate(src, 1):
+        # my-packages.sh prints <project>\t<package> (after an obs/git column with
+        # --show-source): the package is the last field. Fed whole, a line matched
+        # nothing anywhere and the sweep read as clean.
+        name = line.split("\t")[-1].strip()
+        if not name:
+            continue
+        if re.search(r"[\s:/]", name):
+            print(
+                f"outdated.py: line {lineno} is not a package name: "
+                f"{_sanitize.sanitize(line.strip())!r} — pass one name per line "
+                "(my-packages.sh's <project>\\t<package> lines are fine)",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        mine.add(name)
 # An empty set would silently skip every pass, and alongside a Repology outage
 # that reads as the sweep bailing. Say which input was empty — usually a names
 # file read before the step writing it had finished.
@@ -400,6 +421,11 @@ if do_check and suppressed:
 # Anitya tracks upstreams directly, so check every name Repology did NOT flag —
 # including the suppressed ones (Repology's "newest" itself may be stale).
 lookups, a_hits, a_odd, failed = {}, [], [], []
+# Names the passes below could not look up in the reference project: absent is
+# the project answering, failed is osc not answering (the name went unchecked).
+ref_absent, ref_failed = set(), set()
+# (pass, names it ran over) for a pass that resolved none of them: wrong input.
+unresolved = []
 # Names whose answering source is OLDER than the packaged version: that channel
 # stopped (a repo no longer tagged, a stale mapping), so it decides nothing. They
 # go on to the next pass, and are reported if no pass can do better.
@@ -436,7 +462,8 @@ if do_check and not args.no_anitya:
         for pkg, (raw, how) in sorted(lookups.items()):
             ref = refv.get(pkg)
             if not ref or ref.status != "ok":
-                continue  # absent from / unreadable in the reference project
+                (ref_failed if ref and ref.status == "failed" else ref_absent).add(pkg)
+                continue
             fv = ref.version
             cmp = _anitya.vercmp(raw, fv)
             if (
@@ -457,6 +484,9 @@ if do_check and not args.no_anitya:
             f"Repology did not flag: {len(a_hits)} additional candidate(s) — "
             f"anitya has NO dates, so VERIFY each before acting"
         )
+        print(f"# anitya: {len(lookups)} of {len(rest)} name(s) known")
+        if len(rest) - len(failed) >= 10 and not lookups:
+            unresolved.append(("anitya", len(rest)))
         for pkg, fv, raw, how in a_hits:
             disp = _anitya.norm(raw)
             rawnote = f" = {raw}" if disp != raw else ""
@@ -506,9 +536,13 @@ if forge_pass_ran:
     still = []
     for pkg in remaining:
         ref = refv.get(pkg)
-        if not ref or ref.status != "ok" or not (ref.url or ref.src):
+        if not ref or ref.status != "ok":
+            (ref_failed if ref and ref.status == "failed" else ref_absent).add(pkg)
+            continue
+        if not (ref.url or ref.src):
             continue
         still.append(pkg)
+    in_ref = len(remaining) - len(set(remaining) & (ref_absent | ref_failed))
 
     if do_homepage:
 
@@ -652,6 +686,13 @@ if forge_pass_ran:
         f"{len(hp_hits) + len(forge_hits)} additional candidate(s) — "
         f"VERIFY each before acting"
     )
+    mapped = len(mapped_current) + (len(still) - len(forge_unmapped) if do_forge else 0)
+    print(
+        f"# forge: {mapped} of {len(remaining)} name(s) mapped to an upstream; "
+        f"{in_ref} found in {args.project}"
+    )
+    if len(remaining) >= 10 and not in_ref:
+        unresolved.append(("forge", len(remaining)))
     for pkg, fv, raw, how in hp_hits:
         disp = _anitya.norm(raw) if _anitya else raw
         rawnote = f" = {raw}" if disp != raw else ""
@@ -696,6 +737,17 @@ if forge_pass_ran:
             f"can see them — check by hand or on a cadence): "
             + " ".join(forge_unmapped)
         )
+
+if ref_failed:
+    print(
+        f"# {len(ref_failed)} name(s) whose {args.project} spec could not be read "
+        "(osc failed) — NOT checked: " + " ".join(sorted(ref_failed))
+    )
+if ref_absent:
+    print(
+        f"# {len(ref_absent)} name(s) not in {args.project}, so no reference "
+        "version — NOT checked: " + " ".join(sorted(ref_absent))
+    )
 
 if next_major:
     print(
@@ -760,6 +812,23 @@ else:
                 f"{len(forge_authority)} name(s) whose Source0 registry is down",
             )
         )
+if ref_failed:
+    down.append(
+        (
+            f"osc({len(ref_failed)} names)",
+            f"{args.project} spec unreadable for {len(ref_failed)} name(s)",
+        )
+    )
+# A pass that ran over many names and resolved none of them means the input is
+# wrong (a whole my-packages.sh line once went in as one name): not a clean sweep.
+for which, n in unresolved:
+    down.append(
+        (
+            f"{which}(none of {n} resolved)",
+            f"{which} resolved none of {n} names; check the input is one "
+            "package name per line",
+        )
+    )
 
 # The detail goes first and the verdict last, kept short: callers read the
 # final line through `tail | cut`, and a long one lost the verdict itself.

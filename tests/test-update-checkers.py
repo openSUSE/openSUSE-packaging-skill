@@ -471,6 +471,14 @@ class SweepCoverageTests(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
         self.assertNotIn("# COVERAGE: complete", r.stdout)
 
+    def test_a_line_that_is_not_a_package_name_is_a_usage_error(self):
+        # devel-packages.sh prints "<package> <devel-project>": fed whole, the
+        # pair is no package name anywhere.
+        r = self._run("--no-repology", names=("pkg-a", "pkg-b devel:tools"))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("line 2 is not a package name", r.stderr)
+        self.assertNotIn("# COVERAGE", r.stdout)
+
     def test_empty_stdin_is_a_usage_error(self):
         r = subprocess.run(
             [sys.executable, self.SCRIPT, "--no-repology"],
@@ -535,6 +543,12 @@ class _R(io.BytesIO):
 _real_run = subprocess.run
 def _run(cmd, *a, **k):
     if cmd and cmd[0] == "osc":
+        if MODE == "osc_absent":
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Server returned an error: HTTP Error 404: Not Found\\n")
+        if MODE == "osc_down":
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Server returned an error: HTTP Error 503\\n")
         return subprocess.CompletedProcess(cmd, 0, SPEC, "")
     if cmd and cmd[0] == "gh":
         # force the anonymous HTTP path so urlopen below is the only source
@@ -829,6 +843,49 @@ urllib.request.urlopen = _urlopen
         )
         self.assertNotIn("Traceback", r.stderr)
         self.assertIn("pkg-h(2.78.0 > 2.77.0 [anitya:homepage])", r.stdout)
+
+    def test_my_packages_two_column_lines_find_the_same_hits(self):
+        # my-packages.sh prints <project>\t<package>; fed whole, the line
+        # matched nothing and a 378-package sweep read "0 candidates, complete".
+        kw = dict(spec=self.SPEC_NPM_MACRO, flags=("--no-repology", "--no-anitya"))
+        bare = self._sweep("npm_ahead", names=("pkg-n",), **kw)
+        cols = self._sweep("npm_ahead", names=("devel:tools\tpkg-n",), **kw)
+        self.assertNotIn("Traceback", cols.stderr)
+        self.assertRegex(cols.stdout, r"(?m)^pkg-n +2\.78\.0 +-> 2\.79\.1")
+        self.assertEqual(cols.stdout, bare.stdout)
+        self.assertEqual(cols.returncode, bare.returncode, cols.stdout)
+
+    TEN = tuple(f"pkg-{i}" for i in range(10))
+
+    def test_forge_finding_no_name_in_factory_degrades(self):
+        r = self._sweep(
+            "osc_absent", names=self.TEN, flags=("--no-repology", "--no-anitya")
+        )
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("forge resolved none of 10 names", r.stdout)
+        self.assertEqual(r.returncode, 3, r.stdout)
+
+    def test_anitya_knowing_no_name_degrades(self):
+        r = self._sweep("nodata", names=self.TEN, flags=("--no-repology",))
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("anitya resolved none of 10 names", r.stdout)
+        self.assertNotIn("forge resolved none", r.stdout)
+        self.assertEqual(r.returncode, 3, r.stdout)
+
+    def test_a_few_names_missing_from_factory_are_listed_not_degraded(self):
+        r = self._sweep(
+            "osc_absent", names=("pkg-a", "pkg-x", "pkg-y"), flags=("--no-repology",)
+        )
+        self.assertIn("3 name(s) not in openSUSE:Factory", r.stdout)
+        self.assertIn("# COVERAGE: complete", r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_unreadable_reference_spec_is_unchecked_and_degrades(self):
+        # osc failing used to drop the name from both passes without a word.
+        r = self._sweep("osc_down", names=("pkg-a",), flags=("--no-repology",))
+        self.assertIn("spec could not be read", r.stdout)
+        self.assertIn("osc(1 names)", r.stdout.strip().splitlines()[-1])
+        self.assertEqual(r.returncode, 3, r.stdout)
 
     def test_upstream_behind_the_package_is_reported_not_dropped(self):
         r = self._sweep("tags_behind", spec=self.SPEC_AHEAD)
