@@ -10,7 +10,7 @@ Renders a Markdown table (so it looks nice in a chat/terminal that renders MD).
 Usage:
   sr-status.py [--user U] [--state open|all|declined|accepted] [--target PRJ]
                [--limit N] [--format table|blocks] [--brief] [--summary]
-               [--no-prs] [ID ...]
+               [--deadline SECONDS] [--no-prs] [ID ...]
   sr-status.py --pr pool/<pkg>#<n>
     ID ...      specific OBS request ids, N, #N or sr#N (overrides discovery;
                 skips the PR leg); one search call per 50 ids
@@ -26,7 +26,10 @@ Usage:
     --summary   counts by state and target, every decline with its reason and
                 what was filed since at its target and in its devel project, the
                 oldest new and review requests, and comments by others since your
-                last action (one call per open SR); never capped, so no --limit
+                last action on your SRs and PRs (one call each); never capped, so
+                no --limit. Pool PR builds are not read there: --pr reads them.
+    --deadline  start no per-item lookup after this many seconds (default 80):
+                the rest print as UNKNOWN, so a long queue still prints
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
@@ -60,6 +63,8 @@ import json
 import re
 import os
 import datetime
+import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -134,8 +139,9 @@ SHORT = {
     "opensuse-review-team": "team",
     "repo-checker": "repo",
 }
-# logins whose comments are bot noise, not human feedback: exact names plus the
-# autogits/_obs_ service accounts — a bare "bot" substring also hid people
+# logins whose comments are bot noise, not human feedback: exact names, the
+# autogits/_obs_ service accounts, and src.opensuse.org's group-review accounts
+# (packagehub-review, opensuse-review) — a bare "bot" substring also hid people
 BOTS = {
     "factory-auto",
     "licensedigger",
@@ -144,12 +150,18 @@ BOTS = {
     "origin-manager",
     "abichecker",
     "leaper",
+    "legaldb",
 }
 
 
 def is_bot(who):
     w = (who or "").lower()
-    return w in BOTS or w.startswith(("autogits", "_")) or "_obs_" in w
+    return (
+        w in BOTS
+        or w.startswith(("autogits", "_"))
+        or "_obs_" in w
+        or w.endswith("-review")
+    )
 
 
 def review_label(rv):  # short, for the compact table column
@@ -565,6 +577,10 @@ def fetch_prs(state, brief, leg):
                 # closed-unmerged, needs-your-review and a red, stale or
                 # unreadable PR build all sort first
                 "bad": st == "closed" or leg == "review-requested" or build_bad,
+                "repo": repo,
+                "ncomments": it.get("comments") or 0,
+                "author": (it.get("user") or {}).get("login"),
+                "created": it.get("created_at"),
             }
         )
     return rows, len(issues) >= PR_PAGE
@@ -658,10 +674,23 @@ def fetch_ids(ids):
     return got
 
 
+# Per-item lookups stop starting at this monotonic time (set from --deadline),
+# so a long queue still prints before a harness kills the call.
+DEADLINE = None
+SKIPPED = "deadline"  # what a lookup returns when it never started
+
+
 def comments_for(rows, fn):
-    """fn(row) for every row, 8 at a time: comments are one call per request."""
+    """fn(row) for every row, 8 at a time: comments are one call per request.
+    A row whose turn comes after DEADLINE gets SKIPPED instead of a call."""
+
+    def one(row):
+        if DEADLINE is not None and time.monotonic() >= DEADLINE:
+            return SKIPPED
+        return fn(row)
+
     with ThreadPoolExecutor(max_workers=8) as ex:
-        return list(ex.map(fn, rows))
+        return list(ex.map(one, rows))
 
 
 # ---------- --summary ----------
@@ -684,8 +713,12 @@ def later_requests(prj, pkg, after):
     scoped to the target (a collection by project/package also matches where
     it is only the source or a reviewer, and drags the whole history along).
     Returns [(id, state, creator)], or None when the lookup failed."""
+
+    def q(x):  # quoted: a raw '+' (libsigc++2) reaches the server as a space
+        return urllib.parse.quote(x, safe=":")
+
     match = (
-        f"action/target/@project='{prj}'+and+action/target/@package='{pkg}'"
+        f"action/target/@project='{q(prj)}'+and+action/target/@package='{q(pkg)}'"
         f"+and+@id>{after}+and+(state/@name='new'+or+state/@name='review'"
         "+or+state/@name='accepted')"
     )
@@ -750,6 +783,40 @@ def others_comments(row, user):
     ]
 
 
+def iso(s):
+    """A Gitea timestamp as an aware datetime, or None."""
+    try:
+        return datetime.datetime.fromisoformat((s or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def pr_others_comments(pr):
+    """Non-bot comments on one of your PRs by someone other than its author,
+    newer than the author's last comment (or the PR's opening). Returns a
+    list of (when, who, text), or None when the fetch failed."""
+    cmts = gitea_get(f"/repos/{pr['repo']}/issues/{pr['id'].lstrip('#')}/comments")
+    if cmts is None:
+        return None
+    author = pr.get("author")
+    marks = [iso(pr.get("created"))] + [
+        iso(c.get("created_at"))
+        for c in cmts
+        if (c.get("user") or {}).get("login") == author
+    ]
+    marks = [m for m in marks if m is not None]
+    last = max(marks) if marks else None
+    out = []
+    for c in cmts:
+        who = (c.get("user") or {}).get("login")
+        when = iso(c.get("created_at"))
+        if who == author or is_bot(who):
+            continue
+        if last is None or when is None or when > last:
+            out.append(((c.get("created_at") or "?")[:10], who or "?", c.get("body")))
+    return out
+
+
 def summary(user, rows, prs, failed_legs, no_prs):
     """--summary: what needs reading at volume, in one screen."""
     srs = [r for r in rows if r["kind"] == "SR"]
@@ -799,6 +866,9 @@ def summary(user, rows, prs, failed_legs, no_prs):
             who = clip(st.get("who", "?") if st is not None else "?", 40)
             why = clip((st.findtext("comment") if st is not None else "") or "", 120)
             print(f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} by {who}: "{why}"')
+            if follow is SKIPPED:
+                print("    later requests UNKNOWN (not looked up: --deadline reached)")
+                continue
             for where, later in follow:
                 if later is None:
                     after = "UNKNOWN (lookup failed)"
@@ -810,22 +880,51 @@ def summary(user, rows, prs, failed_legs, no_prs):
                     after = "nothing filed since"
                 print(f"    {where}: {after}")
     open_srs = [r for r in srs if r["state"] in ("new", "review", "declined")]
-    found = comments_for(open_srs, lambda r: others_comments(r, user))
-    unknown = [r for r, c in zip(open_srs, found) if c is None]
-    news = [(r, c) for r, c in zip(open_srs, found) if c]
+    prs_ok = not no_prs and not failed_legs
+    mine = [p for p in prs if not p.get("review")]
+    asked = [p for p in prs if p.get("review")]
+    items = []
+    if prs_ok:
+        # issues/search says how many comments a PR has: read only those, and
+        # first, as they are few and --deadline cuts the end of the queue
+        items += [("PR", p) for p in mine if p.get("ncomments")]
+    items += [("SR", r) for r in open_srs]
+    found = comments_for(
+        items,
+        lambda it: (
+            others_comments(it[1], user) if it[0] == "SR" else pr_others_comments(it[1])
+        ),
+    )
+    failed = [it for it, c in zip(items, found) if c is None]
+    skipped = [it for it, c in zip(items, found) if c is SKIPPED]
+    news = [(it, c) for it, c in zip(items, found) if c and c is not SKIPPED]
+
+    def label(it):
+        kind, r = it
+        if kind == "SR":
+            return f"SR {r['id']} {r['pkg']} -> {r['target']}"
+        return f"PR {r['repo']}{r['id']}"
+
     print(
         f"\ncomments by others since your last action: {len(news)} request(s)"
-        + (f", {len(unknown)} UNKNOWN (comment fetch failed)" if unknown else "")
+        + (" or PR(s)" if prs_ok else "")
+        + (f", {len(failed)} UNKNOWN (comment fetch failed)" if failed else "")
+        + (
+            f", {len(skipped)} UNKNOWN (not fetched: --deadline reached)"
+            if skipped
+            else ""
+        )
     )
-    for r, cs in news:
+    for it, cs in news:
         when, who, text = cs[-1]
         more = f" (+{len(cs) - 1} more)" if len(cs) > 1 else ""
+        print(f'  {label(it)} {clip(who, 40)} {when[:10]}: "{clip(text, 100)}"{more}')
+    for it in failed:
+        print(f"  {label(it)} UNKNOWN (comment fetch failed)")
+    if skipped:
         print(
-            f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} {clip(who, 40)} {when[:10]}: "{clip(text, 100)}"{more}'
-        )
-    for r in unknown:
-        print(
-            f"  SR {r['id']} {r['pkg']} -> {r['target']} UNKNOWN (comment fetch failed)"
+            "  not fetched (--deadline reached; raise it, or ask by id): "
+            + ", ".join(label(it).split(" -> ")[0] for it in skipped)
         )
     if not no_prs:
         if failed_legs:
@@ -833,13 +932,21 @@ def summary(user, rows, prs, failed_legs, no_prs):
                 f"\nsrc.opensuse.org PRs UNKNOWN: the {' and '.join(failed_legs)} leg failed, see stderr"
             )
         else:
-            mine = [p for p in prs if not p.get("review")]
-            asked = [p for p in prs if p.get("review")]
             print(
                 f"\nsrc.opensuse.org PRs: {len(mine)} yours, {len(asked)} awaiting your review"
             )
             for p in asked:
-                print(f"  awaiting your review: {p['target']}{p['id']}")
+                print(f"  awaiting your review: {p['repo']}{p['id']}")
+            pool = [
+                p
+                for p in mine
+                if p["repo"].startswith("pool/") and p["state"] == "open"
+            ]
+            if pool:
+                print(
+                    "  PR builds not read: sr-status.py --pr pool/<pkg>#<n> for "
+                    + ", ".join(f"{p['repo']}{p['id']}" for p in pool)
+                )
 
 
 # ---------- main ----------
@@ -888,6 +995,14 @@ def main():
         "request, comments by others since your last action",
     )
     ap.add_argument(
+        "--deadline",
+        type=float,
+        default=80,
+        metavar="SECONDS",
+        help="start no per-item lookup after this many seconds (default 80); "
+        "the rest print as UNKNOWN, so a long queue still prints",
+    )
+    ap.add_argument(
         "--no-prs", action="store_true", help="skip the src.opensuse.org PR leg"
     )
     ap.add_argument(
@@ -896,6 +1011,8 @@ def main():
         help="one PR's staging-bot OBS build verdict, e.g. pool/pkg#3",
     )
     a = ap.parse_args()
+    global DEADLINE
+    DEADLINE = time.monotonic() + a.deadline
     if a.pr:
         m = re.fullmatch(r"([\w.+-]+/[\w.+-]+)#(\d+)", a.pr)
         if not m or a.ids:
@@ -974,7 +1091,7 @@ def main():
                 detail, lambda r: human_comment(r["id"], r["el"].find("state"))
             ),
         ):
-            r["comment"] = c
+            r["comment"] = "(not fetched: --deadline reached)" if c is SKIPPED else c
 
     # A decline that a later accepted request for the same package and target
     # replaced is cleanup, not done: osc still counts it, and the next `osc sr`
