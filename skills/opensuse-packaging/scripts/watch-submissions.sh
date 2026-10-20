@@ -16,6 +16,8 @@
 #                        NEW SR <id> <pkg> [state]       entered the active set
 #                        SR <id> <pkg>: staging A -> B   staging (re)assignment
 #                        RESOLVE SR <id> <pkg> (...)     left new/review
+#                          with --resolve: RESOLVE SR <id> <pkg>: accepted by X |
+#                          declined by X: "<reason>" | superseded by #N | revoked by X
 #                        NEW INCOMING SR <id> <pkg> from <creator> [state]
 #                        RESOLVE INCOMING SR <id> <pkg> (...)
 #                        INCOMING MAINTENANCE: <n> new (<ids>) — ...
@@ -24,9 +26,11 @@
 #                        RESOLVE PR <repo>#<n> '<title>' (no longer open)
 #   WATCH-ERROR ...    query failure; baseline untouched (exit 2)
 #
-# "RESOLVE" means the item left the watched set; the CALLER fetches the final
-# state (osc request show <id> / tea api .../pulls/<n> — accepted/declined/
-# revoked vs merged/closed). For NEW INCOMING the caller reviews the request
+# "RESOLVE" means the item left the watched set: "gone from the list" is not
+# "landed". --resolve fetches the final state of your outgoing ones in one
+# search call; without it the CALLER fetches it (osc request show <id> / tea
+# api .../pulls/<n> — accepted/declined/revoked vs merged/closed). For NEW
+# INCOMING the caller reviews the request
 # (osc request show --diff <id>) and applies the accept/decline policy. The
 # watcher itself stays one-API-call-per-leg cheap and does not chase
 # resolutions. maintenance_incident / maintenance_release entries are the
@@ -37,11 +41,15 @@
 #
 # Usage: watch-submissions.sh [--user U] [--login GITEA_LOGIN]
 #                             [--state-dir DIR] [--allow-empty] [--no-prs]
-#                             [--no-incoming]
+#                             [--no-incoming] [--resolve]
 #   --user        OBS account (default: osc whois)
 #   --login       tea login name for the Gitea leg (default: src.opensuse.org)
 #   --state-dir   where the baseline JSON lives
-#                 (default: ${XDG_STATE_HOME:-~/.local/state}/osc-submission-watch)
+#                 (default: ${XDG_STATE_HOME:-~/.local/state}/osc-submission-watch).
+#                 Every run replaces the baseline, so an ad-hoc "what changed?"
+#                 run takes its own directory, or it eats the delta the next
+#                 cron firing would have reported.
+#   --resolve     name the final state of each outgoing SR that left the set
 #   --allow-empty accept an empty OBS active set as truth. Default is to treat
 #                 it as a failed query and keep the baseline — right for anyone
 #                 who usually has SRs in flight, wrong the day you have none.
@@ -62,7 +70,7 @@ set -o pipefail
 
 OBSUSER="" LOGIN="src.opensuse.org"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/osc-submission-watch"
-ALLOW_EMPTY=0 NO_PRS=0 NO_INCOMING=0
+ALLOW_EMPTY=0 NO_PRS=0 NO_INCOMING=0 RESOLVE=0
 while [ $# -gt 0 ]; do
   case "$1" in --user|--login|--state-dir) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
@@ -73,6 +81,7 @@ while [ $# -gt 0 ]; do
     --allow-empty) ALLOW_EMPTY=1; shift;;
     --no-prs) NO_PRS=1; shift;;
     --no-incoming) NO_INCOMING=1; shift;;
+    --resolve) RESOLVE=1; shift;;
     *) echo "unknown argument: $1 (usage: references/script-usage.md)" >&2; exit 2;;
   esac
 done
@@ -90,7 +99,9 @@ BASE="$STATE_DIR/baseline-$OBSUSER.json"
 TMP=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
-osc api "/request?view=collection&roles=creator&user=$OBSUSER&states=new,review&limit=250" \
+# No limit on your own set: a capped answer would turn every request past the
+# cap into a RESOLVE line.
+osc api "/request?view=collection&roles=creator&user=$OBSUSER&states=new,review" \
     >"$TMP/obs.xml" 2>"$TMP/obs.err"
 OBS_RC=$?
 
@@ -110,9 +121,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OBS_RC=$OBS_RC INCOMING_RC=$INCOMING_RC GITEA_RC=$GITEA_RC \
-ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING \
+ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING RESOLVE=$RESOLVE \
 OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
-import json, os, sys, xml.etree.ElementTree as ET
+import json, os, subprocess, sys, xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.environ["SCRIPT_DIR"])
 import _sanitize   # escape/Unicode-smuggling filter for third-party text
@@ -121,6 +132,8 @@ tmp, base_path = os.environ["TMP"], os.environ["BASE"]
 allow_empty = os.environ["ALLOW_EMPTY"] == "1"
 no_prs = os.environ["NO_PRS"] == "1"
 no_incoming = os.environ["NO_INCOMING"] == "1"
+resolve = os.environ["RESOLVE"] == "1"
+INCOMING_LIMIT = 250  # the incoming query's limit= parameter
 obsuser = os.environ["OBSUSER"]
 
 def parse_requests(path):
@@ -182,12 +195,14 @@ if not obs and not allow_empty:
 # roles=maintainer,reviewer returns requests whose TARGET the user maintains /
 # is asked to review; the user's own creations are removed so nothing shows up
 # in both sets. Empty is normal here — no --allow-empty guard.
-incoming, incoming_ok = {}, False
+incoming, incoming_ok, incoming_full = {}, False, False
 if not no_incoming and os.environ["INCOMING_RC"] == "0":
     try:
-        incoming = {rid: v for rid, v in parse_requests(f"{tmp}/incoming.xml").items()
-                    if v["creator"] != obsuser}
-        incoming_ok = True
+        got = parse_requests(f"{tmp}/incoming.xml")
+        # a full page may be cut: diffing it would fake RESOLVE lines
+        incoming_full = len(got) >= INCOMING_LIMIT
+        incoming_ok = not incoming_full
+        incoming = {rid: v for rid, v in got.items() if v["creator"] != obsuser}
     except ET.ParseError:
         incoming_ok = False
 
@@ -228,8 +243,45 @@ for rid, v in obs.items():
     elif bo[rid].get("staging") != v.get("staging"):
         changes.append(f"SR {rid} {v['pkg']}: staging "
                        f"{bo[rid].get('staging') or '-'} -> {v.get('staging') or '-'}")
-for rid, v in bo.items():
-    if rid not in obs:
+def final_states(ids):
+    """id -> 'accepted by X' / 'declined by X: "..."' / 'superseded by #N' /
+    'revoked by X' for requests that left the set, from one search call;
+    None when that call failed."""
+    ids = sorted(ids, key=int)
+    reqs = []
+    for i in range(0, len(ids), 50):  # 50 ids per call keeps the URL short
+        match = "+or+".join(f"@id={rid}" for rid in ids[i:i + 50])
+        try:
+            r = subprocess.run(["osc", "api", f"/search/request?match={match}"],
+                               capture_output=True, text=True, timeout=60)
+            root = ET.fromstring(r.stdout) if r.returncode == 0 else None
+        except (subprocess.TimeoutExpired, ET.ParseError):
+            root = None
+        if root is None:
+            return None
+        reqs += root.findall("request")
+    out = {}
+    for req in reqs:
+        st = req.find("state")
+        if st is None:
+            continue
+        name, who = st.get("name", "?"), _sanitize.sanitize(st.get("who") or "?")
+        if name == "superseded" and st.get("superseded_by"):
+            out[req.get("id")] = f"superseded by #{st.get('superseded_by')}"
+        elif name == "declined":
+            why = " ".join(_sanitize.sanitize(st.findtext("comment") or "").split())
+            out[req.get("id")] = f'declined by {who}: "{why[:100]}"'
+        else:
+            out[req.get("id")] = f"{name} by {who}"
+    return out
+
+gone = [rid for rid in bo if rid not in obs]
+finals = final_states(gone) if resolve else {}
+for rid in gone:
+    v = bo[rid]
+    if finals is not None and rid in finals:
+        changes.append(f"RESOLVE SR {rid} {v['pkg']}: {finals[rid]}")
+    else:
         changes.append(f"RESOLVE SR {rid} {v['pkg']} "
                        "(left review; fetch final state: accepted/declined/revoked)")
 
@@ -283,10 +335,14 @@ for c in changes:
     print("  * " + c)
 if not gitea_ok and not no_prs:
     print("  ! gitea leg unavailable this run (PR diff skipped; PR baseline kept)")
-if not incoming_ok and not no_incoming:
+if incoming_full:
+    print(f"  ! incoming leg hit its {INCOMING_LIMIT} limit (diff skipped; baseline kept)")
+elif not incoming_ok and not no_incoming:
     print("  ! incoming leg unavailable this run (diff skipped; baseline kept)")
 if incoming_upgraded:
     print("  ! incoming leg initialized (baseline upgraded; deltas start next run)")
+if resolve and finals is None:
+    print("  ! --resolve lookup failed this run (final states not fetched)")
 
 json.dump({"obs": obs,
            "incoming": incoming if incoming_ok else bi,
