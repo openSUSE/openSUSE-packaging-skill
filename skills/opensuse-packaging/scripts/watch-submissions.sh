@@ -27,14 +27,16 @@
 #   WATCH-ERROR ...    query failure; baseline untouched (exit 2)
 #
 # "RESOLVE" means the item left the watched set: "gone from the list" is not
-# "landed". --resolve fetches the final state of your outgoing ones in one
-# search call; without it the CALLER fetches it (osc request show <id> / tea
-# api .../pulls/<n> — accepted/declined/revoked vs merged/closed). For NEW
+# "landed". --resolve fetches the final state of your outgoing ones, one search
+# call per 50 ids; without it the CALLER fetches it (osc request show <id> /
+# tea api .../pulls/<n> — accepted/declined/revoked vs merged/closed). For NEW
 # INCOMING the caller reviews the request
-# (osc request show --diff <id>) and applies the accept/decline policy. The
-# watcher itself stays one-API-call-per-leg cheap and does not chase
-# resolutions. maintenance_incident / maintenance_release entries are the
-# exception: they are the QAM/security teams' pipeline, never the package
+# (osc request show --diff <id>) and applies the accept/decline policy. Without
+# --resolve the watcher stays one API call per leg. A leg whose answer fills its
+# page (incoming 250, PRs 50) may be cut, so its diff is skipped rather than
+# reporting RESOLVE lines it cannot prove. maintenance_incident /
+# maintenance_release entries are the exception: they are the QAM/security
+# teams' pipeline, never the package
 # maintainer's to accept or decline, so they are aggregated into one counted
 # INCOMING MAINTENANCE line rather than per-request lines that would read like
 # review to-dos.
@@ -134,6 +136,7 @@ no_prs = os.environ["NO_PRS"] == "1"
 no_incoming = os.environ["NO_INCOMING"] == "1"
 resolve = os.environ["RESOLVE"] == "1"
 INCOMING_LIMIT = 250  # the incoming query's limit= parameter
+GITEA_LIMIT = 50  # the PR query's limit= parameter
 obsuser = os.environ["OBSUSER"]
 
 def parse_requests(path):
@@ -207,15 +210,18 @@ if not no_incoming and os.environ["INCOMING_RC"] == "0":
         incoming_ok = False
 
 # ---- Gitea leg (soft: a failure skips the PR diff, never fakes RESOLVEs) ----
-gitea, gitea_ok = {}, False
+gitea, gitea_ok, gitea_full = {}, False, False
 if not no_prs and os.environ["GITEA_RC"] == "0":
     try:
-        for it in json.load(open(f"{tmp}/gitea.json")):
+        prs = json.load(open(f"{tmp}/gitea.json"))
+        for it in prs:
             repo = (it.get("repository") or {}).get("full_name", "?")
             # PR titles are foreign-authored — sanitize at ingestion
             gitea[f"{repo}#{it.get('number')}"] = {
                 "title": _sanitize.sanitize(it.get("title") or "")[:60]}
-        gitea_ok = True
+        # a full page may be cut: diffing it would fake RESOLVE PR lines
+        gitea_full = len(prs) >= GITEA_LIMIT
+        gitea_ok = not gitea_full
     except Exception:
         gitea_ok = False
 
@@ -245,8 +251,8 @@ for rid, v in obs.items():
                        f"{bo[rid].get('staging') or '-'} -> {v.get('staging') or '-'}")
 def final_states(ids):
     """id -> 'accepted by X' / 'declined by X: "..."' / 'superseded by #N' /
-    'revoked by X' for requests that left the set, from one search call;
-    None when that call failed."""
+    'revoked by X' for requests that left the set, one search call per 50
+    ids; None when any call failed."""
     ids = sorted(ids, key=int)
     reqs = []
     for i in range(0, len(ids), 50):  # 50 ids per call keeps the URL short
@@ -270,7 +276,8 @@ def final_states(ids):
             out[req.get("id")] = f"superseded by #{st.get('superseded_by')}"
         elif name == "declined":
             why = " ".join(_sanitize.sanitize(st.findtext("comment") or "").split())
-            out[req.get("id")] = f'declined by {who}: "{why[:100]}"'
+            why = why if len(why) <= 100 else why[:99].rstrip() + "…"
+            out[req.get("id")] = f'declined by {who}: "{why}"'
         else:
             out[req.get("id")] = f"{name} by {who}"
     return out
@@ -333,7 +340,9 @@ if gitea_ok:
 print("CHANGED" if changes else "NOCHANGE")
 for c in changes:
     print("  * " + c)
-if not gitea_ok and not no_prs:
+if gitea_full:
+    print(f"  ! gitea leg hit its {GITEA_LIMIT} limit (PR diff skipped; PR baseline kept)")
+elif not gitea_ok and not no_prs:
     print("  ! gitea leg unavailable this run (PR diff skipped; PR baseline kept)")
 if incoming_full:
     print(f"  ! incoming leg hit its {INCOMING_LIMIT} limit (diff skipped; baseline kept)")
