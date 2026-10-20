@@ -12,7 +12,8 @@ Usage:
                [--limit N] [--format table|blocks] [--brief] [--summary]
                [--no-prs] [ID ...]
   sr-status.py --pr pool/<pkg>#<n>
-    ID ...      specific OBS request ids (overrides discovery; skips the PR leg)
+    ID ...      specific OBS request ids, N, #N or sr#N (overrides discovery;
+                skips the PR leg); one search call per 50 ids
     --pr        one PR's staging-bot build verdict, as an exit code
     --state     which of your creator SRs/PRs to show (default: open = new,review,declined)
     --target    restrict SR discovery to a target project (e.g. openSUSE:Factory)
@@ -23,8 +24,9 @@ Usage:
     --brief     discovery list only (id, package, target, state) — NO per-item
                 review/comment API calls (this is what my-requests.sh wraps)
     --summary   counts by state and target, every decline with its reason and
-                any later request for that package, the oldest new request, and
-                comments by others since your last action (one call per open SR)
+                what was filed since at its target and in its devel project, the
+                oldest new and review requests, and comments by others since your
+                last action (one call per open SR); never capped, so no --limit
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
@@ -132,20 +134,22 @@ SHORT = {
     "opensuse-review-team": "team",
     "repo-checker": "repo",
 }
-# logins whose comments are bot noise, not human feedback
-BOTS = (
+# logins whose comments are bot noise, not human feedback: exact names plus the
+# autogits/_obs_ service accounts — a bare "bot" substring also hid people
+BOTS = {
     "factory-auto",
     "licensedigger",
     "repo-checker",
     "staging-bot",
-    "_obs_",
-    "autogits",
-)
+    "origin-manager",
+    "abichecker",
+    "leaper",
+}
 
 
 def is_bot(who):
     w = (who or "").lower()
-    return any(b in w for b in BOTS) or "bot" in w or w.startswith("_")
+    return w in BOTS or w.startswith(("autogits", "_")) or "_obs_" in w
 
 
 def review_label(rv):  # short, for the compact table column
@@ -476,7 +480,7 @@ def pr_mode(repo, num):
     return PR_EXIT[v]
 
 
-PR_PAGE = 50  # src.opensuse.org's page size for issues/search
+PR_PAGE = 50  # the limit= the PR leg asks for: a full page may have more
 
 
 def fetch_prs(state, brief, leg):
@@ -619,7 +623,7 @@ def sr_row(req, brief):
     return row
 
 
-def failed_row(rid, why):
+def failed_row(rid, why, comment="—"):
     return {
         "kind": "SR",
         "id": rid,
@@ -628,7 +632,7 @@ def failed_row(rid, why):
         "target": "?",
         "state": "",
         "chain": why,
-        "comment": "(see stderr)",
+        "comment": comment,
         "bad": True,
     }
 
@@ -674,14 +678,18 @@ def created(row):
     return norm_time(st.get("created")) if st is not None else ""
 
 
-def later_requests(row):
-    """Requests filed after a decline for the same target package, by anyone:
-    whether someone already handled it. One call per decline."""
-    q = (
-        "/request?view=collection&types=submit&states=new,review,accepted"
-        f"&project={row['target']}&package={row['pkg']}"
+def later_requests(prj, pkg, after):
+    """Requests to prj/pkg newer than id `after`, by anyone, still open or
+    accepted: whether someone already handled a decline. One search call,
+    scoped to the target (a collection by project/package also matches where
+    it is only the source or a reviewer, and drags the whole history along).
+    Returns [(id, state, creator)], or None when the lookup failed."""
+    match = (
+        f"action/target/@project='{prj}'+and+action/target/@package='{pkg}'"
+        f"+and+@id>{after}+and+(state/@name='new'+or+state/@name='review'"
+        "+or+state/@name='accepted')"
     )
-    raw = api(q, hard=False)
+    raw = api(f"/search/request?match={match}", hard=False)
     try:
         root = ET.fromstring(raw) if raw is not None else None
     except ET.ParseError:
@@ -691,12 +699,27 @@ def later_requests(row):
     later = []
     for r in root.findall("request"):
         rid = r.get("id", "")
-        if rid.isdigit() and int(rid) > row["num"]:
+        if rid.isdigit() and int(rid) > after:
             st = r.find("state")
             later.append(
                 (int(rid), st.get("name") if st is not None else "?", r.get("creator"))
             )
     return sorted(later)
+
+
+def decline_followups(row):
+    """[(where, later)] for a decline: its target, and its source project when
+    that is not a home: one — a Factory decline is fixed in the devel project."""
+    act = row["el"].find("action")
+    src = act.find("source") if act is not None else None
+    places = [(row["target"], row["pkg"])]
+    if (
+        src is not None
+        and src.get("project")
+        and not src.get("project").startswith("home:")
+    ):
+        places.append((src.get("project"), src.get("package") or row["pkg"]))
+    return [(f"{p}/{k}", later_requests(p, k, row["num"])) for p, k in places]
 
 
 def others_comments(row, user):
@@ -752,9 +775,11 @@ def summary(user, rows, prs, failed_legs, no_prs):
                 + "/".join(str(c[s]) for s in states)
                 + ")"
             )
-    new = [r for r in srs if r["state"] == "new"]
-    if new:
-        old = min(new, key=created)
+    for state in ("new", "review"):
+        waiting = [r for r in srs if r["state"] == state]
+        if not waiting:
+            continue
+        old = min(waiting, key=created)
         when = created(old)
         try:
             then = datetime.datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
@@ -763,26 +788,27 @@ def summary(user, rows, prs, failed_legs, no_prs):
         except ValueError:
             age = ""
         print(
-            f"oldest new: SR {old['id']} {old['pkg']} -> {old['target']} (created {when[:10]}{age})"
+            f"oldest {state}: SR {old['id']} {old['pkg']} -> {old['target']} "
+            f"(created {when[:10]}{age})"
         )
     declined = [r for r in srs if r["state"] == "declined"]
     if declined:
         print(f"\ndeclined ({len(declined)}):")
-        for r, later in zip(declined, comments_for(declined, later_requests)):
+        for r, follow in zip(declined, comments_for(declined, decline_followups)):
             st = r["el"].find("state")
             who = clip(st.get("who", "?") if st is not None else "?", 40)
             why = clip((st.findtext("comment") if st is not None else "") or "", 120)
-            if later is None:
-                after = "later requests UNKNOWN (lookup failed)"
-            elif later:
-                after = "; ".join(
-                    f"later #{n} {s} by {clip(c or '?', 40)}" for n, s, c in later
-                )
-            else:
-                after = "nothing filed there since"
-            print(
-                f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} by {who}: "{why}" — {after}'
-            )
+            print(f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} by {who}: "{why}"')
+            for where, later in follow:
+                if later is None:
+                    after = "UNKNOWN (lookup failed)"
+                elif later:
+                    after = "; ".join(
+                        f"#{n} {s} by {clip(c or '?', 40)}" for n, s, c in later
+                    )
+                else:
+                    after = "nothing filed since"
+                print(f"    {where}: {after}")
     open_srs = [r for r in srs if r["state"] in ("new", "review", "declined")]
     found = comments_for(open_srs, lambda r: others_comments(r, user))
     unknown = [r for r, c in zip(open_srs, found) if c is None]
@@ -812,6 +838,8 @@ def summary(user, rows, prs, failed_legs, no_prs):
             print(
                 f"\nsrc.opensuse.org PRs: {len(mine)} yours, {len(asked)} awaiting your review"
             )
+            for p in asked:
+                print(f"  awaiting your review: {p['target']}{p['id']}")
 
 
 # ---------- main ----------
@@ -875,6 +903,14 @@ def main():
         sys.exit(pr_mode(m[1], m[2]))
     if a.summary and a.ids:
         ap.error("--summary takes no request ids")
+    if a.summary and a.limit is not None:
+        ap.error("--summary is never capped: drop --limit")
+    ids = []
+    for raw in a.ids:
+        rid = re.sub(r"^(?:sr)?#", "", raw.strip(), flags=re.I)
+        if not re.fullmatch(r"[1-9][0-9]*", rid):
+            ap.error(f"not a request id: {raw!r} (digits, optionally after sr# or #)")
+        ids.append(rid)
     if a.limit is not None and a.limit < 0:
         ap.error("--limit takes 0 (no cap) or a positive number")
     limit = a.limit if a.limit is not None else (0 if a.brief or a.summary else 40)
@@ -889,13 +925,13 @@ def main():
 
     brief = a.brief or a.summary
     rows, cut = [], 0
-    if a.ids:
-        got = fetch_ids(a.ids)
-        for rid in a.ids:
+    if ids:
+        got = fetch_ids(ids)
+        for rid in ids:
             if rid not in got:
                 rows.append(failed_row(rid, "NOT FOUND"))
             elif got[rid] is None:
-                rows.append(failed_row(rid, "FETCH FAILED"))
+                rows.append(failed_row(rid, "FETCH FAILED", "(see stderr)"))
             else:
                 rows.append(sr_row(got[rid], brief))
     else:
@@ -1010,7 +1046,7 @@ def main():
         for r in rows:
             src = f"  {r.get('src', '')} ->" if r.get("src") else " "
             print(
-                f"  {r['kind']} {r['id']}  [{r['state'] + r.get('note', ''):9}] {src} "
+                f"  {r['kind']} {r['id']}  [{(r['state'] or r['chain']) + r.get('note', ''):9}] {src} "
                 f"{r['target']}"
                 + (f"/{r['pkg']}" if r["kind"] == "SR" else "")
                 + (f"  @{r['staging']}" if r.get("staging") else "")
