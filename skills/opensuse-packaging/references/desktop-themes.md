@@ -21,9 +21,10 @@ with nothing.
 `rpmlint/checks/BrandingPolicyCheck.py`):
 - **A name matching `\S+-(branding|theme)-\S+` is checked as a branding package** of type
   `branding` or `theme`: it must Provide (`=`) and Conflict `<base>-<type>`, carry
-  `Supplements: (<base> and <type>-<flavor>)`, and have no Recommends/Suggests/Enhances; its
-  Requires are not checked. A plain theme named `<base>-theme-<flavor>` therefore gets
-  `E: branding-provides-missing`, `branding-conflicts-missing <base>-theme` and
+  `Supplements: (<base> and <type>-<flavor>)`, and have no Recommends/Suggests/Enhances
+  (those are warnings); its Requires are not checked. A plain theme named
+  `<base>-theme-<flavor>` therefore gets `E: branding-provides-missing`,
+  `branding-conflicts-missing <base>-theme` and
   `branding-supplements-missing (<base> and theme-<flavor>)` — lxqt-theme-openSUSE-default,
   gnome-shell-theme-yaru and plymouth-theme-breeze6 carry them and leave them. **Never add that
   Conflicts or Supplements to a plain theme** (it would conflict with the real branding
@@ -126,12 +127,15 @@ unowned one. Owners in Factory:
 ## Plymouth themes
 
 `Requires: plymouth-plugin-<plugin>` for the plugin the `.plymouth` file names (theme-spinner:
-`Requires: %{name}-plugin-two-step`), `BuildArch: noarch`. **A third-party theme does not make
-itself the default** and has no scriptlets (plymouth-theme-breeze6): choosing it and
-rebuilding the initrd stay with the administrator. Only plymouth's own themes do it —
-theme-spinfinity's and theme-fade-in's `%post` run `plymouth-set-default-theme -R` (which
-rebuilds the initrd) when the current theme is `text`. The distro default comes from
-plymouth-branding-openSUSE.
+`Requires: %{name}-plugin-two-step`), `BuildArch: noarch`. **Prefer no scriptlets**
+(plymouth-theme-breeze6): choosing the theme and rebuilding the initrd stay with the
+administrator. Factory has the other shape too — plymouth's theme-spinfinity and
+theme-fade-in, and plymouth-theme-opensuse-beat, make themselves the default; if a theme
+must, copy that exact shape: `%post` on first install only (`$1 -eq 1`) and only when the
+current theme is `text`, `plymouth-set-default-theme -R <theme>` (which rebuilds the initrd)
+but without `-R` inside `/.buildenv`, and `%postun` on erase (`$1 -eq 0`) running
+`plymouth-set-default-theme -R --reset` if it is still the current theme. The distro default
+comes from plymouth-branding-openSUSE.
 
 ## Firefox add-ons
 
