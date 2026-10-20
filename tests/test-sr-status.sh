@@ -434,15 +434,112 @@ rows=$(grep '^  SR ' <<<"$LAST")
 grep -qF "SR 110  [declined ]" <<<"$rows" && grep -qF "SR 130  [declined ]" <<<"$rows" \
   && ! grep -qi "superseded" <<<"$rows" && pass "replaced-brief: only the replaced one is annotated" \
   || fail "replaced-brief: annotations: $rows"
+# Explicit ids come back from ONE search call, never one call per id (40 ids
+# took over the 2-minute tool limit that way).
 case_ replaced-ids 0 "| SR | 100 | foo | openSUSE:Factory | ❌ $REVOKE |" \
-  "mkdir -p \$B/obs/request \$B/obs/comments/request &&
-   { sreq 100 foo openSUSE:Factory declined 'fix the changelog'; } > \$B/obs/request/100 &&
-   { sreq 120 foo openSUSE:Factory accepted; } > \$B/obs/request/120 &&
+  "mkdir -p \$B/obs/search \$B/obs/comments/request &&
+   { echo '<collection>'; sreq 100 foo openSUSE:Factory declined 'fix the changelog'
+     sreq 120 foo openSUSE:Factory accepted; echo '</collection>'; } > \$B/obs/search/request_match_@id_100+or+@id_120 &&
    echo '<comments/>' > \$B/obs/comments/request/120" 100 120
 [ "$(grep '^| SR ' <<<"$LAST" | head -1 | cut -d'|' -f3)" = " 100 " ] \
   && pass "replaced-ids: the declined row stays first" || fail "replaced-ids: order: $LAST"
+[ "$(grep -c '^osc api /search/request' <<<"$CALLS")" = 1 ] && ! grep -q '^osc api /request/' <<<"$CALLS" \
+  && pass "replaced-ids: one search call for both ids" || fail "replaced-ids: calls: $CALLS"
 case_ declined-alone-ids 0 "| SR | 100 | foo | openSUSE:Factory | ❌ declined |" \
-  "mkdir -p \$B/obs/request && { sreq 100 foo openSUSE:Factory declined 'fix the changelog'; } > \$B/obs/request/100" 100
+  "mkdir -p \$B/obs/search && { echo '<collection>'; sreq 100 foo openSUSE:Factory declined 'fix the changelog'
+   echo '</collection>'; } > \$B/obs/search/request_match_@id_100" 100
+# An id the search does not return is named, never dropped.
+case_ id-not-found 0 "| SR | 999 | ? | ? | ❔  | NOT FOUND |" \
+  "mkdir -p \$B/obs/search && { echo '<collection>'; sreq 100 foo openSUSE:Factory declined 'x'
+   echo '</collection>'; } > \$B/obs/search/request_match_@id_100+or+@id_999" 100 999
+case_ ids-search-failed 0 "| SR | 100 | ? | ? | ❔  | FETCH FAILED |" ":" 100
+
+# ---------------------------------------------------------------- requests at volume
+# The listing used to cut at 40, oldest first and before the declines-first
+# sort, and to say only "N shown": "40 open" was reported while 166 were, and a
+# declined one fell off. --brief has no cap; the table keeps every decline and
+# says what it cut.
+OPEN=request_view_collection_states_new,review,declined_roles_creator_user_tester_types_submit
+# shellcheck disable=SC2317  # called from case mutations, through eval
+many() { # <count>: requests 1..count to openSUSE:Factory, #1 declined, the rest new
+  echo '<collection>'; sreq 1 pkg1 openSUSE:Factory declined 'old decline'
+  for i in $(seq 2 "$1"); do sreq "$i" "pkg$i" openSUSE:Factory new; done; echo '</collection>'
+}
+case_ brief-uncapped 0 "### Submissions for \`tester\` — 45 shown" \
+  "many 45 > \$B/obs/$OPEN" --brief --no-prs
+[ "$(grep -c '^  SR ' <<<"$LAST")" = 45 ] && pass "brief-uncapped: every request listed" || fail "brief-uncapped: $(grep -c '^  SR ' <<<"$LAST") rows"
+case_ table-cap-keeps-declines 0 "— 40 of 45 shown — --limit 0 for all" \
+  "many 45 > \$B/obs/$OPEN" --no-prs
+rows=$(grep '^| SR ' <<<"$LAST")
+grep -q '^| SR | 1 | pkg1 ' <<<"$rows" && ! grep -qE '^\| SR \| [2-6] \|' <<<"$rows" && grep -q '^| SR | 7 |' <<<"$rows" \
+  && pass "table-cap-keeps-declines: the decline stays, the oldest others go" || fail "table-cap-keeps-declines: $rows"
+case_ limit-zero-no-cap 0 "— 45 shown" "many 45 > \$B/obs/$OPEN" --no-prs --limit 0
+case_ limit-negative 2 "--limit takes 0 (no cap) or a positive number" ":" --limit -1
+# A PR leg that comes back at its page size may hold more: say so.
+case_ pr-page-full 0 "the created PR leg returned 50, its page size: more may exist" \
+  "{ echo '['; for i in \$(seq 1 49); do echo \"{\\\"number\\\": \$i, \\\"state\\\": \\\"open\\\", \\\"repository\\\": {\\\"full_name\\\": \\\"g/r\\\"}},\"; done
+     echo '{\"number\": 50, \"state\": \"open\", \"repository\": {\"full_name\": \"g/r\"}}]'; } > \$G/issues/search_type_pulls_created_true_state_open_limit_50" --brief
+
+# --summary: counts by state x target, every decline with its reason and what
+# was filed for that package since, the oldest new request, and comments by
+# others newer than your own last action. A failed lookup is UNKNOWN, never
+# "nothing".
+# shellcheck disable=SC2317  # called from case mutations, through eval
+vreq() { # <id> <package> <target> <state> <created> [decline comment]
+  printf '<request id="%s" creator="tester"><action type="submit"><source project="devel:example" package="%s"/>
+  <target project="%s" package="%s"/></action><state name="%s" who="a-reviewer" when="2026-10-18T10:00:00" created="%s">%s</state>
+  <history who="tester" when="%s"><description>Request created</description></history></request>\n' \
+    "$1" "$2" "$3" "$2" "$4" "$5" "${6:+<comment>$6</comment>}" "$5"
+}
+# shellcheck disable=SC2317  # called from case mutations, through eval
+cmt() { # <who> <when> <text>
+  printf '<comment who="%s" when="%s UTC" id="1">%s</comment>\n' "$1" "$2" "$3"
+}
+# shellcheck disable=SC2317  # called from case mutations, through eval
+summary_fixtures() { # <fixture tree>
+  local B=$1
+  mkdir -p "$B/obs/comments/request"
+  { echo '<collection>'
+    vreq 201 alpha M17N new 2026-10-01T08:00:00
+    vreq 202 beta M17N new 2026-10-15T08:00:00
+    vreq 203 gamma games review 2026-10-16T08:00:00
+    vreq 204 delta openSUSE:Factory review 2026-10-16T09:00:00
+    vreq 205 owntone openSUSE:Factory declined 2026-10-17T18:30:23 'nothing provides group(owntone)'
+    echo '</collection>'; } > "$B/obs/$OPEN"
+  # alpha: a reviewer asked something after the request was filed
+  { echo '<comments request="201">'; cmt gsu '2026-10-19 05:09:04' 'Please keep the empty lines'; echo '</comments>'; } > "$B/obs/comments/request/201"
+  # beta: the reviewer's comment came before your own reply, so it is handled
+  { echo '<comments request="202">'; cmt maint '2026-10-16 05:00:00' 'why this patch?'
+    cmt tester '2026-10-16 06:00:00' 'see upstream'; echo '</comments>'; } > "$B/obs/comments/request/202"
+  # gamma: only a bot spoke
+  { echo '<comments request="203">'; cmt factory-auto '2026-10-17 05:00:00' 'check_source ok'; echo '</comments>'; } > "$B/obs/comments/request/203"
+  # delta: the comment fetch fails
+  echo @NET > "$B/obs/comments/request/204"
+  echo '<comments request="205"/>' > "$B/obs/comments/request/205"
+  { echo '<collection>'
+    printf '<request id="250" creator="maint"><action type="submit"><target project="openSUSE:Factory" package="owntone"/></action><state name="accepted"/></request>\n'
+    printf '<request id="190" creator="old"><action type="submit"><target project="openSUSE:Factory" package="owntone"/></action><state name="accepted"/></request>\n'
+    echo '</collection>'; } > "$B/obs/request_view_collection_types_submit_states_new,review,accepted_project_openSUSE:Factory_package_owntone"
+}
+case_ summary 0 "OBS submit requests: 5 (new 2 · review 2 · declined 1)" "summary_fixtures \$B" --summary --no-prs
+for want in "  M17N                                    2  (2/0/0)" \
+            "oldest new: SR 201 alpha -> M17N (created 2026-10-01" \
+            'SR 205 owntone -> openSUSE:Factory by a-reviewer: "nothing provides group(owntone)" — later #250 accepted by maint' \
+            "comments by others since your last action: 1 request(s), 1 UNKNOWN (comment fetch failed)" \
+            'SR 201 alpha -> M17N gsu 2026-10-19: "Please keep the empty lines"' \
+            "SR 204 delta -> openSUSE:Factory UNKNOWN (comment fetch failed)"; do
+  grep -qF -- "$want" <<<"$LAST" && pass "summary: $want" || fail "summary: missing '$want'"
+done
+! grep -qE 'SR 202 beta|SR 203 gamma|later #190' <<<"$LAST" \
+  && pass "summary: handled, bot-only and earlier requests stay out" || fail "summary: extra lines: $LAST"
+case_ summary-later-unknown 0 "later requests UNKNOWN (lookup failed)" \
+  "summary_fixtures \$B && rm \$B/obs/request_view_collection_types_submit_states_new,review,accepted_project_openSUSE:Factory_package_owntone" \
+  --summary --no-prs
+case_ summary-nothing-since 0 "— nothing filed there since" \
+  "summary_fixtures \$B && echo '<collection/>' > \$B/obs/request_view_collection_types_submit_states_new,review,accepted_project_openSUSE:Factory_package_owntone" \
+  --summary --no-prs
+case_ summary-prs 0 "src.opensuse.org PRs: 3 yours, 0 awaiting your review" "summary_fixtures \$B" --summary
+case_ summary-with-ids 2 "--summary takes no request ids" ":" --summary 100
 
 echo "---"; [ "$fails" = 0 ] && echo "all sr-status checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

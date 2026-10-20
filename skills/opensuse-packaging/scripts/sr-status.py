@@ -9,16 +9,22 @@ Renders a Markdown table (so it looks nice in a chat/terminal that renders MD).
 
 Usage:
   sr-status.py [--user U] [--state open|all|declined|accepted] [--target PRJ]
-               [--limit N] [--format table|blocks] [--brief] [--no-prs] [ID ...]
+               [--limit N] [--format table|blocks] [--brief] [--summary]
+               [--no-prs] [ID ...]
   sr-status.py --pr pool/<pkg>#<n>
     ID ...      specific OBS request ids (overrides discovery; skips the PR leg)
     --pr        one PR's staging-bot build verdict, as an exit code
     --state     which of your creator SRs/PRs to show (default: open = new,review,declined)
     --target    restrict SR discovery to a target project (e.g. openSUSE:Factory)
-    --limit     cap discovered SRs (most recent first); each costs 2 API calls
+    --limit     cap the SRs whose comments are fetched (default 40; no cap with
+                --brief or --summary; 0 = no cap). Declines are never cut, and
+                the header says "N of M shown" whenever anything was.
     --format    table = one row per item; blocks = per-item bullets
     --brief     discovery list only (id, package, target, state) — NO per-item
                 review/comment API calls (this is what my-requests.sh wraps)
+    --summary   counts by state and target, every decline with its reason and
+                any later request for that package, the oldest new request, and
+                comments by others since your last action (one call per open SR)
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: `osc whois`)
 
@@ -51,7 +57,10 @@ import subprocess
 import json
 import re
 import os
+import datetime
 import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # escape/Unicode-smuggling filter for third-party text
@@ -467,15 +476,19 @@ def pr_mode(repo, num):
     return PR_EXIT[v]
 
 
+PR_PAGE = 50  # src.opensuse.org's page size for issues/search
+
+
 def fetch_prs(state, brief, leg):
     """One issues/search call for the user's PRs (leg='created') or PRs
     awaiting the user's review (leg='review-requested'); per-PR detail
     (base branch, mergeable, bot-build + human comments) only in full mode.
-    Returns a list of row dicts, or None on failure (caller falls back)."""
+    Returns (rows, full) — full when the page came back at PR_PAGE, so more
+    may exist — or None on failure (caller falls back)."""
     q_state = "open" if state == "open" else "all"
     issues = gitea_get(
         f"/repos/issues/search?type=pulls&{leg.replace('-', '_')}=true"
-        f"&state={q_state}&limit=50"
+        f"&state={q_state}&limit={PR_PAGE}"
     )
     if issues is None:
         sys.stderr.write(
@@ -550,7 +563,255 @@ def fetch_prs(state, brief, leg):
                 "bad": st == "closed" or leg == "review-requested" or build_bad,
             }
         )
-    return rows
+    return rows, len(issues) >= PR_PAGE
+
+
+# ---------- OBS request rows ----------
+
+SEARCH_CHUNK = 50  # ids per /search/request call, to keep the URL short
+
+
+def sr_row(req, brief):
+    """One table/brief row from a request element of a collection or search
+    result: both already carry the state, actions and reviews, so no per-item
+    call is needed for anything but the comments."""
+    st = req.find("state")
+    sname = st.get("name") if st is not None else ""
+    act = req.find("action")
+    tgt = act.find("target") if act is not None else None
+    src = act.find("source") if act is not None else None
+    reviews = req.findall("review")
+    # staging assignment is free here — the reviews are in the XML already
+    stg = ""
+    for rv in reviews:
+        if rv.get("state") == "new":
+            by = rv.get("by_project") or ""
+            if "Staging" in by:
+                parts = by.split(":")
+                # ...Staging:adi:40 -> adi:40, ...Staging:G -> G
+                stg = parts[-1] if parts[-2] == "Staging" else ":".join(parts[-2:])
+    rid = req.get("id", "?")
+    row = {
+        "kind": "SR",
+        "id": rid,
+        "num": int(rid) if rid.isdigit() else 0,
+        "pkg": tgt.get("package") if tgt is not None else "?",
+        "target": tgt.get("project") if tgt is not None else "?",
+        "state": sname,
+        "chain": "—",
+        "comment": "—",
+        "bad": sname == "declined",
+        "el": req,
+    }
+    if brief:
+        row["src"] = (
+            f"{src.get('project')}/{src.get('package')}" if src is not None else "?"
+        )
+        row["staging"] = stg
+    else:
+        row["reviews"] = reviews
+        row["chain"] = (
+            " ".join(
+                f"{review_label(rv)}{badge(rv.get('state', ''))}" for rv in reviews
+            )
+            or "—"
+        )
+    return row
+
+
+def failed_row(rid, why):
+    return {
+        "kind": "SR",
+        "id": rid,
+        "num": int(rid) if rid.isdigit() else 0,
+        "pkg": "?",
+        "target": "?",
+        "state": "",
+        "chain": why,
+        "comment": "(see stderr)",
+        "bad": True,
+    }
+
+
+def fetch_ids(ids):
+    """The requests behind explicit ids, SEARCH_CHUNK per search call: one
+    call per id timed out on 40 ids. Returns {id: element}; an id missing
+    from the answer is absent, a failed chunk maps its ids to None."""
+    got = {}
+    for i in range(0, len(ids), SEARCH_CHUNK):
+        chunk = ids[i : i + SEARCH_CHUNK]
+        match = "+or+".join(f"@id={rid}" for rid in chunk)
+        raw = api(f"/search/request?match={match}", hard=False)
+        try:
+            root = ET.fromstring(raw) if raw is not None else None
+        except ET.ParseError:
+            root = None
+        if root is None:
+            got.update({rid: None for rid in chunk})
+            continue
+        for r in root.findall("request"):
+            got[r.get("id")] = r
+    return got
+
+
+def comments_for(rows, fn):
+    """fn(row) for every row, 8 at a time: comments are one call per request."""
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(fn, rows))
+
+
+# ---------- --summary ----------
+
+
+def norm_time(s):
+    """OBS writes 2026-10-19T05:09:04 in request XML and
+    2026-10-19 05:09:04 UTC in comments; both become comparable text."""
+    return (s or "").replace("T", " ").replace(" UTC", "")[:19]
+
+
+def created(row):
+    st = row["el"].find("state")
+    return norm_time(st.get("created")) if st is not None else ""
+
+
+def later_requests(row):
+    """Requests filed after a decline for the same target package, by anyone:
+    whether someone already handled it. One call per decline."""
+    q = (
+        "/request?view=collection&types=submit&states=new,review,accepted"
+        f"&project={row['target']}&package={row['pkg']}"
+    )
+    raw = api(q, hard=False)
+    try:
+        root = ET.fromstring(raw) if raw is not None else None
+    except ET.ParseError:
+        root = None
+    if root is None:
+        return None
+    later = []
+    for r in root.findall("request"):
+        rid = r.get("id", "")
+        if rid.isdigit() and int(rid) > row["num"]:
+            st = r.find("state")
+            later.append(
+                (int(rid), st.get("name") if st is not None else "?", r.get("creator"))
+            )
+    return sorted(later)
+
+
+def others_comments(row, user):
+    """Non-bot comments by someone other than `user` newer than the user's last
+    action on the request (its creation, a history entry, or an own comment).
+    Returns a list of (when, who, text), or None when the fetch failed."""
+    req = row["el"]
+    mine = [created(row)]
+    mine += [
+        norm_time(h.get("when")) for h in req.iter("history") if h.get("who") == user
+    ]
+    raw = api(f"/comments/request/{row['id']}", hard=False)
+    try:
+        root = ET.fromstring(raw) if raw is not None else None
+    except ET.ParseError:
+        root = None
+    if root is None:
+        return None
+    cmts = root.findall("comment")
+    mine += [norm_time(c.get("when")) for c in cmts if c.get("who") == user]
+    last = max(mine) if mine else ""
+    return [
+        (norm_time(c.get("when")), c.get("who", "?"), c.text)
+        for c in cmts
+        if c.get("who") != user
+        and not is_bot(c.get("who"))
+        and norm_time(c.get("when")) > last
+    ]
+
+
+def summary(user, rows, prs, failed_legs, no_prs):
+    """--summary: what needs reading at volume, in one screen."""
+    srs = [r for r in rows if r["kind"] == "SR"]
+    by_state = Counter(r["state"] for r in srs)
+    by_target = defaultdict(Counter)
+    for r in srs:
+        by_target[r["target"]][r["state"]] += 1
+    states = [s for s in ("new", "review", "declined") if by_state[s]] + sorted(
+        s for s in by_state if s not in ("new", "review", "declined")
+    )
+    print(f"### Submissions for `{user}` — summary\n")
+    print(
+        f"OBS submit requests: {len(srs)}"
+        + (f" ({' · '.join(f'{s} {by_state[s]}' for s in states)})" if srs else "")
+    )
+    if by_target:
+        print("by target (" + "/".join(states) + "):")
+        for tgt, c in sorted(
+            by_target.items(), key=lambda kv: (-sum(kv[1].values()), kv[0])
+        ):
+            print(
+                f"  {tgt:36} {sum(c.values()):4}  ("
+                + "/".join(str(c[s]) for s in states)
+                + ")"
+            )
+    new = [r for r in srs if r["state"] == "new"]
+    if new:
+        old = min(new, key=created)
+        when = created(old)
+        try:
+            then = datetime.datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            age = f", {(now - then).days} days ago"
+        except ValueError:
+            age = ""
+        print(
+            f"oldest new: SR {old['id']} {old['pkg']} -> {old['target']} (created {when[:10]}{age})"
+        )
+    declined = [r for r in srs if r["state"] == "declined"]
+    if declined:
+        print(f"\ndeclined ({len(declined)}):")
+        for r, later in zip(declined, comments_for(declined, later_requests)):
+            st = r["el"].find("state")
+            who = clip(st.get("who", "?") if st is not None else "?", 40)
+            why = clip((st.findtext("comment") if st is not None else "") or "", 120)
+            if later is None:
+                after = "later requests UNKNOWN (lookup failed)"
+            elif later:
+                after = "; ".join(
+                    f"later #{n} {s} by {clip(c or '?', 40)}" for n, s, c in later
+                )
+            else:
+                after = "nothing filed there since"
+            print(
+                f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} by {who}: "{why}" — {after}'
+            )
+    open_srs = [r for r in srs if r["state"] in ("new", "review", "declined")]
+    found = comments_for(open_srs, lambda r: others_comments(r, user))
+    unknown = [r for r, c in zip(open_srs, found) if c is None]
+    news = [(r, c) for r, c in zip(open_srs, found) if c]
+    print(
+        f"\ncomments by others since your last action: {len(news)} request(s)"
+        + (f", {len(unknown)} UNKNOWN (comment fetch failed)" if unknown else "")
+    )
+    for r, cs in news:
+        when, who, text = cs[-1]
+        more = f" (+{len(cs) - 1} more)" if len(cs) > 1 else ""
+        print(
+            f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} {clip(who, 40)} {when[:10]}: "{clip(text, 100)}"{more}'
+        )
+    for r in unknown:
+        print(
+            f"  SR {r['id']} {r['pkg']} -> {r['target']} UNKNOWN (comment fetch failed)"
+        )
+    if not no_prs:
+        if failed_legs:
+            print(
+                f"\nsrc.opensuse.org PRs UNKNOWN: the {' and '.join(failed_legs)} leg failed, see stderr"
+            )
+        else:
+            mine = [p for p in prs if not p.get("review")]
+            asked = [p for p in prs if p.get("review")]
+            print(
+                f"\nsrc.opensuse.org PRs: {len(mine)} yours, {len(asked)} awaiting your review"
+            )
 
 
 # ---------- main ----------
@@ -560,8 +821,8 @@ def main():
     ap = argparse.ArgumentParser(
         allow_abbrev=False,
         epilog="Exit:\n"
-        "  0 = printed (a PR-leg failure only warns); --pr: green at the PR head, "
-        "or merged\n"
+        "  0 = printed (a PR-leg or comment-fetch failure only warns, as UNKNOWN);\n"
+        "      --pr: green at the PR head, or merged\n"
         "  1 = --pr: red at the PR head, or closed without a merge\n"
         "  2 = usage, or a lookup failed (the OBS query; with --pr any lookup)\n"
         "  3 = --pr: pending (no staging-bot comment yet, still building, or not\n"
@@ -577,8 +838,9 @@ def main():
     ap.add_argument(
         "--limit",
         type=int,
-        default=40,
-        help="cap discovered SRs (most recent first); each costs 2 API calls",
+        default=None,
+        help="cap the SRs whose comments are fetched (default 40; no cap with "
+        "--brief or --summary; 0 = no cap); declines are never cut",
     )
     ap.add_argument(
         "--format",
@@ -590,6 +852,12 @@ def main():
         "--brief",
         action="store_true",
         help="discovery list only — no per-item review/comment calls",
+    )
+    ap.add_argument(
+        "--summary",
+        action="store_true",
+        help="counts by state and target, declines with reasons, the oldest new "
+        "request, comments by others since your last action",
     )
     ap.add_argument(
         "--no-prs", action="store_true", help="skip the src.opensuse.org PR leg"
@@ -605,6 +873,11 @@ def main():
         if not m or a.ids:
             ap.error("--pr takes OWNER/REPO#N and no request ids")
         sys.exit(pr_mode(m[1], m[2]))
+    if a.summary and a.ids:
+        ap.error("--summary takes no request ids")
+    if a.limit is not None and a.limit < 0:
+        ap.error("--limit takes 0 (no cap) or a positive number")
+    limit = a.limit if a.limit is not None else (0 if a.brief or a.summary else 40)
     w = run(["osc", "whois"])
     user = a.user or w.stdout.split(":")[0].strip()
     if not user:
@@ -614,9 +887,18 @@ def main():
         )
         sys.exit(2)
 
-    rows = []
-    ids = a.ids
-    if not ids:
+    brief = a.brief or a.summary
+    rows, cut = [], 0
+    if a.ids:
+        got = fetch_ids(a.ids)
+        for rid in a.ids:
+            if rid not in got:
+                rows.append(failed_row(rid, "NOT FOUND"))
+            elif got[rid] is None:
+                rows.append(failed_row(rid, "FETCH FAILED"))
+            else:
+                rows.append(sr_row(got[rid], brief))
+    else:
         # "open" means "still needs something from you", so it MUST include
         # declined: a decline is the single most actionable state a request of
         # yours can be in (it needs a fix + supersede, or a revoke), and it is
@@ -631,96 +913,32 @@ def main():
             q += f"&project={a.target}"
         col = ET.fromstring(api(q) or "<collection/>")  # api() exits 2 on failure
         reqs = col.findall("request")
-        if a.limit and len(reqs) > a.limit:
-            reqs = sorted(reqs, key=lambda r: int(r.get("id", 0)), reverse=True)[
-                : a.limit
-            ]
-        if a.brief:
-            for r in reqs:
+        if limit and len(reqs) > limit:
+            # the cap only saves the comment calls: keep every decline, then the
+            # newest of the rest — a silent cut of the oldest once hid a decline
+            def declined(r):
                 st = r.find("state")
-                act = r.find("action")
-                tgt = act.find("target") if act is not None else None
-                src = act.find("source") if act is not None else None
-                sname = st.get("name") if st is not None else "?"
-                # staging assignment is free here — the collection XML already
-                # carries the reviews, so no per-item API call is needed
-                stg = ""
-                for rv in r.findall("review"):
-                    if rv.get("state") == "new":
-                        by = rv.get("by_project") or ""
-                        if "Staging" in by:
-                            parts = by.split(":")
-                            # ...Staging:adi:40 -> adi:40, ...Staging:G -> G
-                            stg = (
-                                parts[-1]
-                                if parts[-2] == "Staging"
-                                else ":".join(parts[-2:])
-                            )
-                rows.append(
-                    {
-                        "kind": "SR",
-                        "id": r.get("id"),
-                        "num": int(r.get("id", 0)),
-                        "pkg": tgt.get("package") if tgt is not None else "?",
-                        "target": (tgt.get("project") if tgt is not None else "?"),
-                        "src": (
-                            f"{src.get('project')}/{src.get('package')}"
-                            if src is not None
-                            else "?"
-                        ),
-                        "state": sname,
-                        "staging": stg,
-                        "chain": "—",
-                        "comment": "—",
-                        "bad": sname == "declined",
-                    }
-                )
-        else:
-            ids = [r.get("id") for r in reqs]
-    if ids:
-        for rid in ids:
-            raw = api(f"/request/{rid}", hard=False)
-            if raw is None:
-                rows.append(
-                    {
-                        "kind": "SR",
-                        "id": rid,
-                        "num": int(rid) if rid.isdigit() else 0,
-                        "pkg": "?",
-                        "target": "?",
-                        "state": "",
-                        "chain": "FETCH FAILED",
-                        "comment": "(see stderr)",
-                        "bad": True,
-                    }
-                )
-                continue
-            req = ET.fromstring(raw or "<request/>")
-            st = req.find("state")
-            sname = st.get("name") if st is not None else ""
-            act = req.find("action")
-            tgt = act.find("target") if act is not None else None
-            reviews = req.findall("review")
-            chain = (
-                " ".join(
-                    f"{review_label(rv)}{badge(rv.get('state', ''))}" for rv in reviews
-                )
-                or "—"
+                return st is not None and st.get("name") == "declined"
+
+            keep = [r for r in reqs if declined(r)]
+            rest = sorted(
+                (r for r in reqs if not declined(r)),
+                key=lambda r: int(r.get("id", 0)),
+                reverse=True,
             )
-            rows.append(
-                {
-                    "kind": "SR",
-                    "id": rid,
-                    "num": int(rid) if str(rid).isdigit() else 0,
-                    "pkg": tgt.get("package") if tgt is not None else "?",
-                    "target": tgt.get("project") if tgt is not None else "?",
-                    "state": sname,
-                    "chain": chain,
-                    "reviews": reviews,
-                    "comment": human_comment(rid, st),
-                    "bad": sname == "declined",
-                }
-            )
+            keep += rest[: max(0, limit - len(keep))]
+            cut = len(reqs) - len(keep)
+            reqs = keep
+        rows = [sr_row(r, brief) for r in reqs]
+    if not brief:
+        detail = [r for r in rows if "el" in r]
+        for r, c in zip(
+            detail,
+            comments_for(
+                detail, lambda r: human_comment(r["id"], r["el"].find("state"))
+            ),
+        ):
+            r["comment"] = c
 
     # A decline that a later accepted request for the same package and target
     # replaced is cleanup, not done: osc still counts it, and the next `osc sr`
@@ -744,14 +962,28 @@ def main():
                 f'osc rq revoke -m "replaced by #{n}" {r["id"]}'
             )
 
-    failed_legs = []
+    failed_legs, full_legs, prs = [], [], []
     if not a.ids and not a.no_prs:
         for leg in ("created", "review-requested"):
-            prs = fetch_prs(a.state, a.brief, leg)
-            if prs is None:
+            got = fetch_prs(a.state, brief, leg)
+            if got is None:
                 failed_legs.append(leg)
-            else:
-                rows.extend(prs)
+                continue
+            leg_rows, full = got
+            for p in leg_rows:
+                p["review"] = leg == "review-requested"
+            prs.extend(leg_rows)
+            if full:
+                full_legs.append(leg)
+    rows.extend(prs)
+
+    if a.summary:
+        summary(user, rows, prs, failed_legs, a.no_prs)
+        if full_legs:
+            print(
+                f"  (the {' and '.join(full_legs)} PR leg returned {PR_PAGE}, its page size: more may exist)"
+            )
+        return
 
     # declined SRs / closed-unmerged PRs first, then ids numeric descending-safe
     rows.sort(key=lambda r: (not r["bad"], r["num"]))
@@ -762,8 +994,15 @@ def main():
             " (OBS SRs; src.opensuse.org PRs UNKNOWN: the "
             f"{' and '.join(failed_legs)} leg failed, see stderr)"
         )
+    shown = (
+        f"{len(rows)} of {len(rows) + cut} shown — --limit 0 for all"
+        if cut
+        else f"{len(rows)} shown"
+    )
+    if full_legs:
+        shown += f"; the {' and '.join(full_legs)} PR leg returned {PR_PAGE}, its page size: more may exist"
     print(
-        f"### Submissions for `{user}` — {len(rows)} shown"
+        f"### Submissions for `{user}` — {shown}"
         + ("" if a.no_prs or a.ids else scope)
         + "\n"
     )
