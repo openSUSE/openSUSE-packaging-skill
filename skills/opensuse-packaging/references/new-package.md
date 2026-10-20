@@ -11,6 +11,7 @@ submit route for a package Factory does not have yet. Spec rules themselves stay
 Harvest from them: the **shared-library soname / subpackage split**, the `-devel`/`-tools`/`-doc` partitioning, build-system invocation and **build options** (`-D…`/`--enable-…`), `%check`/test wiring, any **required patches**, and the correct **SPDX license**.
 
 For a KF6/Qt6 (ECM) app bound for a KDE:* devel project, also read two or three current specs there — `references/kde-packaging.md` "KF6 / ECM packages (Qt6, Kirigami)".
+For a theme, icon theme, branding or desktop-specific package, read `references/desktop-themes.md` "Branding package or plain theme" and "Per-desktop pieces — boolean Supplements" first.
 
 Prefer basing the new package on the best existing reference — `osc copypac` from a good `home:` copy (see the copypac note), or port a distro's spec — then reconcile it against the cross-distro consensus, rather than writing from scratch and missing a subpackage split or a needed patch everyone else already carries. Treat a single distro's choices as one data point; where distros **disagree** (e.g. one ships only a static lib, another a versioned `.so`), follow openSUSE's Shared Library Policy and the majority of the distros that ship a proper shared lib. (Real case: cmark-gfm — new to Factory for mupdf's Markdown support; surveyed Fedora/Debian/Arch/etc. to settle the `libcmark-gfm`/`libcmark-gfm-extensions` soname subpackages + `-devel` split before packaging it in `Publishing`.)
 
