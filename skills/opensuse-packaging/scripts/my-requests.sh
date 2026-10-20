@@ -6,12 +6,18 @@
 # request-search API with roles=creator (via sr-status.py).
 #
 # Usage: my-requests.sh [--state open|declined|accepted|all] [--user OBSUSER] [--target PRJ]
+#                       [--limit N] [--summary]
 #   --state   open (new,review,declined) | declined | accepted | all  (default: open)
 #             "open" includes declined on purpose: a decline is terminal, so it
 #             leaves the active set — filtering it out hides the one state that
 #             actually needs you. See references/submit-watch.md.
 #   --user    OBS account (default: `osc whois`)
 #   --target  restrict to a target project (e.g. openSUSE:Factory)
+#   --limit   cap the list (default: no cap — every request is listed)
+#   --summary counts by state and target, every decline with its reason and
+#             what was filed since, the oldest new request, and comments by
+#             others since your last action — the answer to "status of my
+#             submissions" when there are many
 # Exit: 0 = listed, 2 = usage or the OBS query failed.
 set -euo pipefail
 
