@@ -186,6 +186,40 @@ class Package:
             self.revs[rev] = tree(self.prj, self.pkg, rev)
         return bool(self.revs[rev]) and self.revs[rev][1] == self.devel[1]
 
+    def factory_devel(self):
+        """openSUSE:Factory's devel project for the package when it is another
+        one than prj (and its package is no _link to prj/pkg), else None."""
+        try:
+            r = subprocess.run(
+                ["bash", os.path.join(HERE, "devel-of.sh"), self.pkg],
+                capture_output=True,
+                text=True,
+                timeout=2 * TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            raise Lookup("devel-of.sh timed out", False)
+        if r.returncode in (3, 4):  # not in Factory, or no devel project named
+            return None
+        if r.returncode != 0:
+            raise Lookup(f"devel-of.sh {self.pkg}: exit {r.returncode}", False)
+        dprj, _, dpkg = r.stdout.strip().partition("/")
+        if dprj == self.prj:
+            return None
+        try:
+            link = ET.fromstring(osc("api", f"/source/{dprj}/{dpkg}/_link"))
+        except Lookup as e:
+            if e.args[1]:
+                return dprj
+            raise
+        except ET.ParseError as e:
+            raise Lookup(f"unreadable /source/{dprj}/{dpkg}/_link: {e}", False)
+        if (
+            link.get("project") == self.prj
+            and (link.get("package") or dpkg) == self.pkg
+        ):
+            return None
+        return dprj
+
     def forwards(self, states):
         """Factory submit requests for the package from the devel project."""
         reqs = search(
@@ -210,6 +244,9 @@ class Package:
                 "DEVEL-DECLINED",
                 f"{own['id']} by {clean(own['who'])}: {clean(own['comment'], 120)}",
             )
+        wrong = self.factory_devel()
+        if wrong:
+            return "WRONG-DEVEL", f"openSUSE:Factory develops it in {wrong}"
         self.devel = tree(self.prj, self.pkg)
         if self.devel is None:
             return "GONE", f"no longer in {self.prj}"

@@ -6943,5 +6943,41 @@
     "tool_input": {
       "command": "osc api -X $M /source/home:tester:spark/foo"
     }
+  },
+  "api-delete-m": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -m DELETE /source/home:tester:spark/foo"
+    }
+  },
+  "api-delete-m-joined": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -mDELETE /source/home:tester:spark/foo/"
+    }
+  },
+  "api-delete-m-force": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -m delete '/source/home:tester:spark/foo?force=1'"
+    }
+  },
+  "api-delete-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE '/source/home:tester:spark/foo/_link?comment=Unlink'"
+    }
+  },
+  "api-delete-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE /source/home:tester:spark/foo/foo.spec"
+    }
+  },
+  "api-delete-attribute": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -m DELETE /source/home:tester:spark/foo/_attribute/OBS:Maintained"
+    }
   }
 }

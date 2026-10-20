@@ -1061,6 +1061,13 @@ case_ api-delete-method-eq        2 rdelete-pending "an osc api DELETE of https:
 case_ api-delete-var              2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
 case_ api-delete-var-unknown      2 rdelete-unknown "osc api with \$M"
 case_ api-get-source              0 - ""
+case_ api-delete-m                2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
+case_ api-delete-m-joined         2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo/"
+case_ api-delete-m-force          2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo?force=1"
+# A file, the _link or an attribute is no project or package: nothing is revoked.
+case_ api-delete-link             0 - ""
+case_ api-delete-file             0 - ""
+case_ api-delete-attribute        0 - ""
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.
 case_ msg-subst-cat-long         2 request-message "an osc sr message with 380 characters of prose"

@@ -28,8 +28,8 @@
 #                        package is unmaintained and you maintain the project)
 #   exit 3  BLOCKED    — an explicit reviewer role exists; stop, report, wait
 #   exit 4  NOT_YOURS  — package has a maintainer and it is not you
-#   exit 5  package/meta unreadable (404, auth, network), or Factory's devel
-#           project lookup failed
+#   exit 5  package or project _meta unreadable (404, auth, network), or
+#           Factory's devel project lookup failed
 #   exit 6  WRONG-DEVEL — openSUSE:Factory develops the package in another
 #           project; accept nothing here, submit there
 #   exit 2  usage error (also an empty --batch file)
@@ -107,7 +107,8 @@ check_one() {
   if [ -n "$cache" ] && [ -f "$cache/$p" ]; then
     prjmeta="$(cat "$cache/$p")"
   else
-    prjmeta="$(osc api "/source/$p/_meta" 2>/dev/null)" || prjmeta=""
+    # unread, a project-level reviewer would go unseen
+    prjmeta="$(osc api "/source/$p/_meta" 2>/dev/null)" || return 5
     [ -z "$cache" ] || printf '%s' "$prjmeta" > "$cache/$p"
   fi
 
@@ -161,7 +162,7 @@ fi
 [ -n "$prj" ] && [ -n "$pkg" ] || { usage; exit 2; }
 out="$(check_one "$prj" "$pkg")"; rc=$?
 if [ $rc -eq 5 ]; then
-  echo "cannot read /source/$prj/$pkg/_meta or its Factory devel project (absent, auth, or network)" >&2
+  echo "cannot read /source/$prj/$pkg/_meta, its project's or its Factory devel project (absent, auth, or network)" >&2
   exit 5
 fi
 IFS=$'\t' read -r verdict revs others why <<<"$out"

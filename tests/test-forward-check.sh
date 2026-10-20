@@ -35,6 +35,8 @@ def answer(path, missing):
     text = open(path).read()
     if text.strip() == "@ERR":
         sys.exit("Server returned an error: HTTP Error 500: Internal Server Error")
+    if text.strip() == "@ERR502":
+        sys.exit("Server returned an error: HTTP Error 502: Bad Gateway (backend said 404)")
     sys.stdout.write(text)
 if args == ["whois"]:
     print('tester: "Tester"')
@@ -96,6 +98,7 @@ obs /source/devel:a/_meta '<project name="devel:a"/>'
 
 put fwd maint;        fact fwd "$(req 3000 maint review 2026-10-16T08:00:00)"
 put stale maint;      fact stale "$(req 3001 maint review 2026-10-16T08:00:00 devel:a old)"
+obs "/source/devel:a/stale?expand=1&rev=old" "$(srcdir old aaa)"
 put revnum maint;     fact revnum "$(req 3009 maint review 2026-10-16T08:00:00 devel:a 7)"
 obs "/source/devel:a/revnum?expand=1&rev=7" "$(srcdir ccc bbb)"
 # A linked devel package's srcmd5 changes with its link base: equal files are
@@ -186,7 +189,13 @@ echo "--- then the role decides"
 case_ due            4 "devel:a/due  DUE" : devel:a due
 case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" : devel:a newpkg
 case_ maintainers    0 "devel:a/maintdue  MAINTAINERS" : devel:a maintdue
-case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL" : devel:a wrong
+case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL openSUSE:Factory develops it in devel:b" : devel:a wrong
+grep -qF "target/@project='openSUSE:Factory'" "$LASTDIR/calls" && fail "wrong-devel searched Factory first" \
+  || pass "wrong-devel is decided before any Factory search"
+# A current forward does not make the wrong project right.
+case_ wrong-forwarded 4 "devel:a/fwd  WRONG-DEVEL" "echo devel:b/fwd > devel/fwd" devel:a fwd
+case_ link-into-here 4 "devel:a/due  DUE" \
+  "echo devel:b/due > devel/due; obs /source/devel:b/due/_link '<link project=\"devel:a\"/>'" devel:a due
 case_ gate-fails     3 "devel:a/due  UNKNOWN autoforward-gate.sh: UNREADABLE" \
   "echo @ERR > obs/_source_devel:a_due__meta" devel:a due
 
@@ -203,6 +212,7 @@ case_ status-body    3 "UNKNOWN request search answered <status>" \
   'echo "<status code=\"error\"><summary>x</summary></status>" > search/factory-due' devel:a due
 case_ source-fails   3 "devel:a/due  UNKNOWN" "echo @ERR > obs/_source_devel:a_due_expand_1" devel:a due
 case_ gone           0 "devel:a/due  GONE no longer in devel:a" "rm obs/_source_devel:a_due_expand_1" devel:a due
+case_ not-a-404      3 "devel:a/due  UNKNOWN" "echo @ERR502 > obs/_source_devel:a_due_expand_1" devel:a due
 
 echo "--- --mine lists your accepted requests into devel projects"
 case_ mine           4 "# 2 package(s): 1 DUE, 1 FORWARDED" : --mine --since 2026-10-14

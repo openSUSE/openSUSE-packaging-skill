@@ -1129,7 +1129,8 @@ def osc_prompt(run, stdin):
     )
 
 
-SOURCE_PATH = Rx(r"(?:^|/)source/[^/?#\s]")
+# A project or package itself (not one of its files): /source/PRJ[/PKG][/][?...]
+SOURCE_PATH = Rx(r"(?:^|/)source/[^/?#\s]+(?:/[^/?#\s]+)?/?(?:[?#]|$)")
 
 
 def osc_deletes(run, ctx, cwd):
@@ -1160,7 +1161,7 @@ def osc_deletes(run, ctx, cwd):
         return
     opts, pos = osc_args(sub, args)
     methods = [
-        m for k, v in opts if k in ("-X", "--method") for m in spell(v, "osc api")
+        m for k, v in opts if k in ("-X", "-m", "--method") for m in spell(v, "osc api")
     ]
     if any(m.upper() == "DELETE" for m in methods):
         for p in (x for w in pos for x in spell(w, "an osc api DELETE")):
