@@ -15,9 +15,9 @@
 #   --target  restrict to a target project (e.g. openSUSE:Factory)
 #   --limit   cap the list (default: no cap — every request is listed)
 #   --summary counts by state and target, every decline with its reason and
-#             what was filed since, the oldest new request, and comments by
-#             others since your last action — the answer to "status of my
-#             submissions" when there are many
+#             what was filed since, the oldest new and review requests, and
+#             comments by others since your last action (OBS only: "status of
+#             my submissions" is sr-status.py --summary, which adds the PRs)
 # Exit: 0 = listed, 2 = usage or the OBS query failed.
 set -euo pipefail
 
