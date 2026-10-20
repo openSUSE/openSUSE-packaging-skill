@@ -647,6 +647,56 @@ for want in "comments by others since your last action: 4 request(s) or PR(s), 2
 done
 ! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && ! grep -q 'pool/tesseract-ocr/issues/4/comments' <<<"$CALLS" \
   && pass "summary-pr-comments: handled, bot and comment-less PRs stay out" || fail "summary-pr-comments: $LAST"
+# The count includes reviews, which the issue comments call does not return:
+# when it is short, the reviews are read too. A change request is to answer;
+# an approval ("merge ok", APPROVED) is listed apart. A failed reviews call
+# is UNKNOWN.
+# shellcheck disable=SC2317  # called from case mutations, through eval
+pr_review_fixtures() { # <fixture tree>
+  local G=$1/gitea/repos
+  pr_comments_fixtures "$1"
+  python3 - "$G/issues/search_type_pulls_created_true_state_open_limit_50" <<'EOF'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+for n, repo, count in ((9, "other/reviewed", 3), (10, "other/approved", 1), (11, "other/merge-ok", 1), (12, "other/rv-broken", 2)):
+    d.append({"number": n, "state": "open", "comments": count, "user": {"login": "me"},
+              "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": repo}})
+json.dump(d, open(p, "w"))
+EOF
+  mkdir -p "$G/other/reviewed/issues/9" "$G/other/reviewed/pulls/9" "$G/other/approved/issues/10" "$G/other/approved/pulls/10" \
+    "$G/other/merge-ok/issues/11" "$G/other/rv-broken/issues/12" "$G/other/rv-broken/pulls/12"
+  echo '[{"user": {"login": "autogits_obs_staging_bot"}, "body": "Build failed", "created_at": "2026-10-19T08:00:00Z"}]' > "$G/other/reviewed/issues/9/comments"
+  echo '[{"user": {"login": "mcepl"}, "state": "REQUEST_CHANGES", "body": "FTBFS", "comments_count": 2, "submitted_at": "2026-10-19T09:00:00Z"},
+   {"user": {"login": "me"}, "state": "COMMENT", "body": "", "comments_count": 0, "submitted_at": "2026-10-12T09:00:00Z"}]' > "$G/other/reviewed/pulls/9/reviews"
+  echo '[]' > "$G/other/approved/issues/10/comments"
+  echo '[{"user": {"login": "oertel"}, "state": "APPROVED", "body": "", "comments_count": 0, "submitted_at": "2026-10-19T09:00:00Z"}]' > "$G/other/approved/pulls/10/reviews"
+  echo '[{"user": {"login": "maint"}, "body": "merge ok", "created_at": "2026-10-19T09:00:00Z"}]' > "$G/other/merge-ok/issues/11/comments"
+  echo '[]' > "$G/other/rv-broken/issues/12/comments"
+  echo @NET > "$G/other/rv-broken/pulls/12/reviews"
+}
+case_ summary-pr-reviews 0 'PR other/reviewed#9 mcepl 2026-10-19 [change request, +2 inline]: "FTBFS"' \
+  "summary_fixtures \$B && pr_review_fixtures \$B" --summary
+for want in "comments by others since your last action: 5 request(s) or PR(s), 3 UNKNOWN (comment fetch failed)" \
+            "approved since your last action: PR other/approved#10 by oertel, PR other/merge-ok#11 by maint" \
+            "PR other/rv-broken#12 UNKNOWN (comment fetch failed)"; do
+  grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-reviews: $want" || fail "summary-pr-reviews: missing '$want'"
+done
+! grep -qE 'PR other/(approved|merge-ok)#1[01] (oertel|maint)' <<<"$LAST" && ! grep -q 'somegroup/example/pulls/2/reviews' <<<"$CALLS" \
+  && pass "summary-pr-reviews: approvals are not questions; no reviews call when the count is met" || fail "summary-pr-reviews: $LAST"
+# Under --deadline the PRs come first (few, and the end of the queue is what
+# gets cut): the skipped list keeps that order.
+case_ summary-deadline-prs-first 0 "not fetched (--deadline reached; raise it, or ask by id): PR somegroup/example#2, PR other/handled#6" \
+  "summary_fixtures \$B && pr_comments_fixtures \$B" --summary --deadline 0
+# The table past the deadline: a decline still shows its reason (no call
+# needed), the rest say they were not fetched — never the bare sentinel.
+case_ table-deadline 0 '| SR | 1 | pkg1 | openSUSE:Factory | ❌ declined | — | 💬 a-reviewer: "old decline" |' \
+  "many 3 > \$B/obs/$OPEN" --no-prs --deadline 0
+grep -qF '| (not fetched: --deadline reached) |' <<<"$LAST" && ! grep -qE '\| deadline \|' <<<"$LAST" \
+  && pass "table-deadline: the others say they were not fetched" || fail "table-deadline: $LAST"
+case_ deadline-negative 2 "--deadline takes 0 or more seconds" ":" --deadline -1
+# A call's timeout is cut to the time left before the deadline (at least 5 s):
+# a call started at 79 s must not run to 140 s.
+case_ deadline-caps-call-timeout 2 "osc timed out after 5s" "put \$B/obs/$OPEN @HANG" --summary --no-prs --deadline 0
 # A long queue must still print: past --deadline no lookup starts, and the
 # rest is UNKNOWN, never "nothing".
 case_ summary-deadline 0 "not fetched (--deadline reached; raise it, or ask by id): SR 201 alpha, SR 202 beta" \
