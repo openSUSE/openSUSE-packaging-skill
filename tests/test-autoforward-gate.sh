@@ -62,6 +62,8 @@ case_ not-yours         4 "NOT_YOURS — maintained by someone else" \
 case_ unmaintained      4 "NOT_YOURS — package unmaintained, not a project maintainer" \
   "obs /source/devel:a/foo/_meta '$NOMAINT'" devel:a foo
 case_ unreadable        5 "cannot read /source/devel:a/foo/_meta" "rm obs/_source_devel:a_foo__meta" devel:a foo
+# Unread, a project-level reviewer would go unseen.
+case_ project-unreadable 5 "its project's" "obs /source/devel:a/_meta @ERR" devel:a foo
 
 echo "--- the project must be the one Factory develops the package in"
 case_ wrong-devel       6 "WRONG-DEVEL — openSUSE:Factory develops it in devel:b" \
@@ -80,7 +82,7 @@ case_ link-literal      6 "WRONG-DEVEL" \
   "obs /source/devel.a/foo/_meta \"\$(cat obs/_source_devel:a_foo__meta)\"; obs /source/devel.a/_meta '<project/>'; echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link '<link project=\"develxa\"/>'" devel.a foo
 # Factory itself is never another project's devel project.
 case_ factory-itself    0 "ELIGIBLE" \
-  "obs /source/openSUSE:Factory/foo/_meta \"\$(cat obs/_source_devel:a_foo__meta)\"" openSUSE:Factory foo
+  "obs /source/openSUSE:Factory/foo/_meta \"\$(cat obs/_source_devel:a_foo__meta)\"; obs /source/openSUSE:Factory/_meta '<project/>'" openSUSE:Factory foo
 grep -q develproject "$work/factory-itself/calls" && fail "factory-itself asked for a devel project" \
   || pass "factory-itself asks for no devel project"
 case_ not-in-factory    0 "ELIGIBLE" "rm devel/foo" devel:a foo
@@ -101,6 +103,9 @@ case_ batch-wrong-over-blocked 6 "WRONG-DEVEL" \
 case_ batch-unreadable-wins 5 "UNREADABLE" \
   "echo devel:c/foo > devel/foo; printf '%s\n' \"$ROWS\" > rows" --batch rows
 case_ batch-empty       2 "no project/package rows" ": > rows" --batch rows
+# A failed project _meta read is not cached as an empty one.
+case_ batch-project-unreadable 5 $'devel:a/bar\tUNREADABLE' \
+  "$BAR; echo devel:a/bar > devel/bar; obs /source/devel:a/_meta @ERR; printf '%s\n' \"$ROWS\" > rows" --batch rows
 [ "$(grep -c '^osc api /source/devel:a/_meta$' "$work/batch-eligible/calls")" = 1 ] \
   && pass "--batch reads each project's _meta once" || fail "--batch: devel:a/_meta not read exactly once"
 
