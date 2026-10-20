@@ -9,25 +9,36 @@ against Factory specs and build logs (2026-10).
 ## Branding package or plain theme
 
 **Name a package `*-branding-<flavor>` only when it takes over the distribution's single
-default slot for a base package.** Such a package Provides and Conflicts `<base>-branding`
-and is pulled in by `Supplements: (<base> and branding-openSUSE)`; the base package Requires
-`<base>-branding` (gtk3-branding-openSUSE: `Provides: gtk3-branding = %{gtk3_version}`,
-`Conflicts: gtk3-branding`; gdm-branding-openSUSE: `Supplements: (gdm and branding-openSUSE)`).
-An optional, seasonal or third-party theme is a **plain theme** that installs beside
-branding-openSUSE and conflicts with nothing.
+default slot for a base package.** Such a package Provides (versioned, `=`) and Conflicts
+`<base>-branding` and is pulled in by `Supplements: (<base> and branding-<flavor>)`; the base
+package Requires or Recommends `<base>-branding` (gtk3-branding-openSUSE: `Provides:
+gtk3-branding = %{gtk3_version}`, `Conflicts: gtk3-branding`; gtk3 has `Recommends:
+%{name}-branding`, gdm `Requires: %{name}-branding = %{version}`). An optional, seasonal or
+third-party theme is a **plain theme** that installs beside branding-openSUSE and conflicts
+with nothing.
 
-**rpmlint's BrandingPolicyCheck judges the packages you Require, not only your own name.**
-- Only a name matching `\S+-(branding|theme)-\S+` counts as a branding package, and must then
-  carry the Provides/Conflicts/Supplements above (yaru's `gnome-shell-theme-yaru` gets
-  `branding-supplements-missing`). `<name>-sddm-theme` or `<name>-icon-theme` does not match.
-- Every package's Requires are checked: a required name matching that pattern gives
-  `E: branding-requires-specific-flavor` (openSUSEway → `sway-branding-openSUSE`); an
-  unversioned required name that merely *starts with* `…-branding` or `…-theme` gives
-  `E: branding-requires-unversioned` — `pkgconfig(adwaita-icon-theme)` and
-  `hicolor-icon-theme` both count.
-- These errors carry no score (badness threshold 999), so they never fail a build. Factory's
-  own themes leave them unfiltered (adwaita-xfce-icon-theme, elementary-xfce-icon-theme have
-  no rpmlintrc); if you filter one, filter that exact dependency with a comment.
+**rpmlint's BrandingPolicyCheck sorts packages by their own name first** (rpmlint 2.10,
+`rpmlint/checks/BrandingPolicyCheck.py`):
+- **A name matching `\S+-(branding|theme)-\S+` is checked as a branding package** of type
+  `branding` or `theme`: it must Provide (`=`) and Conflict `<base>-<type>`, carry
+  `Supplements: (<base> and <type>-<flavor>)`, and have no Recommends/Suggests/Enhances; its
+  Requires are not checked. A plain theme named `<base>-theme-<flavor>` therefore gets
+  `E: branding-provides-missing`, `branding-conflicts-missing <base>-theme` and
+  `branding-supplements-missing (<base> and theme-<flavor>)` — lxqt-theme-openSUSE-default,
+  gnome-shell-theme-yaru and plymouth-theme-breeze6 carry them and leave them. **Never add that
+  Conflicts or Supplements to a plain theme** (it would conflict with the real branding
+  package and install itself wherever the base is), and never rename a package just to dodge
+  the check. A name ending in `-theme` (`<name>-sddm-theme`, `<name>-icon-theme`) does not
+  match.
+- **Every other package has its Requires checked**: a required name matching that pattern
+  gives `E: branding-requires-specific-flavor` (openSUSEway → `sway-branding-openSUSE`); an
+  unversioned required name that *contains* `-branding` or `-theme` after its first
+  character gives `E: branding-requires-unversioned` — `lxqt-themes`, `hicolor-icon-theme`
+  and `pkgconfig(adwaita-icon-theme)` all count.
+- Each of these errors adds 1 to the badness (yaru-theme: 20 errors, 20 badness); a build
+  fails only past the threshold of 999. Factory's own themes leave them unfiltered
+  (adwaita-xfce-icon-theme and elementary-xfce-icon-theme have no rpmlintrc); if you filter
+  one, filter that exact dependency with a comment.
 
 **Require an icon theme by its package name, never by `pkgconfig()`**: `Requires:
 adwaita-icon-theme`, as every Factory theme does — the `.pc` file is a build-time artifact.
@@ -43,8 +54,8 @@ adwaita-icon-theme`, as every Factory theme does — the `.pc` file is a build-t
   if libgtk-3-0)`. Expect and leave `warning: File listed twice: …/icon-theme.cache` (the
   directory and the `%ghost` both list it) and `W: ghost-files-without-postin` — Factory's
   icon themes carry both.
-- **An inherited theme is a plain Requires** (elementary-xfce-icon-theme: `Requires:
-  adwaita-icon-theme`; breeze6-icons: `Requires: kf6-breeze-icons >= %{kf6_version}`).
+- **An inherited theme is a plain Requires** (mint-y-icon-theme: `Requires:
+  adwaita-icon-theme`, `gnome-icon-theme`, `hicolor-icon-theme`).
 - `%fdupes %{buildroot}%{_datadir}` (hardlinks) when the tree spans subpackages; `%fdupes -s`
   only when everything lands in one package.
 
@@ -73,11 +84,12 @@ unowned one. Owners in Factory:
 | `/usr/share/plasma`, `/usr/share/wallpapers` | kf6-filesystem |
 | `/usr/share/plasma/desktoptheme` | libplasma6-desktoptheme (kalpa-themes co-owns it) |
 | `/usr/share/plasma/look-and-feel` | plasma6-workspace |
-| `/usr/share/color-schemes` | breeze6 |
+| `/usr/share/color-schemes` | breeze6-style |
 | `/usr/share/plymouth/themes` | plymouth |
 | `/usr/share/sddm/themes`, `/usr/lib/sddm/sddm.conf.d` | sddm (plasma6-sddm-theme-openSUSE co-owns them) |
-| `/usr/share/backgrounds`, `/usr/share/gnome-background-properties` | nobody — co-own with `%dir` (wallpapers-openSUSE-extra, budgie-backgrounds) |
-| `%{_libdir}/firefox/browser/extensions` | MozillaFirefox-translations-common — co-own `%dir %{_libdir}/firefox{,/browser,/browser/extensions}` rather than require it |
+| `/usr/share/backgrounds`, `/usr/share/gnome-background-properties` | gnome-backgrounds (GNOME only) — co-own with `%dir` rather than require it, as wallpapers-openSUSE-extra (`gnome-background-properties`, `wallpapers`) and budgie-backgrounds (`backgrounds`) do |
+| `%{_libdir}/firefox`, `…/firefox/browser` | MozillaFirefox |
+| `%{_libdir}/firefox/browser/extensions` | MozillaFirefox-translations-common and -other — with `Requires: MozillaFirefox%{?_isa}`, co-own only this one with `%dir` |
 
 ## Per-desktop pieces — boolean Supplements
 
@@ -114,20 +126,25 @@ unowned one. Owners in Factory:
 ## Plymouth themes
 
 `Requires: plymouth-plugin-<plugin>` for the plugin the `.plymouth` file names (theme-spinner:
-`Requires: %{name}-plugin-two-step`), `BuildArch: noarch`. A theme does not make itself the
-default: plymouth's own themes switch only when the current one is `text`, and
-plymouth-theme-breeze6 has no scriptlets at all. The distro default comes from
-plymouth-branding-openSUSE, and only plymouth regenerates the initrd.
+`Requires: %{name}-plugin-two-step`), `BuildArch: noarch`. **A third-party theme does not make
+itself the default** and has no scriptlets (plymouth-theme-breeze6): choosing it and
+rebuilding the initrd stay with the administrator. Only plymouth's own themes do it —
+theme-spinfinity's and theme-fade-in's `%post` run `plymouth-set-default-theme -R` (which
+rebuilds the initrd) when the current theme is `text`. The distro default comes from
+plymouth-branding-openSUSE.
 
 ## Firefox add-ons
 
 - **An unsigned add-on loads only from the app directory,
   `%{_libdir}/firefox/browser/extensions/<id>.xpi`** (Firefox is built with
-  `--with-unsigned-addon-scopes=app`); the system directory under `/usr/share/mozilla`
-  (`%firefox_extdir`) accepts only signed ones. The path is arch-specific, so the package is.
-- **`Requires: MozillaFirefox%{?_isa}`, and `%{?_isa}` in its Supplements too**: a plain
-  `MozillaFirefox` lets an i586 build install next to a 64-bit Firefox, which never reads
-  `/usr/lib/firefox`.
+  `--with-unsigned-addon-scopes=app`). The system directory `%firefox_extdir`
+  (`%{_libdir}/mozilla/extensions/<appid>`, or `/usr/share/mozilla/…` in a noarch build)
+  accepts only signed ones. The path is arch-specific, so the package is.
+- **`Requires: MozillaFirefox%{?_isa}`, and `%{?_isa}` in its Supplements too.** On x86_64
+  zypper also accepts i586 packages: while the x86_64 build is not yet published it installs
+  the i586 one, which puts the add-on in `/usr/lib/firefox`, never read by the 64-bit Firefox,
+  and **`zypper up` never switches the arch back** (`zypper in -f <pkg>.x86_64` does). The
+  `%{?_isa}` makes the wrong-arch build uninstallable.
 - firefox-esr has its own progdir (`%{_libdir}/firefox-esr`, as in
   MozillaFirefox-branding-openSUSE's multibuild); `E: no-binary` on 32-bit builds is harmless
   (rpmlint exempts only lib64 paths).
@@ -151,11 +168,3 @@ Two Factory-accepted shapes:
   `%description` and `%files` inside it. Expect `E: invalid-spec-name` on the flavor's src
   rpm and `W: libdir-macro-in-noarch-package` (rpmlint's spec check ignores `%if`); both
   are noise. The flavor reruns the whole build, `%check` included.
-
-## Publishing and testing from the repository
-
-- `osc results` **`finished`** means the build is done and waits for that architecture's
-  scheduler, which can lag hours; other arches publish meanwhile. It is not a failure.
-- On x86_64, zypper accepts i586 packages: while x86_64 is unpublished it installs the i586
-  build of an arch-specific package, and **`zypper up` never switches the arch back** — the
-  tester needs `zypper in -f <pkg>.x86_64` (or `zypper dup`).
