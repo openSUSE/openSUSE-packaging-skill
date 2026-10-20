@@ -61,10 +61,10 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 **HARD RULE — tool discipline:** OBS through `osc`, src.opensuse.org through these scripts, `tea` or `git-obs` — never curl or urllib the OBS or src.opensuse.org API — and only non-interactive forms (`osc ci -m`, `osc sr -s <id>`, never `--yes`). → `references/osc-usage.md` "Tool discipline"
 
 - `my-packages.sh` — your **explicit package-level** maintainerships; unions the two *disjoint* maintainer indexes (OBS `_meta` + git `_maintainership.json`) — never substitute a single OBS query (core directive 11).
-- `my-requests.sh` — your submit requests as a plain list.
+- `my-requests.sh` — your submit requests as a plain list, uncapped (OBS only).
 - `incoming-requests.py` — OBS requests + src.opensuse.org PRs needing **you personally**; group-review noise dropped.
-- `sr-status.py` — the Block-3 watch view: OBS SRs *and* Gitea PRs in one table, declines first. `--pr pool/<pkg>#<n>` reads that PR's OBS build at its head — the bot's last comment, or a green build of an older commit, is not the verdict.
-- `watch-submissions.sh` — cron/scheduled delta watcher: prints only what changed since the last run. A `NEW INCOMING` line means *review and recommend*, never accept/decline (core directive 10).
+- `sr-status.py` — the Block-3 watch view: OBS SRs *and* Gitea PRs in one table, declines first. **"Status of my submissions" = `--summary`**: counts by state × target, each decline with what was filed since, others' comments since your last action. `--pr pool/<pkg>#<n>` reads that PR's OBS build at its head — the bot's last comment, or a green build of an older commit, is not the verdict.
+- `watch-submissions.sh` — delta watcher: prints only what changed since the last run; `--resolve` names each gone SR's final state (an ad-hoc run takes its own `--state-dir`). A `NEW INCOMING` line means *review and recommend*, never accept/decline (core directive 10).
 - `devel-packages.sh` — the packages a devel project develops, per Factory's `_meta`, with the SR target beside each: the only sweep list for "packages in PRJ" (`osc ls PRJ` ∩ Factory holds aggregates and other projects' packages).
 - `outdated.py` — Repology ∩ your package set, plus an Anitya pass and a forge pass over what Repology cannot see. **A source being down degrades the run, never aborts it** — read the closing `# COVERAGE:` line; a lost source means the sweep is NOT a clean bill of health.
 - `upstream-probe.py` — per-candidate date-based CURRENT / UPDATE-CANDIDATE / SUSPECT verdict. **When `Source0:` is served by a package registry (pythonhosted/npm/crates), that registry decides the verdict** — a git tag ahead of it is not a release the package can consume.
