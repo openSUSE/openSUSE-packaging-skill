@@ -78,14 +78,18 @@ TIMEOUT = 60
 
 
 def run(cmd):
-    """subprocess.run with TIMEOUT. A call that times out, or whose binary is
-    missing, comes back as a failed one (rc 124 / 127, as in the shell) and is
-    reported like any other."""
+    """subprocess.run with TIMEOUT, cut to the time left before DEADLINE (at
+    least 5 s), so a call started just before it cannot run a minute past. A
+    call that times out, or whose binary is missing, comes back as a failed
+    one (rc 124 / 127, as in the shell) and is reported like any other."""
+    t = TIMEOUT
+    if DEADLINE is not None:
+        t = min(TIMEOUT, max(5, DEADLINE - time.monotonic()))
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=t)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
-            cmd, 124, "", f"{cmd[0]} timed out after {TIMEOUT}s"
+            cmd, 124, "", f"{cmd[0]} timed out after {t:.0f}s"
         )
     except FileNotFoundError:
         return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
@@ -791,30 +795,64 @@ def iso(s):
         return None
 
 
+def login(x):
+    return (x.get("user") or {}).get("login")
+
+
 def pr_others_comments(pr):
-    """Non-bot comments on one of your PRs by someone other than its author,
-    newer than the author's last comment (or the PR's opening). Returns a
-    list of (when, who, text), or None when the fetch failed."""
-    cmts = gitea_get(f"/repos/{pr['repo']}/issues/{pr['id'].lstrip('#')}/comments")
+    """What others said on one of your PRs since your last word there (its
+    opening, or your latest comment or review), bots aside. issues/search's
+    count includes reviews, which /issues/<n>/comments does not return, so
+    when it is short the reviews are read too. Returns (when, who, text,
+    kind) oldest first — kind "comment", "change request" or "approval", with
+    ", +N inline" for review comments — or None when a fetch failed."""
+    num = pr["id"].lstrip("#")
+    cmts = gitea_get(f"/repos/{pr['repo']}/issues/{num}/comments")
     if cmts is None:
         return None
+    reviews = []
+    if len(cmts) < (pr.get("ncomments") or 0):
+        reviews = gitea_get(f"/repos/{pr['repo']}/pulls/{num}/reviews")
+        if reviews is None:
+            return None
     author = pr.get("author")
-    marks = [iso(pr.get("created"))] + [
-        iso(c.get("created_at"))
-        for c in cmts
-        if (c.get("user") or {}).get("login") == author
-    ]
+    marks = [iso(pr.get("created"))]
+    marks += [iso(c.get("created_at")) for c in cmts if login(c) == author]
+    marks += [iso(r.get("submitted_at")) for r in reviews if login(r) == author]
     marks = [m for m in marks if m is not None]
     last = max(marks) if marks else None
+
+    def newer(stamp):
+        when = iso(stamp)
+        return last is None or when is None or when > last
+
     out = []
     for c in cmts:
-        who = (c.get("user") or {}).get("login")
-        when = iso(c.get("created_at"))
-        if who == author or is_bot(who):
+        who = login(c)
+        if who == author or is_bot(who) or not newer(c.get("created_at")):
             continue
-        if last is None or when is None or when > last:
-            out.append(((c.get("created_at") or "?")[:10], who or "?", c.get("body")))
-    return out
+        body = c.get("body") or ""
+        merge_ok = body.strip().lower().rstrip(".!") == "merge ok"
+        out.append(
+            (c.get("created_at"), who, body, "approval" if merge_ok else "comment")
+        )
+    for r in reviews:
+        who, state = login(r), (r.get("state") or "").upper()
+        if who == author or is_bot(who) or not newer(r.get("submitted_at")):
+            continue
+        inline = r.get("comments_count") or 0
+        if state == "APPROVED":
+            kind = "approval"
+        elif state == "REQUEST_CHANGES":
+            kind = "change request"
+        elif r.get("body") or inline:
+            kind = "comment"
+        else:
+            continue
+        kind += f", +{inline} inline" if inline else ""
+        out.append((r.get("submitted_at"), who, r.get("body") or "", kind))
+    floor = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return sorted(out, key=lambda x: iso(x[0]) or floor)
 
 
 def summary(user, rows, prs, failed_legs, no_prs):
@@ -897,7 +935,17 @@ def summary(user, rows, prs, failed_legs, no_prs):
     )
     failed = [it for it, c in zip(items, found) if c is None]
     skipped = [it for it, c in zip(items, found) if c is SKIPPED]
-    news = [(it, c) for it, c in zip(items, found) if c and c is not SKIPPED]
+    # an approval ("merge ok", an APPROVED review) is news, not a question
+    news, approvals = [], []
+    for it, cs in zip(items, found):
+        if not cs or cs is SKIPPED:
+            continue
+        cs = [c if len(c) == 4 else (*c, "comment") for c in cs]
+        todo = [c for c in cs if c[3] != "approval"]
+        if todo:
+            news.append((it, todo))
+        if len(todo) < len(cs):
+            approvals.append((it, [c for c in cs if c[3] == "approval"]))
 
     def label(it):
         kind, r = it
@@ -916,9 +964,17 @@ def summary(user, rows, prs, failed_legs, no_prs):
         )
     )
     for it, cs in news:
-        when, who, text = cs[-1]
+        when, who, text, kind = cs[-1]
         more = f" (+{len(cs) - 1} more)" if len(cs) > 1 else ""
-        print(f'  {label(it)} {clip(who, 40)} {when[:10]}: "{clip(text, 100)}"{more}')
+        tag = "" if kind == "comment" else f" [{kind}]"
+        print(
+            f'  {label(it)} {clip(who, 40)} {(when or "?")[:10]}{tag}: "{clip(text, 100)}"{more}'
+        )
+    if approvals:
+        print(
+            "  approved since your last action: "
+            + ", ".join(f"{label(it)} by {clip(cs[-1][1], 40)}" for it, cs in approvals)
+        )
     for it in failed:
         print(f"  {label(it)} UNKNOWN (comment fetch failed)")
     if skipped:
@@ -1011,6 +1067,8 @@ def main():
         help="one PR's staging-bot OBS build verdict, e.g. pool/pkg#3",
     )
     a = ap.parse_args()
+    if a.deadline < 0:
+        ap.error("--deadline takes 0 or more seconds")
     global DEADLINE
     DEADLINE = time.monotonic() + a.deadline
     if a.pr:
@@ -1084,7 +1142,20 @@ def main():
             reqs = keep
         rows = [sr_row(r, brief) for r in reqs]
     if not brief:
-        detail = [r for r in rows if "el" in r]
+        # a decline's reason is in the XML already: it needs no call, and so
+        # no deadline either
+        def decline_note(r):
+            st = r["el"].find("state")
+            return (
+                st is not None
+                and st.get("name") == "declined"
+                and (st.findtext("comment") or "").strip()
+            )
+
+        for r in rows:
+            if "el" in r and decline_note(r):
+                r["comment"] = human_comment(r["id"], r["el"].find("state"))
+        detail = [r for r in rows if "el" in r and not decline_note(r)]
         for r, c in zip(
             detail,
             comments_for(
