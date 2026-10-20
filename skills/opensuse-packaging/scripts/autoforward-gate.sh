@@ -16,6 +16,9 @@
 #   2. the package has NO maintainer at all and you hold `maintainer` on the
 #      PROJECT — an unowned package in a project you run is yours to move.
 # Either way an explicit reviewer (package or project, person or group) blocks.
+# And the project must be the one Factory develops the package in: a request
+# accepted anywhere else lands in the wrong devel project (real case: apache-arrow
+# accepted into Application:Geo, whose package only linked to science).
 #
 # This ONLY ever applies to requests YOU created. Never use it to accept or
 # decline somebody else's request — that always needs an explicit human
@@ -25,15 +28,20 @@
 #                        package is unmaintained and you maintain the project)
 #   exit 3  BLOCKED    — an explicit reviewer role exists; stop, report, wait
 #   exit 4  NOT_YOURS  — package has a maintainer and it is not you
-#   exit 5  package/meta unreadable (404, auth, network)
+#   exit 5  package/meta unreadable (404, auth, network), or Factory's devel
+#           project lookup failed
+#   exit 6  WRONG-DEVEL — openSUSE:Factory develops the package in another
+#           project; accept nothing here, submit there
 #   exit 2  usage error (also an empty --batch file)
 #
-# --batch exits with the worst row: 5 UNREADABLE > 3 BLOCKED > 4 NOT_YOURS > 0.
+# --batch exits with the worst row: 5 UNREADABLE > 6 WRONG-DEVEL > 3 BLOCKED >
+# 4 NOT_YOURS > 0.
 #
 # Usage: autoforward-gate.sh <project> <package> [--user <account>]
 #        autoforward-gate.sh --batch <file>   # lines of "<project>\t<package>"
 #   --user defaults to `osc whois`.
 set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
 
 usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 case "${1:-}" in
@@ -65,12 +73,43 @@ _revs()   { printf '%s' "$1" \
             | grep -o '<\(person\|group\) \(userid\|groupid\)="[^"]*" role="reviewer"' \
             | sed -E 's/^<(person|group) (userid|groupid)="([^"]*)".*/\3/' | sort -u; }
 
+# The value of attribute $1 on the <link> element in $2, compared as a string.
+_attr() { printf '%s' "$2" | tr '\n' ' ' | sed -n "s/.*<link[^>]* $1=\"\([^\"]*\)\".*/\1/p" | head -1; }
+
 # Prints "<verdict>\t<reviewers>\t<other-maintainers>\t<why>"; returns exit code.
 check_one() {
   local p="$1" k="$2" pmeta prjmeta maints revs prjrevs others prjmaints
   pmeta="$(osc api "/source/$p/$k/_meta" 2>/dev/null)" || return 5
   [ -n "$pmeta" ] || return 5
-  prjmeta="$(osc api "/source/$p/_meta" 2>/dev/null)" || prjmeta=""
+  if [ "$p" != openSUSE:Factory ]; then
+    local devel drc
+    devel="$(bash "$here/devel-of.sh" "$k" 2>/dev/null)"; drc=$?
+    case $drc in
+      0) if [ "${devel%/*}" != "$p" ]; then
+           # the devel package may be a _link to this one, which is fine
+           local link lrc lprj lpkg
+           link="$(osc api "/source/$devel/_link" 2>&1)"; lrc=$?
+           if [ $lrc -ne 0 ]; then
+             grep -q 'HTTP Error 404' <<<"$link" || return 5
+             link=""
+           fi
+           lprj="$(_attr project "$link")"; lpkg="$(_attr package "$link")"
+           if [ "$lprj" != "$p" ] || [ "${lpkg:-${devel#*/}}" != "$k" ]; then
+             printf 'WRONG-DEVEL\t-\t-\topenSUSE:Factory develops it in %s\n' "${devel%/*}"
+             return 6
+           fi
+         fi;;
+      3|4) ;;  # not in Factory, or no devel project named: nothing to contradict
+      *) return 5;;
+    esac
+  fi
+  # --batch reads each project's _meta once
+  if [ -n "$cache" ] && [ -f "$cache/$p" ]; then
+    prjmeta="$(cat "$cache/$p")"
+  else
+    prjmeta="$(osc api "/source/$p/_meta" 2>/dev/null)" || prjmeta=""
+    [ -z "$cache" ] || printf '%s' "$prjmeta" > "$cache/$p"
+  fi
 
   maints="$(_maints "$pmeta")"
   revs="$(_revs "$pmeta")"
@@ -101,10 +140,12 @@ check_one() {
   return 4
 }
 
+cache=""
 if [ -n "$batch" ]; then
   [ -r "$batch" ] || { echo "cannot read $batch" >&2; exit 2; }
+  cache="$(mktemp -d)"; trap 'rm -rf "$cache"' EXIT
   rc_any=0; rows=0
-  rank() { case $1 in 5) echo 3;; 3) echo 2;; 4) echo 1;; *) echo 0;; esac; }
+  rank() { case $1 in 5) echo 4;; 6) echo 3;; 3) echo 2;; 4) echo 1;; *) echo 0;; esac; }
   while IFS=$'\t' read -r bp bk; do
     [ -n "${bp:-}" ] && [ -n "${bk:-}" ] || continue
     rows=$((rows+1))
@@ -120,7 +161,7 @@ fi
 [ -n "$prj" ] && [ -n "$pkg" ] || { usage; exit 2; }
 out="$(check_one "$prj" "$pkg")"; rc=$?
 if [ $rc -eq 5 ]; then
-  echo "cannot read /source/$prj/$pkg/_meta (absent, auth, or network)" >&2
+  echo "cannot read /source/$prj/$pkg/_meta or its Factory devel project (absent, auth, or network)" >&2
   exit 5
 fi
 IFS=$'\t' read -r verdict revs others why <<<"$out"
@@ -128,5 +169,6 @@ case "$verdict" in
   ELIGIBLE)  echo "ELIGIBLE — $why, no reviewer role set (other maintainers: $others)";;
   BLOCKED)   echo "BLOCKED — explicit reviewer role: $revs — do NOT accept/forward unattended";;
   NOT_YOURS) echo "NOT_YOURS — $why (maintainers: $others)";;
+  WRONG-DEVEL) echo "WRONG-DEVEL — $why: accept nothing in $prj, submit there";;
 esac
 exit $rc
