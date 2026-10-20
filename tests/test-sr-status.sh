@@ -44,10 +44,12 @@ case $1 in
           echo "Failed to establish a new connection: [Errno 111] Connection refused" >&2; exit 1; }
       done
       echo '<collection>'; for id in $ids; do cat "$FIX/obs/req/$id" 2>/dev/null; done; echo '</collection>' ;;
-    # A search for later requests to one target answers from obs/later/<prj>/<pkg>.
+    # A search for later requests to one target answers from obs/later/<prj>/<pkg>,
+    # after decoding the query as the server does: '+' is a space, %XX a byte.
     /search/request\?match=action/target/*)
-      prj=$(printf %s "$2" | sed -n "s/.*@project='\([^']*\)'.*/\1/p")
-      pkg=$(printf %s "$2" | sed -n "s/.*@package='\([^']*\)'.*/\1/p")
+      q=$(printf %s "$2" | tr '+' ' '); q=$(printf '%b' "${q//%/\\x}")
+      prj=$(printf %s "$q" | sed -n "s/.*@project='\([^']*\)'.*/\1/p")
+      pkg=$(printf %s "$q" | sed -n "s/.*@package='\([^']*\)'.*/\1/p")
       exec serve "$FIX/obs/later/$prj/$pkg" ;;
     *) exec serve "$FIX/obs/$(printf %s "$2" | tr '?&=' '___')" ;;
   esac ;;
@@ -606,6 +608,52 @@ case_ summary-prs 0 "src.opensuse.org PRs: 3 yours, 1 awaiting your review" \
    '[{\"number\": 7, \"state\": \"open\", \"repository\": {\"full_name\": \"somegroup/example\"}}]'" --summary
 grep -qF "awaiting your review: somegroup/example#7" <<<"$LAST" && pass "summary-prs: names the PR awaiting you" || fail "summary-prs: $LAST"
 case_ summary-with-ids 2 "--summary takes no request ids" ":" --summary 100
+# The follow-up search is URL-quoted: a raw '+' arrives as a space, and
+# libsigc++2 then matched nothing. It asks only for newer requests (@id>).
+case_ summary-plus-in-name 0 "openSUSE:Factory/libsigc++2: #300 accepted by maint" \
+  "summary_fixtures \$B && sed -i 's/owntone/libsigc++2/g' \$B/obs/$OPEN &&
+   printf '<collection><request id=\"300\" creator=\"maint\"><state name=\"accepted\"/></request></collection>' > \$B/obs/later/openSUSE:Factory/libsigc++2" \
+  --summary --no-prs
+grep -qF "@id>205" <<<"$CALLS" && grep -qF "libsigc%2B%2B2" <<<"$CALLS" \
+  && pass "summary-plus-in-name: the search is quoted and asks for newer ids" || fail "summary-plus-in-name: $CALLS"
+# Your PRs' comments are read too, only for PRs that have any: the newest by
+# someone else after your own last comment, bots (legaldb among them) aside.
+# The pool PRs' builds are not read here, and the summary says so.
+# shellcheck disable=SC2317  # called from case mutations, through eval
+pr_comments_fixtures() { # <fixture tree>
+  local G=$1/gitea/repos
+  printf '%s' '[
+   {"number": 4, "state": "open", "comments": 0, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "pool/tesseract-ocr"}},
+   {"number": 2, "state": "open", "comments": 3, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "somegroup/example"}},
+   {"number": 6, "state": "open", "comments": 2, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "other/handled"}},
+   {"number": 8, "state": "open", "comments": 1, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "other/broken"}}]' \
+    > "$G/issues/search_type_pulls_created_true_state_open_limit_50"
+  printf '%s' '[{"user": {"login": "a-maint"}, "body": "Please run osc service mr", "created_at": "2026-10-18T09:00:00Z"},
+   {"user": {"login": "legaldb"}, "body": "legal ok", "created_at": "2026-10-19T09:00:00Z"},
+   {"user": {"login": "autogits_obs_staging_bot"}, "body": "Build successful", "created_at": "2026-10-19T10:00:00Z"},
+   {"user": {"login": "packagehub-review"}, "body": "Review by packagehub-review represents a group of reviewers", "created_at": "2026-10-19T11:00:00Z"}]' \
+    > "$G/somegroup/example/issues/2/comments"
+  mkdir -p "$G/other/handled/issues/6" "$G/other/broken/issues/8"
+  printf '%s' '[{"user": {"login": "a-maint"}, "body": "why?", "created_at": "2026-10-11T09:00:00+00:00"},
+   {"user": {"login": "me"}, "body": "because", "created_at": "2026-10-12T09:00:00+00:00"}]' > "$G/other/handled/issues/6/comments"
+  echo @NET > "$G/other/broken/issues/8/comments"
+}
+case_ summary-pr-comments 0 'PR somegroup/example#2 a-maint 2026-10-18: "Please run osc service mr"' \
+  "summary_fixtures \$B && pr_comments_fixtures \$B" --summary
+for want in "comments by others since your last action: 4 request(s) or PR(s), 2 UNKNOWN (comment fetch failed)" \
+            "PR other/broken#8 UNKNOWN (comment fetch failed)" \
+            "PR builds not read: sr-status.py --pr pool/<pkg>#<n> for pool/tesseract-ocr#4"; do
+  grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-comments: $want" || fail "summary-pr-comments: missing '$want'"
+done
+! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && ! grep -q 'pool/tesseract-ocr/issues/4/comments' <<<"$CALLS" \
+  && pass "summary-pr-comments: handled, bot and comment-less PRs stay out" || fail "summary-pr-comments: $LAST"
+# A long queue must still print: past --deadline no lookup starts, and the
+# rest is UNKNOWN, never "nothing".
+case_ summary-deadline 0 "not fetched (--deadline reached; raise it, or ask by id): SR 201 alpha, SR 202 beta" \
+  "summary_fixtures \$B" --summary --no-prs --deadline 0
+grep -qF "later requests UNKNOWN (not looked up: --deadline reached)" <<<"$LAST" \
+  && grep -qF ", 7 UNKNOWN (not fetched: --deadline reached)" <<<"$LAST" && ! grep -q '/comments/request' <<<"$CALLS" \
+  && pass "summary-deadline: nothing fetched, every item UNKNOWN" || fail "summary-deadline: $LAST"
 # --summary is never capped: a cap would read 10 of 45 as the whole queue.
 case_ summary-refuses-limit 2 "--summary is never capped: drop --limit" ":" --summary --limit 10
 case_ summary-uncapped 0 "OBS submit requests: 45 (new 44 · declined 1)" "many 45 > \$B/obs/$OPEN" --summary --no-prs

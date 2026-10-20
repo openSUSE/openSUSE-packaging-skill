@@ -13,7 +13,8 @@
 #             actually needs you. See references/submit-watch.md.
 #   --user    OBS account (default: `osc whois`)
 #   --target  restrict to a target project (e.g. openSUSE:Factory)
-#   --limit   cap the list (default: no cap — every request is listed)
+#   --limit   cap the list (default: no cap — every request is listed); not
+#             with --summary, which is never capped
 #   --summary counts by state and target, every decline with its reason and
 #             what was filed since, the oldest new and review requests, and
 #             comments by others since your last action (OBS only: "status of
