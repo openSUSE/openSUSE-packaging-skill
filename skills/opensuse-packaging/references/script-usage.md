@@ -6,7 +6,7 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 
 - `my-packages.sh [--project PRJ] [--user OBSUSER] [--source obs|git|both] [--all-projects] [--show-source]` — `--all-projects` keeps Backports/Leap/SLFO/ALP; exit 0 listed · 2 usage or query failed
 - `devel-packages.sh <devel-project> [<devel-project> ...]` — the Factory packages a devel project develops, `<package> <devel-project>` per line (names: `| cut -d' ' -f1`); exit 0 listed · 3 none · 5 search failed · 2 usage
-- `outdated.py [--names FILE] [--project PRJ] [--repo REPO] [--ua UA] [--no-factory-check] [--no-anitya] [--no-forge] [--no-repology]` — names on stdin by default (`my-packages.sh` lines as they are); exit 0 full coverage · 3 a source lost, or a pass resolved no name · 2 usage, no names, or a line that is no package name
+- `outdated.py [--names FILE] [--project PRJ] [--repo REPO] [--ua UA] [--no-factory-check] [--no-anitya] [--no-forge] [--no-repology]` — names on stdin by default (`my-packages.sh` lines as they are); exit 0 full coverage · 3 a source lost, or no name found in --project · 2 usage, no names, or a line that is no package name
 - `upstream-probe.py [pkg] [--spec FILE] [--url URL --version V] [--project PRJ]` — exit 0 CURRENT · 1 UPDATE-CANDIDATE · 3 SUSPECT · 2 usage or no verdict
 - `distro-survey.sh <pkg> [factory-version]` — env `DISTRO_SURVEY_BUDGET`, `DISTRO_SURVEY_TIMEOUT`; exit 0 printed · 2 usage
 - `factory-report.py [--days N | --since YYYY-MM-DD] [--project PRJ] [--top N] [--highlight USER] [--role-account ACCT]... [--json] [-o|--output FILE]` — HTML by default; exit 0 written · 1 osc api failed or no SRs · 2 usage
