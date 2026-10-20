@@ -6,7 +6,7 @@ When the user asks "does this spec follow the guidelines?", "is this spec OK?", 
 
 Every behaviour below was checked against **spec-cleaner 1.3.0** (2026-10-17, rpm 4.20). `scripts/gate.sh` runs this invocation itself and goes red on a non-empty diff, so it runs in OBS-ONLY mode too.
 
-**`gate.sh` prints the spec-cleaner version and notes any other than 1.3.0, older or newer: the rewrites below may differ there.** openSUSE:Backports:SLE-16.0 ships 1.2.4+2, whose one documented false hunk is a second `License:` inserted after `Release:` when Summary and License sit inside a `%if` flavor block (a `_multibuild` spec) — never apply it, and name it with `--cleaner-deviation`. Any other hunk is a finding like any other: apply it, or check it with 1.3.0 from Factory (`osc getbinaries openSUSE:Factory spec-cleaner standard x86_64`, unpacked with `rpm2cpio … | cpio -id` and run with `PYTHONPATH` at its `site-packages`).
+**`gate.sh` prints the spec-cleaner version and notes any other than 1.3.0, older or newer: the rewrites below may differ there.** openSUSE:Backports:SLE-16.0 ships 1.2.4+2, whose one documented false hunk is a second `License:` inserted after `Release:` when Summary and License sit inside a `%if` flavor block (a `_multibuild` spec) — never apply it, and name it with `--cleaner-deviation`. Any other hunk is a finding like any other: apply it, or check it with 1.3.0 from Factory (`osc getbinaries openSUSE:Factory spec-cleaner standard x86_64`, unpacked with `rpm2cpio … | cpio -id` and run as `python3 <root>/usr/bin/spec-cleaner` with `PYTHONPATH` at its `site-packages`).
 
 **Canonical invocation — always pass `--remove-groups --pkgconfig --perl --tex`:**
 
