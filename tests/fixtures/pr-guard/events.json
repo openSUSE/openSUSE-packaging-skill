@@ -6979,5 +6979,29 @@
     "tool_input": {
       "command": "osc api -m DELETE /source/home:tester:spark/foo/_attribute/OBS:Maintained"
     }
+  },
+  "api-delete-double-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE /source//home:tester:scratch/foo"
+    }
+  },
+  "api-delete-empty-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "P=home:tester:scratch; K=; osc api -X DELETE \"/source/$P/$K/\""
+    }
+  },
+  "api-delete-dotdot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE /source/home:tester:scratch/foo/x/.."
+    }
+  },
+  "api-delete-encoded-dot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE /source/home:tester:scratch/foo/%2e"
+    }
   }
 }
