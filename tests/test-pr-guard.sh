@@ -1064,6 +1064,12 @@ case_ api-get-source              0 - ""
 case_ api-delete-m                2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
 case_ api-delete-m-joined         2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo/"
 case_ api-delete-m-force          2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo?force=1"
+# OBS reads the path decoded, slashes collapsed and dot segments resolved:
+# "/source/$P/$K/" with an empty K is project P.
+case_ api-delete-double-slash     2 rdelete-pending "an osc api DELETE of /source//$h:tester:scratch/foo"
+case_ api-delete-empty-var        2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch//"
+case_ api-delete-dotdot           2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch/foo/x/.."
+case_ api-delete-encoded-dot      2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch/foo/%2e"
 # A file, the _link or an attribute is no project or package: nothing is revoked.
 case_ api-delete-link             0 - ""
 case_ api-delete-file             0 - ""

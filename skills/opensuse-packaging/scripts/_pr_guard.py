@@ -3,7 +3,9 @@ a call has matched its prefilter. Not a command: see pr-guard.py --help."""
 
 import json
 import os
+import posixpath
 import re
+import urllib.parse
 
 GITEA = "https://src.opensuse.org/api/v1"
 PIN_REF = "refs/remotes/origin/main"
@@ -1129,8 +1131,18 @@ def osc_prompt(run, stdin):
     )
 
 
-# A project or package itself (not one of its files): /source/PRJ[/PKG][/][?...]
-SOURCE_PATH = Rx(r"(?:^|/)source/[^/?#\s]+(?:/[^/?#\s]+)?/?(?:[?#]|$)")
+# A project or package itself (not one of its files): /source/PRJ[/PKG]
+SOURCE_PATH = Rx(r"/source/[^/]+(?:/[^/]+)?")
+
+
+def source_itself(p):
+    """Whether an osc api path names a project or package itself, read as OBS
+    reads it: percent-decoded, repeated slashes collapsed, `.` and `..`
+    resolved, query and fragment dropped (`/source/P//` is project P)."""
+    path = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]*", "", p, flags=re.I)
+    path = urllib.parse.unquote(re.split(r"[?#]", path, maxsplit=1)[0])
+    path = posixpath.normpath(re.sub(r"/+", "/", "/" + path))
+    return SOURCE_PATH.fullmatch(path) is not None
 
 
 def osc_deletes(run, ctx, cwd):
@@ -1165,7 +1177,7 @@ def osc_deletes(run, ctx, cwd):
     ]
     if any(m.upper() == "DELETE" for m in methods):
         for p in (x for w in pos for x in spell(w, "an osc api DELETE")):
-            if SOURCE_PATH.search(p):
+            if source_itself(p):
                 block("rdelete-pending", f"an osc api DELETE of {p}")
 
 
