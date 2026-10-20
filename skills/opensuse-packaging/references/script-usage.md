@@ -38,7 +38,8 @@ The exact usage of every bundled script: don't run `--help`. CI checks each line
 - `my-requests.sh [--state open|declined|accepted|all] [--user U] [--target PRJ] [--limit N] [--summary]` — uncapped; exit 0 listed · 2 usage or query failed
 - `incoming-requests.py [--user U] [--format ascii|table|plain] [--verbose] [--no-prs]` — exit 0 listed · 2 usage or OBS query failed
 - `watch-submissions.sh [--user U] [--login NAME] [--state-dir DIR] [--allow-empty] [--no-prs] [--no-incoming] [--resolve]` — baseline in `$XDG_STATE_HOME/osc-submission-watch` unless `--state-dir` (an ad-hoc run takes its own, or it eats the cron delta); `--resolve` names each gone SR's final state; first line BASELINE-INIT, NOCHANGE, CHANGED or WATCH-ERROR; exit 0 · 2 WATCH-ERROR or usage
-- `autoforward-gate.sh <project> <package> [--user U] | --batch FILE` — `--batch` exits with the worst row (5 > 3 > 4 > 0); exit 0 ELIGIBLE · 3 BLOCKED · 4 NOT_YOURS · 5 unreadable · 2 usage
+- `autoforward-gate.sh <project> <package> [--user U] | --batch FILE` — `--batch` exits with the worst row (5 > 6 > 3 > 4 > 0); exit 0 ELIGIBLE · 3 BLOCKED · 4 NOT_YOURS · 5 unreadable · 6 WRONG-DEVEL (Factory develops it elsewhere) · 2 usage
+- `forward-check.py <devel-project> <package> | --mine [--since YYYY-MM-DD] [--user U]` — one verdict per package as each is decided, the count last (FORWARDED or MINE-OPEN current/stale, IN-FACTORY, MINE-DECLINED, DECLINED, FOREIGN-DECLINED, NOT-LANDED, DEVEL-DECLINED, GONE, WRONG-DEVEL, NEW-IN-FACTORY, DUE, MAINTAINERS, UNKNOWN); exit 0 nothing to do · 4 something needs you · 3 a lookup failed · 2 usage
 - `devel-of.sh <package> [target-project]` — exit 0 prints devel/pkg · 3 not in target · 4 no devel project · 5 lookup failed · 2 usage
 
 ## Leap
