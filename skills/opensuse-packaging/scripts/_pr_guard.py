@@ -477,6 +477,13 @@ MESSAGES = {
     "osc-prompt": "{0}: osc asks before it supersedes, forwards or commits past a "
     "conflict, and an answer through a pipe skips that decision. Name what you "
     "replace with -s ID, pass -m, run osc with </dev/null, and file a forward by hand.",
+    "rdelete-pending": "{0}: OBS revokes every request that still comes from what "
+    "it deletes, new, review and declined alike, and a project takes its packages' "
+    "requests with it. Delete one package at a time with plain osc rdelete PRJ PKG "
+    "-m MSG, which refuses while a request involves it, then the emptied project "
+    "with osc rdelete PRJ -m MSG.",
+    "rdelete-unknown": "cannot tell what {0} deletes, so it is refused. Name the "
+    "project, package and options literally, or loop over a literal list.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
     "the file in one call and run it in the next.",
     "exec-written": "{0} is written by this same call, so the guard would judge "
@@ -1120,6 +1127,45 @@ def osc_prompt(run, stdin):
         "osc-prompt",
         f"osc {sub} with an answer on stdin" + (f" ({said})" if said else ""),
     )
+
+
+SOURCE_PATH = Rx(r"(?:^|/)source/[^/?#\s]")
+
+
+def osc_deletes(run, ctx, cwd):
+    """osc rdelete with --force or --recursive, or an osc api DELETE of
+    sources. OBS revokes every request (new, review, declined) whose source it
+    deletes; osc checks for them only on a package delete without --force,
+    and a project delete takes all its packages with it."""
+    sub, args = osc_sub(run)
+    if sub not in ("rdelete", "api"):
+        return
+
+    def spell(w, what):
+        if not VARIABLE.search(w):
+            return [w]
+        spellings = substitute(w, ctx, cwd)
+        if not spellings:
+            block("rdelete-unknown", f"{what} with {shown(w)}")
+        return [x for one in spellings for x in one.split()]
+
+    if sub == "rdelete":  # an operand only the shell knows may be an option
+        opts, pos = osc_args(sub, args)
+        held = [x for w in pos if VARIABLE.search(w) for x in spell(w, "osc rdelete")]
+        keys = {k for k, _ in opts + osc_args(sub, held)[0]}
+        if keys & {"-f", "--force"}:
+            block("rdelete-pending", "osc rdelete --force")
+        if keys & {"-r", "--recursive"}:
+            block("rdelete-pending", "osc rdelete --recursive")
+        return
+    opts, pos = osc_args(sub, args)
+    methods = [
+        m for k, v in opts if k in ("-X", "--method") for m in spell(v, "osc api")
+    ]
+    if any(m.upper() == "DELETE" for m in methods):
+        for p in (x for w in pos for x in spell(w, "an osc api DELETE")):
+            if SOURCE_PATH.search(p):
+                block("rdelete-pending", f"an osc api DELETE of {p}")
 
 
 def request_cleanup(run, ctx, cwd):
@@ -2796,6 +2842,7 @@ def guess(run, ctx, cwd, own=False):
             osc_writes(["osc", *rest], ctx, cwd)
             request_target(["osc", *rest], ctx, cwd)
             request_cleanup(["osc", *rest], ctx, cwd)
+            osc_deletes(["osc", *rest], ctx, cwd)
         if own:
             for tool in ("gh", "tea", "git-obs", "secret-tool"):
                 secret_rules(tool, [tool, *rest], ctx, cwd)
@@ -3180,6 +3227,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         osc_writes(run, ctx, here)
         request_target(run, ctx, here)
         request_cleanup(run, ctx, here)
+        osc_deletes(run, ctx, here)
         osc_prompt(run, stdin)
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.

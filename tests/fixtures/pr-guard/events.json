@@ -6823,5 +6823,125 @@
       "command": "printf 'Update to 1.3\\n' | osc ci -F -"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "rdelete-force-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete -r -f home:tester:scratch -m 'Clean up'"
+    }
+  },
+  "rdelete-force-combined": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete -rf home:tester:scratch"
+    }
+  },
+  "rdelete-force-abbrev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete --forc home:tester:spark foo"
+    }
+  },
+  "rdelete-force-apiurl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -A https://api.opensuse.org rdelete --force home:tester:spark foo"
+    }
+  },
+  "rdelete-recursive-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete -r home:tester:scratch -m 'Clean up'"
+    }
+  },
+  "rdelete-recursive-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete --recursive home:tester:scratch"
+    }
+  },
+  "rdelete-var-force": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "F=-f; osc rdelete $F home:tester:spark foo -m 'Accepted'"
+    }
+  },
+  "rdelete-var-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete home:tester:spark foo $F -m 'Accepted'"
+    }
+  },
+  "rdelete-guessed-osc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$OSC rdelete -r home:tester:scratch -m 'Clean up'"
+    }
+  },
+  "rdelete-plain-package": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete home:tester:spark foo -m 'Accepted'"
+    }
+  },
+  "rdelete-empty-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete home:tester:scratch -m 'Empty now'"
+    }
+  },
+  "rdelete-for-literal": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for p in foo bar; do osc rdelete home:tester:spark \"$p\" -m 'Accepted'; done"
+    }
+  },
+  "api-delete-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X DELETE /source/home:tester:spark/foo"
+    }
+  },
+  "api-delete-joined": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -XDELETE '/source/home:tester:scratch?force=1'"
+    }
+  },
+  "api-delete-method": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api --method DELETE /source/home:tester:scratch"
+    }
+  },
+  "api-delete-method-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api --method=delete https://api.opensuse.org/source/home:tester:scratch"
+    }
+  },
+  "api-delete-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "M=DELETE; osc api -X $M /source/home:tester:spark/foo"
+    }
+  },
+  "api-get-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api /source/home:tester:spark/foo"
+    }
+  },
+  "rdelete-var-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rdelete home:tester:spark foo -m \"$MSG\""
+    }
+  },
+  "api-delete-var-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X $M /source/home:tester:spark/foo"
+    }
   }
 }

@@ -35,7 +35,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc linkpac PRJ PKG TGT_PRJ [TGT_PKG]` — rewrites the target's package meta: re-check its build flags after.
 - `osc repairlink PRJ PKG` — rebase a broken `_link`.
 - `osc pull` — merge upstream changes into a branched checkout.
-- `osc rdelete -m MSG PRJ PKG` — delete a package server-side; for a whole project `-r` deletes its packages too and `-f` deletes even when others depend on it.
+- `osc rdelete -m MSG PRJ PKG` — delete a package server-side; for a whole project `-r` deletes its packages too. OBS revokes every request (new, review, declined) whose source it deletes. Only on a package delete does osc refuse first while such a request exists ("Package has pending requests"); `-f` skips that check and passes `force=1`, and a project delete checks nothing, so pr-guard refuses `-f`, `-r` and an `osc api` DELETE of sources.
 - `osc fork` — Gitea fork of an scmsync package; see `references/git-workflow.md`.
 - `osc cat PRJ PKG FILE` — print one remote file without checking anything out.
 - `osc ls PRJ [PKG]` (list) · `osc log PRJ [PKG]` — remote file list · commit history.
