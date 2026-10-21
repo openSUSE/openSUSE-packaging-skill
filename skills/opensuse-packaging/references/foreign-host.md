@@ -19,7 +19,9 @@ A tool that is genuinely missing must be installed, not worked around.
 ## Source services on a foreign host
 
 `osc build` and `osc commit` run the project's `localonly` source services
-(e.g. `format_spec_file` on `home:*:branches:*` projects). When the matching
+(e.g. `format_spec_file` on `home:*:branches:*` projects). A `format_spec_file`
+service is satisfied by the `spec-cleaner-format_spec_file` package:
+`references/spec-cleaner.md` "Checking a spec file". When the matching
 `obs-service-*` package is not installed on the host, osc aborts demanding it;
 pass `--noservice` to both commands instead. The services are a local
 convenience, not part of the build — and the spec-cleaner pass in the core
