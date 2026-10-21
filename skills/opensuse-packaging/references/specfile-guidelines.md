@@ -16,7 +16,7 @@
 ## Spec file — general rules
 
 - ASCII only unless non-ASCII is genuinely needed; save as UTF-8 if so.
-- Every spec must carry the standard openSUSE copyright header. If missing, run `osc service run format_spec_file` to add one rather than hand-writing it.
+- Every spec must carry the standard openSUSE copyright header. If missing, run `osc service run format_spec_file` to add one rather than hand-writing it — with `spec-cleaner-format_spec_file` as the service's provider: `references/spec-cleaner.md` "Checking a spec file".
 - Use macros (`%{_bindir}`, `%{_libdir}`, `%{_mandir}`, `%{buildroot}`, `%{name}`, `%{version}`, …) instead of hard-coded paths. List at https://en.opensuse.org/openSUSE:Packaging_Conventions_RPM_Macros.
 - Do not use the macro form of shell utilities (`%__cat`, `%__rm`, …); plain `cat`, `rm`, etc. are preferred. The spec-cleaner bot converts these automatically.
 - Do not mix RPM macros and the auto-exported shell vars (`$RPM_BUILD_ROOT`, `$RPM_OPT_FLAGS`, …). Pick one style per spec; macros are the modern preference.
