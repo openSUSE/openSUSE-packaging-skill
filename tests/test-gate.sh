@@ -517,6 +517,20 @@ grep -qF "note: pushed already holds HEAD" "$work/gate-gz/patch-tags.txt" && pas
 gt git-base-target 1 "gz.spec:2: gz-a.patch has no PATCH-* tag in the comment above it" --git-base factory
 grep -qF "note: gz.spec:3: gz-b.patch has no PATCH-* tag in the comment above it (unchanged from the target)" "$work/gate-gz/patch-tags.txt" \
   && pass "patch-tags git-base-target: the unchanged patch is a note" || fail "patch-tags git-base-target: the unchanged patch is not a note"
+# Uncommitted edits on a clone of the remote's default branch: HEAD is the
+# base there, which is evidence (the normal pre-commit run), with or without
+# an explicit --git-base, which is never overridden.
+r="$work/gzr.git"; c="$work/gzc"; rm -rf "$r" "$c"
+( git clone -q --bare --branch factory "$g" "$r" && git clone -q "$r" "$c" \
+  && cd "$c" && echo a3 > gz-a.patch ) || fail "git clone fixture"
+for args in "" "--git-base origin/factory"; do
+  # shellcheck disable=SC2086  # $args is zero or two words
+  out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$c" $args 2>&1)"
+  grep -qF "## patch-tags: rc=1" <<<"$out" && grep -qF "gz.spec:2: gz-a.patch has no PATCH-* tag" "$work/gate-gzc/patch-tags.txt" \
+    && grep -qF "note: gz.spec:3: gz-b.patch has no PATCH-* tag in the comment above it (unchanged from the target)" "$work/gate-gzc/patch-tags.txt" \
+    && pass "patch-tags uncommitted edit on the default branch${args:+, $args}: only the edited patch is red" \
+    || { fail "patch-tags uncommitted edit on the default branch${args:+, $args}"; sed 's/^/    /' "$work/gate-gzc/patch-tags.txt" 2>/dev/null; }
+done
 : > "$O/fail-meta"; rm "$O/devel/foo"
 og "$work/t-good"
 grep -qF "## target: rc=1" <<<"$out" && grep -qF "could not be read (devel-of.sh exit 5)" <<<"$out" \
