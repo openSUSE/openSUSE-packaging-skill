@@ -14,7 +14,7 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 g1=; g2=; g3=; s1=
 work="$(mktemp -d /var/tmp/test-build-wait.XXXXXX)"
-# shellcheck disable=SC2317  # runs from the EXIT trap
+# shellcheck disable=SC2317,SC2329  # runs from the EXIT trap
 cleanup() { for g in $g1 $g2 $g3; do kill -- -"$g"; done 2>/dev/null; [ -z "$s1" ] || kill "$s1" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 cd "$work" || exit 1

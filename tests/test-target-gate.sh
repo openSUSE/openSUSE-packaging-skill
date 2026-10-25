@@ -245,7 +245,7 @@ tree() { git -C "$1" rev-parse 'HEAD^{tree}'; }
 # The stamp dir is spelled through a variable: the installed pr-guard.py reads
 # this suite before it runs and refuses any other text naming that path.
 stampf() { local d=target-gate; echo "$1/.git/$d/$(tree "$1")-${2:-leap-16.0}.json"; }
-# shellcheck disable=SC2317  # called from the checks, through eval
+# shellcheck disable=SC2317,SC2329  # called from the checks, through eval
 calls() { grep -c -- "$1" "$FAKE/calls"; }
 
 # case_ <name> <expected rc> <expected message> <shell command>

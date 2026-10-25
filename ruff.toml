@@ -1,5 +1,7 @@
 # Fixtures are malformed on purpose and references are documentation: neither is source.
 extend-exclude = ["tests/fixtures", "*.md"]
+# The Python floor (README "Requirements"); CI tests it.
+target-version = "py311"
 
 [lint]
 # Pinned explicitly rather than left to the default. Ruff's default selection is

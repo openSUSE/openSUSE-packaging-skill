@@ -108,7 +108,7 @@ fi
 fresh=0; made=0; keep=0
 # One EXIT trap for everything: undo a half-made sync, but never the synced tree
 # once the build has seen it.
-# shellcheck disable=SC2317  # runs from the trap
+# shellcheck disable=SC2317,SC2329  # runs from the trap
 cleanup() {
   [ "$keep" = 1 ] && return 0
   if [ "$made" = 1 ]; then
