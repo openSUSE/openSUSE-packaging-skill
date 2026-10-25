@@ -50,9 +50,10 @@
 #       says 'CVEs'/'CVE' or claims a security fix ('security fix/issue/update
 #       ...', 'vulnerability') without a full CVE id — a bug ref (boo#/bsc#)
 #       or a GHSA id stands in for the id of a security claim, never of
-#       'CVEs'; a bullet ending in ':' takes its ids from the bullets after
-#       it, and 'no'/'non-'/'not a'/'without' claims nothing: the security
-#       tracker keys off the literal ids
+#       'CVEs' (but it does of 'CVE pending'); a bullet ending in ':' takes
+#       its ids from the bullets after it, 'no'/'non-'/'not a'/'without'
+#       claims nothing, and patch names, paths and URLs are not read: the
+#       security tracker keys off the literal ids
 #       (references/changelog-rules.md "CVEs and security bullets")
 #     - no bullet names an OBS request ('sr#N', 'SR N', 'rq N', 'request #N')
 #       or a staging order ('lands after', 'stage together'): the SR
@@ -176,8 +177,15 @@ SECURITY = re.compile(r"\bsecurity[\s-]+(?:fix(?:es|ed)?|issues?|bugs?|problems?
                       r"vulnerabilit(?:y|ies)|updates?|releases?)\b|\bvulnerabilit(?:y|ies)\b", re.I)
 REFS = re.compile(r"\b(?:boo|bsc|bnc)#\d+|\bGHSA(?:-[0-9a-z]{4}){3}\b", re.I)
 NO_CLAIM = re.compile(r"(?:\bno|\bnon|\bnot(?:\s+an?)?|\bwithout(?:\s+any)?)[\s-]*$", re.I)
-def claims(rx, t):  # "no security fixes", "non-security fix", "no CVE assigned" claim nothing
-    return any(not NO_CLAIM.search(t[:m.start()]) for m in rx.finditer(t))
+PENDING_CVE = re.compile(r"\s+(?:pending|requested|not\s+(?:yet\s+)?assigned|to\s+be\s+assigned)\b", re.I)
+NAMES = re.compile(r"\S+\.(?:patch|diff|dif)\b|\S+/\S+")  # patch names, paths and URLs
+def claims(rx, t, refs=False):
+    """A security claim in t: not negated ("no security fixes", "non-security
+    fix", "no CVE assigned"), and with refs not a "CVE pending" beside its
+    GHSA or bug ref."""
+    return any(not NO_CLAIM.search(t[:m.start()])
+               and not (refs and PENDING_CVE.match(t, m.end()))
+               for m in rx.finditer(t))
 REQUEST_ID = re.compile(r"\b(?:sr|rq|request)\s*#?\s*\d{6,}\b", re.I)
 UPSTREAM_PR = re.compile(r"\b(?:pull|merge)[\s-]*$", re.I)    # "pull request #N" is upstream's
 # Review and bot status (factory-auto, the source validator, a Factory forward)
@@ -249,7 +257,8 @@ for k in range(ncheck):
         # "fixes the following two security issues:" lists its CVEs below
         if t.endswith(":") and any(CVE.search(x) for _, x in groups[g + 1:]):
             continue
-        if claims(BARE_CVE, t) or (claims(SECURITY, t) and not REFS.search(t)):
+        words, refs = NAMES.sub(" ", t), bool(REFS.search(t))
+        if claims(BARE_CVE, words, refs) or (claims(SECURITY, words) and not refs):
             bad.append((n, "bullet claims security fixes without a full CVE id — cite "
                            "each CVE-YYYY-NNNN (with its boo#/bsc#), or describe the fix "
                            "itself without the security claim"))
