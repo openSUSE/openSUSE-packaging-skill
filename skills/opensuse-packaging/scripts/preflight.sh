@@ -17,6 +17,14 @@
 #      before they land, so the update must go as a BRANCH + SR to the devel
 #      project, never a direct commit, and you must not accept your own SR --
 #      maintainer rights are not permission to bypass their gate.
+#   6. a target-agnostic sweep (/search/request on the package as the action
+#      target, any source, any target project): catches what the anchored
+#      queries filter out — an SR filed straight at the target from a
+#      non-devel source, or one aimed at another target entirely (a Leap /
+#      Backports submission, a staging project). A hit on the devel or target
+#      project counts as in flight (check 3's STOP); any other hit is printed
+#      for the report — for a fix leg it names a tree the fixes may have to
+#      ride on — and does not change the verdict.
 #
 # Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U] [--from PRJ]
 #   target-version    the version you intend to package (optional; without it
@@ -263,13 +271,41 @@ for p in d:
   fi
 fi
 
+# ---- 6. target-agnostic sweep ------------------------------------------------
+# The anchored queries above are read against the devel and target projects
+# only, and the outgoing one is filtered to devel sources — an SR filed
+# straight at the target from a non-devel source, or aimed at another target
+# entirely, escapes both. One /search/request sweep on the package as the
+# action target sees every open submit request for it, from anyone.
+oapi "/search/request?match=action/target/@package=%27$pkg%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
+  || fail "could not query other SRs targeting $pkg"
+sweep="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (sweep)"
+seen=" $(printf '%s\n%s\n' "$incoming" "$outgoing" | awk '{print $2}' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')"
+sweep_blocking="" ; sweep_other=""
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  sid="${line#SR }" ; sid="${sid%% *}"
+  case "$seen" in *" $sid "*) continue ;; esac
+  tgt="$(printf '%s' "$line" | sed 's/.* -> \([^ ]*\) by .*/\1/')"
+  if [ "$tgt" = "$devel" ] || [ "$tgt" = "$target" ]; then
+    sweep_blocking="${sweep_blocking:+$sweep_blocking
+}$line"
+  else
+    sweep_other="${sweep_other:+$sweep_other
+}$line"
+  fi
+done <<< "$sweep"
+[ -n "$sweep_blocking" ] && { echo "sweep: SR(s) in flight at $devel/$target from a non-devel source:"; printf '%s\n' "$sweep_blocking" | sed 's/^/    /'; }
+[ -n "$sweep_other" ] && { echo "sweep: SR(s) targeting $pkg in other projects (report them — a fix leg may have to ride on one):"; printf '%s\n' "$sweep_other" | sed 's/^/    /'; }
+[ -z "$sweep_blocking" ] && [ -z "$sweep_other" ] && echo "sweep SRs:      none"
+
 # ---- verdict -----------------------------------------------------------------
 if [ "$newpkg" = 1 ] && [ -z "$devel" ]; then
   echo "VERDICT: PROCEED (new package — absent from $target and no devel project; package it from scratch, see references/update-build.md \"New package from scratch\")"
   exit 0
 fi
-if [ -n "$incoming" ] || [ -n "$outgoing" ] || [ -n "$prs" ]; then
-  first="$(printf '%s\n%s\n%s\n' "$outgoing" "$incoming" "$prs" | grep -m1 .)"
+if [ -n "$incoming" ] || [ -n "$outgoing" ] || [ -n "$prs" ] || [ -n "$sweep_blocking" ]; then
+  first="$(printf '%s\n%s\n%s\n%s\n' "$outgoing" "$incoming" "$prs" "$sweep_blocking" | grep -m1 .)"
   echo "VERDICT: STOP - already in flight: $first"
   exit 3
 fi

@@ -51,7 +51,7 @@ Per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / S
 
 ## `preflight.sh`
 
-Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none". `--from PRJ` names the project about to be branched: it must be the devel project, or the project the devel package links to, else STOP (sr#1392134 branched hardware's stale copy of a devel:languages:python package and its SR deleted that project's newer entries). A target-version that is no version — a project name typed into that slot — is a usage error, not a version that compares as PROCEED.
+Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none". `--from PRJ` names the project about to be branched: it must be the devel project, or the project the devel package links to, else STOP (sr#1392134 branched hardware's stale copy of a devel:languages:python package and its SR deleted that project's newer entries). A target-version that is no version — a project name typed into that slot — is a usage error, not a version that compares as PROCEED. Its last check is a target-agnostic `/search/request` sweep on the package as action target: the anchored queries are filtered to devel sources and two projects, so without it an SR filed straight at the target from a non-devel source — or aimed at another target entirely — reads as "none in flight".
 
 ## `devel-of.sh`
 
