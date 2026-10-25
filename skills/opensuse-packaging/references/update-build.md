@@ -51,6 +51,18 @@
 
 If the devel version already matches and you only have *cosmetic* spec-cleaner changes left, do **not** file a cleanup-only SR over an in-flight version SR — it races the version SR and earns a "conflict in file" decline. Hold the cleanup until the version SR lands, or drop it.
 
+**This pre-flight opens *any* work on a package — a fix or cleanup leg included, not only a version update.** A leg that changes no version still collides with an in-flight SR: it branches the tree the target currently has, while the in-flight SR is about to replace that tree. When the checks above find an SR in flight and your work is *fixes* rather than the update itself, the in-flight SR is not only a stop sign for a competing branch — **its source tree is your base**: branch that tree, apply the fixes there, and re-triage every fix against it before building, because a version bump or a build-system switch inside it can make a fix already-present or moot. Report every in-flight SR you find, whichever way you proceed.
+
+**One sweep catches the SRs the anchored queries miss.** Check 2 is read against the devel project and the one target project, and `preflight.sh` filters its outgoing list to devel sources — so an SR filed straight at the target from a non-devel source, or aimed at a different target entirely (a Leap or Backports submission, a staging project), escapes it. The target-agnostic form sees every open submit request for the package, from anyone:
+
+```
+osc api "/search/request?match=action/target/@package=%27<pkg>%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)"
+```
+
+`preflight.sh` runs this sweep as its last check: a hit on the devel or target project counts as in flight (STOP, like check 2); a hit anywhere else is printed for the report — for a fix leg it names another tree the fixes may have to ride on.
+
+**Real case:** a fix leg on `plymouth` was prepared against Factory while two SRs were already in flight against its devel project — sr#1386086, a version update that also switched the package's build system, and sr#1376509. The fixes had to be re-based onto the in-flight tree and each one re-triaged against the new version and build system; this pre-flight would have made that tree the base from the start.
+
 **Real case (the rule's origin):** asked to update two Rust-based Python packages, an agent branched both, re-bumped, re-vendored, and ran two heavy native Rust builds — only to discover *afterwards* that both versions were **already committed to devel by their co-maintainers** and **already submitted to Factory**, both SRs in review. The entire update+build was wasted; the only net delta was a cosmetic cleanup that would have conflicted with the in-flight SRs. A 30-second pre-flight `osc api .../<pkg>.spec | grep Version` + SR check would have caught it before any branch or build.
 
 `scripts/preflight.sh` mechanizes this whole check (exit 0 PROCEED / 3 STOP — in flight *or* already landed / 4 FORWARD).
