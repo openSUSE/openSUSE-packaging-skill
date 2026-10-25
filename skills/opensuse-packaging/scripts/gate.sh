@@ -142,14 +142,6 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def tree(d):
-    fm = files(d)
-    if fm is None:
-        return 1
-    print(key(fm))
-    return 0
-
-
 def stamp(path, d, prj, pkg, target):
     fm = files(d)
     if fm is None:
@@ -221,7 +213,7 @@ def holders(path):
         h = re.sub(r"(,?\s+and\s+contributors)?[\s.]*$", "", h, flags=re.I)
         h = re.sub(r"\s+", " ", h).strip().lower()
         # spec-cleaner and format_spec_file rewrite the SUSE header themselves
-        if h and not re.search(r"\b(suse|novell)\b", h):
+        if h and not re.match(r"(suse|novell)\b", h):
             out.setdefault(h, line.strip())
     return out
 
@@ -234,7 +226,7 @@ def copyright(base, work):
 
 
 cmd, args = sys.argv[1], sys.argv[2:]
-fn = {"link": link, "tree": tree, "stamp": stamp, "review": review, "copyright": copyright}[cmd]
+fn = {"link": link, "stamp": stamp, "review": review, "copyright": copyright}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -316,7 +308,9 @@ if [ -n "$own" ]; then
   fi
   if [ -n "$tgt" ]; then
     tprj=${tgt%%/*}; tpkg=$pkg; [[ $tgt == */* ]] && tpkg=${tgt#*/}
-    if [ "$tprj" = "$base" ]; then
+    if [ "$tprj" = "$own" ]; then
+      echo "OK: a direct commit to $own, the target" >> "$log/target.txt"
+    elif [ "$tprj" = "$base" ]; then
       echo "OK: the checkout is based on $base, the target is $tprj/$tpkg" >> "$log/target.txt"
     elif [ "$tprj" = openSUSE:Factory ]; then
       [ $drc -ge 0 ] || devel_of
@@ -329,8 +323,12 @@ if [ -n "$own" ]; then
         3|4) echo "note: $pkg has no devel project in openSUSE:Factory; the checkout is based on $base" >> "$log/target.txt" ;;
         *) echo "UNKNOWN: Factory's devel project for $pkg could not be read (devel-of.sh exit $drc)" >> "$log/target.txt"; rc=1 ;;
       esac
-    else
+    elif timeout 60 osc api "/source/$tprj/$tpkg/_meta" > /dev/null 2> "$log/target-meta.err"; then
       echo "RED: the checkout is based on $base/$bpkg, the SR goes to $tprj/$tpkg: its .changes history is not the target's — branch the target (osc branch $tprj $tpkg), or pass --target $base if $base really is where this goes" >> "$log/target.txt"; rc=1
+    elif grep -q 'HTTP Error 404' "$log/target-meta.err"; then
+      echo "note: $tprj/$tpkg does not exist: a new package there" >> "$log/target.txt"
+    else
+      echo "UNKNOWN: cannot read $tprj/$tpkg/_meta: $(head -n 1 "$log/target-meta.err")" >> "$log/target.txt"; rc=1
     fi
   fi
   show target $rc "$log/target.txt"
@@ -412,10 +410,10 @@ if [ -e "${changes[0]}" ]; then
     # commits its base, so its own copy is no evidence of what the target has.
     mkdir -p "$log/target-base"; : > "$log/changes-guard.txt"; rc=0
     for ch in "${changes[@]}"; do
-      if osc cat "$tprj" "$tpkg" "$ch" > "$log/target-base/$ch" 2> "$log/target-base/$ch.err"; then
+      if timeout 60 osc cat "$tprj" "$tpkg" "$ch" > "$log/target-base/$ch" 2> "$log/target-base/$ch.err"; then
         echo "### $ch vs $tprj/$tpkg" >> "$log/changes-guard.txt"
         "$HERE/changes-guard.sh" "${guard[@]}" --base "$log/target-base/$ch" "$ch" >> "$log/changes-guard.txt" 2>&1 || rc=1
-      elif grep -qE '404|does not exist|not found' "$log/target-base/$ch.err"; then
+      elif grep -q 'HTTP Error 404' "$log/target-base/$ch.err"; then
         echo "### $ch: not in $tprj/$tpkg, vs the committed copy" >> "$log/changes-guard.txt"
         "$HERE/changes-guard.sh" "${guard[@]}" "$ch" >> "$log/changes-guard.txt" 2>&1 || rc=1
       else
@@ -468,8 +466,8 @@ for s in "${specs[@]}"; do
   [ "$n" -le 1 ] || { echo "$s: $n '# spec file for package' headers — keep one" >> "$log/spec-header.txt"; rc=1; }
   b="$log/base.$s"; rm -f "$b"; from=""
   if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
-    if osc cat "$tprj" "$tpkg" "$s" > "$b" 2> "$b.err"; then from="$tprj/$tpkg"
-    elif grep -qE '404|does not exist|not found' "$b.err"; then rm -f "$b"
+    if timeout 60 osc cat "$tprj" "$tpkg" "$s" > "$b" 2> "$b.err"; then from="$tprj/$tpkg"
+    elif grep -q 'HTTP Error 404' "$b.err"; then rm -f "$b"
     else echo "UNKNOWN: osc cat $tprj $tpkg $s failed: $(head -n 1 "$b.err")" >> "$log/spec-header.txt"; rc=1; rm -f "$b"; fi
   elif [ -r ".osc/sources/$s" ]; then cp ".osc/sources/$s" "$b"; from="the committed copy"
   elif [ -r ".osc/$s" ]; then cp ".osc/$s" "$b"; from="the committed copy"

@@ -308,7 +308,7 @@ case "$1" in
                   [ -d "$OBS/$p" ] && { echo "<directory name=\"${p#*/}\">"
                     for f in "$OBS/$p"/*; do echo "<entry name=\"$(basename "$f")\"/>"; done; echo "</directory>"; exit 0; } ;;
        esac ;;
-  cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+  cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 400: package 'foo-ui' does not exist" >&2; exit 1; }
        [ -f "$OBS/$2/$3/$4" ] && { cat "$OBS/$2/$3/$4"; exit 0; } ;;
   status) exit 0 ;;
   vc) printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4"; exit 0 ;;
@@ -390,6 +390,20 @@ og "$work/t-plain" --target openSUSE:Factory
 grep -qF "## target: rc=1" <<<"$out" && grep -qF "takes foo from its devel project devel:example; this checkout is based on hardware" <<<"$out" \
   && pass "Factory submission from a project that is not its devel project: target red" \
   || { fail "Factory submission from the wrong project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Most devel packages are a _link to Factory: a direct commit there is the
+# devel project's own, and its committed copy is the baseline.
+co "$work/t-dlink" devel:example openSUSE:Factory "$O/devel:example/foo"
+og "$work/t-dlink"
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "## changes-guard: rc=0" <<<"$out" \
+  && pass "direct commit in the devel project, its package a link to Factory: target and changes-guard green" \
+  || { fail "direct devel commit of a link to Factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A new package for a project that has no copy of it yet: nothing to rewrite.
+co "$work/t-new" 'home:<you>:spark' - "$O/hardware/foo"
+og "$work/t-new" --target devel:other
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "devel:other/foo does not exist: a new package there" <<<"$out" \
+  && ! grep -qF "osc branch devel:other" <<<"$out" \
+  && pass "new package named with its target: a note, not red" \
+  || { fail "new package with --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
 e "Mon Jan  5" "Update to 0.9.5" | put openSUSE:Leap:16.0:Update/foo foo.changes
 printf 'Name: foo\nVersion: 0.9.5\n' | put openSUSE:Leap:16.0:Update/foo foo.spec
 co "$work/t-maint" 'home:<you>:branches:openSUSE:Leap:16.0:Update' openSUSE:Leap:16.0:Update "$O/openSUSE:Leap:16.0:Update/foo"
@@ -423,6 +437,16 @@ hdr 2026 '# Copyright (c) 2024 Jane Maintainer <jane@example.org>
 og "$work/t-hdr"
 grep -qF "## spec-header: rc=0" <<<"$out" && pass "spec header: the old SUSE header rewritten as spec-cleaner writes it, green" \
   || { fail "spec header: SUSE header rewrite"; printf '%s\n' "$out" | sed 's/^/    /'; }
+hdr 2025 '# Copyright (c) 2024 Jane Maintainer <jane@example.org>
+# Copyright (c) 2015 Tony Packager <tony@suse.example>
+' > "$work/t-hdr/.osc/sources/foo.spec"
+cp "$work/t-hdr/.osc/sources/foo.spec" "$O/devel:example/foo/foo.spec"
+hdr 2026 '# Copyright (c) 2024 Jane Maintainer <jane@example.org>
+' > "$work/t-hdr/foo.spec"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "is gone: # Copyright (c) 2015 Tony Packager <tony@suse.example>" <<<"$out" \
+  && pass "spec header: a packager's line with a SUSE address dropped, red" \
+  || { fail "spec header: SUSE address exempted"; printf '%s\n' "$out" | sed 's/^/    /'; }
 { hdr 2026 '# Copyright (c) 2026 Jane Maintainer <jane@example.org>
 '; printf '#\n# spec file for package foo\n#\n'; } > "$work/t-hdr/foo.spec"
 og "$work/t-hdr"

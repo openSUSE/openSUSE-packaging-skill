@@ -107,6 +107,8 @@ if [ -z "$devel" ]; then
   if [ "$O_404" = 1 ]; then
     echo "package:        $pkg — NOT in $target (new package)"
     newpkg=1
+  elif printf '%s' "$O_OUT" | grep -q '<devel '; then
+    fail "osc develproject failed, but $target/$pkg/_meta names a devel project"
   else
     echo "package:        $pkg — in $target but no devel project set"
   fi
