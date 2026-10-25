@@ -70,6 +70,10 @@ done
 if [ -n "$targetver" ] && { [[ ! $targetver =~ ^[A-Za-z0-9._+~^]+$ ]] || [[ ! $targetver =~ [0-9] ]]; }; then
   echo "preflight.sh: '$targetver' is not a version (the target project goes in --target-project)" >&2; exit 2
 fi
+# Query strings decode + as a space, so the package name enters every
+# request query percent-encoded (libsigc++3 read as "libsigc  3" printed
+# "none" with sr#1386760 open); URL paths keep the literal name.
+epkg="${pkg//+/%2B}"
 [ -n "$user" ] || user="$(timeout 30 osc whois 2>/dev/null | sed 's/:.*//')" || true
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
@@ -204,11 +208,11 @@ for r in root.findall("request"):
 
 incoming=""
 if [ -n "$devel" ]; then
-  oapi "/request?view=collection&types=submit&states=new,review&project=$devel&package=$pkg" \
+  oapi "/request?view=collection&types=submit&states=new,review&project=$devel&package=$epkg" \
     || fail "could not query incoming SRs for $devel/$pkg"
   incoming="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (incoming)"
 fi
-oapi "/request?view=collection&types=submit&states=new,review&project=$target&package=$pkg" \
+oapi "/request?view=collection&types=submit&states=new,review&project=$target&package=$epkg" \
   || fail "could not query $target SRs for $pkg"
 outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (outgoing)"
 
@@ -219,7 +223,7 @@ outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable
 # declined 1375013). The prompt covers every open request from the same source,
 # anyone's, and --yes answers it for all of them: supersede only your own, by
 # id with -s; someone else's is theirs to revoke.
-oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$pkg" \
+oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$epkg" \
   || fail "could not query declined $target SRs for $pkg"
 declined="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (declined)"
 
@@ -277,7 +281,7 @@ fi
 # straight at the target from a non-devel source, or aimed at another target
 # entirely, escapes both. One /search/request sweep on the package as the
 # action target sees every open submit request for it, from anyone.
-oapi "/search/request?match=action/target/@package=%27$pkg%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
+oapi "/search/request?match=action/target/@package=%27$epkg%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
   || fail "could not query other SRs targeting $pkg"
 sweep="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (sweep)"
 seen=" $(printf '%s\n%s\n' "$incoming" "$outgoing" | awk '{print $2}' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')"
