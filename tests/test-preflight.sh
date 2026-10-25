@@ -58,7 +58,7 @@ obs '/request?view=collection&types=submit&states=new,review&project=openSUSE:Fa
 obs '/request?view=collection&types=submit&states=declined&project=openSUSE:Factory&package=foo' '<collection>
   <request id="1375013" creator="tester"><action type="submit"><source project="devel:example" package="foo"/>
   <target project="openSUSE:Factory" package="foo"/></action><state name="declined"/></request></collection>'
-SWEEP='/search/request?match=action/target/@package=%27foo%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)'
+SWEEP='/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27foo%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)'
 obs "$SWEEP" '<collection/>'
 
 # case_ <name> <expected rc> <expected message> <mutation> [preflight args after foo]
@@ -114,6 +114,19 @@ case_ sweep-dedup 3 "SR 2000004 [new] devel:other/foo -> openSUSE:Leap:16.0 by s
 # SR 2000003 is named exactly twice — the incoming listing and the STOP
 # verdict line quoting it; a third naming would be the sweep repeating it.
 [ "$(grep -c 'SR 2000003' <<<"$LAST")" = 2 ] && pass "sweep-dedup: an SR the anchored checks listed is not repeated" || fail "sweep-dedup: $LAST"
+
+# Only a submit request moves code: a set_bugowner or add_role request
+# against the package is not an update in flight, however it is aimed
+# (sr#1383747 was a set_bugowner request and read as a STOP for runc).
+case_ sweep-non-submit 4 "sweep SRs:      none" \
+  "echo '<collection><request id=\"2000005\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"openSUSE:Factory\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><state name=\"review\"/></request><request id=\"2000007\" creator=\"someone-else\"><action type=\"add_role\"><target project=\"devel:example\" package=\"foo\"/><person name=\"someone-else\" role=\"maintainer\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+! grep -qE "VERDICT: STOP|2000005|2000007" <<<"$LAST" && pass "sweep-non-submit: role requests are not in flight" || fail "sweep-non-submit: $LAST"
+# A non-submit request beside a real one changes nothing either: the submit
+# is reported, the role request is dropped.
+case_ sweep-mixed-actions 4 "SR 2000006 [new] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
+  "echo '<collection><request id=\"2000005\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"openSUSE:Factory\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><state name=\"review\"/></request><request id=\"2000006\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+grep -qF "VERDICT: FORWARD" <<<"$LAST" && ! grep -q "2000005" <<<"$LAST" \
+  && pass "sweep-mixed-actions: only the submit is reported" || fail "sweep-mixed-actions: $LAST"
 
 # A + in a package name decodes as a space in a query string, so every
 # request query must percent-encode it (libsigc++3 read as "libsigc  3"

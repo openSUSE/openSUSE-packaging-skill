@@ -36,11 +36,11 @@
    osc request list <devel> <pkg>        # lists SRs involving the pkg in that project
    # outgoing devel -> Factory (this is the one that lands the update):
    osc api "/request?view=collection&types=submit&states=new,review&project=openSUSE:Factory&package=<pkg>"
-   osc api "/search/request?match=action/target/@package=%27<pkg>%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)"
+   osc api "/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27<pkg>%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)"
    ```
    - **Incoming** = someone's `home:…:branches/<pkg> -> <devel>` SR (a maintainer staging the bump into devel — e.g. a `home:<maintainer>:branches…/python-uv -> devel:languages:python` "cleanup" SR). Even if the devel spec doesn't *yet* show the new version, an accepted/open incoming SR means it's already handled.
    - **Outgoing** = the `<devel> -> openSUSE:Factory` SR that actually delivers the update to Factory.
-   - **Sweep** = third query: open SRs on the package, any source/target; report hits the anchored reads miss. `preflight.sh` runs it last.
+   - **Sweep** = third query: open submit SRs on the package, any source/target; report hits the anchored reads miss. `preflight.sh` runs it last.
 
 **Decision matrix:**
 
