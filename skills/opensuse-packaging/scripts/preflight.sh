@@ -18,17 +18,24 @@
 #      project, never a direct commit, and you must not accept your own SR --
 #      maintainer rights are not permission to bypass their gate.
 #
-# Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U]
+# Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U] [--from PRJ]
 #   target-version    the version you intend to package (optional; without it
-#                     the devel-vs-Factory version delta drives the verdict)
+#                     the devel-vs-Factory version delta drives the verdict);
+#                     anything not version-shaped (a project name) is a usage error
 #   --target-project  default openSUSE:Factory
 #   --user            OBS account (default: `osc whois`)
+#   --from            the project you are about to branch (or already branched):
+#                     STOP unless it is the devel project, or the devel package
+#                     is a _link to it. A copy elsewhere carries its own .changes
+#                     history, and an SR from it rewrites the devel project's
+#                     (sr#1392134: hardware's stale copy filed to devel:languages:python)
 #
 # Verdict line + exit code:
 #   0  VERDICT: PROCEED            (also for a brand-new package, with a note)
 #   3  VERDICT: STOP     — update already in flight (prints the SR id / PR #), or
 #      nothing to do because devel and the target project already carry the same
-#      version (the update landed; forwarding it would file an empty SR)
+#      version (the update landed; forwarding it would file an empty SR), or
+#      --from names a project that is not where the package is developed
 #   4  VERDICT: FORWARD  — stranded devel update: devel is ahead but no Factory
 #      SR was ever filed (openmopac/pspg case); prints the exact osc sr command
 #   2  a check FAILED (network/auth) — a failed check must NEVER print PROCEED
@@ -38,18 +45,23 @@ case "${1:-}" in
   '') awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2;;
 esac
 
-pkg="" ; targetver="" ; target="openSUSE:Factory" ; user=""
+pkg="" ; targetver="" ; target="openSUSE:Factory" ; user="" ; from=""
 while [ $# -gt 0 ]; do
-  case "$1" in --target-project|--user) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --target-project|--user|--from) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in
     --target-project) target="$2"; shift 2;;
     --user) user="$2"; shift 2;;
+    --from) from="$2"; shift 2;;
     -*) echo "unknown arg: $1" >&2; exit 2;;
     *) if [ -z "$pkg" ]; then pkg="$1"; elif [ -z "$targetver" ]; then targetver="$1";
        else echo "unexpected arg: $1" >&2; exit 2; fi; shift;;
   esac
 done
 [ -n "$pkg" ] || { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 2; }
+# A project name in the version slot compared as a version and printed PROCEED.
+if [ -n "$targetver" ] && { [[ ! $targetver =~ ^[A-Za-z0-9._+~^]+$ ]] || [[ ! $targetver =~ [0-9] ]]; }; then
+  echo "preflight.sh: '$targetver' is not a version (the target project goes in --target-project)" >&2; exit 2
+fi
 [ -n "$user" ] || user="$(timeout 30 osc whois 2>/dev/null | sed 's/:.*//')" || true
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
@@ -100,6 +112,22 @@ if [ -z "$devel" ]; then
   fi
 else
   echo "devel project:  $devel"
+fi
+if [ -n "$from" ]; then
+  if [ -z "$devel" ]; then
+    echo "branch source:  $from (no devel project to check it against)"
+  elif [ "$from" = "$devel" ]; then
+    echo "branch source:  $from (the devel project)"
+  else
+    oapi "/source/$devel/$pkg/_link" || fail "could not read $devel/$pkg/_link"
+    lp="$(printf '%s' "$O_OUT" | grep -oE '<link [^>]*project="[^"]*"' | sed 's/.*project="//; s/"$//' | head -1)"
+    if [ "$O_404" = 0 ] && [ "$lp" = "$from" ]; then
+      echo "branch source:  $from ($devel/$pkg links to it)"
+    else
+      echo "VERDICT: STOP - wrong branch source: $pkg is developed in $devel, not $from; its history is not $devel's — branch $devel/$pkg (osc branch $devel $pkg)"
+      exit 3
+    fi
+  fi
 fi
 
 # ---- 2. versions: devel spec + top .changes header, target-project spec -----

@@ -49,7 +49,7 @@ Per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / S
 
 ## `preflight.sh`
 
-Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none".
+Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none". `--from PRJ` names the project about to be branched: it must be the devel project, or the project the devel package links to, else STOP (sr#1392134 branched hardware's stale copy of a devel:languages:python package and its SR deleted that project's newer entries). A target-version that is no version — a project name typed into that slot — is a usage error, not a version that compares as PROCEED.
 
 ## `devel-of.sh`
 
@@ -269,22 +269,52 @@ steps and five result blocks that ride along in context for the rest of the
 session; this costs one. The adversarial change review (agents/changes-review.md)
 still follows — it is a judgement, not a check, and stays outside this script.
 
-Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--target PRJ[/PKG]]
-               [--git-base REF] [--build-log FILE] [--full]
+Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
+               [--git-base REF] [--build-log FILE] [--cleaner-deviation REASON] [--full]
+       gate.sh [DIR] --review FILE
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
                changes-patches, default 1)
   changes-lint also checks those entries' author against what a bare
   `osc vc` writes (vc-identity.sh); with no identity from osc vc it is red.
   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
-  --target     SR target for changes-patches (default: link origin, else Factory)
+  --squash-mine  the new top entry folds the run of your own unaccepted entries
+               under it into one, when the user asks for it (changes-guard)
+  --target     the SR target (default: Factory's devel project, devel-of.sh; for a
+               link into another openSUSE:/SUSE: project, that maintenance
+               project; for a package Factory lacks, the link origin, else the
+               checkout's own project). An osc checkout whose link origin (its
+               own project when it is no link) is not the target is red: its
+               .changes history is not the target's (sr#1392134). A forward to
+               openSUSE:Factory from Factory's devel project is fine.
+               changes-guard then compares against the target's .changes and
+               changes-patches against the target
   --git-base   git checkout: the target's ref for changes-patches (a fork PR's
                upstream is the pushed fork branch, which compares clean)
   --build-log  also run build-summary.sh on this osc build log (verdict only)
+  --cleaner-deviation  the spec-cleaner diff left is a documented deviation
+               (references/spec-cleaner.md "Checking a spec file"): name it.
+               The gate passes, prints the reason and keeps the diff for the
+               change review, which judges every hunk of it
   --full       print every gate's complete output (default: last 12 lines each;
                full output is always saved under $TMPDIR/gate-<pkg>/)
-Exit: 0 = every gate green, 1 = at least one red (VERDICT names them), 2 = usage,
-      or DIR is not a package checkout (no *.spec, no .osc/_package).
+  --review FILE  record the change review instead of running the gates: FILE's
+               first non-empty line starts with PASS and names "tree <key12>",
+               the tree the last GREEN run printed; needs that GREEN run
+Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
+the md5 and name of every file osc would commit (no _link, no _service:*), in
+~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
+it. A rerun of the same tree keeps its review.
+Exit: 0 = every gate green (--review: recorded), 1 = at least one red (VERDICT
+      names them; --review: the verdict file is not a PASS of this tree),
+      2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
+      3 = --review: no GREEN gate run of the current tree.
+
+The target comes first. Without `--target` it is Factory's devel project (`devel-of.sh`), or for a link into another `openSUSE:`/`SUSE:` project, that maintenance project. An osc checkout whose link origin (its own project when it is no link) is not the target is red: python-streamdeck sr#1392134 was a branch of hardware's 0.9.5 copy filed to devel:languages:python at 0.9.8, and the gate passed it because changes-guard compared against the branch's own committed copy. changes-guard now compares against the target's `.changes` and changes-patches against the target; a direct commit to the checkout's own project keeps the committed copy. `--target <own project>` is the deliberate override.
+
+`spec-header` is red on a second `# spec file for package` header (rpmcrab shipped one past three reviews) and on a `# Copyright` holder of the target's spec, other than SUSE or Novell, that the change drops (bluetui lost its maintainer's line to a format_spec_file run).
+
+A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the md5 and name of every file `osc ci` would commit, without `_link` and `_service:*` — in `~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json`, and prints its first 12 characters; a red run deletes the stamp. `--review FILE` records the change review against it: the first non-empty line starts with `PASS` and names that `tree <key12>`, as target-gate.sh's `--review` does for pool PRs. The stamp is a record for the submit tools, not proof: it stops a commit after a red gate, not a forged PASS.
 
 It also runs spec-cleaner itself, the canonical four-flag invocation with a fresh `-o` per spec, so the check happens in every build mode (OBS-ONLY included): an empty diff is green, any diff red unless `--cleaner-deviation REASON` names a documented deviation (the gate then passes, prints the reason and keeps the diff for the change review), and a missing or failing spec-cleaner is red, never "no diff".
 
