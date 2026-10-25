@@ -106,6 +106,8 @@ chmod +x "$W/open-pr.sh"
 printf '#!/bin/bash\nbash %s/open-pr.sh\n' "$W" > "$W/outer.sh"
 # Harmless now; the calls that run them rewrite them first.
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
+# A script with its own backoff: its sleep is the script's, not the call's.
+printf 'osc results\nsleep 120\n' > "$W/backoff.sh"
 # A short long.txt where a message substitution that changes directory must not look.
 printf 'Short.\n' > "$W/long.txt"
 # A FIFO blocks whoever opens it until a writer comes: never opened by the guard.
@@ -128,6 +130,8 @@ osc_co_ "$work/osc/$h:tester:branches:OBS_Maintained:x/x.openSUSE_Backports_SLE-
 osc_co_ "$work/osc/branch/x" "$h:tester:branches:openSUSE:Backports:SLE-15-SP7:Update"
 osc_co_ "$work/osc/devel/x" devel:tools
 osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$work/osc/spark/libpqxx/.osc/_package"
+osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
+  && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
 
 # ev <name>: the fixture event, placeholders filled in.
 ev() {
@@ -1031,6 +1035,26 @@ case_ sr-cleanup-submitpac       0 - ""
 case_ sr-cleanup-top-home        0 - ""
 case_ sr-cleanup-devel           0 - ""
 
+echo "--- a home branch is filed only to the project its link points at"
+# python-streamdeck: branched from a stale copy in hardware, filed to Factory's
+# devel project, so the request deleted five of the target's .changes entries.
+case_ request-link-sweep-copy    2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python: the branch carries"
+case_ request-link-slash         2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python"
+case_ request-link-checkout      2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python"
+case_ request-link-var           2 request-link "not to devel:languages:python"
+# Filed to Factory, the advice is the devel project first, then the forward.
+case_ request-link-branch-to-factory 2 request-link "python-goodlink, not to openSUSE:Factory: Factory takes a package from its devel project"
+case_ request-link-garbled       2 request-target-unknown "$h:tester:spark/garbled-src (the answer did not parse)"
+case_ request-link-to-target     0 - ""
+case_ request-link-same-project  0 - ""
+case_ request-link-no-link       0 - ""
+case_ request-link-devel-source  0 - ""
+# osc reads a project "." as the checkout's, and creq -a submit files the same request.
+case_ request-link-dot           2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck"
+case_ request-link-creq          2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck"
+case_ request-link-creq-delete   0 - ""
+case_ sr-target-creq             2 request-target "libpqxx's devel project is server:database:postgresql (Factory _meta), not server:database"
+
 echo "--- osc's questions are answered with options, never through a pipe"
 case_ osc-prompt-echo-sr         2 osc-prompt "osc sr with an answer on stdin (y)"
 case_ osc-prompt-yes-sr          2 osc-prompt "osc sr with an answer on stdin"
@@ -1039,6 +1063,55 @@ case_ osc-prompt-echo-accept     2 osc-prompt "osc rq with an answer on stdin (y
 case_ osc-prompt-devnull-sr      0 - ""
 case_ osc-prompt-message-stdin-ci 0 - ""
 case_ osc-ci-long-message        0 - ""
+# --yes answers them unread, as a pipe does: by any prefix argparse takes.
+case_ osc-yes-sr                 2 osc-yes "an osc request with --yes"
+case_ osc-yes-prefix             2 osc-yes "an osc request with --yes"
+case_ osc-yes-creq               2 osc-yes "an osc request with --yes"
+case_ osc-yes-var                2 osc-yes "an osc request with --yes"
+case_ osc-yes-python             2 osc-yes "an osc request with --yes"
+case_ osc-yes-message            0 - ""
+case_ osc-yes-echo               0 - ""
+case_ osc-yes-heredoc-commit     0 - ""
+# A line continuation joins the words, for the prefilter too.
+case_ prefilter-continuation-osc 2 osc-yes "an osc request with --yes"
+
+echo "--- a script runs under its own interpreter"
+case_ interpreter-python-sh      2 interpreter "python3 $W/iter.sh"
+case_ interpreter-bash-py        2 interpreter "bash $W/iter.py"
+case_ interpreter-sh-var         2 interpreter "python3 \$S/iter.sh"
+case_ interpreter-var-value      2 interpreter "python3 \$F ($W/iter.sh)"
+case_ interpreter-python-py      0 - ""
+case_ interpreter-bash-sh        0 - ""
+case_ interpreter-echo           0 - ""
+
+echo "--- a wait is on an event, not a fixed sleep of a minute or more"
+case_ sleep-long                 2 sleep "sleep 290"
+case_ sleep-minutes              2 sleep "sleep 5m"
+case_ sleep-sum                  2 sleep "sleep 30 30"
+case_ sleep-loop                 2 sleep "sleep 290"
+case_ sleep-timeout              2 sleep "sleep 290"
+case_ sleep-var                  2 sleep "sleep \$N"
+case_ sleep-path                 2 sleep "sleep 600"
+case_ prefilter-continuation-sleep 2 sleep "sleep 600"
+# GNU sleep's own spellings: a +, hex, leading blanks; an unknown operand counts 0.
+case_ sleep-plus                 2 sleep "sleep +600"
+case_ sleep-hex                  2 sleep "sleep 0x258"
+case_ sleep-blank                2 sleep "sleep  600"
+case_ sleep-unset-operand        2 sleep "sleep 600 \$UNSET"
+case_ sleep-substitution-operand 2 sleep "sleep 600"
+case_ sleep-busybox              2 sleep "sleep 600"
+case_ sleep-added                2 sleep "sleep 59 (118 s in this call)"
+# Inline code is the call's own; a script it runs keeps its backoff.
+case_ sleep-bash-c               2 sleep "sleep 120"
+case_ sleep-eval                 2 sleep "sleep 120"
+case_ sleep-short                0 - ""
+case_ sleep-short-loop           0 - ""
+case_ sleep-unknown              0 - ""
+case_ sleep-monitor              0 - ""
+case_ sleep-echo                 0 - ""
+case_ sleep-commit-message       0 - ""
+case_ sleep-background           0 - ""
+case_ sleep-in-script            0 - ""
 
 echo "--- deletes never take requests with them: one package at a time, no force"
 case_ rdelete-force-recursive     2 rdelete-pending "osc rdelete --force"

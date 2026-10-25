@@ -11,9 +11,15 @@ request that overrides osc's devel-project check or create one through the API,
 file a submit request to a project other than the package's devel project in
 Factory's _meta, or into an _aggregate or a _link of another project,
 file a submit request from a home subproject that does not have OBS delete
-its branch once accepted, feed an osc request or commit an answer on stdin
+its branch once accepted, or from a home branch whose package links to a
+project other than the target (a link within the branch's own project
+passes), feed an osc request or commit an answer on stdin
 (a pipe, here-string or heredoc; < /dev/null and a message read with -F -
-are fine), file a request whose message is too long (over 160 characters of prose, which
+are fine) or answer them unread with osc's own yes option, run a .sh file
+with Python or a .py file with a shell, wait in fixed sleeps of a minute or
+more in all (not in the Monitor tool, a background call or a script the call
+runs), file a request
+whose message is too long (over 160 characters of prose, which
 is every line but a "- " list item; a list line over 100; over 1000 in all),
 carries a work note for the user (build or sweep status, the session's tools),
 only says it forwards, or cannot be read, or write into a *:Update or *:Maintenance:* project outside
@@ -87,7 +93,7 @@ import sys
 # names the credential rules need where no path shows (gh, a netrc, curl -u).
 PREFILTER = re.compile(
     r"\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b"
-    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd)\b"
+    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep)\b"
     r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b"
     r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
     r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
@@ -114,9 +120,10 @@ DEADLINE = 50
 
 
 def unquoted(text):
-    """text as the shell joins its words: $'...' decoded, then quotes and
-    backslashes dropped (o''sc, "osc", \\osc and $'\\x6fsc' all read osc).
-    The opencode plugin carries the same function."""
+    """text as the shell joins its words: line continuations joined, $'...'
+    decoded, then quotes and backslashes dropped (o''sc, "osc", \\osc,
+    o\\<newline>sc and $'\\x6fsc' all read osc). The opencode plugin carries
+    the same function."""
 
     def esc(m):
         e = m.group(1)
@@ -124,6 +131,7 @@ def unquoted(text):
             return chr(min(int(e[1:], 16), 0x10FFFF))
         return chr(int(e, 8)) if e[0] in "01234567" else e
 
+    text = text.replace("\\\n", "")
     text = ANSI_C.sub(lambda m: ESCAPE.sub(esc, m.group(1)), text)
     return re.sub(r"[\"'\\]", "", text)
 

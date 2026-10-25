@@ -473,16 +473,22 @@ pool or unnamed repository is refused however it is sent, and elsewhere counts u
 call provably only reads), pushing to a branch that heads an open pool PR, writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject`, a request through the API (`/request?cmd=create`) , a submit request to a project other
+`--nodevelproject` or `--yes`, a request through the API (`/request?cmd=create`) , a submit request to a project other
 than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
-of another project, or one whose message
+of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branch whose
+package links to a project other than the target (a link within the branch's own project
+passes), or one whose message
 has over 160 characters of prose (every line but a `- ` list item), a list line over 100
 characters or over 1000 in all, a work note for the user (build or sweep status, the
 session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
 `echo`/`printf`/`cat` substitution; one it cannot read is refused), or writing into a
 `*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
 another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
-or one it cannot place. A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not
+or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
+fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
+Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
+`build-wait.sh`; a loop's body counts once, and `time.sleep` or `watch -n` are not judged).
+A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not
 judged, and a refusal redacts the credentials it would echo (URL userinfo,
 `Authorization`/`Bearer` values, `token=`).
 

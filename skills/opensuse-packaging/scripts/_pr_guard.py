@@ -238,6 +238,11 @@ OSC_NODEVEL = Rx(
     r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)"
     rf"(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
 )
+# --yes, or a prefix of it, on a submit request: it answers osc's questions.
+OSC_YES = Rx(
+    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)"
+    r"(?![-\w]).*?(?<![-\w])--y(?:es?)?(?![-\w])"
+)
 # A maintenance or update project, which takes no direct write; one under
 # home: is the user's own branch, whatever its name ends in.
 MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
@@ -389,6 +394,7 @@ WRAPPERS = {  # each with the options that take a value
     "sudo": "-u -g -C -D -h -p -r -t -U",
     "doas": "-u -C",
     "xargs": "-I -n -P -d -a -E -L -s",
+    "busybox": "",
 }
 # Per interpreter, the letters of a short-option cluster: code = inline program
 # (attached to the cluster, or the next word), module = runs no file, noexec =
@@ -479,6 +485,21 @@ MESSAGES = {
     "osc-prompt": "{0}: osc asks before it supersedes, forwards or commits past a "
     "conflict, and an answer through a pipe skips that decision. Name what you "
     "replace with -s ID, pass -m, run osc with </dev/null, and file a forward by hand.",
+    "osc-yes": "{0}: --yes answers osc's questions unread, superseding whatever "
+    "request it finds. Name what you replace with -s ID, pass -m, run osc with "
+    "</dev/null, and file a forward by hand.",
+    "request-link": "{0}: the branch carries that project's package and history, so "
+    "the request would rewrite the target's .changes with them. Branch from the "
+    "target (osc branch TARGET PKG) and submit from that branch.",
+    "request-link-factory": "{0}: Factory takes a package from its devel project, "
+    "which reviews it first. Submit the branch to the project it links to, and "
+    "forward from there once it is accepted.",
+    "interpreter": "{0}: a .sh file is a shell script and a .py file a Python one; "
+    "the wrong interpreter fails on its first lines, and a pipe hides that. Run "
+    "bash X.sh or python3 X.py, or the script by its path.",
+    "sleep": "{0}: a fixed wait holds the session while nothing is checked. Wait on "
+    "the event: scripts/obs-wait.py build PRJ PKG (or request ID), "
+    "scripts/build-wait.sh PGID LOG for a local build, or check back in a later call.",
     "rdelete-pending": "{0}: OBS revokes every request that still comes from what "
     "it deletes, new, review and declined alike, and a project takes its packages' "
     "requests with it. Delete one package at a time with plain osc rdelete PRJ PKG "
@@ -559,10 +580,13 @@ class Ctx:
     pushes, heredoc bodies, environment changes, variable values, the files the
     call writes, and memoised lookups."""
 
-    def __init__(self, cwd):
+    def __init__(self, cwd, tool=None, background=False):
         import time
 
         self.cwd = cwd
+        self.tool = tool  # the harness's tool name
+        self.background = background  # a call that does not hold the session
+        self.slept = 0.0  # the seconds this call's sleeps add up to
         self.remotes = {}
         self.prs = {}
         self.devel = {}  # Factory's devel project per package, "" for none
@@ -713,6 +737,8 @@ def osc_rules(seg, request=None):
         block("backports", "an osc request to openSUSE:Backports:SLE-16.x")
     if OSC_NODEVEL.search(seg if request is None else request):
         block("nodevelproject", "an osc request with --nodevelproject")
+    if OSC_YES.search(seg if request is None else request):
+        block("osc-yes", "an osc request with --yes")
 
 
 def long_prefix(a, names):
@@ -1046,32 +1072,64 @@ OWN_RULES = re.compile(r"(?:openSUSE|SUSE|home)(?::|$)")
 PKG_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*")
 
 
+def submit_operands(run):
+    """The operands of each submit a command files, slash-split as osc does:
+    osc sr's, or each `osc creq -a submit ...` group's (-a takes every word up
+    to the next option). Empty when it files none."""
+    sub, args = osc_sub(run)
+    args = [long_prefix(a, ("--message", "--file", "--action")) for a in args]
+    if sub in SUBMITS:
+        groups = [parse_opts(args, "mFrsaA", REQUEST_VALUED)[1]]
+    elif sub in ("creq", "createrequest"):
+        groups, cur, i = [], None, 0
+        while i < len(args):
+            a = args[i]
+            if a in ("-a", "--action"):
+                cur = []
+                groups.append(cur)
+            elif a.startswith("-") and a != "-":
+                cur = None
+                i += a in REQUEST_VALUED or len(a) == 2 and a[1] in "mFrs"
+            elif cur is not None:
+                cur.append(a)
+            i += 1
+        groups = [g[1:] for g in groups if g[:1] == ["submit"]]
+    else:
+        return []
+    return [[w for p in g for w in p.strip("/").split("/")] for g in groups]
+
+
+def spellings(w, ctx, cwd, project=True):
+    """A request operand's values, as the call sets them; a project "." is the
+    checkout's, as osc reads it."""
+    vals = (substitute(w, ctx, cwd) or []) if VARIABLE.search(w or "") else [w]
+    if not project:
+        return vals
+    return [checkout_package(ctx, cwd, "_project") if v == "." else v for v in vals]
+
+
 def request_target(run, ctx, cwd):
     """A submit request to a project other than the one Factory's _meta names
     as the package's devel project: a sweep through a project lists its
     aggregates, links and siblings' packages, and an SR filed to it for one of
     those goes to the wrong project."""
-    sub, args = osc_sub(run)
-    if sub not in SUBMITS:
-        return
-    args = [long_prefix(a, ("--message", "--file")) for a in args]
-    pos = parse_opts(args, "mFrsaA", REQUEST_VALUED)[1]
-    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
-    if len(words) >= 3:
-        dsts, pkgs = [words[2]], [words[3] if len(words) > 3 else words[1]]
-    elif words:
-        dsts = [words[0]]
-        pkgs = [words[1]] if len(words) == 2 else [checkout_package(ctx, cwd)]
-    else:
-        return  # osc picks the link's or devel project's target itself
+    for words in submit_operands(run):
+        if len(words) >= 3:
+            dsts, pkgs = [words[2]], [words[3] if len(words) > 3 else words[1]]
+        elif words:
+            dsts = [words[0]]
+            pkgs = [words[1]] if len(words) == 2 else [checkout_package(ctx, cwd)]
+        else:
+            continue  # osc picks the link's or devel project's target itself
+        target_rules(osc_sub(run)[0], dsts, pkgs, ctx, cwd)
 
-    def spell(w):  # a word's values, as the call sets them
-        return (substitute(w, ctx, cwd) or []) if VARIABLE.search(w or "") else [w]
 
-    for dst in (d for w in dsts for d in spell(w)):
+def target_rules(sub, dsts, pkgs, ctx, cwd):
+    """request_target's rules on one submit's targets."""
+    for dst in (d for w in dsts for d in spellings(w, ctx, cwd)):
         if not dst or OWN_RULES.match(dst):
             continue
-        for pkg in (p for w in pkgs for p in spell(w)):
+        for pkg in (p for w in pkgs for p in spellings(w, ctx, cwd, False)):
             if not pkg or not PKG_NAME.fullmatch(pkg):
                 block(
                     "request-target-unknown",
@@ -1208,6 +1266,53 @@ def request_cleanup(run, ctx, cwd):
             block("sr-cleanup", f"osc {sub} from {src}")
 
 
+HOME_PRJ = re.compile(r"home:[^:]+(?::.+)?")
+
+
+def request_link(run, ctx, cwd):
+    """A submit request from a home branch whose package links to a third
+    project: the branch holds that project's sources and .changes, so the
+    request rewrites the target's history with them (a branch of a stale
+    copy in another project, filed to the devel project). A link within the
+    branch's own project is its own source."""
+    sub = osc_sub(run)[0]
+    for words in submit_operands(run):
+        if len(words) >= 3:
+            srcs, pkgs, dsts = [words[0]], [words[1]], [words[2]]
+        elif words:
+            srcs = [checkout_package(ctx, cwd, "_project")]
+            pkgs, dsts = [checkout_package(ctx, cwd)], [words[0]]
+        else:
+            continue  # osc submits to the project the link points at
+        link_rules(sub, srcs, pkgs, dsts, ctx, cwd)
+
+
+def link_rules(sub, srcs, pkgs, dsts, ctx, cwd):
+    """request_link's rules on one submit's operands."""
+    for src in (s for w in srcs for s in spellings(w, ctx, cwd)):
+        if not src or not HOME_PRJ.fullmatch(src):
+            continue
+        for pkg in (p for w in pkgs for p in spellings(w, ctx, cwd, False)):
+            if not pkg or not PKG_NAME.fullmatch(pkg):
+                block(
+                    "request-target-unknown",
+                    f"which package osc {sub} from {src} sends",
+                )
+            root = source_listing(src, pkg, ctx)
+            link = root.find("linkinfo") if root is not None else None
+            lp = link.get("project") if link is not None else None
+            if not lp or lp == src:
+                continue
+            for dst in (d for w in dsts for d in spellings(w, ctx, cwd)):
+                if dst and dst != lp:
+                    origin = f"{lp}/{link.get('package') or pkg}"
+                    block(
+                        "request-link",
+                        f"{src}/{pkg} is a _link to {origin}, not to {dst}",
+                        "request-link-factory" if dst == "openSUSE:Factory" else None,
+                    )
+
+
 def factory_devel(pkg, ctx):
     """The devel project openSUSE:Factory's _meta names for pkg; "" when it
     names none or Factory has no such package. A failed, slow or unreadable
@@ -1253,22 +1358,20 @@ def factory_devel(pkg, ctx):
     return devel
 
 
-def target_kind(dst, pkg, ctx):
-    """("aggregate", None) or ("link", "PRJ/PKG") when dst/pkg only mirrors
-    another project's package (a _link within dst, or to Factory or SUSE, is
-    its own source), else (None, None). A 404 is a package dst does not carry
-    yet. A failed or unreadable lookup refuses."""
+def source_listing(prj, pkg, ctx):
+    """The parsed source listing of prj/pkg, None for a 404. A failed, slow or
+    unreadable lookup refuses."""
     import subprocess
     import time
     import xml.etree.ElementTree as ET
 
-    key = (dst, pkg)
+    key = ("listing", prj, pkg)
     if key in ctx.devel:
         return ctx.devel[key]
-    what = f"{dst}/{pkg}"
+    what = f"{prj}/{pkg}"
     stub = os.environ.get("PR_GUARD_META_DIR")
     if stub:
-        path = os.path.join(stub, "src", dst, pkg + ".xml")
+        path = os.path.join(stub, "src", prj, pkg + ".xml")
         text = open(path, encoding="utf-8").read() if os.path.exists(path) else None
     else:
         left = ctx.deadline - time.monotonic()
@@ -1279,7 +1382,7 @@ def target_kind(dst, pkg, ctx):
             )
         try:
             r = subprocess.run(
-                ["osc", "api", f"/source/{dst}/{pkg}"],
+                ["osc", "api", f"/source/{prj}/{pkg}"],
                 capture_output=True,
                 text=True,
                 timeout=left,
@@ -1289,12 +1392,27 @@ def target_kind(dst, pkg, ctx):
         if r.returncode != 0 and "HTTP Error 404" not in r.stderr:
             block("request-target-unknown", f"{what} (osc exited {r.returncode})")
         text = r.stdout if r.returncode == 0 else None
-    got = (None, None)
+    root = None
     if text is not None:
         try:
             root = ET.fromstring(text)
         except ET.ParseError:
             block("request-target-unknown", f"{what} (the answer did not parse)")
+    ctx.devel[key] = root
+    return root
+
+
+def target_kind(dst, pkg, ctx):
+    """("aggregate", None) or ("link", "PRJ/PKG") when dst/pkg only mirrors
+    another project's package (a _link within dst, or to Factory or SUSE, is
+    its own source), else (None, None). A 404 is a package dst does not carry
+    yet. A failed or unreadable lookup refuses."""
+    key = (dst, pkg)
+    if key in ctx.devel:
+        return ctx.devel[key]
+    root = source_listing(dst, pkg, ctx)
+    got = (None, None)
+    if root is not None:
         names = {e.get("name") for e in root.findall("entry")}
         link = root.find("linkinfo")
         if "_aggregate" in names:
@@ -2512,9 +2630,55 @@ def interpreter(run, lang, stdin, env, ctx, cwd, depth):
     if codes:
         return
     if operands and not from_stdin:
-        scan_file(operands[0], kind, ctx, cwd, depth, env, run=True)
+        word = operands[0]
+        held = substitute(word, ctx, cwd) if VARIABLE.search(word) else None
+        for path in [word, *(held or ())]:
+            if (lang, os.path.splitext(path)[1]) in (
+                ("python", ".sh"),
+                ("shell", ".py"),
+            ):
+                via = "" if path == word else f" ({path})"
+                block("interpreter", f"{os.path.basename(run[0])} {word}{via}")
+        scan_file(word, kind, ctx, cwd, depth, env, run=True)
     else:
         feed(stdin, kind, os.path.basename(run[0]), ctx, cwd, depth)
+
+
+# A sleep operand as GNU sleep reads it (strtod, then a unit): leading blanks,
+# a +, a decimal or hex number, or infinity.
+SLEEP_ARG = re.compile(
+    r"\s*\+?(?:(0x(?:[0-9a-f]+(?:\.[0-9a-f]*)?|\.[0-9a-f]+)(?:p[-+]?\d+)?)"
+    r"|((?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?)|(inf(?:inity)?))([smhd]?)",
+    re.I,
+)
+SLEEP_UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def seconds(a):
+    """The seconds a sleep operand stands for, or None for no number."""
+    m = SLEEP_ARG.fullmatch(a)
+    if not m:
+        return None
+    hexa, dec, inf, unit = m.groups()
+    n = float("inf") if inf else float.fromhex(hexa) if hexa else float(dec)
+    return n * SLEEP_UNIT[unit.lower()]
+
+
+def long_sleep(run, ctx, cwd):
+    """A fixed wait of a minute or more in one call: GNU sleep adds its
+    operands, and the call adds its sleeps. A variable this call set counts at
+    its longest value; an operand only the shell knows, or an option, as 0. A
+    loop's body counts once."""
+    this = 0.0
+    for a in run[1:]:
+        if a == "--":
+            continue
+        values = substitute(a, ctx, cwd) if VARIABLE.search(a) else [a]
+        this += max(seconds(v) or 0.0 for v in values or [""])
+    ctx.slept += this
+    if ctx.slept >= 60:
+        more = "" if ctx.slept == this else f" ({ctx.slept:g} s in this call)"
+        block("sleep", " ".join(["sleep", *run[1:]]) + more)
 
 
 def feed(stdin, kind, name, ctx, cwd, depth):
@@ -2854,6 +3018,7 @@ def guess(run, ctx, cwd, own=False):
             request_message(["osc", *rest], None, ctx, cwd)
             osc_writes(["osc", *rest], ctx, cwd)
             request_target(["osc", *rest], ctx, cwd)
+            request_link(["osc", *rest], ctx, cwd)
             request_cleanup(["osc", *rest], ctx, cwd)
             osc_deletes(["osc", *rest], ctx, cwd)
         if own:
@@ -3239,6 +3404,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         request_message(run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
         request_target(run, ctx, here)
+        request_link(run, ctx, here)
         request_cleanup(run, ctx, here)
         osc_deletes(run, ctx, here)
         osc_prompt(run, stdin)
@@ -3261,6 +3427,11 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         interpreter(run, "python", stdin, env, ctx, here, depth)
     elif name in ("node", "nodejs", "perl"):
         interpreter(run, name.replace("nodejs", "node"), stdin, env, ctx, here, depth)
+    elif name == "sleep":
+        # The call's own wait: Monitor exists to wait, a background call holds
+        # nothing, and a script's backoff is the script's.
+        if depth == 0 and ctx.tool != "Monitor" and not ctx.background:
+            long_sleep(run, ctx, here)
     elif name in ("source", ".") and len(run) > 1:
         scan_file(run[1], "shell", ctx, here, depth)
     elif "/" in run[0]:
@@ -3911,7 +4082,7 @@ def judge(ev):
     if not isinstance(inp, dict):
         return None
     cwd = ev.get("cwd") if isinstance(ev.get("cwd"), str) and ev.get("cwd") else None
-    ctx = Ctx(cwd)
+    ctx = Ctx(cwd, ev.get("tool_name"), inp.get("run_in_background") is True)
     try:
         if isinstance(inp.get("command"), str):
             shell_pass(inp["command"], ctx, cwd, 0)
