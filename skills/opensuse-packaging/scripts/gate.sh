@@ -634,9 +634,14 @@ if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
   fi
 elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
   against=.osc/_files                      # a direct commit: against the committed copy
-elif [ -z "$own" ] && ref=${gitbase:-$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)} && [ -n "$ref" ]; then
-  # a pushed fork branch holds the change itself: it says nothing about the target
-  if git merge-base --is-ancestor HEAD "$ref" 2>/dev/null; then
+elif [ -z "$own" ] && [ -n "$gitbase" ]; then
+  against="git:$gitbase"                   # named by the caller: always the base
+elif [ -z "$own" ] && ref=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$ref" ]; then
+  # a pushed fork or topic branch holds the change itself: it says nothing
+  # about the target. The remote's default branch does (uncommitted edits).
+  remote=$(git for-each-ref --format='%(upstream:remotename)' "$(git symbolic-ref -q HEAD)" 2>/dev/null)
+  default=""; [ -z "$remote" ] || default=$(git symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null)
+  if [ "$ref" != "$default" ] && git merge-base --is-ancestor HEAD "$ref" 2>/dev/null; then
     echo "note: $ref already holds HEAD: every patch counts as changed (a fork PR passes --git-base <target ref>)" >> "$log/patch-tags.txt"
   else
     against="git:$ref"
