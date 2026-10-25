@@ -1,0 +1,1 @@
+<request id="1390006" creator="tester"><action type="delete"><target project="devel:x" package="foo"/></action><state name="new"/></request>

@@ -4,7 +4,7 @@
 Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
 update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
 (tea, git-obs, a merge URL on pool, or elsewhere an API call that does not
-provably only read; gh is not judged), push to a branch that heads an open pool
+provably only read; gh only for comments), push to a branch that heads an open pool
 PR, write a target-gate.sh stamp, run an emulated osc build, file a request
 against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
@@ -38,6 +38,21 @@ put a credential on an HTTP tool's, tea api's or git-obs api's command line,
 or call the OBS or Gitea API with curl, wget or HTTPie instead of osc or
 git-obs.
 
+Some calls are left to the user instead (exit 0 with the hook's "ask"
+decision on stdout; a refusal anywhere in the call still wins): a comment or
+review posted with osc, tea, git-obs or gh (a close carrying one included), or
+an API write to comments or reviews; an osc request (rq, review) accept or
+approve, or the API's changestate to accepted, or a submit to openSUSE:Factory
+from a devel project, unless autoforward-gate.sh would call the package
+ELIGIBLE (the user's own request, no reviewer, the user's package or an
+unowned one in a project they maintain, Factory's devel project), and every
+decline and approvenew; an osc commit of a checkout whose files match no GREEN
+gate.sh run (or of a whole project checkout), or one after the call writes
+into its checkout; a submit request whose source files match no GREEN gate.sh
+run with the change review's PASS recorded, or in a call that writes anywhere.
+A failed lookup there asks too. Program code that runs osc itself (python3 -c) is not
+asked.
+
 A command line is judged one parsed command at a time, so what a command only
 carries -- a commit message, a grep pattern, an echo -- is not read as a
 command. Program text is read whole: every script a command runs (its path
@@ -65,7 +80,9 @@ Environment:
                       holds the Gitea response, a missing file reads as a 404
   PR_GUARD_META_DIR   offline stand-in for the submit-target lookups, for tests:
                       <pkg>.xml is Factory's _meta, src/<prj>/<pkg>.xml the
-                      target's source listing; a missing file reads as a 404
+                      target's source listing, api/<path, /?&= as _> any other
+                      GET ("@ERR" fails it); a missing file reads as a 404
+  PR_GUARD_OBS_USER   the OBS account the asks judge (default: osc whois)
 
 A call that matches nothing guarded is allowed without a lookup. Once one
 matches, anything the guard cannot establish -- a remote, branch or repository
@@ -73,7 +90,8 @@ held in a variable, a failed PR lookup or lookups past 40 s in all (under the
 hook's 60 s timeout), an unreadable script or stdin program, a script path it
 cannot expand, a malformed event, a missing _pr_guard.py -- refuses the call.
 
-Exit: 0 = allowed · 2 = refused, reason on stderr
+Exit: 0 = allowed (an ask prints the hook's JSON on stdout) · 2 = refused,
+reason on stderr
 """
 
 # Only what the prefilter needs is loaded up front: most calls stop at it, and
@@ -230,6 +248,16 @@ def main(argv):
         except Exception:
             why += "failed, "
         why += "so the call is refused."
+    if why and getattr(why, "ask", False):  # the harness asks the user
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": str(why),
+            }
+        }
+        print(json.dumps(out))
+        return 0
     if why:
         sys.stderr.write(why + "\n")
         return 2

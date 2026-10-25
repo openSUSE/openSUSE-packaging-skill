@@ -468,7 +468,7 @@ git-credential-* packages through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-merging any other src.opensuse.org PR the same ways (`gh` is not judged; a merge URL on a
+merging any other src.opensuse.org PR the same ways (`gh` only for comments; a merge URL on a
 pool or unnamed repository is refused however it is sent, and elsewhere counts unless the
 call provably only reads), pushing to a branch that heads an open pool PR, writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
@@ -487,10 +487,51 @@ another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `me
 or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
 fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
 Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
-`build-wait.sh`; a loop's body counts once, and `time.sleep` or `watch -n` are not judged).
-A `-h`/`--help` call of `tea`, `git-obs`, `git` or `osc` is not
+`build-wait.sh`; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
+to the background with `&` are added up, and a shell function's body, `$((…))`,
+`time.sleep` and `watch -n` are not judged).
+A `-h`/`--help` call of `tea`, `git-obs`, `git`, `osc` or `gh` is not
 judged, and a refusal redacts the credentials it would echo (URL userinfo,
 `Authorization`/`Bearer` values, `token=`).
+
+Some calls it leaves to you instead: it exits 0 and prints the hook's `ask` decision as
+JSON, and a refusal anywhere in the same call still wins. Claude Code shows the prompt,
+from a sub-agent too; a headless `-p` run refuses it. Neither opencode plugin can prompt,
+so both refuse the call with the guard's reason: approve it by running the command
+yourself. It asks before:
+
+- **a comment or review**: `osc comment create` or `delete`, `tea comment`, `tea pulls
+  approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr review
+  approve`/`decline`, `gh pr comment`, `gh issue comment`, `gh pr review`, a close that
+  carries a comment (`gh pr|issue close -c`, `git-obs pr close|reopen -m`), and a write through
+  `osc api`, `tea api`, `git-obs api` or `gh api` to `…/comments` or `…/reviews`;
+- **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
+  (also `rq` and `review`) `decline` and `approvenew`; its `accept` and `approve`, an
+  `osc api` `changestate` to accepted or `cmd=approve`, and a submit to
+  `openSUSE:Factory` from a project outside `home:`, unless the package passes the
+  guard's own copy of `autoforward-gate.sh`'s test (your own request with only submit
+  actions; no reviewer on package or project; you maintain the package, or it has no
+  maintainer and you maintain the project; Factory develops it there or links it there).
+  The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+- **a commit of a tree `gate.sh` did not judge**: an `osc commit` whose files (as osc
+  commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a
+  whole project checkout. Run `gate.sh`, then commit in the next call: a call that runs
+  both is judged before the gate writes its stamp;
+- **a request without a reviewed tree**: an `osc sr`, `submitpac` or `osc creq -a submit`
+  whose source files (one expanded-listing lookup) match no stamp that is GREEN and holds
+  the change review's PASS (`gate.sh DIR --review FILE`). A forward matches the stamp of
+  the branch the devel project accepted.
+
+A commit the stamps let through still asks when the call writes into its checkout before
+it (a redirection there, `sed`, `sort -o`, `cp`, `osc add`, an editor, a script, an
+interpreter, or any of them in a loop around the commit); a request asks when the call
+writes anything anywhere, a commit included: commit, and file, each in a call of its own.
+A lookup there that fails or runs past the budget asks too; the lookups go to the
+instance `osc -A` names, in one process through osc's library (one `osc api` each where
+the hook's `python3` cannot import it), and the account comes from `osc whois`, once per
+call and in memory only. The stamp checks are a speed
+bump against committing past a red gate, not a lock: a hand-written stamp is not caught,
+and program code that runs osc itself (`python3 -c`) is not asked.
 
 On the agent's own commands (not the scripts or program code they run) it also refuses
 reading a credential file — tea's, osc's, gh's, netrc, git's credential stores, osc's
@@ -510,7 +551,7 @@ options. The Read tool stays with the snippets.
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
 | `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook and harness config |
-| `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero |
+| `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero or asks |
 | `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools) |
 | `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
 | `opencode-v2/opencode.jsonc` | appended to the `permissions` array of the same file, instead of the 1.x block | the same backstop in 2.x's array form, plus `edit` denies for the guard, the harness configs and the stamps, and an `execute` deny |
@@ -534,7 +575,9 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 
    To update it later, read `diff -u` of each installed file against the skill's copy
    first, then re-run the `install`. Without `_pr_guard.py` every call the prefilter
-   matches is refused.
+   matches is refused. Re-pin the opencode plugin of step 3 in the same go: a plugin older
+   than the guard runs every call the guard only asks about (it reads the exit code, and
+   an ask exits 0), though it still refuses every call the guard refuses.
 
 2. Claude Code: once step 1 is done, add the PreToolUse entry of
    `claude/pr-guard-hook.json` to `hooks.PreToolUse` in `~/.claude/settings.json`, next to
@@ -741,7 +784,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   configs; nothing else of the Write and Edit judgement applies.
 - On opencode 2.x without the snippet's `execute` deny, Code Mode's `fetch` sends any
   request unjudged, a pulls API merge included.
-- A merge through the pulls API is judged whatever its host; `gh` is not judged, so
+- A merge through the pulls API is judged whatever its host; `gh` is judged only for comments, so
   `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
 - Braces are expanded in every word of a command that may read, quoted ones too (the parser

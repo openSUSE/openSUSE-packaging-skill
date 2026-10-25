@@ -6,9 +6,10 @@ import { join, normalize, resolve } from "node:path"
 
 // Pool PR guard for opencode 2.x: hands a matching shell, write or edit call to
 // the pinned pr-guard.py (and the _pr_guard.py beside it) and refuses the call
-// when the guard exits non-zero. Install: contrib/harness/README.md. A missing
-// guard or python3 refuses only the calls that match the prefilter. opencode 1.x
-// does not run this file; it takes ../opencode/pool-pr-guard.ts.
+// when the guard exits non-zero or asks for the user's go (this hook cannot
+// prompt). Install: contrib/harness/README.md. A missing guard or python3
+// refuses only the calls that match the prefilter. opencode 1.x does not run this
+// file; it takes ../opencode/pool-pr-guard.ts.
 
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
@@ -47,12 +48,15 @@ const watched = (dir: string) =>
 const home = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
 
 // The guard's verdict on one event, without blocking the service the sessions share:
-// undefined lets the call run, anything else is why it is refused.
+// undefined lets the call run, anything else is why it is refused. This hook
+// cannot prompt, so a call the guard leaves to the user ("ask") is refused too.
 const judge = (event: Record<string, unknown>) =>
   new Promise<string | undefined>((done) => {
     let err = ""
-    const child = spawn("python3", [GUARD], { stdio: ["pipe", "ignore", "pipe"] })
+    let out = ""
+    const child = spawn("python3", [GUARD], { stdio: ["pipe", "pipe", "pipe"] })
     const timer = setTimeout(() => child.kill("SIGKILL"), 60_000)
+    child.stdout.setEncoding("utf8").on("data", (d: string) => (out += d))
     child.stderr.setEncoding("utf8").on("data", (d: string) => (err += d))
     child.stdin.on("error", () => {})
     child.on("error", (e) => {
@@ -61,10 +65,21 @@ const judge = (event: Record<string, unknown>) =>
     })
     child.on("close", (code, signal) => {
       clearTimeout(timer)
-      done(code === 0 ? undefined : err.trim() || `pr-guard exited ${code ?? signal}`)
+      done(code === 0 ? asked(out) : err.trim() || `pr-guard exited ${code ?? signal}`)
     })
     child.stdin.end(JSON.stringify(event))
   })
+// The guard's ask on stdout, as a refusal: the user runs the command once they approve.
+const asked = (out: string) => {
+  if (!out.trim()) return undefined
+  try {
+    const d = JSON.parse(out)?.hookSpecificOutput
+    if (d?.permissionDecision !== "ask") return undefined
+    return `${d.permissionDecisionReason} (opencode cannot ask here: show the user the command; they run it once they approve)`
+  } catch {
+    return `pr-guard printed what it should not: ${out.trim().slice(0, 200)}`
+  }
+}
 
 const plugin: Plugin.Plugin = {
   id: "opensuse-packaging.pool-pr-guard",
