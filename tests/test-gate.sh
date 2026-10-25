@@ -178,6 +178,66 @@ out="$(bash "$GATE" "$work/notice-sub" 2>&1)"
 grep -qF "## spec-notices: rc=0" <<<"$out" && pass "one notice per subpackage License tag: green" \
   || { fail "one notice per subpackage License tag"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# Every Patch line needs a PATCH-* tag that names its file; an UPSTREAM tag
+# also says where upstream has it (a devel reviewer asked on sr#1385879).
+# ptag <name> <rc> <expected line> [<copy of pt-ok as a second spec>] < spec body
+ptag() {
+  mkdir -p "$work/pt-$1"; cat > "$work/pt-$1/p.spec"
+  [ -z "${4:-}" ] || cp "$work/pt-ok/p.spec" "$work/pt-$1/$4"
+  out="$(bash "$GATE" "$work/pt-$1" 2>&1)"
+  grep -qF "## patch-tags: rc=$2" <<<"$out" && grep -qF -- "$3" <<<"$out" && pass "patch-tags $1 (rc=$2)" \
+    || { fail "patch-tags $1: expected rc=$2 and '$3'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+ptag ok 0 "OK: every patch tagged by name" <<'EOF'
+Name:           p
+Version:        1.2
+# PATCH-FIX-OPENSUSE p-paths.patch -- use the FHS paths
+Patch0:         p-paths.patch
+# PATCH-FIX-UPSTREAM p-1.2-crash.patch gh#example/p#12 -- fix
+#   a crash on empty input
+Patch1:         %{name}-%{version}-crash.patch
+# PATCH-FIX-UPSTREAM p-race.patch -- from upstream commit 1763633e5f7a
+%if 0%{?suse_version} > 1600
+Patch2:         p-race.patch
+%endif
+# PATCH-NEEDS-REBASE p-old.patch -- does not apply to 1.2 yet
+Patch3:         p-old.patch
+#Patch4:        p-dead.patch
+# PATCH-FIX-UPSTREAM p-endian.patch fdo#63461 -- fix a crash across endianness
+Patch5:         p-endian.patch
+EOF
+ptag untagged 1 "p.spec:4: p-a.patch has no PATCH-* tag in the comment above it" <<'EOF'
+Name:           p
+# the paths of the old layout
+Patch0:         p-ok.patch
+Patch1:         p-a.patch
+EOF
+ptag wrong-name 1 "p.spec:3: the PATCH-* tag above p-b.patch does not name it" <<'EOF'
+Name:           p
+# PATCH-FIX-OPENSUSE p-a.patch -- use the FHS paths
+Patch1:         p-b.patch
+EOF
+ptag upstream-no-ref 1 "p.spec:3: the PATCH-*-UPSTREAM tag of p-a.patch cites no reference" <<'EOF'
+Name:           p
+# PATCH-FIX-UPSTREAM p-a.patch -- fixed upstream
+Patch0:         p-a.patch
+EOF
+ptag hash-name-no-ref 1 "the PATCH-*-UPSTREAM tag of p-1763633e5f7a.patch cites no reference" <<'EOF'
+Name:           p
+# PATCH-FEATURE-UPSTREAM p-1763633e5f7a.patch -- backport
+Patch0:         p-1763633e5f7a.patch
+EOF
+ptag no-patches 0 "OK: every patch tagged by name" <<'EOF'
+Name:           p
+Source0:        p-1.2.tar.gz
+EOF
+ptag multibuild 1 "p.spec:2: p-a.patch has no PATCH-* tag" ok-copy.spec <<'EOF'
+Name:           p
+Patch0:         p-a.patch
+EOF
+if grep -qE '^ok-copy\.spec:[0-9]+:' <<<"$out"; then fail "patch-tags multibuild: the tagged spec was flagged"
+else pass "patch-tags multibuild: only the bad spec is named"; fi
+
 # spec-cleaner runs in the gate, every time: a fake on PATH stands in for it.
 # SC_MODE: same (writes the spec back unchanged), group (adds a Group: line),
 # fail (exits 1). An absent tool is red, never a pass.

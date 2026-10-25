@@ -119,7 +119,8 @@ case_ cve-patch-named-clean 0 "OK: clean" --entries 1 "$work/cve-patch-named.cha
 entry cve-fix-other-id.changes "- Fix CVE-2026-1111; CVE-2026-2222 remains unfixed"
 case_ cve-fix-other-id 1 "cve-fix-other-id.changes:4: bullet names a CVE id as not fixed" --entries 1 "$work/cve-fix-other-id.changes"
 entry cve-not-affected.changes "- Refresh the vendored dependencies:" \
-  "  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11 fix" \
+  "  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11" \
+  "    fix" \
   "  * CVE-2025-1111 (boo#2): is not affected by this, ships foo 1.2"
 case_ cve-not-affected-clean 0 "OK: clean" --entries 1 "$work/cve-not-affected.changes"
 
@@ -189,6 +190,18 @@ entry long-line.changes "- Drop dead Source1 inscript2-20210820.tar.gz: its rele
 case_ long-line 1 "long-line.changes:4: line is 123 characters: wrap it" --entries 1 "$work/long-line.changes"
 entry long-word.changes "- Add 0001-meson-build-allow-overriding-the-default-plugin-search-path-for-tests.patch:" "  fix the test run"
 case_ long-word-clean 0 "OK: clean" --entries 1 "$work/long-word.changes"
+# The width is osc vc's 67, not 80: a 68-column sub-bullet that wraps is red
+# (sr#1392409's review caught a 69-column one by hand).
+entry wrap-68.changes "- Drop obsolete patches:" "  * DevIL-1.7.8-libpng14.patch (upstream uses the current libpng 16)"
+case_ wrap-68 1 "wrap-68.changes:5: line is 68 characters: wrap it at 67" --entries 1 "$work/wrap-68.changes"
+entry wrap-67.changes "- Drop obsolete patches:" "  * DevIL-1.7.8-libpng14.patch (upstream uses the current libpng16)"
+case_ wrap-67-clean 0 "OK: clean" --entries 1 "$work/wrap-67.changes"
+# A word that cannot fit at its indentation may run over; so may an old entry.
+entry wrap-word.changes "- Refresh patches:" "  * 0001-build-let-the-test-suite-find-plugins-in-the-builddir-1.patch"
+case_ wrap-word-clean 0 "OK: clean" --entries 1 "$work/wrap-word.changes"
+{ printf '%s\nTue Sep 15 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n' "$SEP"
+  cat "$work/wrap-68.changes"; } > "$work/wrap-old.changes"
+case_ wrap-old-entry-not-judged 0 "OK: clean" --entries 1 "$work/wrap-old.changes"
 
 # --author: the identity osc vc writes. An entry that shares its name or its
 # address must carry both (sr#1385844 shipped the git address under the name).
@@ -240,7 +253,7 @@ full-id|0|- Update to 2.0 (security release):^  * CVE-2026-1234: heap overflow i
 cves-with-ids|0|- Security fixes for two CVEs: CVE-2026-1234,^  CVE-2026-5678
 bug-ref|0|- Fix a vulnerability in the HTTP parser (boo#1284176)
 ghsa|0|- Fix a vulnerability in the parser (GHSA-abcd-efgh-ijkl)
-not-affected|0|- Refresh the vendored crates:^  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11 fix
+not-affected|0|- Refresh the vendored crates:^  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11^    fix
 no-cve|0|- Fix a heap overflow in the parser (no CVE assigned)
 hardening|0|- Build with -D_FORTIFY_SOURCE=3 for stronger hardening
 security-policy|0|- Ship the upstream security policy file
