@@ -21,9 +21,12 @@
 #      target, any source, any target project): catches what the anchored
 #      queries filter out — an SR filed straight at the target from a
 #      non-devel source, or one aimed at another target entirely (a Leap /
-#      Backports submission, a staging project). A hit on the devel or target
-#      project counts as in flight (check 3's STOP); any other hit is printed
-#      for the report — for a fix leg it names a tree the fixes may have to
+#      Backports submission, a staging project). Submit requests only: a
+#      set_bugowner, add_role or delete request moves no code and is not an
+#      update in flight. A hit on the target project counts as in flight
+#      (check 3's STOP); one on the devel project is check 2's incoming SR,
+#      already listed and deduped out below. Any other hit is printed for
+#      the report — for a fix leg it names a tree the fixes may have to
 #      ride on — and does not change the verdict.
 #
 # Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U] [--from PRJ]
@@ -193,7 +196,11 @@ try:
 except ET.ParseError:
     sys.exit(2)
 for r in root.findall("request"):
-    a = r.find("action"); s = a.find("source") if a is not None else None
+    a = r.find("action")
+    # Only a submit moves code: a set_bugowner/add_role/delete request is
+    # not an update in flight, whatever the query returned.
+    if a is None or a.get("type") != "submit": continue
+    s = a.find("source")
     t = a.find("target") if a is not None else None
     st = r.find("state")
     sp = s.get("project") if s is not None else "?"
@@ -280,8 +287,10 @@ fi
 # only, and the outgoing one is filtered to devel sources — an SR filed
 # straight at the target from a non-devel source, or aimed at another target
 # entirely, escapes both. One /search/request sweep on the package as the
-# action target sees every open submit request for it, from anyone.
-oapi "/search/request?match=action/target/@package=%27$epkg%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
+# action target sees every open submit request for it, from anyone. The
+# match is submit-only, and parse_srs drops a non-submit action a second
+# time: a set_bugowner request (sr#1383747, for runc) is not in flight.
+oapi "/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27$epkg%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
   || fail "could not query other SRs targeting $pkg"
 sweep="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (sweep)"
 seen=" $(printf '%s\n%s\n' "$incoming" "$outgoing" | awk '{print $2}' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')"
@@ -291,7 +300,9 @@ while IFS= read -r line; do
   sid="${line#SR }" ; sid="${sid%% *}"
   case "$seen" in *" $sid "*) continue ;; esac
   tgt="$(printf '%s' "$line" | sed 's/.* -> \([^ ]*\) by .*/\1/')"
-  if [ "$tgt" = "$devel" ] || [ "$tgt" = "$target" ]; then
+  # No $devel arm: a submit to devel/$pkg is check 2's incoming SR, already
+  # in $seen and deduped above, so only the target project can block here.
+  if [ "$tgt" = "$target" ]; then
     sweep_blocking="${sweep_blocking:+$sweep_blocking
 }$line"
   else
@@ -299,7 +310,7 @@ while IFS= read -r line; do
 }$line"
   fi
 done <<< "$sweep"
-[ -n "$sweep_blocking" ] && { echo "sweep: SR(s) in flight at $devel/$target from a non-devel source:"; printf '%s\n' "$sweep_blocking" | sed 's/^/    /'; }
+[ -n "$sweep_blocking" ] && { echo "sweep: SR(s) in flight at $target from a non-devel source:"; printf '%s\n' "$sweep_blocking" | sed 's/^/    /'; }
 [ -n "$sweep_other" ] && { echo "sweep: SR(s) targeting $pkg in other projects (report them — a fix leg may have to ride on one):"; printf '%s\n' "$sweep_other" | sed 's/^/    /'; }
 [ -z "$sweep_blocking" ] && [ -z "$sweep_other" ] && echo "sweep SRs:      none"
 
