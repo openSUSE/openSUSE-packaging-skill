@@ -188,8 +188,11 @@ EOF
 # A line that could have been wrapped is red; one unbreakable word is not.
 entry long-line.changes "- Drop dead Source1 inscript2-20210820.tar.gz: its releases.pagure.org URL 404s, and it was only unpacked for old releases."
 case_ long-line 1 "long-line.changes:4: line is 123 characters: wrap it" --entries 1 "$work/long-line.changes"
-entry long-word.changes "- Add 0001-meson-build-allow-overriding-the-default-plugin-search-path-for-tests.patch:" "  fix the test run"
+entry long-word.changes "- Add patch, which fixes the test run:" "  0001-meson-build-allow-overriding-the-default-plugin-search-path-for-tests.patch"
 case_ long-word-clean 0 "OK: clean" --entries 1 "$work/long-word.changes"
+# The words before an unbreakable one could have wrapped: break before it.
+entry long-word-tail.changes "- Refresh the following patch for the new tree, which moved the plugin loader: 0001-meson-build-allow-overriding-the-default-plugin-search-path.patch"
+case_ long-word-tail 1 "long-word-tail.changes:4: line is 149 characters: wrap it at 67" --entries 1 "$work/long-word-tail.changes"
 # The width is the .changes convention's 67, not 80: a 68-column sub-bullet
 # that wraps is red (sr#1392409's review caught a 69-column one by hand).
 entry wrap-68.changes "- Drop obsolete patches:" "  * DevIL-1.7.8-libpng14.patch (upstream uses the current libpng 16)"

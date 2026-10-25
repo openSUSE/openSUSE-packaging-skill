@@ -28,8 +28,8 @@
 #                openSUSE:Factory from Factory's devel project is fine.
 #                changes-guard then compares against the target's .changes and
 #                changes-patches against the target
-#   --git-base   git checkout: the target's ref for changes-patches (a fork PR's
-#                upstream is the pushed fork branch, which compares clean)
+#   --git-base   git checkout: the target's ref for changes-patches and patch-tags
+#                (a fork PR's upstream is the pushed fork branch, which compares clean)
 #   --build-log  also run build-summary.sh on this osc build log (verdict only)
 #   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
 #                (references/spec-cleaner.md "Checking a spec file"): name it.
@@ -275,14 +275,8 @@ def untouched(against):
     return same
 
 
-def tags(spec, against="strict"):
-    try:
-        with open(spec, encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
-    except OSError as e:
-        print("%s: cannot read it: %s" % (spec, e.strerror))
-        return 1
-    same = untouched(against)
+def verdicts(lines):
+    # (line number, patch file, what is wrong with its tag or None) per Patch line
     macros = {}
     for line in lines:
         m = re.match(r"(name|version)\s*:\s*(\S+)", line, re.I)
@@ -303,7 +297,7 @@ def tags(spec, against="strict"):
     def base(s):  # a URL Patch names its file after #/, else by its last path part
         return s.split("#/")[-1] if "#/" in s else s.rsplit("/", 1)[-1]
 
-    bad = 0
+    out = []
     for i, line in enumerate(lines):
         m = PATCH.match(line)
         if not m:
@@ -327,10 +321,34 @@ def tags(spec, against="strict"):
         # the reference is this tag's: from its line down, plus the Patch value
         elif "UPSTREAM" in TAG.search(block[naming[-1]]).group(0) and not cited(block[naming[-1]:] + [m.group(1)], names):
             why = "the PATCH-*-UPSTREAM tag of %s cites no reference (URL, gh#owner/repo#N, commit, bug id like bsc#N)" % f
-        if why and same(f):  # shipped as is: whoever changes it next tags it
-            print("note: %s:%d: %s (unchanged from the target)" % (spec, i + 1, why))
+        out.append((i + 1, f, why))
+    return out
+
+
+def read_lines(path):
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read().splitlines()
+
+
+def tags(spec, against="strict", basespec=""):
+    try:
+        lines = read_lines(spec)
+    except OSError as e:
+        print("%s: cannot read it: %s" % (spec, e.strerror))
+        return 1
+    same = untouched(against)
+    kept = set()  # patches the target's spec tags correctly: losing that tag is a change
+    if basespec:
+        try:
+            kept = {f for _, f, why in verdicts(read_lines(basespec)) if why is None}
+        except OSError:
+            same = untouched("strict")
+    bad = 0
+    for n, f, why in verdicts(lines):
+        if why and same(f) and f not in kept:  # shipped as is: whoever changes it next tags it
+            print("note: %s:%d: %s (unchanged from the target)" % (spec, n, why))
         elif why:
-            print("%s:%d: %s" % (spec, i + 1, why))
+            print("%s:%d: %s" % (spec, n, why))
             bad = 1
     return bad
 
@@ -617,11 +635,18 @@ if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
 elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
   against=.osc/_files                      # a direct commit: against the committed copy
 elif [ -z "$own" ] && ref=${gitbase:-$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)} && [ -n "$ref" ]; then
-  against="git:$ref"
+  # a pushed fork branch holds the change itself: it says nothing about the target
+  if git merge-base --is-ancestor HEAD "$ref" 2>/dev/null; then
+    echo "note: $ref already holds HEAD: every patch counts as changed (a fork PR passes --git-base <target ref>)" >> "$log/patch-tags.txt"
+  else
+    against="git:$ref"
+  fi
 fi
 for s in "${specs[@]}"; do
   [ -e "$s" ] || continue
-  py tags "$s" "$against" >> "$log/patch-tags.raw" || rc=1
+  # the target's spec (spec-header saved it): a patch it tags correctly must stay tagged
+  b=""; [ "$against" = strict ] || [ ! -e "$log/base.$s" ] || b="$log/base.$s"
+  py tags "$s" "$against" "$b" >> "$log/patch-tags.raw" || rc=1
 done
 # notes first, so the red lines stay in the 12 lines show prints
 { grep '^note:' "$log/patch-tags.raw"; grep -v '^note:' "$log/patch-tags.raw"; } >> "$log/patch-tags.txt" 2>/dev/null
