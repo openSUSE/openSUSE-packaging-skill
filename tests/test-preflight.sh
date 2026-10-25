@@ -67,6 +67,7 @@ XPATH=""
 case_() {
   local name=$1 rc=$2 msg=$3 mut=$4 dir="$work/$1" out got; shift 4
   cp -a "$B" "$dir"
+  # shellcheck disable=SC2030  # rebinding B to the copy is the point; the parent's B stays the pristine tree
   (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   mkdir -p "$dir/tmp"
   out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" foo "$@" 2>&1)"; got=$?
@@ -133,7 +134,9 @@ grep -qF "VERDICT: FORWARD" <<<"$LAST" && ! grep -q "2000005" <<<"$LAST" \
 # printed "none" while sr#1386760 was open). No fixtures exist for foo++, so
 # every read 404s and the run ends PROCEED; what is asserted is the calls
 # log — the URLs osc was asked for carry %2B, never a raw +.
-dir="$work/pkg-plus"; cp -a "$B" "$dir"; mkdir -p "$dir/tmp"
+dir="$work/pkg-plus"
+# shellcheck disable=SC2031  # B is rebound only inside the mutation subshell; here it is still the pristine tree
+cp -a "$B" "$dir"; mkdir -p "$dir/tmp"
 out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="$work/bin:$PATH" bash "$PF" 'foo++' 2>&1)"; got=$?
 calls="$(cat "$dir/calls")"
 [ "$got" = 0 ] && grep -qF 'package=foo%2B%2B' <<<"$calls" && grep -qF 'target/@package=%27foo%2B%2B%27' <<<"$calls" \
