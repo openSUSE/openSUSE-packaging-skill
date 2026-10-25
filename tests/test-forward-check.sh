@@ -230,14 +230,17 @@ absent "openSUSE:Factory/fwd" "--mine skips openSUSE: targets"
 case_ mine-unknown   3 "UNKNOWN: cannot list the requests" "echo @ERR > search/mine" --mine
 case_ mine-none      0 "# 0 package(s): none" "rm search/mine" --mine
 
-echo "--- several packages: pairs, prj/pkg and --batch"
-case_ pairs          4 "# 2 package(s): 1 DUE, 1 FORWARDED" : devel:a fwd devel:a due
-grep -qF "devel:a/fwd  FORWARDED 3000" <<<"$LAST" && grep -qF "devel:a/due  DUE" <<<"$LAST" \
-  && pass "pairs: one row per pair" || fail "pairs: $LAST"
+echo "--- several packages: prj/pkg words and --batch; one bare pair only alone"
 case_ slash          0 "devel:a/fwd  FORWARDED 3000 by maint review current" : devel:a/fwd
-case_ mixed          4 "# 2 package(s): 1 DUE, 1 FORWARDED" : devel:a/fwd devel:a due
-case_ duplicate      0 "# 1 package(s): 1 FORWARDED" : devel:a fwd devel:a/fwd
-case_ odd-words      2 "'devel:a' has no package" : devel:a fwd devel:a
+case_ slashes        4 "# 2 package(s): 1 DUE, 1 FORWARDED" : devel:a/fwd devel:a/due
+grep -qF "devel:a/fwd  FORWARDED 3000" <<<"$LAST" && grep -qF "devel:a/due  DUE" <<<"$LAST" \
+  && pass "slashes: one row per package" || fail "slashes: $LAST"
+# "prj p1 p2 p3" read as pairs checked p2/p3 and said WRONG-DEVEL.
+case_ bare-list      2 "not <project>/<package>: 'devel:a'" : devel:a fwd due infac
+case_ bare-pairs     2 "not <project>/<package>: 'devel:a'" : devel:a fwd devel:a due
+case_ mixed          2 "not <project>/<package>: 'devel:a'" : devel:a/fwd devel:a due
+case_ duplicate      0 "# 1 package(s): 1 FORWARDED" : devel:a/fwd devel:a/fwd
+case_ odd-words      2 "not <project>/<package>: 'devel:a'" : devel:a fwd devel:a
 case_ empty-half     2 "not <project>/<package>: 'devel:a/'" : devel:a/
 case_ batch          4 "# 3 package(s): 1 DUE, 1 FORWARDED, 1 IN-FACTORY" \
   "printf '# a comment\n\ndevel:a\tfwd\ndevel:a due\ndevel:a/infac\n' > list" --batch list
@@ -247,13 +250,13 @@ case_ batch-extra    2 "--batch list:1: more than one package" "printf 'devel:a 
 case_ batch-and-pair 2 "give <devel-project> <package>, --batch FILE, or --mine" "printf 'devel:a fwd\n' > list" --batch list devel:a due
 # A package the own-request search cannot answer for is UNKNOWN on its own row:
 # the others are still decided.
-case_ own-search-fails 3 "devel:a/pend  UNKNOWN" "echo @ERR > search/own-devel:a-pend" devel:a pend devel:a fwd
+case_ own-search-fails 3 "devel:a/pend  UNKNOWN" "echo @ERR > search/own-devel:a-pend" devel:a/pend devel:a/fwd
 grep -qF "devel:a/fwd  FORWARDED 3000" <<<"$LAST" && pass "own-search-fails: the other package is decided" \
   || fail "own-search-fails: $LAST"
 
 echo "--- --deadline: what it stops is UNKNOWN, and the run says it is incomplete"
 case_ deadline-zero  3 "# INCOMPLETE: 2 not looked up (--deadline reached; raise it, or ask for these): devel:a/due, devel:a/fwd" \
-  : devel:a fwd devel:a due --deadline 0
+  : devel:a/fwd devel:a/due --deadline 0
 grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
   && [ "$(tail -2 <<<"$LAST" | head -1 | cut -c1-12)" = "# 2 package(" ] \
   && pass "deadline-zero: rows UNKNOWN, the count before the INCOMPLETE line" || fail "deadline-zero: $LAST"
@@ -265,6 +268,9 @@ case_ deadline-cut   3 "# INCOMPLETE: 1 not looked up" \
 grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
   && pass "deadline-cut: the package is UNKNOWN, not DUE" || fail "deadline-cut: $LAST"
 case_ deadline-negative 2 "--deadline takes 0 or more seconds" : devel:a due --deadline -1
+# --mine runs in the background without a default cut (222 of 349 read as
+# UNKNOWN at 80 s); an explicit --deadline still applies.
+case_ mine-explicit-deadline 3 "UNKNOWN: cannot list the requests (--deadline reached)" : --mine --deadline 0
 # Killed by a harness timeout (SIGTERM), it still says the output is cut off.
 d="$work/sigterm"; cp -a "$work/base" "$d"; printf '@SLOW\n<collection matches="0"/>\n' > "$d/search/factory-due"
 ( cd "$d" && FIX=$d PATH="$work/bin:$PATH" exec python3 "$FC" devel:a due > "$d/out" 2>&1 ) &

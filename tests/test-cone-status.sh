@@ -39,6 +39,12 @@ commit() {
   printf '<revisionlist><revision rev="3"><time>%s</time></revision></revisionlist>\n' \
     "$(( $(date +%s) - $3 ))" > "$1/_source_${P}_$2__history_limit_1"
 }
+# ended <case dir> <seconds ago>: the repo/arch's newest build job ended then
+# shellcheck disable=SC2317,SC2329  # called from case setups, through eval
+ended() {
+  printf '<jobhistlist><jobhist package="dep" endtime="%s"/></jobhistlist>\n' \
+    "$(( $(date +%s) - $2 ))" > "$1/_build_${P}_standard_x86_64__jobhistory_limit_1"
+}
 # case_ <name> <rc> <expected line> <setup: result/commit calls on $d>
 case_() {
   local name=$1 rc=$2 msg=$3 out got; d="$work/$1"; mkdir -p "$d"
@@ -52,19 +58,30 @@ case_() {
 case_ green 0 "summary: 2 ok / 0 failed / 0 in-flight" 'result "$d" a=succeeded b=succeeded'
 case_ building 1 "summary: 1 ok / 0 failed / 1 in-flight" 'result "$d" a=succeeded b=building'
 case_ settled-failure 2 "summary: 1 ok / 1 failed / 0 in-flight" 'result "$d" a=succeeded b=failed'
-# Packages that only wait for a worker: polling does not shorten that.
-case_ queued-stuck 4 "QUEUED-STUCK: 2 scheduled 30+ min after the last commit, the rest green" \
-  'result "$d" a=succeeded b=scheduled c=scheduled x=excluded; commit "$d" b 3600; commit "$d" c 7200'
+# Packages that only wait for a worker: polling does not shorten that. Stuck
+# once neither a commit nor a finished job in the repo/arch came for 30 min.
+case_ queued-stuck 4 "QUEUED-STUCK: 2 scheduled 30+ min with no commit or finished job there, the rest green" \
+  'result "$d" a=succeeded b=scheduled c=scheduled x=excluded; commit "$d" b 3600; commit "$d" c 7200; ended "$d" 3600'
+# Blocked on a dependency for an hour, scheduled since it built two minutes ago.
+case_ queued-after-dep 1 "summary: 1 ok / 0 failed / 1 in-flight" \
+  'result "$d" a=succeeded b=scheduled; commit "$d" b 3600; ended "$d" 120'
+# A flavor (b:test) has no _history of its own: its package's commit counts.
+case_ queued-flavor 4 "QUEUED-STUCK: 1 scheduled" \
+  'result "$d" a=succeeded b:test=scheduled; commit "$d" b 3600; ended "$d" 3600'
+case_ queued-no-jobs 4 "QUEUED-STUCK: 1 scheduled" \
+  'result "$d" a=succeeded b=scheduled; commit "$d" b 3600; echo "<jobhistlist/>" > "$d/_build_${P}_standard_x86_64__jobhistory_limit_1"'
+case_ queued-jobs-unreadable 1 "NOTE: a last-commit or job time could not be read — treated as in flight" \
+  'result "$d" a=succeeded b=scheduled; commit "$d" b 3600'
 case_ queued-fresh 1 "summary: 1 ok / 0 failed / 2 in-flight" \
-  'result "$d" a=succeeded b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 600'
-case_ queued-unreadable 1 "NOTE: a last-commit time could not be read — treated as in flight" \
-  'result "$d" a=succeeded b=scheduled; echo "<revisionlist/>" > "$d/_source_${P}_b__history_limit_1"'
+  'result "$d" a=succeeded b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 600; ended "$d" 3600'
+case_ queued-unreadable 1 "NOTE: a last-commit or job time could not be read — treated as in flight" \
+  'result "$d" a=succeeded b=scheduled; ended "$d" 3600; echo "<revisionlist/>" > "$d/_source_${P}_b__history_limit_1"'
 case_ queued-none-green 1 "summary: 0 ok / 0 failed / 2 in-flight" \
-  'result "$d" b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 3600'
+  'result "$d" b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 3600; ended "$d" 3600'
 case_ queued-with-failure 1 "summary: 1 ok / 1 failed / 1 in-flight" \
-  'result "$d" a=succeeded b=scheduled f=failed; commit "$d" b 3600'
+  'result "$d" a=succeeded b=scheduled f=failed; commit "$d" b 3600; ended "$d" 3600'
 case_ queued-with-building 1 "summary: 1 ok / 0 failed / 2 in-flight" \
-  'result "$d" a=succeeded b=scheduled g=building; commit "$d" b 3600'
+  'result "$d" a=succeeded b=scheduled g=building; commit "$d" b 3600; ended "$d" 3600'
 case_ no-result 3 "no build result for $P standard/x86_64" ':'
 
 if [ "$fails" -eq 0 ]; then echo "ALL PASSED"; else echo "$fails FAILED"; exit 1; fi

@@ -16,9 +16,11 @@
 #      in flight — an unrecognized status code counts as settled-failure, NOT
 #      pending, so a stuck package can't keep the loop spinning forever
 #   3  no answer: usage error, or the _meta/_result lookup failed or did not parse
-#   4  QUEUED-STUCK: the only packages left are "scheduled", each 30+ min after
-#      its last commit, and the rest succeeded — they wait for a worker, which
-#      no polling shortens: report it and check back later. NOT green: every
+#   4  QUEUED-STUCK: the only packages left are "scheduled", the rest succeeded,
+#      and 30+ min have passed since each one's last commit and since the
+#      last build job in the repo/arch ended (a package scheduled because its
+#      dependency just built is not stuck) — they wait for a worker, which no
+#      polling shortens: report it and check back later. NOT green: every
 #      package must be green before anything is filed
 #
 # Usage: cone-status.sh <project> [repo] [arch]
@@ -98,24 +100,34 @@ print(f"summary: {green} ok / {failed} failed / {pending} in-flight  (of {total}
 for code, pkg in unknown:
     print(f"NOTE: unknown code {code!r} for {pkg}/{repo}/{arch} — counted as settled failure")
 
-def age(pkg):
-    """Seconds since pkg was last committed, None when that cannot be read."""
+def when(path, find, attr=None):
+    """An epoch time from an osc api answer: the text at find, or its attr
+    (0 when the list is empty); None when it cannot be read."""
     try:
-        out = subprocess.run(["osc", "api", f"/source/{prj}/{pkg}/_history?limit=1"],
-                             capture_output=True, text=True, timeout=30).stdout
-        return time.time() - int(ET.fromstring(out).findtext("revision/time"))
-    except (subprocess.TimeoutExpired, OSError, ET.ParseError, TypeError, ValueError):
+        out = subprocess.run(["osc", "api", path], capture_output=True, text=True,
+                             timeout=30).stdout
+        hits = ET.fromstring(out).findall(find)
+        if attr:
+            return int(hits[-1].get(attr) or 0) if hits else 0
+        return int(hits[-1].text)
+    except (subprocess.TimeoutExpired, OSError, ET.ParseError, TypeError, ValueError, IndexError):
         return None
 
 queued = [pkg for code, pkg in rows if code == "scheduled"]
 if pending and not dirty and not failed and green and len(queued) == pending:
-    with ThreadPoolExecutor(max_workers=8) as ex:   # one call per package
-        ages = list(ex.map(age, queued))
-    if None in ages:
-        print("NOTE: a last-commit time could not be read — treated as in flight")
-    elif min(ages) >= 30 * 60:
-        print(f"QUEUED-STUCK: {len(queued)} scheduled 30+ min after the last commit, "
-              "the rest green — not green: report it and check back later")
+    # a dependency that just built is why a package turns from blocked to
+    # scheduled: the newest finished job in the repo/arch counts like a commit
+    times = [when(f"/build/{prj}/{repo}/{arch}/_jobhistory?limit=1", "jobhist", "endtime")]
+    if times[0] is not None and time.time() - times[0] >= 30 * 60:
+        names = sorted({pkg.split(":")[0] for pkg in queued})   # a flavor has no _history
+        with ThreadPoolExecutor(max_workers=8) as ex:            # one call per package
+            times += ex.map(lambda p: when(f"/source/{prj}/{p}/_history?limit=1",
+                                           "revision/time"), names)
+    if None in times:
+        print("NOTE: a last-commit or job time could not be read — treated as in flight")
+    elif time.time() - max(times) >= 30 * 60:
+        print(f"QUEUED-STUCK: {len(queued)} scheduled 30+ min with no commit or finished "
+              "job there, the rest green — not green: report it and check back later")
         sys.exit(4)
 if pending > 0 or dirty:
     sys.exit(1)      # something still in flight — do not trust failures yet

@@ -245,6 +245,13 @@ no-cve|0|- Fix a heap overflow in the parser (no CVE assigned)
 hardening|0|- Build with -D_FORTIFY_SOURCE=3 for stronger hardening
 security-policy|0|- Ship the upstream security policy file
 patch-name|0|- Add fix-CVE-2026-54886.patch:^  * CVE-2026-54886: SFTP server loop (bsc#1270246)
+no-security|0|- Rebuild for the new parser: no security fixes
+non-security|0|- Backport a non-security fix for the parser
+not-a-vulnerability|0|- Document why the parser crash is not a vulnerability
+without|0|- Refresh the bundled data without security fixes
+colon-lead|0|- Version 10.08.0 also fixes the following two security issues:^- CVE-2026-103226: stack buffer overflow (bsc#1283917)^- CVE-2026-101258: heap buffer overflow (bsc#1284397)
+colon-lead-no-ids|1|- Version 2.0 also fixes the following security issues:^- Faster start-up
+colon-not-last|1|- Fixes security issues: see upstream^- CVE-2026-103226: stack buffer overflow (bsc#1283917)
 EOF
 # Only the entries in scope are judged: an old vague entry is history.
 { printf '%s\nMon Oct 19 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n' "$SEP"

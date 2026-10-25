@@ -38,6 +38,7 @@ case "$1 $2" in
   "api /source/"*"/_history"*) serve history ;;
   "api /source/"*) serve source ;;
   "api /request/"*) serve request ;;
+  "api /build/"*"/_jobhistory?limit="*) serve repojobs ;;
   "api /build/"*"/_jobhistory?package="*)
     IFS=/ read -r _ _ _ repo arch rest <<<"$2"
     name=${rest#_jobhistory?package=}; name=${name%%&*}
@@ -141,6 +142,9 @@ res() { # res NAME ARCH[:FLAVOR][!]=CODE[/DETAILS] ...  — "!" marks the reposi
 src() { echo "<directory name=\"$K\" rev=\"3\" srcmd5=\"$2\"/>" > "$FIX/$1"; }
 hist() { # hist NAME SECONDS — the last commit was SECONDS ago
   printf '<revisionlist><revision rev="3"><time>%s</time></revision></revisionlist>\n' "$(( $(date +%s) - $2 ))" > "$FIX/$1"
+}
+ended() { # ended NAME SECONDS — the repo/arch's newest build job ended SECONDS ago
+  printf '<jobhistlist><jobhist package="dep" code="succeeded" endtime="%s"/></jobhistlist>\n' "$(( $(date +%s) - $2 ))" > "$FIX/$1"
 }
 job() { echo "<jobhistlist><jobhist package=\"$K\" srcmd5=\"$2\" code=\"succeeded\"/></jobhistlist>" > "$FIX/$1"; }
 req() { # req NAME STATE [ATTRS] [COMMENT] [REVIEWS]
@@ -296,12 +300,25 @@ expect "a lookup failing mid-wait is no answer, not pending" 3 "gateway"
 
 # An arch that only waits for a worker: no wait shortens it. Reported as
 # QUEUED-STUCK (exit 4, not green) once the rest is green from the current
-# sources and the last commit is 30+ minutes old, instead of 127 sleeps.
-new queued; res results x86_64=succeeded aarch64=scheduled i586=scheduled; src source $CUR; job jobhist $CUR; hist history 3600
+# sources and neither a commit nor a finished job in that repo/arch came in
+# the last 30 minutes, instead of 127 sleeps.
+new queued; res results x86_64=succeeded aarch64=scheduled i586=scheduled; src source $CUR; job jobhist $CUR; hist history 3600; ended repojobs 3600
 run queued build $P $K --timeout 20
-expect "only scheduled arches left an hour after the commit: QUEUED-STUCK" 4 \
-  "VERDICT: QUEUED-STUCK — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64, standard/i586 60 min after the last commit, succeeded: standard/x86_64; not green"
+expect "only scheduled arches left, an hour with no commit or job: QUEUED-STUCK" 4 \
+  "VERDICT: QUEUED-STUCK — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64, standard/i586 for 60 min with no commit or finished job there, succeeded: standard/x86_64; not green"
 [ "$ms" -lt 5000 ] && pass "  ...at once, without waiting out the timeout (${ms}ms)" || fail "  waited ${ms}ms"
+# Blocked on a dependency for an hour, scheduled since it built two minutes ago.
+new queued-after-dep; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR; hist history 3600; ended repojobs 120
+run queued-after-dep build $P $K --timeout 0
+expect "scheduled right after a dependency built is pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64"
+new queued-no-jobs; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR; hist history 3600
+echo '<jobhistlist/>' > "$FIX/repojobs"
+run queued-no-jobs build $P $K --timeout 0
+expect "no job ever ended there: the commit's age decides" 4 "QUEUED-STUCK"
+new queued-jobs-err; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR; hist history 3600
+echo '@ERR HTTP Error 502: gateway' > "$FIX/repojobs"
+run queued-jobs-err build $P $K --timeout 0
+expect "an unreadable repo job history is no answer" 3 "VERDICT: UNKNOWN"
 new queued-fresh; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR; hist history 600
 run queued-fresh build $P $K --timeout 0
 expect "scheduled ten minutes after the commit is still pending" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64"
