@@ -115,6 +115,19 @@ case_ sweep-dedup 3 "SR 2000004 [new] devel:other/foo -> openSUSE:Leap:16.0 by s
 # verdict line quoting it; a third naming would be the sweep repeating it.
 [ "$(grep -c 'SR 2000003' <<<"$LAST")" = 2 ] && pass "sweep-dedup: an SR the anchored checks listed is not repeated" || fail "sweep-dedup: $LAST"
 
+# A + in a package name decodes as a space in a query string, so every
+# request query must percent-encode it (libsigc++3 read as "libsigc  3"
+# printed "none" while sr#1386760 was open). No fixtures exist for foo++, so
+# every read 404s and the run ends PROCEED; what is asserted is the calls
+# log — the URLs osc was asked for carry %2B, never a raw +.
+dir="$work/pkg-plus"; cp -a "$B" "$dir"; mkdir -p "$dir/tmp"
+out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="$work/bin:$PATH" bash "$PF" 'foo++' 2>&1)"; got=$?
+calls="$(cat "$dir/calls")"
+[ "$got" = 0 ] && grep -qF 'package=foo%2B%2B' <<<"$calls" && grep -qF 'target/@package=%27foo%2B%2B%27' <<<"$calls" \
+  && ! grep -qE 'package=foo\+\+|%27foo\+\+' <<<"$calls" \
+  && pass "pkg-plus: + percent-encoded in every request query" \
+  || { fail "pkg-plus: expected rc=0 and %2B-encoded queries, got rc=$got"; printf '%s\n' "$calls" | sed 's/^/    /'; }
+
 # A git devel project's in-flight update is a PR on src.opensuse.org, read
 # through git-obs pinned to that login. A failed or unreadable read is
 # CHECK-FAILED, never "open PRs: none".
