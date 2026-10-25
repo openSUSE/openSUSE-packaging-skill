@@ -24,7 +24,7 @@
 
 ## Pre-flight: is this update already done or in flight? (HARD RULE — do this BEFORE any edit/branch/build)
 
-**Before you `osc branch`, bump a `Version:`, regenerate a vendor tarball, or start a (possibly very expensive) build, confirm you are not redoing work done or in flight — for updates and fix/cleanup legs alike.** Repology/triage flags "outdated" against *published Tumbleweed*, which lags the devel project — the devel project (and an in-flight SR) may already carry the exact version you're about to package. Run **both** checks against the package's devel project (`osc develproject openSUSE:Factory <pkg>` to find it):
+**Before you `osc branch` or edit anything — updates and fix/cleanup legs alike — confirm the work is not done or in flight.** Repology/triage flags "outdated" against *published Tumbleweed*, which lags the devel project — the devel project (and an in-flight SR) may already carry the exact version you're about to package. Run **both** checks against the package's devel project (`osc develproject openSUSE:Factory <pkg>` to find it):
 
 1. **Does the devel project already carry the target version?**
    ```
@@ -40,7 +40,7 @@
    ```
    - **Incoming** = someone's `home:…:branches/<pkg> -> <devel>` SR (a maintainer staging the bump into devel — e.g. a `home:<maintainer>:branches…/python-uv -> devel:languages:python` "cleanup" SR). Even if the devel spec doesn't *yet* show the new version, an accepted/open incoming SR means it's already handled.
    - **Outgoing** = the `<devel> -> openSUSE:Factory` SR that actually delivers the update to Factory.
-   - **Sweep** = the third query: every open SR on the package, from anyone, aimed anywhere — one filed straight at the target, or at another target, escapes both anchored reads. `preflight.sh` runs it as its last check.
+   - **Sweep** = third query: open SRs on the package, any source/target; report hits the anchored reads miss. `preflight.sh` runs it last.
 
 **Decision matrix:**
 
@@ -53,7 +53,7 @@
 
 If the devel version already matches and you only have *cosmetic* spec-cleaner changes left, do **not** file a cleanup-only SR over an in-flight version SR — it races the version SR and earns a "conflict in file" decline. Hold the cleanup until the version SR lands, or drop it.
 
-For substantive fixes, re-base instead: branch the in-flight SR's source tree, apply the fixes there, re-triage against it — a version bump or build-system switch can make a fix present already, or moot. Real case: a `plymouth` fix leg prepared against Factory needed exactly that — sr#1386086 (version update, build-system switch) and sr#1376509 were in flight against its devel project.
+For fixes, re-base instead: branch the in-flight SR's tree, apply fixes there, re-triage (its version/build-system change may include or moot them). Real case: `plymouth`, prepared against Factory with sr#1386086 and sr#1376509 in flight.
 
 **Real case (the rule's origin):** asked to update two Rust-based Python packages, an agent branched both, re-bumped, re-vendored, and ran two heavy native Rust builds — only to discover *afterwards* that both versions were **already committed to devel by their co-maintainers** and **already submitted to Factory**, both SRs in review. The entire update+build was wasted; the only net delta was a cosmetic cleanup that would have conflicted with the in-flight SRs. A 30-second pre-flight `osc api .../<pkg>.spec | grep Version` + SR check would have caught it before any branch or build.
 
