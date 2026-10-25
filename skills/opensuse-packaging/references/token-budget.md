@@ -59,8 +59,8 @@ are always-on, not a phase.
   context. A PASS the author wrote for its own change is no review.
 - **Quote the user's request verbatim** in the brief, with every instruction it carries ("use the
   cargo macros"): a paraphrase is where instructions get lost.
-- **Run children in the background and take each as it returns** — gate, review and file it, then
-  the next. A wave that waits for its slowest child leaves the finished ones idle, and a foreground
+- **Run children in the background and take each as it returns** — review the ones that handed back
+  `REVIEW-PENDING`, file each once green, then the next. A wave that waits for its slowest child leaves the finished ones idle, and a foreground
   child is aborted by the user's next message. An agent that cannot spawn children at all (a
   restricted agent or a permission rule) stops and asks the user to switch agents rather than run
   the fan-out inline.

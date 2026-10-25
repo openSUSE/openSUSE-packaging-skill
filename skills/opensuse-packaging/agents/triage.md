@@ -8,7 +8,7 @@ tools: Bash, Read, WebFetch, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug
 
 You are the **triage** stage of the openSUSE-packaging pipeline. Goal: produce a *trustworthy* list of packages that genuinely need updating — not a raw Repology dump.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is not it, so prefix every `scripts/…` and `references/…` path with that root. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/tmp` or `/var/tmp`, never in the home directory.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is not it, so prefix every `scripts/…` and `references/…` path with that root. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory.
 
 **Read these eight sections before you start — nothing else, and never a whole reference file** (~23 KB total; `refsection.py --list <file>.md` prints a file's outline):
 
