@@ -20,7 +20,7 @@ cat > "$work/bin/osc" <<'EOF'
 echo "osc $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
 case $1 in
   whois) [ -e "$FIX/no-whois" ] && exit 1; echo 'tester: "Tester"' ;;
-  develproject) echo "devel:example/$3" ;;
+  develproject) [ -e "$FIX/no-develproject" ] && exit 1; echo "devel:example/$3" ;;
   api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=,' '_____')"
        [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
        [ "$(cat "$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
@@ -144,6 +144,15 @@ case_ from-link-elsewhere 3 "wrong branch source" \
   "echo '<link project=\"science\" package=\"foo\"/>' > \$B/obs/_source_devel:example_foo__link" --from hardware
 case_ from-link-unreadable 2 "CHECK FAILED: could not read devel:example/foo/_link" \
   "echo @500 > \$B/obs/_source_devel:example_foo__link" --from hardware
+
+# osc develproject failing is no "no devel project": when _meta names one, the
+# lookup failed, and --from must not PROCEED against nothing.
+case_ develproject-failed 2 "osc develproject failed, but openSUSE:Factory/foo/_meta names a devel project" \
+  ": > \$B/no-develproject && echo '<package name=\"foo\"><devel project=\"devel:example\"/></package>' > \$B/obs/_source_openSUSE:Factory_foo__meta" \
+  --from hardware
+! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "develproject-failed: no PROCEED" || fail "develproject-failed: $LAST"
+case_ no-devel-set 0 "in openSUSE:Factory but no devel project set" \
+  ": > \$B/no-develproject && echo '<package name=\"foo\"/>' > \$B/obs/_source_openSUSE:Factory_foo__meta" --from hardware
 
 echo "---"; [ "$fails" = 0 ] && echo "all preflight checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
