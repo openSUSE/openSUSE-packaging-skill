@@ -2,8 +2,8 @@
 # The commit/SR gate chain as ONE tool call: the SR target, source_validator,
 # factory-auto's URL check (download_files), spec-cleaner, changes-lint.sh,
 # changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
-# check and the spec header, each run unpiped with its exit code read directly,
-# then one VERDICT line. Five separate calls cost five provider
+# check, the spec header and the patch tags, each run unpiped with its exit
+# code read directly, then one VERDICT line. Five separate calls cost five provider
 # steps and five result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
 # still follows — it is a judgement, not a check, and stays outside this script.
@@ -225,8 +225,78 @@ def copyright(base, work):
     return 1 if gone else 0
 
 
+TAG = re.compile(r"PATCH-(?:(?:FIX|FEATURE)-(?:UPSTREAM|OPENSUSE|SLE)|NEEDS-REBASE)\b")
+PATCH = re.compile(r"Patch\d*\s*:\s*(\S+)", re.I)
+MACRO = re.compile(r"%\{\??(\w+)\}|%(\w+)")
+REF = re.compile(r"https?://\S+|\bgh#[\w.-]+/[\w.-]+#\d+|\b[a-z][a-z0-9]*#\d+")  # URL, gh#o/r#N, a bug id (bsc#, fdo#, …)
+HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def cited(block, names):
+    text = "\n".join(block)
+    for n in names:  # a hash-like file name is no reference
+        text = text.replace(n, " ")
+    return bool(REF.search(text)) or any(re.search(r"\d", h) for h in HEX.findall(text))
+
+
+def tags(spec):
+    try:
+        with open(spec, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError as e:
+        print("%s: cannot read it: %s" % (spec, e.strerror))
+        return 1
+    macros = {}
+    for line in lines:
+        m = re.match(r"(name|version)\s*:\s*(\S+)", line, re.I)
+        if m:
+            macros.setdefault(m.group(1).lower(), m.group(2))
+        m = re.match(r"%(?:define|global)\s+(\w+)\s+(\S+)\s*$", line)
+        if m:
+            macros.setdefault(m.group(1), m.group(2))
+
+    def expand(s):
+        for _ in range(5):
+            t = MACRO.sub(lambda m: macros.get(m.group(1) or m.group(2), m.group(0)), s)
+            if t == s:
+                break
+            s = t
+        return s
+
+    def base(s):  # a URL Patch names its file after #/, else by its last path part
+        return s.split("#/")[-1] if "#/" in s else s.rsplit("/", 1)[-1]
+
+    bad = 0
+    for i, line in enumerate(lines):
+        m = PATCH.match(line)
+        if not m:
+            continue
+        f = base(expand(m.group(1)))
+        names = {base(m.group(1)), f}
+        j = i - 1  # an %if around the Patch line sits between it and its comment
+        while j >= 0 and re.match(r"%(if|else|elif|endif)\b", lines[j].strip()):
+            j -= 1
+        block = []
+        while j >= 0 and lines[j].lstrip().startswith("#"):
+            block.insert(0, lines[j])
+            j -= 1
+        tagged = [t for t in block if TAG.search(t)]
+        named = [t for t in tagged if any(n in t for n in names)]
+        why = None
+        if not tagged:
+            why = "%s has no PATCH-* tag in the comment above it" % f
+        elif not named:
+            why = "the PATCH-* tag above %s does not name it" % f
+        elif "UPSTREAM" in TAG.search(named[0]).group(0) and not cited(block, names):
+            why = "the PATCH-*-UPSTREAM tag of %s cites no reference (URL, gh#owner/repo#N, commit, bug id like bsc#N)" % f
+        if why:
+            print("%s:%d: %s" % (spec, i + 1, why))
+            bad = 1
+    return bad
+
+
 cmd, args = sys.argv[1], sys.argv[2:]
-fn = {"link": link, "stamp": stamp, "review": review, "copyright": copyright}[cmd]
+fn = {"link": link, "stamp": stamp, "review": review, "copyright": copyright, "tags": tags}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -491,6 +561,17 @@ for s in "${specs[@]}"; do
 done
 [ $rc -eq 0 ] && echo "OK: one spec header, and every copyright holder of the target kept" >> "$log/spec-header.txt"
 show spec-header $rc "$log/spec-header.txt"
+
+# Every Patch line carries a PATCH-* tag naming its file, and an UPSTREAM tag
+# says where upstream has it (references/patches.md): a devel reviewer asked
+# for them on sr#1385879, which no gate had checked.
+: > "$log/patch-tags.txt"; rc=0
+for s in "${specs[@]}"; do
+  [ -e "$s" ] || continue
+  py tags "$s" >> "$log/patch-tags.txt" || rc=1
+done
+[ $rc -eq 0 ] && echo "OK: every patch tagged by name, every UPSTREAM tag with its reference" >> "$log/patch-tags.txt"
+show patch-tags $rc "$log/patch-tags.txt"
 
 if [ ${#red[@]} -eq 0 ]; then
   t=""
