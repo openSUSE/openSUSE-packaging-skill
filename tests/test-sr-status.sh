@@ -715,8 +715,10 @@ case_ summary-uncapped 0 "OBS submit requests: 45 (new 44 · declined 1)" "many 
 # osc sr pins the source revision it was filed from: a fix committed to the
 # branch afterwards reaches nobody until it is filed again with -s, yet three
 # such requests were reported as "intact". An open request whose source holds
-# other files than its pinned revision is STALE; equal files at another srcmd5
-# (a link) are not.
+# other files than its pinned revision is STALE; equal files at another
+# revision (a link whose base moved, an scmsync package's obsinfo) are not. The
+# pinned rev is compared with the current one first: one call when it is
+# unchanged.
 H=home  # spelled apart: no literal home project in a public file
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 rreq() { # <id> <package> <source project> <rev> [state] [target]
@@ -725,48 +727,59 @@ rreq() { # <id> <package> <source project> <rev> [state] [target]
     "$1" "$3" "$2" "$4" "${6:-openSUSE:Factory}" "$2" "${5:-new}"
 }
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
-srcl() { # <fixture tree> <project> <package> <srcmd5> <file md5> [rev]: an expanded listing
-  put "$1/obs/source/$2/$3_expand_1${6:+_rev_$6}" \
-    "<directory name=\"$3\" srcmd5=\"$4\"><entry name=\"$3.spec\" md5=\"$5\"/></directory>"
+lst() { # <fixture tree> <listing path under /source/> <rev> <srcmd5> <spec md5> [more xml]
+  put "$1/obs/source/$2" "<directory name=\"x\" rev=\"$3\" srcmd5=\"$4\"><entry name=\"x.spec\" md5=\"$5\"/>${6:-}</directory>"
 }
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
-stale_fixtures() { # <fixture tree>: 301 stale, 302 current, 303 relinked (same files), 304 accepted elsewhere
+stale_fixtures() { # <fixture tree>
+  local d=devel:example
   { echo '<collection>'
-    rreq 301 foo devel:example r1
-    rreq 302 bar devel:example b2 review
-    rreq 303 baz devel:example z1
+    rreq 301 foo "$d" 3                 # a later revision changed the files: stale
+    rreq 302 bar "$d" 7 review          # still at revision 7
+    rreq 303 baz "$d" 8                 # a link: its base moved, the files did not
+    rreq 304 qux "$d" 3                 # scmsync: only the obsinfo's branch changed
+    printf '<request id="305" creator="tester"><action type="submit"><source project="%s" package="m1" rev="1"/><target project="openSUSE:Factory" package="m1"/></action><action type="submit"><source project="%s" package="m2" rev="1"/><target project="openSUSE:Factory" package="m2"/></action><state name="new" who="tester" created="2026-10-20T10:00:00"/></request>\n' "$d" "$d"
+    rreq 306 quux "$d" u5               # pinned by srcmd5, still current
     echo '</collection>'; } > "$1/obs/$OPEN"
-  srcl "$1" devel:example foo f2 m2; srcl "$1" devel:example foo r1 m1 r1
-  srcl "$1" devel:example bar b2 n2
-  srcl "$1" devel:example baz z9 k1; srcl "$1" devel:example baz z1 k1 z1
+  lst "$1" "$d"/foo 5 f5 m5; lst "$1" "$d"/foo_rev_3 3 f3 m3
+  lst "$1" "$d"/bar 7 b7 n7
+  lst "$1" "$d"/baz 9 z9 k1 '<linkinfo project="devel:base" package="baz" srcmd5="zz" xsrcmd5="x9" lsrcmd5="l9"/>'
+  lst "$1" "$d"/baz_expand_1 9 x9 k1; lst "$1" "$d"/baz_expand_1_rev_8 8 x8 k1
+  lst "$1" "$d"/qux 4 q4 s1 '<entry name="_scmsync.obsinfo" md5="branch-factory"/>'
+  lst "$1" "$d"/qux_rev_3 3 q3 s1 '<entry name="_scmsync.obsinfo" md5="branch-main"/>'
+  lst "$1" "$d"/quux 5 u5 w5
 }
-STALE1='STALE — source changed after the pinned revision: osc sr -m MSG -s 301 devel:example foo openSUSE:Factory'
+STALE1='STALE — source changed after the pinned revision: run forward-check.py devel:example/foo before any refile'
 case_ table-stale 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; $STALE1 |" "stale_fixtures \$B" --no-prs
 rows=$(grep '^| SR ' <<<"$LAST")
 [ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " 301 " ] && pass "table-stale: a stale request sorts first" || fail "table-stale: order: $rows"
-! grep -qE '\| (302|303) \|.*STALE' <<<"$rows" && pass "table-stale: current and relinked requests are not stale" \
+! grep -qE '\| (302|303|304|306) \|.*STALE' <<<"$rows" && pass "table-stale: current, relinked, scmsync and srcmd5-pinned requests are not stale" \
   || fail "table-stale: $rows"
-! grep -q 'bar_expand_1_rev' <<<"$CALLS" && pass "table-stale: a matching srcmd5 needs no second call" || fail "table-stale: $CALLS"
-case_ table-stale-cleanup 0 "osc sr -m MSG --cleanup -s 301 $H:tester:spark foo openSUSE:Factory" \
+grep -qF '| SR | 305 | m1 | openSUSE:Factory | ⏳ new; STALE not checked (2 actions) |' <<<"$rows" \
+  && pass "table-stale: a multi-action request is not checked" || fail "table-stale: 305: $rows"
+! grep -qE '/source/devel:example/(bar|quux)\?' <<<"$CALLS" && ! grep -q 'foo?expand' <<<"$CALLS" \
+  && pass "table-stale: an unchanged rev takes one call, a non-link no expanded one" || fail "table-stale: $CALLS"
+case_ table-stale-home 0 "STALE — source changed after the pinned revision: osc sr -m MSG --cleanup -s 301 $H:tester:spark foo openSUSE:Factory |" \
   "stale_fixtures \$B && sed -i 's/source project=\"devel:example\" package=\"foo\"/source project=\"$H:tester:spark\" package=\"foo\"/' \$B/obs/$OPEN &&
-   srcl \$B $H:tester:spark foo f2 m2 && srcl \$B $H:tester:spark foo r1 m1 r1" --no-prs
+   lst \$B $H:tester:spark/foo 5 f5 m5 && lst \$B $H:tester:spark/foo_rev_3 3 f3 m3" --no-prs
 case_ table-stale-unknown 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; STALE UNKNOWN (source lookup failed) |" \
-  "stale_fixtures \$B && echo @NET > \$B/obs/source/devel:example/foo_expand_1" --no-prs
+  "stale_fixtures \$B && echo @NET > \$B/obs/source/devel:example/foo" --no-prs
 case_ table-stale-pinned-unknown 0 "STALE UNKNOWN (pinned revision lookup failed)" \
-  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_expand_1_rev_r1" --no-prs
+  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_rev_3" --no-prs
 case_ table-source-gone 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; source gone: devel:example/foo |" \
-  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_expand_1" --no-prs
+  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo" --no-prs
 case_ table-stale-deadline 0 "⏳ new; STALE not checked (--deadline reached)" "stale_fixtures \$B" --no-prs --deadline 0
 case_ brief-not-checked 0 "SR 301  [new" "stale_fixtures \$B" --brief --no-prs
-! grep -q '_expand_1' <<<"$CALLS" && ! grep -q STALE <<<"$LAST" && pass "brief-not-checked: --brief makes no source call" \
+! grep -q 'api /source/' <<<"$CALLS" && ! grep -q STALE <<<"$LAST" && pass "brief-not-checked: --brief makes no source call" \
   || fail "brief-not-checked: $CALLS"
-case_ summary-stale 0 "stale (1): source changed after the revision the request pins — refile with -s:" \
+case_ summary-stale 0 "stale (1): source changed after the revision the request pins — refile:" \
   "stale_fixtures \$B" --summary --no-prs
-grep -qF "  SR 301 foo -> openSUSE:Factory: osc sr -m MSG -s 301 devel:example foo openSUSE:Factory" <<<"$LAST" \
-  && ! grep -qE '  SR 30[23] .*osc sr' <<<"$LAST" && pass "summary-stale: names the refile, only for the stale one" || fail "summary-stale: $LAST"
+grep -qF "  SR 301 foo -> openSUSE:Factory: run forward-check.py devel:example/foo before any refile" <<<"$LAST" \
+  && grep -qF "  SR 305 m1 -> openSUSE:Factory: STALE not checked (2 actions)" <<<"$LAST" \
+  && ! grep -qE '  SR 30[2346] [a-z]+ -> openSUSE:Factory: ' <<<"$LAST" && pass "summary-stale: the stale one and the unchecked one, nothing else" || fail "summary-stale: $LAST"
 case_ summary-stale-none 0 "stale (0): source changed after the revision the request pins" \
-  "stale_fixtures \$B && srcl \$B devel:example foo r1 m2" --summary --no-prs
-case_ summary-stale-deadline 0 "  not checked (--deadline reached): SR 301 foo, SR 302 bar, SR 303 baz" \
+  "stale_fixtures \$B && lst \$B devel:example/foo_rev_3 3 f3 m5" --summary --no-prs
+case_ summary-stale-deadline 0 "  not checked (--deadline reached): SR 301 foo, SR 302 bar, SR 303 baz, SR 304 qux, SR 305 m1, SR 306 quux" \
   "stale_fixtures \$B" --summary --no-prs --deadline 0
 
 # --summary --days: "no SR of mine was ever filed" was said of a request that
@@ -784,17 +797,23 @@ closed_fixtures() { # <fixture tree>
     creq 1392106 hidapi hardware accepted maint
     creq 1392121 libwacom hardware accepted maint
     creq 1392209 dlib openSUSE:Factory revoked tester 'forwarder is not package maintainer'
-    creq 1386578 mariadb server:database superseded tester '' 1386595
+    creq 1386578 mariadb server:database superseded tester 'Update mariadb to 13.0.2' 1386595
+    creq 1386600 zstd openSUSE:Factory superseded maint 'refreshed by the maintainer' 1386650
     echo '</collection>'; } > "$1/obs/closed"
 }
 SINCE=$(date -u -d '14 days ago' +%F)
-case_ summary-closed 0 "closed in the last 14 days (since $SINCE): 4 — accepted 2 · revoked 1 · superseded 1" \
+case_ summary-closed 0 "closed in the last 14 days (since $SINCE): 5 — accepted 2 · revoked 1 · superseded 2" \
   "closed_fixtures \$B" --summary --no-prs
-for want in "  accepted in hardware: hidapi #1392106, libwacom #1392121" \
-            "  superseded in server:database: mariadb #1386578→#1386595" \
-            '  revoked: SR 1392209 dlib -> openSUSE:Factory by tester: "forwarder is not package maintainer"'; do
+# Your own refile carries your new description as its reason: counted, not
+# listed. Someone else superseding yours is news.
+for want in "  hardware: accepted 2" "  openSUSE:Factory: revoked 1 · superseded 1" "  server:database: superseded 1" \
+            '  revoked: SR 1392209 dlib -> openSUSE:Factory (tester): "forwarder is not package maintainer"' \
+            "  superseded by your own refile: 1" \
+            '  superseded: SR 1386600 zstd -> openSUSE:Factory by #1386650 (maint): "refreshed by the maintainer"'; do
   grep -qF -- "$want" <<<"$LAST" && pass "summary-closed: $want" || fail "summary-closed: missing '$want'"
 done
+! grep -qE 'hidapi|libwacom|SR 1386578' <<<"$LAST" && pass "summary-closed: accepted requests and your own refiles are counted, not listed" \
+  || fail "summary-closed: accepted rows listed: $LAST"
 grep -qF "state/@when>='$SINCE'" <<<"$CALLS" && grep -qF "@creator='tester'" <<<"$CALLS" \
   && pass "summary-closed: one search for your requests closed since then" || fail "summary-closed: $CALLS"
 case_ summary-closed-none 0 "closed in the last 14 days (since $SINCE): 0" ":" --summary --no-prs
@@ -802,7 +821,7 @@ case_ summary-closed-failed 0 "closed in the last 14 days (since $SINCE): UNKNOW
   "echo @NET > \$B/obs/closed" --summary --no-prs
 case_ summary-closed-deadline 0 "closed in the last 14 days (since $SINCE): UNKNOWN (not looked up: --deadline reached)" \
   "closed_fixtures \$B" --summary --no-prs --deadline 0
-case_ summary-days 0 "closed in the last 3 days (since $(date -u -d '3 days ago' +%F)): 4" \
+case_ summary-days 0 "closed in the last 3 days (since $(date -u -d '3 days ago' +%F)): 5" \
   "closed_fixtures \$B" --summary --no-prs --days 3
 case_ days-without-summary 2 "--days N (1 or more) goes with --summary" ":" --days 3
 case_ days-zero 2 "--days N (1 or more) goes with --summary" ":" --summary --days 0

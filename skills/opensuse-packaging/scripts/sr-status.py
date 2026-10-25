@@ -47,9 +47,12 @@ git-obs call times out after 60s and then counts as a failed lookup (a network
 failure for --pr), never as an empty answer.
 
 A new or review SR whose source changed after the revision it pins is STALE
-(outside --brief: one or two calls per request): osc sr does not follow the
-branch, so a fix committed after filing reaches nobody until it is filed again
-with -s. Equal files at another srcmd5 (a link) are not stale.
+(outside --brief: one call per request when the source is still at that
+revision): osc sr does not follow the branch, so a fix committed after filing
+reaches nobody until it is filed again with -s. Equal files at another
+srcmd5 (a link, or an scmsync package's _scmsync.obsinfo) are not stale. A
+devel-project source gets forward-check.py instead of the refile, and a
+request with several actions is not checked.
 
 A declined SR that a later accepted one for the same package and target
 replaced is annotated with the revoke that clears it and stays at the top:
@@ -708,18 +711,21 @@ def comments_for(rows, fn):
 # ---------- stale requests ----------
 
 LOOKUP_FAILED = object()
+# An scmsync package's obsinfo names its tracking branch: it changes (main ->
+# factory) while the sources stay the same commit.
+SCMSYNC_INFO = "_scmsync.obsinfo"
 
 
-def source_files(prj, pkg, rev=None):
-    """(srcmd5, {(name, md5)}) of prj/pkg expanded (at revision rev): files,
-    not srcmd5s, decide, since a link's srcmd5 also covers its base. None on
-    a 404, LOOKUP_FAILED on any other failure."""
+def listing(prj, pkg, rev=None, expand=False):
+    """The <directory> of prj/pkg (expanded, at revision rev): None on a 404,
+    LOOKUP_FAILED on any other failure."""
 
     def q(x):
         return urllib.parse.quote(x, safe=":")
 
+    query = (["expand=1"] if expand else []) + ([f"rev={q(rev)}"] if rev else [])
+    path = f"/source/{q(prj)}/{q(pkg)}" + ("?" + "&".join(query) if query else "")
     errors = []
-    path = f"/source/{q(prj)}/{q(pkg)}?expand=1" + (f"&rev={q(rev)}" if rev else "")
     raw = api(path, hard=False, errors=errors)
     if raw is None:
         return None if any("HTTP Error 404" in e for e in errors) else LOOKUP_FAILED
@@ -727,15 +733,25 @@ def source_files(prj, pkg, rev=None):
         root = ET.fromstring(raw)
     except ET.ParseError:
         return LOOKUP_FAILED
-    if root.tag != "directory":
-        return LOOKUP_FAILED
-    return root.get("srcmd5"), frozenset(
-        (e.get("name"), e.get("md5")) for e in root.findall("entry")
+    return root if root.tag == "directory" else LOOKUP_FAILED
+
+
+def files(root):
+    """A listing's (name, md5) pairs: files, not srcmd5s, decide, since a
+    link's srcmd5 also covers its base."""
+    return frozenset(
+        (e.get("name"), e.get("md5"))
+        for e in root.findall("entry")
+        if e.get("name") != SCMSYNC_INFO
     )
 
 
 def refile(row, prj, pkg):
-    """The osc sr that files the source's current state over the request."""
+    """What files the source's current state over the request: the osc sr
+    for a home: branch; for a devel project forward-check.py first, since a
+    refile would also forward other people's commits there."""
+    if not prj.startswith("home:"):
+        return f"run forward-check.py {prj}/{pkg} before any refile"
     cmd = "osc sr -m MSG"
     if re.match(r"home:[^:]+:", prj):
         cmd += " --cleanup"
@@ -745,25 +761,35 @@ def refile(row, prj, pkg):
 
 def staleness(row):
     """What to say about an open request whose source moved on; empty when
-    it still carries its source's current files or pins no revision."""
-    act = row["el"].find("action")
-    src = act.find("source") if act is not None else None
+    it still carries its source's current files or pins no revision. The
+    pinned rev (most are revision numbers) is compared with the source's
+    current revision first: one call when nothing changed."""
+    acts = row["el"].findall("action")
+    if len(acts) > 1:
+        return f"STALE not checked ({len(acts)} actions)"
+    src = acts[0].find("source") if acts and acts[0].get("type") == "submit" else None
     if src is None or not (
         src.get("rev") and src.get("project") and src.get("package")
     ):
         return ""
     prj, pkg, rev = src.get("project"), src.get("package"), src.get("rev")
-    head = source_files(prj, pkg)
+    head = listing(prj, pkg)
     if head is LOOKUP_FAILED:
         return "STALE UNKNOWN (source lookup failed)"
     if head is None:
         return f"source gone: {prj}/{pkg}"
-    if head[0] == rev:
+    link = head.find("linkinfo")
+    current = {head.get("rev"), head.get("srcmd5")}
+    if link is not None:
+        current |= {link.get("xsrcmd5"), link.get("lsrcmd5")}
+    if rev in current - {None}:
         return ""
-    pinned = source_files(prj, pkg, rev)
-    if pinned is LOOKUP_FAILED or pinned is None:
+    if link is not None:
+        head = listing(prj, pkg, expand=True)
+    pinned = listing(prj, pkg, rev, expand=link is not None)
+    if head in (None, LOOKUP_FAILED) or pinned in (None, LOOKUP_FAILED):
         return "STALE UNKNOWN (pinned revision lookup failed)"
-    if pinned[1] == head[1]:
+    if files(pinned) == files(head):
         return ""
     return f"STALE — source changed after the pinned revision: {refile(row, prj, pkg)}"
 
@@ -1035,7 +1061,7 @@ def summary(user, rows, prs, failed_legs, no_prs, days):
         hits = [x for x in stale if x[1].startswith("STALE —")]
         print(
             f"\nstale ({len(hits)}): source changed after the revision the request pins"
-            + (" — refile with -s:" if hits else "")
+            + (" — refile:" if hits else "")
         )
         for r, s in stale:
             what = s.split(": ", 1)[1] if s.startswith("STALE —") else s
@@ -1057,22 +1083,26 @@ def summary(user, rows, prs, failed_legs, no_prs, days):
             f"{head}: {len(closed)}"
             + (" — " + " · ".join(f"{s} {by[s]}" for s in sorted(by)) if closed else "")
         )
-        for state, show in (
-            ("accepted", lambda r: f"{r['pkg']} #{r['id']}"),
-            ("superseded", lambda r: f"{r['pkg']} #{r['id']}→#{r['by']}"),
-        ):
-            per = defaultdict(list)
-            for r in closed:
-                if r["state"] == state:
-                    per[r["target"]].append(show(r))
-            for tgt in sorted(per):
-                print(f"  {state} in {tgt}: " + ", ".join(per[tgt]))
+        per = defaultdict(Counter)
         for r in closed:
-            if r["state"] == "revoked":
-                print(
-                    f"  revoked: SR {r['id']} {r['pkg']} -> {r['target']} by "
-                    f'{clip(r["who"], 40)}: "{clip(r["why"], 100)}"'
-                )
+            per[r["target"]][r["state"]] += 1
+        for tgt in sorted(per):
+            c = per[tgt]
+            print(f"  {tgt}: " + " · ".join(f"{s} {c[s]}" for s in sorted(c)))
+        # your own refile is routine (its "why" is your new description):
+        # counted, not listed; someone else superseding yours is news
+        own = [r for r in closed if r["state"] == "superseded" and r["who"] == user]
+        if own:
+            print(f"  superseded by your own refile: {len(own)}")
+        for r in closed:
+            if r["state"] not in ("revoked", "superseded") or r in own:
+                continue
+            by_new = f" by #{r['by']}" if r["state"] == "superseded" else ""
+            why = f': "{clip(r["why"], 100)}"' if r["why"].strip() else ""
+            print(
+                f"  {r['state']}: SR {r['id']} {r['pkg']} -> {r['target']}{by_new} "
+                f"({clip(r['who'], 40)}){why}"
+            )
     open_srs = [r for r in srs if r["state"] in ("new", "review", "declined")]
     prs_ok = not no_prs and not failed_legs
     mine = [p for p in prs if not p.get("review")]
@@ -1337,7 +1367,7 @@ def main():
                 r["note"] = "; STALE not checked (--deadline reached)"
             elif s:
                 r["note"] = f"; {s}"
-                r["bad"] = r["bad"] or s.startswith("STALE")
+                r["bad"] = r["bad"] or s.startswith(("STALE —", "STALE UNKNOWN"))
 
     # A decline that a later accepted request for the same package and target
     # replaced is cleanup, not done: osc still counts it, and the next `osc sr`

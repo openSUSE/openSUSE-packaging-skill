@@ -6,8 +6,8 @@ Devel maintainers forward what they accept themselves (129 of the 132 SRs other
 maintainers accepted in one measured week got their own Factory forward), so an
 accepted devel request is not a forward still to file. This asks Factory:
 
-  forward-check.py <devel-project> <package> [...]  packages, as pairs or as
-                                                    <project>/<package>
+  forward-check.py <devel-project> <package>        one package
+  forward-check.py <project>/<package> [...]        packages
   forward-check.py --batch FILE                     one <project><TAB><package>
                                                     (or prj/pkg) per line
   forward-check.py --mine [--since YYYY-MM-DD]      every submit request of yours
@@ -16,13 +16,15 @@ accepted devel request is not a forward still to file. This asks Factory:
                                                     home: since DATE (default:
                                                     14 days ago)
   --user U          OBS account (default: `osc whois`)
-  --deadline SECONDS  start no lookup after this many seconds (default 80): the
-                    rest print as UNKNOWN and `# INCOMPLETE` follows the count
+  --deadline SECONDS  start no lookup after this many seconds (default 80; none
+                    with --mine): the rest print as UNKNOWN and `# INCOMPLETE`
+                    follows the count
 
 A request to Factory is the forward only when it comes from the devel
 project; it is current when its source revision holds the devel package's
 current files (name and md5, expanded), stale otherwise. One line per package, as
-each is decided (about 2 s each: run --mine in the background), the count last.
+each is decided (about 6 s each: run --mine in the background, or narrow it
+with --since), the count last.
 Output without the count line was cut off before the end: never read it as
 "nothing due".
   FORWARDED <id> by <who> <state> current|stale
@@ -415,21 +417,19 @@ def one(prj, pkg, user):
 
 
 def pairs(words, where):
-    """[(project, package)] from "<project> <package>" pairs and "prj/pkg"
-    words; ValueError naming `where` on anything else."""
-    out, i = [], 0
-    while i < len(words):
-        w = words[i]
-        if "/" in w:
-            prj, _, pkg = w.partition("/")
-            i += 1
-        elif i + 1 < len(words) and "/" not in words[i + 1]:
-            prj, pkg = w, words[i + 1]
-            i += 2
-        else:
-            raise ValueError(f"{where}: {w!r} has no package")
+    """[(project, package)]: one "<project> <package>" pair, or any number of
+    "prj/pkg" words; ValueError naming `where` on anything else, since
+    "prj p1 p2 p3" read as pairs checks p2/p3."""
+    if len(words) == 2 and not any("/" in w for w in words):
+        return [tuple(words)]
+    out = []
+    for w in words:
+        prj, _, pkg = w.partition("/")
         if not prj or not pkg or "/" in pkg:
-            raise ValueError(f"{where}: not <project>/<package>: {w!r}")
+            raise ValueError(
+                f"{where}: not <project>/<package>: {w!r} (one bare "
+                "<project> <package> pair, or prj/pkg words, or --batch FILE)"
+            )
         out.append((prj, pkg))
     return out
 
@@ -446,7 +446,7 @@ def batch(path):
     for n, line in enumerate(lines, 1):
         words = line.split()
         if words and not words[0].startswith("#"):
-            if len(words) > 2:
+            if len(words) > 2 or (len(words) == 2 and "/" in "".join(words)):
                 raise ValueError(f"--batch {path}:{n}: more than one package")
             out += pairs(words, f"--batch {path}:{n}")
     if not out:
@@ -465,14 +465,17 @@ def main():
     ap.add_argument("--batch", metavar="FILE")
     ap.add_argument("--since")
     ap.add_argument("--user")
-    ap.add_argument("--deadline", type=float, default=80, metavar="SECONDS")
+    ap.add_argument("--deadline", type=float, metavar="SECONDS")
     a = ap.parse_intermixed_args()
     if [a.mine, bool(a.packages), bool(a.batch)].count(True) != 1:
         ap.error("give <devel-project> <package>, --batch FILE, or --mine")
     if a.since and (not a.mine or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.since)):
         ap.error("--since YYYY-MM-DD goes with --mine")
-    if a.deadline < 0:
+    if a.deadline is not None and a.deadline < 0:
         ap.error("--deadline takes 0 or more seconds")
+    # --mine is a background run of ~6 s a package: a default cut would read
+    # 222 of 349 as UNKNOWN. A harness kill still prints # INCOMPLETE.
+    deadline = a.deadline if a.deadline is not None else (None if a.mine else 80)
     try:
         wanted = batch(a.batch) if a.batch else pairs(a.packages, "arguments")
     except ValueError as e:
@@ -487,7 +490,7 @@ def main():
             print(f"cannot determine account ({why}); pass --user", file=sys.stderr)
             return 2
     global DEADLINE
-    DEADLINE = start + a.deadline
+    DEADLINE = None if deadline is None else start + deadline
     counts, stale, skipped = {}, False, []
 
     def interrupted(signum, frame):

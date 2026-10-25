@@ -20,9 +20,11 @@ once. Prints one VERDICT line. Read-only; osc authenticates itself, no
 credential file is read.
 
 A build whose only unfinished repos/arches are "scheduled", with the rest
-green from the current sources and the last commit 30 minutes or more ago, is
-QUEUED-STUCK: those arches wait for a worker, which no wait shortens. Report it
-and come back later; it is not green, and every arch must be green before an
+green from the current sources, is QUEUED-STUCK once 30 minutes have passed
+since both the last commit and the last build job that ended in each such
+repo/arch (a package scheduled because its dependency just built is not
+stuck): those arches wait for a worker, which no wait shortens. Report it and
+come back later; it is not green, and every arch must be green before an
 update is filed.
 
 Exit:
@@ -30,7 +32,7 @@ Exit:
   1 = still pending at --timeout: repeat the same call
   2 = settled failure: failed/unresolvable/broken/unknown code or nothing to build; request declined/revoked/superseded/deleted
   3 = no answer: usage, or an osc lookup failed or did not parse
-  4 = QUEUED-STUCK: only scheduled arches left 30+ min after the last commit, the rest green; not green, check back later
+  4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
 """
 
 import argparse
@@ -61,7 +63,7 @@ BUILD_TOPICS = {
 OSC_TIMEOUT = 30
 POLL = 30  # --recheck default without the feed
 GAP = 2  # coalesces an event burst (every arch finishing at once) into one check
-STUCK = 30 * 60  # seconds after the last commit a scheduled arch counts as queued-stuck
+STUCK = 30 * 60  # seconds without a commit or a finished job before scheduled is stuck
 
 GREEN = {"succeeded"}
 RED = {"unresolvable", "broken"}
@@ -121,13 +123,25 @@ def last_job(t, repo, arch, name):
 
 
 def last_commit(t):
-    """Seconds since prj/pkg's latest revision was committed."""
+    """When prj/pkg's latest revision was committed (epoch seconds)."""
     path = f"/source/{t.prj}/{t.pkg}/_history?limit=1"
     when = parse(osc(["api", path]), "source history").findtext("revision/time")
     try:
-        return time.time() - int(when)
+        return int(when)
     except (TypeError, ValueError):
         raise Lookup(f"no commit time in the {t.prj}/{t.pkg} history")
+
+
+def last_job_end(t, repo, arch):
+    """When the newest build job of any package in repo/arch ended (epoch
+    seconds), 0 when there is none: a dependency that just built is why a
+    package turns from blocked to scheduled."""
+    path = f"/build/{t.prj}/{repo}/{arch}/_jobhistory?limit=1"
+    jobs = parse(osc(["api", path]), f"{repo}/{arch} job history").findall("jobhist")
+    try:
+        return int(jobs[-1].get("endtime") or 0) if jobs else 0
+    except ValueError:
+        raise Lookup(f"unreadable end time in the {repo}/{arch} job history")
 
 
 def summary(items, show=4):
@@ -167,7 +181,7 @@ def build_check(t):
     if not rows:
         raise Lookup(f"no build results for {who}{t.where}")
 
-    red, failed, pending, ok = [], [], [], []
+    red, failed, pending, ok, waits = [], [], [], [], []
     for res, name, label, code, dirty, s in rows:
         if dirty:
             pending.append(("dirty", label, ""))
@@ -181,6 +195,8 @@ def build_check(t):
             ok.append((res, name, label))
         elif code in PENDING:
             pending.append((code, label, ""))
+            if code == "scheduled":
+                waits.append((res.get("repository"), res.get("arch")))
         else:
             # Never pending: a code nobody knows must not hold the wait open.
             red.append((f"unknown code {code!r}", label, ""))
@@ -215,12 +231,18 @@ def build_check(t):
         if got != t.srcmd5:
             pending.append((older, label, f"succeeded on {got[:12]}"))
     if pending and all(state == "scheduled" for state, _, _ in pending):
-        age = last_commit(t)
-        if age >= STUCK:
+        now, since = time.time(), last_commit(t)
+        if now - since >= STUCK:
+            for where in dict.fromkeys(waits):
+                since = max(since, last_job_end(t, *where))
+                if now - since < STUCK:
+                    break
+        if now - since >= STUCK:
             green = summary([("succeeded", x[2], "") for x in ok], 8)
             return 4, (
-                f"QUEUED-STUCK — {who}: {summary(pending)} {int(age // 60)} min after "
-                f"the last commit, {green}; not green: report it and check back later"
+                f"QUEUED-STUCK — {who}: {summary(pending)} for {int((now - since) // 60)} "
+                f"min with no commit or finished job there, {green}; not green: report "
+                "it and check back later"
             )
     if pending:
         return 1, f"PENDING — {who}: {summary(pending)}"

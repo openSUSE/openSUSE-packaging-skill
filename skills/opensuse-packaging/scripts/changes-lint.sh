@@ -50,7 +50,9 @@
 #       says 'CVEs'/'CVE' or claims a security fix ('security fix/issue/update
 #       ...', 'vulnerability') without a full CVE id — a bug ref (boo#/bsc#)
 #       or a GHSA id stands in for the id of a security claim, never of
-#       'CVEs': the security tracker keys off the literal ids
+#       'CVEs'; a bullet ending in ':' takes its ids from the bullets after
+#       it, and 'no'/'non-'/'not a'/'without' claims nothing: the security
+#       tracker keys off the literal ids
 #       (references/changelog-rules.md "CVEs and security bullets")
 #     - no bullet names an OBS request ('sr#N', 'SR N', 'rq N', 'request #N')
 #       or a staging order ('lands after', 'stage together'): the SR
@@ -169,10 +171,13 @@ NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
 PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
 # a CVE id cut short or left as a placeholder: CVE-2026-XXXX, CVE-2026, CVE-2026-12
 PARTIAL = re.compile(r"\bCVE-(?:\d{4}-(?!\d{4})\S*|\d{4}\b(?!-)|(?!\d{4}-)[^\s,;)]+)", re.I)
-BARE_CVE = re.compile(r"(?<!\bno )\bCVEs?\b(?!-)", re.I)
+BARE_CVE = re.compile(r"\bCVEs?\b(?!-)", re.I)
 SECURITY = re.compile(r"\bsecurity[\s-]+(?:fix(?:es|ed)?|issues?|bugs?|problems?|flaws?|"
                       r"vulnerabilit(?:y|ies)|updates?|releases?)\b|\bvulnerabilit(?:y|ies)\b", re.I)
 REFS = re.compile(r"\b(?:boo|bsc|bnc)#\d+|\bGHSA(?:-[0-9a-z]{4}){3}\b", re.I)
+NO_CLAIM = re.compile(r"(?:\bno|\bnon|\bnot(?:\s+an?)?|\bwithout(?:\s+any)?)[\s-]*$", re.I)
+def claims(rx, t):  # "no security fixes", "non-security fix", "no CVE assigned" claim nothing
+    return any(not NO_CLAIM.search(t[:m.start()]) for m in rx.finditer(t))
 REQUEST_ID = re.compile(r"\b(?:sr|rq|request)\s*#?\s*\d{6,}\b", re.I)
 UPSTREAM_PR = re.compile(r"\b(?:pull|merge)[\s-]*$", re.I)    # "pull request #N" is upstream's
 # Review and bot status (factory-auto, the source validator, a Factory forward)
@@ -238,10 +243,13 @@ for k in range(ncheck):
             groups.append((n, t.strip()))
         else:
             groups[-1] = (groups[-1][0], groups[-1][1] + " " + t.strip())
-    for n, t in groups:
+    for g, (n, t) in enumerate(groups):
         if CVE.search(t) or PARTIAL.search(t):
             continue
-        if BARE_CVE.search(t) or (SECURITY.search(t) and not REFS.search(t)):
+        # "fixes the following two security issues:" lists its CVEs below
+        if t.endswith(":") and any(CVE.search(x) for _, x in groups[g + 1:]):
+            continue
+        if claims(BARE_CVE, t) or (claims(SECURITY, t) and not REFS.search(t)):
             bad.append((n, "bullet claims security fixes without a full CVE id — cite "
                            "each CVE-YYYY-NNNN (with its boo#/bsc#), or describe the fix "
                            "itself without the security claim"))
