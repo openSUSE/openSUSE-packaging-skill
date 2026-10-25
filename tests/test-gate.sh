@@ -399,11 +399,18 @@ grep -qF "## target: rc=0" <<<"$out" && grep -qF "## changes-guard: rc=0" <<<"$o
   || { fail "direct devel commit of a link to Factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A new package for a project that has no copy of it yet: nothing to rewrite.
 co "$work/t-new" 'home:<you>:spark' - "$O/hardware/foo"
+mkdir -p "$O/devel:other"
 og "$work/t-new" --target devel:other
 grep -qF "## target: rc=0" <<<"$out" && grep -qF "devel:other/foo does not exist: a new package there" <<<"$out" \
   && ! grep -qF "osc branch devel:other" <<<"$out" \
   && pass "new package named with its target: a note, not red" \
   || { fail "new package with --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A misspelt target project is no new package: it would fall back to the
+# committed copy and pass a stale branch.
+og "$work/t-new" --target devel:exmaple
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "project devel:exmaple does not exist" <<<"$out" \
+  && pass "target project that does not exist: red" \
+  || { fail "missing target project"; printf '%s\n' "$out" | sed 's/^/    /'; }
 e "Mon Jan  5" "Update to 0.9.5" | put openSUSE:Leap:16.0:Update/foo foo.changes
 printf 'Name: foo\nVersion: 0.9.5\n' | put openSUSE:Leap:16.0:Update/foo foo.spec
 co "$work/t-maint" 'home:<you>:branches:openSUSE:Leap:16.0:Update' openSUSE:Leap:16.0:Update "$O/openSUSE:Leap:16.0:Update/foo"

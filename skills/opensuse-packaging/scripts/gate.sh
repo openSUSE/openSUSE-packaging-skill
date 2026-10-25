@@ -326,7 +326,14 @@ if [ -n "$own" ]; then
     elif timeout 60 osc api "/source/$tprj/$tpkg/_meta" > /dev/null 2> "$log/target-meta.err"; then
       echo "RED: the checkout is based on $base/$bpkg, the SR goes to $tprj/$tpkg: its .changes history is not the target's — branch the target (osc branch $tprj $tpkg), or pass --target $base if $base really is where this goes" >> "$log/target.txt"; rc=1
     elif grep -q 'HTTP Error 404' "$log/target-meta.err"; then
-      echo "note: $tprj/$tpkg does not exist: a new package there" >> "$log/target.txt"
+      # a misspelt project would pass as a new package against the committed copy
+      if timeout 60 osc api "/source/$tprj/_meta" > /dev/null 2> "$log/target-meta.err"; then
+        echo "note: $tprj/$tpkg does not exist: a new package there" >> "$log/target.txt"
+      elif grep -q 'HTTP Error 404' "$log/target-meta.err"; then
+        echo "RED: the target project $tprj does not exist — check --target" >> "$log/target.txt"; rc=1
+      else
+        echo "UNKNOWN: cannot read $tprj/_meta: $(head -n 1 "$log/target-meta.err")" >> "$log/target.txt"; rc=1
+      fi
     else
       echo "UNKNOWN: cannot read $tprj/$tpkg/_meta: $(head -n 1 "$log/target-meta.err")" >> "$log/target.txt"; rc=1
     fi
