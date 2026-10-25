@@ -188,7 +188,7 @@ ptag() {
   grep -qF "## patch-tags: rc=$2" <<<"$out" && grep -qF -- "$3" <<<"$out" && pass "patch-tags $1 (rc=$2)" \
     || { fail "patch-tags $1: expected rc=$2 and '$3'"; printf '%s\n' "$out" | sed 's/^/    /'; }
 }
-ptag ok 0 "OK: every patch tagged by name" <<'EOF'
+ptag ok 0 "OK: every changed patch tagged by name" <<'EOF'
 Name:           p
 Version:        1.2
 # PATCH-FIX-OPENSUSE p-paths.patch -- use the FHS paths
@@ -205,6 +205,16 @@ Patch3:         p-old.patch
 #Patch4:        p-dead.patch
 # PATCH-FIX-UPSTREAM p-endian.patch fdo#63461 -- fix a crash across endianness
 Patch5:         p-endian.patch
+# PATCH-FIX-UPSTREAM p-url.patch -- the Patch value is the upstream commit
+Patch6:         https://github.com/example/p/commit/abc1234.patch#/p-url.patch
+# PATCH-FIX-UPSTREAM p-mr.patch gh#example/p!12 -- a merge request
+Patch7:         p-mr.patch
+# PATCH-FIX-UPSTREAM p-gcc.patch GCC#123 -- from the GCC tracker
+Patch8:         p-gcc.patch
+# PATCH-FIX-OPENSUSE p-arm.patch -- arm only
+%ifarch aarch64
+Patch9:         p-arm.patch
+%endif
 EOF
 ptag untagged 1 "p.spec:4: p-a.patch has no PATCH-* tag in the comment above it" <<'EOF'
 Name:           p
@@ -227,7 +237,23 @@ Name:           p
 # PATCH-FEATURE-UPSTREAM p-1763633e5f7a.patch -- backport
 Patch0:         p-1763633e5f7a.patch
 EOF
-ptag no-patches 0 "OK: every patch tagged by name" <<'EOF'
+ptag name-substring 1 "p.spec:3: the PATCH-* tag above fix.patch does not name it" <<'EOF'
+Name:           p
+# PATCH-FIX-OPENSUSE notfix.patch fix.patch.orig -- neither is the file
+Patch0:         fix.patch
+EOF
+ptag ref-lent 1 "p.spec:4: the PATCH-*-UPSTREAM tag of p-a.patch cites no reference" <<'EOF'
+Name:           p
+#Patch9:        https://example.org/p-old.patch
+# PATCH-FIX-UPSTREAM p-a.patch -- fixed upstream
+Patch0:         p-a.patch
+EOF
+ptag ref-digits 1 "p.spec:3: the PATCH-*-UPSTREAM tag of p-a.patch cites no reference" <<'EOF'
+Name:           p
+# PATCH-FIX-UPSTREAM p-a.patch -- sent 20240101
+Patch0:         p-a.patch
+EOF
+ptag no-patches 0 "OK: every changed patch tagged by name" <<'EOF'
 Name:           p
 Source0:        p-1.2.tar.gz
 EOF
@@ -364,9 +390,10 @@ case "$1" in
   api) case "$2" in
          */_meta) [ -e "$OBS/fail-meta" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
                   p=${2#/source/}; p=${p%/_meta}; [ -d "$OBS/$p" ] && { echo "<package name=\"${p#*/}\"/>"; exit 0; } ;;
-         *'?expand=1') p=${2#/source/}; p=${p%\?expand=1}
+         *'?expand=1') [ -e "$OBS/fail-list" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+                  p=${2#/source/}; p=${p%\?expand=1}
                   [ -d "$OBS/$p" ] && { echo "<directory name=\"${p#*/}\">"
-                    for f in "$OBS/$p"/*; do echo "<entry name=\"$(basename "$f")\"/>"; done; echo "</directory>"; exit 0; } ;;
+                    for f in "$OBS/$p"/*; do echo "<entry name=\"$(basename "$f")\" md5=\"$(md5sum < "$f" | cut -d' ' -f1)\"/>"; done; echo "</directory>"; exit 0; } ;;
        esac ;;
   cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 400: package 'foo-ui' does not exist" >&2; exit 1; }
        [ -f "$OBS/$2/$3/$4" ] && { cat "$OBS/$2/$3/$4"; exit 0; } ;;
@@ -428,6 +455,43 @@ grep -qF "## target: rc=0" <<<"$out" && grep -qF "the checkout is based on devel
   && grep -qF "## changes-guard: rc=0" <<<"$out" && grep -qF "## changes-patches: rc=0" <<<"$out" \
   && pass "current branch of the devel project: target, changes-guard and changes-patches green" \
   || { fail "current branch of the devel project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Patch tags against the target: a patch the target ships unchanged only gets
+# a note, the same patch edited is red, and without the target's files (a new
+# package there, or a failed listing) every patch counts as changed.
+printf 'Name: bar\nVersion: 1\nPatch0: bar-old.patch\n' | put devel:example/bar bar.spec
+echo old | put devel:example/bar bar-old.patch
+e "Mon Jan  5" "Update to 1" | put devel:example/bar bar.changes
+echo devel:example/bar > "$O/devel/bar"
+cob() { # <dir> <project> <patch text>: a checkout of bar with the target's spec
+  rm -rf "$1"; mkdir -p "$1/.osc/sources"; printf 'bar\n' > "$1/.osc/_package"; printf '%s\n' "$2" > "$1/.osc/_project"
+  printf '2.0\n' > "$1/.osc/_osclib_version"
+  # the committed copy is the target's, md5 and all: only the target's
+  # listing, never this fallback, may call a patch unchanged
+  printf '<directory name="bar" rev="1"><entry name="bar.changes"/><entry name="bar.spec"/><entry name="bar-old.patch" md5="%s"/></directory>\n' \
+    "$(md5sum < "$O/devel:example/bar/bar-old.patch" | cut -d' ' -f1)" > "$1/.osc/_files"
+  cp "$O/devel:example/bar/"* "$1/.osc/sources/"; cp "$O/devel:example/bar/"* "$1/"
+  { e "Thu Oct 22" "Rebuild"; cat "$O/devel:example/bar/bar.changes"; } > "$1/bar.changes"
+  printf '%s\n' "$3" > "$1/bar-old.patch"
+}
+pt() { # <name> <rc> <expected line> <gate args...>
+  local n=$1 r=$2 m=$3; shift 3; og "$@"
+  grep -qF "## patch-tags: rc=$r" <<<"$out" && grep -qF -- "$m" "$work/gate-bar/patch-tags.txt" && pass "patch-tags $n (rc=$r)" \
+    || { fail "patch-tags $n: expected rc=$r and '$m'"; sed 's/^/    /' "$work/gate-bar/patch-tags.txt" 2>/dev/null; }
+}
+cob "$work/t-pt-same" 'home:<you>:branches:devel:example' old
+pt untouched-note 0 "note: bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it (unchanged from the target)" "$work/t-pt-same"
+cob "$work/t-pt-mod" 'home:<you>:branches:devel:example' new
+pt modified-red 1 "bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it" "$work/t-pt-mod"
+grep -q '^note:.*bar-old' "$work/gate-bar/patch-tags.txt" && fail "patch-tags modified-red: also printed as a note" \
+  || pass "patch-tags modified-red: no note for a changed patch"
+cob "$work/t-pt-new" 'home:<you>:spark' old
+pt new-package-strict 1 "bar.spec:3: bar-old.patch has no PATCH-* tag" "$work/t-pt-new" --target devel:example/baz
+: > "$O/fail-list"
+pt listing-failure-strict 1 "note: cannot list devel:example/bar (Server returned an error: HTTP Error 500: Internal): every patch counts as changed" "$work/t-pt-same"
+grep -qF "bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it" "$work/gate-bar/patch-tags.txt" \
+  && ! grep -q '^note: bar.spec' "$work/gate-bar/patch-tags.txt" && pass "patch-tags listing-failure-strict: the patch is red" \
+  || fail "patch-tags listing-failure-strict: the patch is not red"
+rm "$O/fail-list"
 : > "$O/fail-meta"; rm "$O/devel/foo"
 og "$work/t-good"
 grep -qF "## target: rc=1" <<<"$out" && grep -qF "could not be read (devel-of.sh exit 5)" <<<"$out" \

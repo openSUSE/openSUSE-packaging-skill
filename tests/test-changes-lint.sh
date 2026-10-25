@@ -185,13 +185,13 @@ input-validation|  * Add input validation to the source map parser
 factory-reset|  * Fix the factory reset of the settings dialog
 EOF
 
-# A line osc vc would have wrapped is red; one unbreakable word is not.
+# A line that could have been wrapped is red; one unbreakable word is not.
 entry long-line.changes "- Drop dead Source1 inscript2-20210820.tar.gz: its releases.pagure.org URL 404s, and it was only unpacked for old releases."
 case_ long-line 1 "long-line.changes:4: line is 123 characters: wrap it" --entries 1 "$work/long-line.changes"
 entry long-word.changes "- Add 0001-meson-build-allow-overriding-the-default-plugin-search-path-for-tests.patch:" "  fix the test run"
 case_ long-word-clean 0 "OK: clean" --entries 1 "$work/long-word.changes"
-# The width is osc vc's 67, not 80: a 68-column sub-bullet that wraps is red
-# (sr#1392409's review caught a 69-column one by hand).
+# The width is the .changes convention's 67, not 80: a 68-column sub-bullet
+# that wraps is red (sr#1392409's review caught a 69-column one by hand).
 entry wrap-68.changes "- Drop obsolete patches:" "  * DevIL-1.7.8-libpng14.patch (upstream uses the current libpng 16)"
 case_ wrap-68 1 "wrap-68.changes:5: line is 68 characters: wrap it at 67" --entries 1 "$work/wrap-68.changes"
 entry wrap-67.changes "- Drop obsolete patches:" "  * DevIL-1.7.8-libpng14.patch (upstream uses the current libpng16)"
@@ -199,6 +199,9 @@ case_ wrap-67-clean 0 "OK: clean" --entries 1 "$work/wrap-67.changes"
 # A word that cannot fit at its indentation may run over; so may an old entry.
 entry wrap-word.changes "- Refresh patches:" "  * 0001-build-let-the-test-suite-find-plugins-in-the-builddir-1.patch"
 case_ wrap-word-clean 0 "OK: clean" --entries 1 "$work/wrap-word.changes"
+# ... but only as the line's last word: what follows it could have wrapped.
+entry wrap-word-more.changes "- Add 0001-build-let-the-test-suite-find-plugins-in-the-builddir-1.patch: fix the test run"
+case_ wrap-word-more 1 "wrap-word-more.changes:4: line is 90 characters: wrap it at 67" --entries 1 "$work/wrap-word-more.changes"
 { printf '%s\nTue Sep 15 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n' "$SEP"
   cat "$work/wrap-68.changes"; } > "$work/wrap-old.changes"
 case_ wrap-old-entry-not-judged 0 "OK: clean" --entries 1 "$work/wrap-old.changes"
