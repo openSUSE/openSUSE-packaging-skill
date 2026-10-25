@@ -492,6 +492,31 @@ grep -qF "bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it" 
   && ! grep -q '^note: bar.spec' "$work/gate-bar/patch-tags.txt" && pass "patch-tags listing-failure-strict: the patch is red" \
   || fail "patch-tags listing-failure-strict: the patch is not red"
 rm "$O/fail-list"
+# A tag the target's spec had right cannot be lost, even on an unchanged patch.
+cob "$work/t-pt-lost" 'home:<you>:branches:devel:example' old
+printf 'Name: bar\nVersion: 1\n# PATCH-FIX-OPENSUSE bar-old.patch -- the old layout\nPatch0: bar-old.patch\n' | put devel:example/bar bar.spec
+pt tag-lost 1 "bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it" "$work/t-pt-lost"
+grep -q '^note:.*bar-old' "$work/gate-bar/patch-tags.txt" && fail "patch-tags tag-lost: printed as a note" \
+  || pass "patch-tags tag-lost: red, not a note"
+printf 'Name: bar\nVersion: 1\nPatch0: bar-old.patch\n' | put devel:example/bar bar.spec
+# Git: a pushed fork branch already holds the change, so it is no base: every
+# patch counts as changed until --git-base names the target's ref.
+g="$work/gz"; rm -rf "$g"; mkdir -p "$g"
+( cd "$g" && git init -q -b factory && git config user.email t@example.com && git config user.name T \
+  && printf 'Name: gz\nPatch0: gz-a.patch\nPatch1: gz-b.patch\n' > gz.spec && echo a > gz-a.patch && echo b > gz-b.patch \
+  && git add -A && git commit -qm base && git checkout -qb fork && echo a2 > gz-a.patch && git commit -qam edit \
+  && git branch -q pushed && git branch -q -u pushed ) || fail "git fixture"
+gt() { # <name> <rc> <expected line> [gate args]: patch-tags of the git checkout
+  local n=$1 r=$2 m=$3; shift 3; out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$g" "$@" 2>&1)"
+  grep -qF "## patch-tags: rc=$r" <<<"$out" && grep -qF -- "$m" "$work/gate-gz/patch-tags.txt" && pass "patch-tags $n (rc=$r)" \
+    || { fail "patch-tags $n: expected rc=$r and '$m'"; sed 's/^/    /' "$work/gate-gz/patch-tags.txt" 2>/dev/null; }
+}
+gt git-fork-strict 1 "gz.spec:3: gz-b.patch has no PATCH-* tag in the comment above it"
+grep -qF "note: pushed already holds HEAD" "$work/gate-gz/patch-tags.txt" && pass "patch-tags git-fork-strict: says why" \
+  || fail "patch-tags git-fork-strict: no note on the pushed branch"
+gt git-base-target 1 "gz.spec:2: gz-a.patch has no PATCH-* tag in the comment above it" --git-base factory
+grep -qF "note: gz.spec:3: gz-b.patch has no PATCH-* tag in the comment above it (unchanged from the target)" "$work/gate-gz/patch-tags.txt" \
+  && pass "patch-tags git-base-target: the unchanged patch is a note" || fail "patch-tags git-base-target: the unchanged patch is not a note"
 : > "$O/fail-meta"; rm "$O/devel/foo"
 og "$work/t-good"
 grep -qF "## target: rc=1" <<<"$out" && grep -qF "could not be read (devel-of.sh exit 5)" <<<"$out" \

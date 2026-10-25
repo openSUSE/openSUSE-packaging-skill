@@ -64,7 +64,7 @@
 #       for the same reason
 #     - no line is over 67 characters when it could be wrapped there, the
 #       .changes convention (references/changelog-rules.md); a word too long
-#       for that may run over only as the line's last or only word
+#       for that may run over only on a line of its own
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
 #         3 = a file is unreadable (wins over 1: the other files are still
 #         linted and printed, but the run is incomplete).
@@ -225,9 +225,9 @@ for k in range(ncheck):
         words = t.split()
         lead = len(t) - len(t.lstrip()) + (2 if words[0] in ("-", "*", "+") else 0)
         text = words[1:] if words[0] in ("-", "*", "+") else words
-        # a word too long for 67 excuses the line only when it is all of it, or its end
-        if len(t) > 67 and not (text and len(text[-1]) + lead > 67
-                                and all(len(w) + lead <= 67 for w in text[:-1])):
+        # a word too long for 67 excuses the line only when it is all of it:
+        # anything before it could have broken onto a line of its own
+        if len(t) > 67 and not (len(text) == 1 and len(text[0]) + lead > 67):
             bad.append((n, f"line is {len(t)} characters: wrap it at 67, the .changes convention"))
     bullets = []                        # (first line no, text joined over continuations)
     for n, t in body:
