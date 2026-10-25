@@ -6746,6 +6746,92 @@
       "command": "osc sr server:database:postgresql libpqxx openSUSE:Factory -m 'Update libpqxx to 8.0.2'"
     }
   },
+  "request-link-sweep-copy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    }
+  },
+  "request-link-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark/python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    }
+  },
+  "request-link-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:languages:python --cleanup -m 'Update python-streamdeck to 0.10.0'"
+    },
+    "cwd": "@OSC@/spark/python-streamdeck"
+  },
+  "request-link-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "S=home:tester:spark; osc sr --cleanup \"$S\" python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    }
+  },
+  "request-link-branch-to-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:branches:devel:languages:python python-goodlink openSUSE:Factory -m 'Update python-goodlink to 2.0: fixes.'"
+    }
+  },
+  "request-link-garbled": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark garbled-src devel:tools -m 'Update garbled-src to 1.0: fixes.'"
+    }
+  },
+  "request-link-to-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark python-goodlink devel:languages:python -m 'Update python-goodlink to 2.0: fixes.'"
+    }
+  },
+  "request-link-same-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark flavor-b devel:tools -m 'Update flavor-b to 1.1: fixes.'"
+    }
+  },
+  "request-link-no-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark brandnew devel:tools -m 'New package brandnew 1.0: a tool.'"
+    }
+  },
+  "request-link-devel-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr hardware python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    }
+  },
+  "request-link-dot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup . python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    },
+    "cwd": "@OSC@/spark/python-streamdeck"
+  },
+  "request-link-creq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit home:tester:spark python-streamdeck devel:languages:python -m 'Update python-streamdeck to 0.10.0'"
+    }
+  },
+  "request-link-creq-delete": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a delete home:tester:spark python-streamdeck -m 'Drop the stale branch.'"
+    }
+  },
+  "sr-target-creq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit home:tester:spark libpqxx server:database -m 'Update libpqxx to 8.0.2'"
+    }
+  },
   "sr-cleanup-submitpac": {
     "tool_name": "Bash",
     "tool_input": {
@@ -6823,6 +6909,255 @@
       "command": "printf 'Update to 1.3\\n' | osc ci -F -"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "osc-yes-sr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2' --yes"
+    }
+  },
+  "osc-yes-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --ye --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    }
+  },
+  "osc-yes-creq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit devel:tools tesseract-ocr openSUSE:Factory --yes -m 'Update to 5.5.3'"
+    }
+  },
+  "osc-yes-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "Y=--yes; osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2' $Y"
+    }
+  },
+  "osc-yes-python": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c 'import subprocess; subprocess.run([\"osc\", \"sr\", \"--yes\", \"devel:tools\", \"tesseract-ocr\", \"openSUSE:Factory\"])'"
+    }
+  },
+  "osc-yes-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2; filed without --yes'"
+    }
+  },
+  "osc-yes-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'never osc sr --yes'"
+    }
+  },
+  "osc-yes-heredoc-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -q -F - <<'EOF'\nfix: refuse osc sr --yes\n\nIt supersedes unread.\nEOF"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "prefilter-continuation-osc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "o\\\nsc sr --yes devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    }
+  },
+  "interpreter-python-sh": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 @WORK@/iter.sh python-foo 1.0 | head; echo EXIT=$?"
+    }
+  },
+  "interpreter-bash-py": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/iter.py"
+    }
+  },
+  "interpreter-sh-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "S=@WORK@; python3 \"$S/iter.sh\" x"
+    }
+  },
+  "interpreter-var-value": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "F=@WORK@/iter.sh; python3 \"$F\""
+    }
+  },
+  "interpreter-python-py": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 @WORK@/iter.py"
+    }
+  },
+  "interpreter-bash-sh": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/iter.sh"
+    }
+  },
+  "interpreter-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'python3 preflight.sh is wrong'"
+    }
+  },
+  "sleep-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 290"
+    }
+  },
+  "sleep-minutes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 5m"
+    }
+  },
+  "sleep-sum": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 30 30"
+    }
+  },
+  "sleep-loop": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "while ! osc results home:tester:spark libpqxx | grep -q succeeded; do sleep 290; done"
+    }
+  },
+  "sleep-timeout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "timeout 300 sleep 290"
+    }
+  },
+  "sleep-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "N=300; sleep \"$N\""
+    }
+  },
+  "sleep-path": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "/usr/bin/sleep 600"
+    }
+  },
+  "prefilter-continuation-sleep": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sl\\\neep 600"
+    }
+  },
+  "sleep-plus": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep +600"
+    }
+  },
+  "sleep-hex": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 0x258"
+    }
+  },
+  "sleep-blank": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep \" 600\""
+    }
+  },
+  "sleep-unset-operand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 600 $UNSET"
+    }
+  },
+  "sleep-substitution-operand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 600 $(true)"
+    }
+  },
+  "sleep-busybox": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "busybox sleep 600"
+    }
+  },
+  "sleep-added": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 59; sleep 59"
+    }
+  },
+  "sleep-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c 'sleep 120'"
+    }
+  },
+  "sleep-eval": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval 'sleep 120'"
+    }
+  },
+  "sleep-short": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 30"
+    }
+  },
+  "sleep-short-loop": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for i in 1 2 3; do osc results; sleep 20; done"
+    }
+  },
+  "sleep-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep \"$WAIT\""
+    }
+  },
+  "sleep-monitor": {
+    "tool_name": "Monitor",
+    "tool_input": {
+      "command": "until grep -q done @WORK@/long.txt; do sleep 120; done"
+    }
+  },
+  "sleep-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'sleep 300 loops are refused'"
+    }
+  },
+  "sleep-commit-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -q -m 'fix: no sleep 300 loops'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sleep-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 600",
+      "run_in_background": true
+    }
+  },
+  "sleep-in-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/backoff.sh"
+    }
   },
   "rdelete-force-recursive": {
     "tool_name": "Bash",
