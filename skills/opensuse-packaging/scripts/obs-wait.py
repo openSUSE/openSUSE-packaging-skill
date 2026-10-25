@@ -19,11 +19,18 @@ A call takes about --timeout plus that last osc check; --timeout 0 asks osc
 once. Prints one VERDICT line. Read-only; osc authenticates itself, no
 credential file is read.
 
+A build whose only unfinished repos/arches are "scheduled", with the rest
+green from the current sources and the last commit 30 minutes or more ago, is
+QUEUED-STUCK: those arches wait for a worker, which no wait shortens. Report it
+and come back later; it is not green, and every arch must be green before an
+update is filed.
+
 Exit:
   0 = green on every applicable repo/arch from the current sources; request accepted
   1 = still pending at --timeout: repeat the same call
   2 = settled failure: failed/unresolvable/broken/unknown code or nothing to build; request declined/revoked/superseded/deleted
   3 = no answer: usage, or an osc lookup failed or did not parse
+  4 = QUEUED-STUCK: only scheduled arches left 30+ min after the last commit, the rest green; not green, check back later
 """
 
 import argparse
@@ -54,6 +61,7 @@ BUILD_TOPICS = {
 OSC_TIMEOUT = 30
 POLL = 30  # --recheck default without the feed
 GAP = 2  # coalesces an event burst (every arch finishing at once) into one check
+STUCK = 30 * 60  # seconds after the last commit a scheduled arch counts as queued-stuck
 
 GREEN = {"succeeded"}
 RED = {"unresolvable", "broken"}
@@ -110,6 +118,16 @@ def last_job(t, repo, arch, name):
     path = f"/build/{t.prj}/{repo}/{arch}/_jobhistory?package={name}&limit=1"
     jobs = parse(osc(["api", path]), f"{repo}/{arch} job history").findall("jobhist")
     return jobs[-1].get("srcmd5", "") if jobs else ""
+
+
+def last_commit(t):
+    """Seconds since prj/pkg's latest revision was committed."""
+    path = f"/source/{t.prj}/{t.pkg}/_history?limit=1"
+    when = parse(osc(["api", path]), "source history").findtext("revision/time")
+    try:
+        return time.time() - int(when)
+    except (TypeError, ValueError):
+        raise Lookup(f"no commit time in the {t.prj}/{t.pkg} history")
 
 
 def summary(items, show=4):
@@ -185,7 +203,10 @@ def build_check(t):
             red.append(("failed", label, ""))
     if red:
         return 2, f"FAILED — {who}: {summary(red)}"
-    if pending:
+    # only scheduled arches left, the rest succeeded: maybe queued-stuck, once
+    # the succeeded ones are known to be of the current sources
+    queued = bool(ok) and all(state == "scheduled" for state, _, _ in pending)
+    if pending and not queued:
         return 1, f"PENDING — {who}: {summary(pending)}"
     for res, name, label in ok:
         got = last_job(t, res.get("repository"), res.get("arch"), name)
@@ -193,6 +214,14 @@ def build_check(t):
             raise Lookup(f"no build job recorded for {label}: its sources are unknown")
         if got != t.srcmd5:
             pending.append((older, label, f"succeeded on {got[:12]}"))
+    if pending and all(state == "scheduled" for state, _, _ in pending):
+        age = last_commit(t)
+        if age >= STUCK:
+            green = summary([("succeeded", x[2], "") for x in ok], 8)
+            return 4, (
+                f"QUEUED-STUCK — {who}: {summary(pending)} {int(age // 60)} min after "
+                f"the last commit, {green}; not green: report it and check back later"
+            )
     if pending:
         return 1, f"PENDING — {who}: {summary(pending)}"
     return 0, f"GREEN — {who}: " + summary([("succeeded", x[2], "") for x in ok], 8)

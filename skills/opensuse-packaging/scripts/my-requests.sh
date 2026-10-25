@@ -6,7 +6,7 @@
 # request-search API with roles=creator (via sr-status.py).
 #
 # Usage: my-requests.sh [--state open|declined|accepted|all] [--user OBSUSER] [--target PRJ]
-#                       [--limit N] [--summary]
+#                       [--limit N] [--summary] [--days N]
 #   --state   open (new,review,declined) | declined | accepted | all  (default: open)
 #             "open" includes declined on purpose: a decline is terminal, so it
 #             leaves the active set — filtering it out hides the one state that
@@ -19,6 +19,9 @@
 #             what was filed since, the oldest new and review requests, and
 #             comments by others since your last action (OBS only: "status of
 #             my submissions" is sr-status.py --summary, which adds the PRs)
+#   --days    with --summary: also the requests accepted, revoked or superseded
+#             in the last N days (default 14) — "was it filed?" is answered
+#             there, never from the open list
 # Exit: 0 = listed, 2 = usage or the OBS query failed.
 set -euo pipefail
 

@@ -16,6 +16,10 @@
 #      in flight — an unrecognized status code counts as settled-failure, NOT
 #      pending, so a stuck package can't keep the loop spinning forever
 #   3  no answer: usage error, or the _meta/_result lookup failed or did not parse
+#   4  QUEUED-STUCK: the only packages left are "scheduled", each 30+ min after
+#      its last commit, and the rest succeeded — they wait for a worker, which
+#      no polling shortens: report it and check back later. NOT green: every
+#      package must be green before anything is filed
 #
 # Usage: cone-status.sh <project> [repo] [arch]
 #   repo default: first <repository> in the project _meta;  arch default: x86_64
@@ -48,7 +52,8 @@ res="$(osc api "/build/$prj/_result?repository=$repo&arch=$arch" 2>/dev/null)"
 # Parse with xml.etree (attribute-order-independent), classify, print, and
 # encode the verdict in the exit code.
 printf '%s' "$res" | PRJ="$prj" REPO="$repo" ARCH="$arch" python3 -c '
-import sys, os, xml.etree.ElementTree as ET
+import sys, os, subprocess, time, xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 try:
     root = ET.fromstring(sys.stdin.read())
 except ET.ParseError as e:
@@ -93,6 +98,25 @@ print(f"summary: {green} ok / {failed} failed / {pending} in-flight  (of {total}
 for code, pkg in unknown:
     print(f"NOTE: unknown code {code!r} for {pkg}/{repo}/{arch} — counted as settled failure")
 
+def age(pkg):
+    """Seconds since pkg was last committed, None when that cannot be read."""
+    try:
+        out = subprocess.run(["osc", "api", f"/source/{prj}/{pkg}/_history?limit=1"],
+                             capture_output=True, text=True, timeout=30).stdout
+        return time.time() - int(ET.fromstring(out).findtext("revision/time"))
+    except (subprocess.TimeoutExpired, OSError, ET.ParseError, TypeError, ValueError):
+        return None
+
+queued = [pkg for code, pkg in rows if code == "scheduled"]
+if pending and not dirty and not failed and green and len(queued) == pending:
+    with ThreadPoolExecutor(max_workers=8) as ex:   # one call per package
+        ages = list(ex.map(age, queued))
+    if None in ages:
+        print("NOTE: a last-commit time could not be read — treated as in flight")
+    elif min(ages) >= 30 * 60:
+        print(f"QUEUED-STUCK: {len(queued)} scheduled 30+ min after the last commit, "
+              "the rest green — not green: report it and check back later")
+        sys.exit(4)
 if pending > 0 or dirty:
     sys.exit(1)      # something still in flight — do not trust failures yet
 sys.exit(2 if failed > 0 else 0)

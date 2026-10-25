@@ -6,17 +6,25 @@ Devel maintainers forward what they accept themselves (129 of the 132 SRs other
 maintainers accepted in one measured week got their own Factory forward), so an
 accepted devel request is not a forward still to file. This asks Factory:
 
-  forward-check.py <devel-project> <package>    one package
-  forward-check.py --mine [--since YYYY-MM-DD]  every submit request of yours
-                                                accepted into a project that is
-                                                neither openSUSE:* nor home:
-                                                since DATE (default: 14 days ago)
-  --user U   OBS account (default: `osc whois`)
+  forward-check.py <devel-project> <package> [...]  packages, as pairs or as
+                                                    <project>/<package>
+  forward-check.py --batch FILE                     one <project><TAB><package>
+                                                    (or prj/pkg) per line
+  forward-check.py --mine [--since YYYY-MM-DD]      every submit request of yours
+                                                    accepted into a project that
+                                                    is neither openSUSE:* nor
+                                                    home: since DATE (default:
+                                                    14 days ago)
+  --user U          OBS account (default: `osc whois`)
+  --deadline SECONDS  start no lookup after this many seconds (default 80): the
+                    rest print as UNKNOWN and `# INCOMPLETE` follows the count
 
 A request to Factory is the forward only when it comes from the devel
 project; it is current when its source revision holds the devel package's
 current files (name and md5, expanded), stale otherwise. One line per package, as
-each is decided (about 2 s each: run --mine in the background), the count last:
+each is decided (about 2 s each: run --mine in the background), the count last.
+Output without the count line was cut off before the end: never read it as
+"nothing due".
   FORWARDED <id> by <who> <state> current|stale
   MINE-OPEN <id> <state> current|stale   your own forward is open
   IN-FACTORY                   openSUSE:Factory holds the devel package's files
@@ -38,10 +46,13 @@ each is decided (about 2 s each: run --mine in the background), the count last:
   MAINTAINERS                  not yours to forward: the devel maintainers do
   UNKNOWN                      a lookup failed; never read as done
 File a forward only on DUE, or on MINE-DECLINED once the decline is fixed.
+A package not looked up by --deadline is UNKNOWN, and `# INCOMPLETE: K not
+looked up: ...` follows the count; killed with SIGTERM, it prints
+`# INCOMPLETE` too.
 
 Exit: 0 nothing to do; 4 something needs you (a stale forward, MINE-DECLINED,
 DECLINED, FOREIGN-DECLINED, DEVEL-DECLINED, WRONG-DEVEL, NEW-IN-FACTORY or
-DUE); 3 a lookup failed (wins over 4); 2 usage
+DUE); 3 a lookup failed or was cut by --deadline (wins over 4); 2 usage
 
 Requests to an scmsync devel project's Gitea repository are not OBS requests
 and are not covered.
@@ -51,9 +62,11 @@ import argparse
 import datetime
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -65,6 +78,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FACTORY = "openSUSE:Factory"
 TIMEOUT = 60
 CLEAN = {"FORWARDED", "MINE-OPEN", "IN-FACTORY", "NOT-LANDED", "GONE", "MAINTAINERS"}
+SKIPPED = object()  # what a role lookup --deadline stopped returns
+NOT_LOOKED_UP = "not looked up (--deadline reached)"
+
+
+# Lookups stop starting at this monotonic time (set from --deadline), so a
+# long --mine run still prints its count before a harness kills the call.
+DEADLINE = None
 
 
 class Lookup(Exception):
@@ -72,13 +92,29 @@ class Lookup(Exception):
     tells a 404 apart."""
 
 
+class Skipped(Exception):
+    """--deadline passed before this lookup started (or while it ran)."""
+
+
+def timeout(limit):
+    """limit, cut to the time left before DEADLINE (at least 5 s); Skipped
+    once DEADLINE has passed."""
+    if DEADLINE is None:
+        return limit
+    left = DEADLINE - time.monotonic()
+    if left <= 0:
+        raise Skipped()
+    return min(limit, max(5, left))
+
+
 def osc(*args):
+    t = timeout(TIMEOUT)
     try:
-        r = subprocess.run(
-            ["osc", *args], capture_output=True, text=True, timeout=TIMEOUT
-        )
+        r = subprocess.run(["osc", *args], capture_output=True, text=True, timeout=t)
     except subprocess.TimeoutExpired:
-        raise Lookup(f"osc {args[0]} timed out after {TIMEOUT}s", False)
+        if DEADLINE is not None and time.monotonic() >= DEADLINE:
+            raise Skipped()
+        raise Lookup(f"osc {args[0]} timed out after {t:.0f}s", False)
     except FileNotFoundError:
         raise Lookup("osc: command not found", False)
     if r.returncode != 0:
@@ -194,9 +230,11 @@ class Package:
                 ["bash", os.path.join(HERE, "devel-of.sh"), self.pkg],
                 capture_output=True,
                 text=True,
-                timeout=2 * TIMEOUT,
+                timeout=timeout(2 * TIMEOUT),
             )
         except subprocess.TimeoutExpired:
+            if DEADLINE is not None and time.monotonic() >= DEADLINE:
+                raise Skipped()
             raise Lookup("devel-of.sh timed out", False)
         if r.returncode in (3, 4):  # not in Factory, or no devel project named
             return None
@@ -283,6 +321,8 @@ class Package:
 
     def role(self, verdict):
         """The verdict once autoforward-gate.sh has decided the role."""
+        if verdict is SKIPPED:
+            return "UNKNOWN", NOT_LOOKED_UP
         if verdict == "WRONG-DEVEL":
             return verdict, ""
         if verdict in ("BLOCKED", "NOT_YOURS"):
@@ -300,10 +340,15 @@ class Package:
 
 def gate(packages, user):
     """{(prj, pkg): verdict} from autoforward-gate.sh --batch, in up to six
-    parallel batches; a batch that fails leaves its rows out (UNKNOWN)."""
+    parallel batches; a batch that fails leaves its rows out (UNKNOWN), one
+    that --deadline stopped maps them to SKIPPED."""
     chunks = [packages[i::6] for i in range(min(6, len(packages)))]
 
     def run(chunk):
+        try:
+            limit = timeout(len(chunk) * 4 * TIMEOUT)
+        except Skipped:
+            return {(p.prj, p.pkg): SKIPPED for p in chunk}
         with tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False) as fh:
             fh.write("".join(f"{p.prj}\t{p.pkg}\n" for p in chunk))
         try:
@@ -318,9 +363,11 @@ def gate(packages, user):
                 ],
                 capture_output=True,
                 text=True,
-                timeout=len(chunk) * 4 * TIMEOUT,
+                timeout=limit,
             )
         except subprocess.TimeoutExpired:
+            if DEADLINE is not None and time.monotonic() >= DEADLINE:
+                return {(p.prj, p.pkg): SKIPPED for p in chunk}
             return {}
         finally:
             os.unlink(fh.name)
@@ -367,31 +414,88 @@ def one(prj, pkg, user):
     return max(pending, key=lambda r: r["id"]) if pending else None
 
 
+def pairs(words, where):
+    """[(project, package)] from "<project> <package>" pairs and "prj/pkg"
+    words; ValueError naming `where` on anything else."""
+    out, i = [], 0
+    while i < len(words):
+        w = words[i]
+        if "/" in w:
+            prj, _, pkg = w.partition("/")
+            i += 1
+        elif i + 1 < len(words) and "/" not in words[i + 1]:
+            prj, pkg = w, words[i + 1]
+            i += 2
+        else:
+            raise ValueError(f"{where}: {w!r} has no package")
+        if not prj or not pkg or "/" in pkg:
+            raise ValueError(f"{where}: not <project>/<package>: {w!r}")
+        out.append((prj, pkg))
+    return out
+
+
+def batch(path):
+    """The (project, package) lines of a --batch file: tab or space separated,
+    or prj/pkg; blank lines and # comments skipped."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError as e:
+        raise ValueError(f"--batch {path}: {e.strerror}")
+    out = []
+    for n, line in enumerate(lines, 1):
+        words = line.split()
+        if words and not words[0].startswith("#"):
+            if len(words) > 2:
+                raise ValueError(f"--batch {path}:{n}: more than one package")
+            out += pairs(words, f"--batch {path}:{n}")
+    if not out:
+        raise ValueError(f"--batch {path}: no packages")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         allow_abbrev=False,
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("project", nargs="?")
-    ap.add_argument("package", nargs="?")
+    ap.add_argument("packages", nargs="*")
     ap.add_argument("--mine", action="store_true")
+    ap.add_argument("--batch", metavar="FILE")
     ap.add_argument("--since")
     ap.add_argument("--user")
-    a = ap.parse_args()
-    if a.mine == bool(a.project) or bool(a.project) != bool(a.package):
-        ap.error("give <devel-project> <package>, or --mine")
+    ap.add_argument("--deadline", type=float, default=80, metavar="SECONDS")
+    a = ap.parse_intermixed_args()
+    if [a.mine, bool(a.packages), bool(a.batch)].count(True) != 1:
+        ap.error("give <devel-project> <package>, --batch FILE, or --mine")
     if a.since and (not a.mine or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.since)):
         ap.error("--since YYYY-MM-DD goes with --mine")
+    if a.deadline < 0:
+        ap.error("--deadline takes 0 or more seconds")
+    try:
+        wanted = batch(a.batch) if a.batch else pairs(a.packages, "arguments")
+    except ValueError as e:
+        ap.error(str(e))
+    start = time.monotonic()
     user = a.user
     if not user:
         try:
             user = osc("whois").split(":", 1)[0].strip()
-        except Lookup as e:
-            print(
-                f"cannot determine account ({e.args[0]}); pass --user", file=sys.stderr
-            )
+        except (Lookup, Skipped) as e:
+            why = e.args[0] if e.args else "--deadline reached"
+            print(f"cannot determine account ({why}); pass --user", file=sys.stderr)
             return 2
+    global DEADLINE
+    DEADLINE = start + a.deadline
+    counts, stale, skipped = {}, False, []
+
+    def interrupted(signum, frame):
+        sys.stdout.write("# INCOMPLETE: interrupted before every package was decided\n")
+        sys.stdout.flush()
+        os._exit(3)
+
+    signal.signal(signal.SIGTERM, interrupted)
     try:
         if a.mine:
             since = a.since or (
@@ -400,22 +504,27 @@ def main():
             ).strftime("%Y-%m-%d")
             todo = mine_since(user, since)
         else:
-            todo = {(a.project, a.package): one(a.project, a.package, user)}
-    except Lookup as e:
-        print(f"UNKNOWN: cannot list the requests ({e.args[0]})", file=sys.stderr)
+            todo = dict.fromkeys(wanted, "lookup")
+    except (Lookup, Skipped) as e:
+        why = e.args[0] if e.args else "--deadline reached"
+        print(f"UNKNOWN: cannot list the requests ({why})", file=sys.stderr)
         return 3
-
-    counts, stale = {}, False
 
     def emit(p, verdict, detail):
         nonlocal stale
         counts[verdict] = counts.get(verdict, 0) + 1
         stale |= verdict in ("FORWARDED", "MINE-OPEN") and detail.endswith(" stale")
+        if detail == NOT_LOOKED_UP:
+            skipped.append(f"{p.prj}/{p.pkg}")
         print(f"{p.prj}/{p.pkg}  {verdict} {detail}".rstrip(), flush=True)
 
     def decide(p):
         try:
+            if p.own == "lookup":
+                p.own = one(p.prj, p.pkg, user)
             return p, p.decide()
+        except Skipped:
+            return p, ("UNKNOWN", NOT_LOOKED_UP)
         except Lookup as e:
             return p, ("UNKNOWN", clean(str(e.args[0]), 160))
 
@@ -438,6 +547,11 @@ def main():
         f"# {len(packages)} package(s): "
         + (", ".join(f"{n} {v}" for v, n in sorted(counts.items())) or "none")
     )
+    if skipped:
+        print(
+            f"# INCOMPLETE: {len(skipped)} not looked up (--deadline reached; raise "
+            "it, or ask for these): " + ", ".join(sorted(skipped))
+        )
     if "UNKNOWN" in counts:
         return 3
     return 4 if stale or set(counts) - CLEAN else 0

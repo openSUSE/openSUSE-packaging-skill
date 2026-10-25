@@ -35,6 +35,7 @@ serve() { # the n-th call of a kind gets <kind>@n, else the highest below n, els
 }
 case "$1 $2" in
   "results --xml") serve results ;;
+  "api /source/"*"/_history"*) serve history ;;
   "api /source/"*) serve source ;;
   "api /request/"*) serve request ;;
   "api /build/"*"/_jobhistory?package="*)
@@ -138,6 +139,9 @@ res() { # res NAME ARCH[:FLAVOR][!]=CODE[/DETAILS] ...  — "!" marks the reposi
     echo '</resultlist>'; } > "$f"
 }
 src() { echo "<directory name=\"$K\" rev=\"3\" srcmd5=\"$2\"/>" > "$FIX/$1"; }
+hist() { # hist NAME SECONDS — the last commit was SECONDS ago
+  printf '<revisionlist><revision rev="3"><time>%s</time></revision></revisionlist>\n' "$(( $(date +%s) - $2 ))" > "$FIX/$1"
+}
 job() { echo "<jobhistlist><jobhist package=\"$K\" srcmd5=\"$2\" code=\"succeeded\"/></jobhistlist>" > "$FIX/$1"; }
 req() { # req NAME STATE [ATTRS] [COMMENT] [REVIEWS]
   printf '<request id="4242" creator="a-packager"><state name="%s" who="a-reviewer" %s><comment>%s</comment></state>%s</request>\n' \
@@ -289,6 +293,31 @@ src source $CUR
 plan "$(bev 0.3 build_success $CUR)"
 run mid-err build $P $K --timeout 20
 expect "a lookup failing mid-wait is no answer, not pending" 3 "gateway"
+
+# An arch that only waits for a worker: no wait shortens it. Reported as
+# QUEUED-STUCK (exit 4, not green) once the rest is green from the current
+# sources and the last commit is 30+ minutes old, instead of 127 sleeps.
+new queued; res results x86_64=succeeded aarch64=scheduled i586=scheduled; src source $CUR; job jobhist $CUR; hist history 3600
+run queued build $P $K --timeout 20
+expect "only scheduled arches left an hour after the commit: QUEUED-STUCK" 4 \
+  "VERDICT: QUEUED-STUCK — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64, standard/i586 60 min after the last commit, succeeded: standard/x86_64; not green"
+[ "$ms" -lt 5000 ] && pass "  ...at once, without waiting out the timeout (${ms}ms)" || fail "  waited ${ms}ms"
+new queued-fresh; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR; hist history 600
+run queued-fresh build $P $K --timeout 0
+expect "scheduled ten minutes after the commit is still pending" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64"
+new queued-building; res results x86_64=succeeded aarch64=scheduled i586=building; src source $CUR; job jobhist $CUR; hist history 3600
+run queued-building build $P $K --timeout 0
+expect "an arch still building is pending, not stuck" 1 "PENDING"
+new queued-none-green; res results x86_64=scheduled aarch64=scheduled; src source $CUR; hist history 3600
+run queued-none-green build $P $K --timeout 0
+expect "nothing green yet is pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64, standard/aarch64"
+new queued-old-green; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $OLD; hist history 3600
+run queued-old-green build $P $K --timeout 0
+expect "a green arch of older sources keeps it pending" 1 "built from older sources: standard/x86_64 (succeeded on bbbbbbbbbbbb)"
+new queued-no-history; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR
+echo '<revisionlist/>' > "$FIX/history"
+run queued-no-history build $P $K --timeout 0
+expect "no commit time is no answer, never stuck or pending" 3 "VERDICT: UNKNOWN — no commit time in the $P/$K history"
 
 # ---------------------------------------------------------------- the stream
 

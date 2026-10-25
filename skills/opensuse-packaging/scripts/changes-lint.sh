@@ -45,6 +45,13 @@
 #       states that this update fixes that id: reviewers read any CVE id in
 #       .changes as fixed here (references/changelog-rules.md "CVEs and
 #       security bullets")
+#     - no bullet carries an incomplete CVE id ('CVE-2026-XXXX', 'CVE-2026',
+#       'CVE-2026-12'), and no top-level bullet (its sub-bullets included)
+#       says 'CVEs'/'CVE' or claims a security fix ('security fix/issue/update
+#       ...', 'vulnerability') without a full CVE id — a bug ref (boo#/bsc#)
+#       or a GHSA id stands in for the id of a security claim, never of
+#       'CVEs': the security tracker keys off the literal ids
+#       (references/changelog-rules.md "CVEs and security bullets")
 #     - no bullet names an OBS request ('sr#N', 'SR N', 'rq N', 'request #N')
 #       or a staging order ('lands after', 'stage together'): the SR
 #       message carries those, the .changes ships in the RPM
@@ -160,6 +167,12 @@ FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+
 FIXED = re.compile(r"(?P<id>CVE-\d{4}-\d{4,})\)?:?\s+(?:is\s+|was\s+|now\s+)?(?:fixed|addressed)\b", re.I)
 NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
 PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
+# a CVE id cut short or left as a placeholder: CVE-2026-XXXX, CVE-2026, CVE-2026-12
+PARTIAL = re.compile(r"\bCVE-(?:\d{4}-(?!\d{4})\S*|\d{4}\b(?!-)|(?!\d{4}-)[^\s,;)]+)", re.I)
+BARE_CVE = re.compile(r"(?<!\bno )\bCVEs?\b(?!-)", re.I)
+SECURITY = re.compile(r"\bsecurity[\s-]+(?:fix(?:es|ed)?|issues?|bugs?|problems?|flaws?|"
+                      r"vulnerabilit(?:y|ies)|updates?|releases?)\b|\bvulnerabilit(?:y|ies)\b", re.I)
+REFS = re.compile(r"\b(?:boo|bsc|bnc)#\d+|\bGHSA(?:-[0-9a-z]{4}){3}\b", re.I)
 REQUEST_ID = re.compile(r"\b(?:sr|rq|request)\s*#?\s*\d{6,}\b", re.I)
 UPSTREAM_PR = re.compile(r"\b(?:pull|merge)[\s-]*$", re.I)    # "pull request #N" is upstream's
 # Review and bot status (factory-auto, the source validator, a Factory forward)
@@ -215,6 +228,23 @@ for k in range(ncheck):
         if names_request(t):
             bad.append((n, "bullet names a submit request or a staging order — put it in "
                            "the SR message (- Stage with sr#N), not in .changes"))
+        cut = PARTIAL.search(t)
+        if cut:
+            bad.append((n, f"bullet has an incomplete CVE id ({cut.group(0)!r}) — cite the "
+                           "full CVE-YYYY-NNNN, or leave it out"))
+    groups = []                         # top-level '-' bullet with its sub-bullets
+    for n, t in body:
+        if t.startswith("-") or not groups:
+            groups.append((n, t.strip()))
+        else:
+            groups[-1] = (groups[-1][0], groups[-1][1] + " " + t.strip())
+    for n, t in groups:
+        if CVE.search(t) or PARTIAL.search(t):
+            continue
+        if BARE_CVE.search(t) or (SECURITY.search(t) and not REFS.search(t)):
+            bad.append((n, "bullet claims security fixes without a full CVE id — cite "
+                           "each CVE-YYYY-NNNN (with its boo#/bsc#), or describe the fix "
+                           "itself without the security claim"))
 for i, msg in sorted(set(bad)):
     print(f"{f}:{i}: {msg}")
 sys.exit(1 if bad else 0)
