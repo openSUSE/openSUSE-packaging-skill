@@ -62,8 +62,9 @@
 #     - no bullet reports submission or review status ('factory-auto', the
 #       source validator or a source-URL validation, the Factory forward),
 #       for the same reason
-#     - no line is over 67 characters when it could be wrapped there, as
-#       osc vc does (a single word too long for that may run over)
+#     - no line is over 67 characters when it could be wrapped there, the
+#       .changes convention (references/changelog-rules.md); a word too long
+#       for that may run over only as the line's last or only word
 #   Exit: 0 = clean, 1 = findings (file:line: message), 2 = usage,
 #         3 = a file is unreadable (wins over 1: the other files are still
 #         linted and printed, but the run is incomplete).
@@ -220,11 +221,14 @@ for k in range(ncheck):
                     "bare 'Update to <version>' with no summary of upstream "
                     "changes — add substantive bullets, or state "
                     "'* No user-visible changes'"))
-    for n, t in body:                   # osc vc wraps at 67; one long word may overrun
+    for n, t in body:                   # .changes wraps at 67; one unbreakable word may overrun
         words = t.split()
         lead = len(t) - len(t.lstrip()) + (2 if words[0] in ("-", "*", "+") else 0)
-        if len(t) > 67 and max(map(len, words)) + lead <= 67:
-            bad.append((n, f"line is {len(t)} characters: wrap it at 67 (as osc vc does)"))
+        text = words[1:] if words[0] in ("-", "*", "+") else words
+        # a word too long for 67 excuses the line only when it is all of it, or its end
+        if len(t) > 67 and not (text and len(text[-1]) + lead > 67
+                                and all(len(w) + lead <= 67 for w in text[:-1])):
+            bad.append((n, f"line is {len(t)} characters: wrap it at 67, the .changes convention"))
     bullets = []                        # (first line no, text joined over continuations)
     for n, t in body:
         if t.strip().startswith(("-", "*", "+")) or not bullets:

@@ -228,24 +228,61 @@ def copyright(base, work):
 TAG = re.compile(r"PATCH-(?:(?:FIX|FEATURE)-(?:UPSTREAM|OPENSUSE|SLE)|NEEDS-REBASE)\b")
 PATCH = re.compile(r"Patch\d*\s*:\s*(\S+)", re.I)
 MACRO = re.compile(r"%\{\??(\w+)\}|%(\w+)")
-REF = re.compile(r"https?://\S+|\bgh#[\w.-]+/[\w.-]+#\d+|\b[a-z][a-z0-9]*#\d+")  # URL, gh#o/r#N, a bug id (bsc#, fdo#, …)
+# a URL; gh#o/r#N, gh#o/r!N, glgo#GNOME/x!N; a bug id (bsc#N, fdo#N, GCC#N, RT#N)
+REF = re.compile(r"https?://\S+|\b[a-z][\w-]*#(?:[\w.-]+/)+[\w.-]+[#!]\d+|\b[a-z][a-z0-9]*[#!]\d+", re.I)
 HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 
-def cited(block, names):
-    text = "\n".join(block)
+def named(name, text):  # the file as a whole token: not notfix.patch, not fix.patch.orig
+    return re.search(r"(?<![\w.+-])%s(?![\w+-]|\.\w)" % re.escape(name), text) is not None
+
+
+def cited(lines, names):
+    text = "\n".join(lines)
     for n in names:  # a hash-like file name is no reference
         text = text.replace(n, " ")
-    return bool(REF.search(text)) or any(re.search(r"\d", h) for h in HEX.findall(text))
+    return bool(REF.search(text)) or any(re.search(r"\d", h) and re.search(r"[a-f]", h) for h in HEX.findall(text))
 
 
-def tags(spec):
+def untouched(against):
+    # "strict": every patch counts as touched; "git:REF": the file as REF has
+    # it; else a directory listing (the target's, or .osc/_files)
+    if against == "strict":
+        return lambda f: False
+    if against.startswith("git:"):
+        ref = against[4:]
+
+        def same_git(f):
+            return (subprocess.run(["git", "cat-file", "-e", "%s:./%s" % (ref, f)], capture_output=True).returncode == 0
+                    and subprocess.run(["git", "diff", "--quiet", ref, "--", f], capture_output=True).returncode == 0)
+        return same_git
+    try:
+        md5 = {e.get("name"): e.get("md5") for e in ET.parse(against).getroot().findall("entry")}
+    except (OSError, ET.ParseError):
+        return lambda f: False
+
+    def same(f):
+        if f not in md5:
+            return False
+        h = hashlib.md5()
+        try:
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return False
+        return h.hexdigest() == md5[f]
+    return same
+
+
+def tags(spec, against="strict"):
     try:
         with open(spec, encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
     except OSError as e:
         print("%s: cannot read it: %s" % (spec, e.strerror))
         return 1
+    same = untouched(against)
     macros = {}
     for line in lines:
         m = re.match(r"(name|version)\s*:\s*(\S+)", line, re.I)
@@ -273,23 +310,26 @@ def tags(spec):
             continue
         f = base(expand(m.group(1)))
         names = {base(m.group(1)), f}
-        j = i - 1  # an %if around the Patch line sits between it and its comment
-        while j >= 0 and re.match(r"%(if|else|elif|endif)\b", lines[j].strip()):
+        j = i - 1  # an %if/%ifarch around the Patch line sits between it and its comment
+        while j >= 0 and re.match(r"%(if|else|elif|endif)", lines[j].strip()):
             j -= 1
         block = []
         while j >= 0 and lines[j].lstrip().startswith("#"):
             block.insert(0, lines[j])
             j -= 1
-        tagged = [t for t in block if TAG.search(t)]
-        named = [t for t in tagged if any(n in t for n in names)]
+        tagged = [k for k, t in enumerate(block) if TAG.search(t)]
+        naming = [k for k in tagged if any(named(n, block[k]) for n in names)]
         why = None
         if not tagged:
             why = "%s has no PATCH-* tag in the comment above it" % f
-        elif not named:
+        elif not naming:
             why = "the PATCH-* tag above %s does not name it" % f
-        elif "UPSTREAM" in TAG.search(named[0]).group(0) and not cited(block, names):
+        # the reference is this tag's: from its line down, plus the Patch value
+        elif "UPSTREAM" in TAG.search(block[naming[-1]]).group(0) and not cited(block[naming[-1]:] + [m.group(1)], names):
             why = "the PATCH-*-UPSTREAM tag of %s cites no reference (URL, gh#owner/repo#N, commit, bug id like bsc#N)" % f
-        if why:
+        if why and same(f):  # shipped as is: whoever changes it next tags it
+            print("note: %s:%d: %s (unchanged from the target)" % (spec, i + 1, why))
+        elif why:
             print("%s:%d: %s" % (spec, i + 1, why))
             bad = 1
     return bad
@@ -562,15 +602,30 @@ done
 [ $rc -eq 0 ] && echo "OK: one spec header, and every copyright holder of the target kept" >> "$log/spec-header.txt"
 show spec-header $rc "$log/spec-header.txt"
 
-# Every Patch line carries a PATCH-* tag naming its file, and an UPSTREAM tag
-# says where upstream has it (references/patches.md): a devel reviewer asked
-# for them on sr#1385879, which no gate had checked.
-: > "$log/patch-tags.txt"; rc=0
+# A patch the change adds or edits carries a PATCH-* tag naming its file, and
+# an UPSTREAM tag says where upstream has it (references/patches.md): a devel
+# reviewer asked for them on sr#1385879, which no gate had checked. One the
+# target ships unchanged only gets a note. Without the target's files (a new
+# package, a failed lookup) every patch counts as changed.
+: > "$log/patch-tags.txt"; rc=0; against=strict
+if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
+  if timeout 60 osc api "/source/$tprj/$tpkg?expand=1" > "$log/target-files.xml" 2> "$log/target-files.err"; then
+    against="$log/target-files.xml"
+  elif ! grep -q 'HTTP Error 404' "$log/target-files.err"; then
+    echo "note: cannot list $tprj/$tpkg ($(head -n 1 "$log/target-files.err")): every patch counts as changed" >> "$log/patch-tags.txt"
+  fi
+elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
+  against=.osc/_files                      # a direct commit: against the committed copy
+elif [ -z "$own" ] && ref=${gitbase:-$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)} && [ -n "$ref" ]; then
+  against="git:$ref"
+fi
 for s in "${specs[@]}"; do
   [ -e "$s" ] || continue
-  py tags "$s" >> "$log/patch-tags.txt" || rc=1
+  py tags "$s" "$against" >> "$log/patch-tags.raw" || rc=1
 done
-[ $rc -eq 0 ] && echo "OK: every patch tagged by name, every UPSTREAM tag with its reference" >> "$log/patch-tags.txt"
+# notes first, so the red lines stay in the 12 lines show prints
+{ grep '^note:' "$log/patch-tags.raw"; grep -v '^note:' "$log/patch-tags.raw"; } >> "$log/patch-tags.txt" 2>/dev/null
+[ $rc -eq 0 ] && echo "OK: every changed patch tagged by name, every UPSTREAM tag with its reference" >> "$log/patch-tags.txt"
 show patch-tags $rc "$log/patch-tags.txt"
 
 if [ ${#red[@]} -eq 0 ]; then
