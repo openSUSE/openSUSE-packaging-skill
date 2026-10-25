@@ -291,5 +291,203 @@ else
   echo "SKIP: download_files check (no /usr/lib/obs/service/download_files)"
 fi
 
+# The target: Factory's devel project unless named, and the checkout's history
+# must be the target's (sr#1392134: a branch of hardware's stale copy filed to
+# devel:languages:python deleted that project's newer entries). A fake OBS
+# serves $OBS/<prj>/<pkg>/<file>, Factory's devel project from $OBS/devel/<pkg>,
+# and a 500 for every _meta when $OBS/fail-meta exists.
+mkdir -p "$work/obin"
+cat > "$work/obin/osc" <<'EOF'
+#!/bin/bash
+case "$1" in
+  develproject) [ -f "$OBS/devel/$3" ] && { cat "$OBS/devel/$3"; exit 0; } ;;
+  api) case "$2" in
+         */_meta) [ -e "$OBS/fail-meta" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+                  p=${2#/source/}; p=${p%/_meta}; [ -d "$OBS/$p" ] && { echo "<package name=\"${p#*/}\"/>"; exit 0; } ;;
+         *'?expand=1') p=${2#/source/}; p=${p%\?expand=1}
+                  [ -d "$OBS/$p" ] && { echo "<directory name=\"${p#*/}\">"
+                    for f in "$OBS/$p"/*; do echo "<entry name=\"$(basename "$f")\"/>"; done; echo "</directory>"; exit 0; } ;;
+       esac ;;
+  cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+       [ -f "$OBS/$2/$3/$4" ] && { cat "$OBS/$2/$3/$4"; exit 0; } ;;
+  status) exit 0 ;;
+  vc) printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4"; exit 0 ;;
+esac
+echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
+EOF
+chmod +x "$work/obin/osc"
+O="$work/obs"
+put() { mkdir -p "$O/$1" && cat > "$O/$1/$2"; }   # put <prj>/<pkg> <file> < content
+e() { entry "$1 10:00:00 UTC 2026" "$2"; }
+{ e "Wed Sep 16" "Update to 0.9.8"; e "Tue Sep 15" "Update to 0.9.7"; e "Mon Jan  5" "Update to 0.9.5"; } | put devel:example/foo foo.changes
+printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
+e "Mon Jan  5" "Update to 0.9.5" | put hardware/foo foo.changes
+printf 'Name: foo\nVersion: 0.9.5\n' | put hardware/foo foo.spec
+e "Mon Jan  5" "Update to 0.9.5" | put openSUSE:Factory/foo foo.changes
+printf 'Name: foo\nVersion: 0.9.5\n' | put openSUSE:Factory/foo foo.spec
+mkdir -p "$O/devel"; echo devel:example/foo > "$O/devel/foo"
+# co <dir> <own project> <link project or -> <base file dir>: a checkout of foo
+# whose committed files are the base's, plus one new entry and a 1.0 spec.
+co() {
+  rm -rf "$1"; mkdir -p "$1/.osc/sources"; printf 'foo\n' > "$1/.osc/_package"; printf '%s\n' "$2" > "$1/.osc/_project"
+  printf '2.0\n' > "$1/.osc/_osclib_version"
+  local li=""; [ "$3" = - ] || li="<linkinfo project=\"$3\" package=\"foo\" srcmd5=\"x\"/>"
+  printf '<directory name="foo" rev="1">%s<entry name="foo.changes"/><entry name="foo.spec"/></directory>\n' "$li" > "$1/.osc/_files"
+  cp "$4/foo.changes" "$4/foo.spec" "$1/.osc/sources/"
+  { e "Thu Oct 22" "Update to 1.0"; cat "$4/foo.changes"; } > "$1/foo.changes"
+  sed 's/^Version: .*/Version: 1.0/' "$4/foo.spec" > "$1/foo.spec"
+}
+og() { out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$@" 2>&1)"; }
+co "$work/t-wrong" 'home:<you>:spark' hardware "$O/hardware/foo"
+og "$work/t-wrong"
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "based on hardware/foo, the SR goes to devel:example/foo" <<<"$out" \
+  && pass "branch of hardware's copy, Factory develops it in devel:example: target red, names both" \
+  || { fail "branch of another project's copy"; printf '%s\n' "$out" | sed 's/^/    /'; }
+grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "foo.changes vs devel:example/foo" "$work/gate-foo/changes-guard.txt" \
+  && pass "branch of hardware's copy: changes-guard red against the target's .changes" \
+  || { fail "branch of another project's copy: changes-guard"; printf '%s\n' "$out" | sed 's/^/    /'; }
+co "$work/t-plain" hardware - "$O/hardware/foo"
+og "$work/t-plain"
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "based on hardware/foo, the SR goes to devel:example/foo" <<<"$out" \
+  && pass "plain checkout of hardware's copy: target red" || { fail "plain checkout of a stale copy"; printf '%s\n' "$out" | sed 's/^/    /'; }
+og "$work/t-plain" --target hardware
+grep -qF "## target: rc=0" <<<"$out" && pass "plain checkout of hardware's copy, --target hardware: target green" \
+  || { fail "explicit --target of the checkout's own project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A branch of devel whose devel moved on since: the branch's own copy lacks the
+# newest devel entry, so only a comparison with the target sees the deletion.
+mkdir -p "$work/devel-old"; e "Mon Jan  5" "Update to 0.9.5" > "$work/devel-old/foo.changes"
+cp "$O/devel:example/foo/foo.spec" "$work/devel-old/"
+co "$work/t-stale" 'home:<you>:branches:devel:example' devel:example "$work/devel-old"
+og "$work/t-stale"
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "## changes-guard: rc=1" <<<"$out" \
+  && pass "stale branch of the devel project: target green, changes-guard red against devel's newer .changes" \
+  || { fail "stale branch of the devel project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+co "$work/t-good" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+og "$work/t-good"
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "the checkout is based on devel:example, the target is devel:example/foo" <<<"$out" \
+  && grep -qF "## changes-guard: rc=0" <<<"$out" && grep -qF "## changes-patches: rc=0" <<<"$out" \
+  && pass "current branch of the devel project: target, changes-guard and changes-patches green" \
+  || { fail "current branch of the devel project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+: > "$O/fail-meta"; rm "$O/devel/foo"
+og "$work/t-good"
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "could not be read (devel-of.sh exit 5)" <<<"$out" \
+  && pass "Factory's devel project unreadable: target red" || { fail "devel lookup failed"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm "$O/fail-meta"; echo devel:example/foo > "$O/devel/foo"
+: > "$O/fail-cat"
+og "$work/t-good"
+grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "UNKNOWN: osc cat devel:example foo foo.changes failed" "$work/gate-foo/changes-guard.txt" \
+  && grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "UNKNOWN: osc cat devel:example foo foo.spec failed" <<<"$out" \
+  && pass "the target's files unreadable: changes-guard and spec-header red, never the committed copy" \
+  || { fail "target files unreadable"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm "$O/fail-cat"
+co "$work/t-fwd" devel:example - "$O/devel:example/foo"
+og "$work/t-fwd" --target openSUSE:Factory
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "a forward from Factory's devel project devel:example" <<<"$out" \
+  && grep -qF "## changes-guard: rc=0" <<<"$out" \
+  && pass "forward from the devel project to Factory: target green, guarded against Factory's copy" \
+  || { fail "forward from the devel project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+og "$work/t-plain" --target openSUSE:Factory
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "takes foo from its devel project devel:example; this checkout is based on hardware" <<<"$out" \
+  && pass "Factory submission from a project that is not its devel project: target red" \
+  || { fail "Factory submission from the wrong project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+e "Mon Jan  5" "Update to 0.9.5" | put openSUSE:Leap:16.0:Update/foo foo.changes
+printf 'Name: foo\nVersion: 0.9.5\n' | put openSUSE:Leap:16.0:Update/foo foo.spec
+co "$work/t-maint" 'home:<you>:branches:openSUSE:Leap:16.0:Update' openSUSE:Leap:16.0:Update "$O/openSUSE:Leap:16.0:Update/foo"
+og "$work/t-maint"
+grep -qF "## target: rc=0" <<<"$out" && grep -qF "the target is openSUSE:Leap:16.0:Update/foo" <<<"$out" \
+  && pass "branch of a maintenance project: that project is the target" || { fail "maintenance branch"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+# One spec header, and every non-SUSE copyright holder of the target kept.
+hdr() { printf '#\n# spec file for package foo\n#\n# Copyright (c) %s SUSE LLC and contributors\n%s#\n\nName: foo\nVersion: 0.9.8\n' "$1" "$2"; }
+hdr 2025 '# Copyright (c) 2024 Jane Maintainer <jane@example.org>
+' | put devel:example/foo foo.spec
+co "$work/t-hdr" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=0" <<<"$out" && pass "spec header: as the target has it, green" \
+  || { fail "spec header unchanged"; printf '%s\n' "$out" | sed 's/^/    /'; }
+hdr 2026 '# Copyright (c) 2026 Jane Maintainer <jane@example.org>
+' > "$work/t-hdr/foo.spec"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=0" <<<"$out" && pass "spec header: SUSE and maintainer years bumped, green" \
+  || { fail "spec header years bumped"; printf '%s\n' "$out" | sed 's/^/    /'; }
+hdr 2026 '' > "$work/t-hdr/foo.spec"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "foo.spec: a copyright line of devel:example/foo is gone: # Copyright (c) 2024 Jane Maintainer" <<<"$out" \
+  && pass "spec header: a maintainer's copyright line dropped, red" \
+  || { fail "spec header: dropped copyright"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sed 's/^# Copyright (c) 2025 SUSE LLC and contributors$/# Copyright (c) 2019 SUSE LINUX GmbH, Nuernberg, Germany./' \
+  "$O/devel:example/foo/foo.spec" > "$work/t-hdr/.osc/sources/foo.spec"
+cp "$work/t-hdr/.osc/sources/foo.spec" "$O/devel:example/foo/foo.spec"
+hdr 2026 '# Copyright (c) 2024 Jane Maintainer <jane@example.org>
+' > "$work/t-hdr/foo.spec"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=0" <<<"$out" && pass "spec header: the old SUSE header rewritten as spec-cleaner writes it, green" \
+  || { fail "spec header: SUSE header rewrite"; printf '%s\n' "$out" | sed 's/^/    /'; }
+{ hdr 2026 '# Copyright (c) 2026 Jane Maintainer <jane@example.org>
+'; printf '#\n# spec file for package foo\n#\n'; } > "$work/t-hdr/foo.spec"
+og "$work/t-hdr"
+grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "foo.spec: 2 '# spec file for package' headers" <<<"$out" \
+  && pass "spec header: a duplicated header, red" || { fail "spec header: duplicated"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
+
+# The stamp and --review. A red run deletes the stamp; --review needs a GREEN
+# stamp of the checkout's current tree and a PASS line naming that tree. The
+# stamp is written here the way gate.sh writes it on GREEN (sha256 over
+# "<md5>  <name>" lines of the files osc would commit).
+co "$work/t-st" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+SF="$work/home/.local/state/opensuse-packaging/gate/obs/foo/home:<you>:branches:devel:example.json"
+mkstamp() {
+  python3 -I - "$work/t-st" "$SF" <<'PY'
+import hashlib, json, os, sys
+d, path = sys.argv[1:]
+fm = {n: hashlib.md5(open(os.path.join(d, n), "rb").read()).hexdigest() for n in ("foo.changes", "foo.spec")}
+tree = hashlib.sha256("".join("%s  %s\n" % (m, n) for n, m in sorted(fm.items())).encode()).hexdigest()
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump({"project": "home:<you>:branches:devel:example", "package": "foo", "tree": tree, "files": fm,
+           "verdict": "GREEN", "target": "devel:example/foo"}, open(path, "w"))
+print(tree)
+PY
+}
+rv() { out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$1" 2>&1)"; rc=$?; }
+echo "PASS — tree 000000000000 — fine" > "$work/rv.txt"
+rm -f "$SF"; rv "$work/rv.txt"
+[ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && pass "--review without a GREEN gate run: no stamp, rc=3" \
+  || { fail "--review without a stamp: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+T=$(mkstamp)
+echo "PASS — tree ${T:0:12} — clean" > "$work/rv.txt"; rv "$work/rv.txt"
+[ "$rc" = 0 ] && grep -qF "review PASS recorded for tree ${T:0:12}" <<<"$out" \
+  && python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1]))["review"]["verdict"] != "PASS")' "$SF" \
+  && pass "--review: a PASS naming the stamped tree is recorded" || { fail "--review PASS: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'PASS — tree 0123456789ab — clean\n' > "$work/rv.txt"; rv "$work/rv.txt"
+[ "$rc" = 1 ] && grep -qF "review names tree 0123456789ab, the checkout is tree ${T:0:12}" <<<"$out" \
+  && ! python3 -I -c 'import json,sys; sys.exit("review" not in json.load(open(sys.argv[1])))' "$SF" \
+  && pass "--review: a PASS of another tree is red and drops the recorded review" || { fail "--review other tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'BLOCK — tree %s\n' "${T:0:12}" > "$work/rv.txt"; rv "$work/rv.txt"
+[ "$rc" = 1 ] && grep -qF "not PASS" <<<"$out" && pass "--review: a BLOCK is red" || { fail "--review BLOCK: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+echo "- one more bullet" >> "$work/t-st/foo.changes"
+echo "PASS — tree ${T:0:12} — clean" > "$work/rv.txt"; rv "$work/rv.txt"
+[ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && pass "--review: an edit after the GREEN run leaves no stamp for the new tree" \
+  || { fail "--review after an edit: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$work/rv.txt" --entries 2 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF -- "--review records a verdict and runs no gate" <<<"$out" && pass "--review with gate options: usage" \
+  || { fail "--review with gate options: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkstamp > /dev/null; og "$work/t-st"
+grep -q "^VERDICT: RED" <<<"$out" && [ ! -e "$SF" ] && pass "a red gate run deletes the stamp" \
+  || { fail "red run and the stamp"; printf '%s\n' "$out" | tail -3 | sed 's/^/    /'; }
+# A GREEN run writes the stamp its GREEN line names: that needs the real OBS
+# services, so only where they are installed.
+if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
+  co "$work/t-green" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+  printf 'Name:           foo\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
+    > "$work/t-green/foo.spec"
+  sed -i '4s/^- Update to 1.0$/- Build with the system zlib/' "$work/t-green/foo.changes"
+  out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-green" 2>&1)"
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  [ -n "$t12" ] && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d["verdict"]=="GREEN" and d["tree"].startswith(sys.argv[2]) and set(d["files"])=={"foo.changes","foo.spec"}))' "$SF" "$t12" \
+    && pass "a GREEN run stamps the tree its verdict names" || { fail "GREEN stamp"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: GREEN stamp (no OBS source_validator/download_files)"
+fi
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

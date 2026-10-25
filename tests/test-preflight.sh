@@ -23,6 +23,7 @@ case $1 in
   develproject) echo "devel:example/$3" ;;
   api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=,' '_____')"
        [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+       [ "$(cat "$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
        cat "$f" ;;
   *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
 esac
@@ -125,6 +126,24 @@ case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: git-
   "$SCM && echo @HANG > \$B/$PULLS"
 XPATH=""
 ! grep -qF "open PRs:       none" <<<"$LAST" && pass "scm-pr-hang: not read as none" || fail "scm-pr-hang: $LAST"
+
+# The version slot takes a version: a project name there compared as one and
+# printed PROCEED (seen twice with `preflight.sh <pkg> <project>`).
+case_ version-is-project 2 "'devel:languages:python' is not a version" ":" devel:languages:python
+case_ version-no-digit 2 "'hardware' is not a version" ":" hardware
+case_ version-ok 4 "VERDICT: FORWARD" ":" 1.1
+# --from: the project about to be branched must be where the package is
+# developed, or what the devel package links to (sr#1392134 branched
+# hardware's stale copy of a devel:languages:python package).
+case_ from-wrong 3 "VERDICT: STOP - wrong branch source: foo is developed in devel:example, not hardware" ":" --from hardware
+grep -qF "osc branch devel:example foo" <<<"$LAST" && pass "from-wrong: names the branch to make" || fail "from-wrong: $LAST"
+case_ from-devel 4 "branch source:  devel:example (the devel project)" ":" --from devel:example
+case_ from-link-target 4 "branch source:  hardware (devel:example/foo links to it)" \
+  "echo '<link project=\"hardware\" package=\"foo\"/>' > \$B/obs/_source_devel:example_foo__link" --from hardware
+case_ from-link-elsewhere 3 "wrong branch source" \
+  "echo '<link project=\"science\" package=\"foo\"/>' > \$B/obs/_source_devel:example_foo__link" --from hardware
+case_ from-link-unreadable 2 "CHECK FAILED: could not read devel:example/foo/_link" \
+  "echo @500 > \$B/obs/_source_devel:example_foo__link" --from hardware
 
 echo "---"; [ "$fails" = 0 ] && echo "all preflight checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
