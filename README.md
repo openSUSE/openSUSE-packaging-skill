@@ -12,7 +12,7 @@ read as ordinary instruction documents.
 |---|---|
 | `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `osc`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
 
-Requirements: `bash`, `python3` (3.9+, standard library only), `osc`, `curl`. Individual
+Requirements: `bash`, `python3` (3.11+, standard library only), `osc`, `curl`. Individual
 helpers use `tea`, `gh` or `rpmlint` where the task needs them.
 
 ## Layout

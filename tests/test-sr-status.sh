@@ -101,7 +101,7 @@ url: https://src.opensuse.org/pool/tesseract-ocr
 revision: $2
 trackingbranch: leap-16.x"
 }
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 extra() { # <project> <package> <code>: one more status in the x86_64 result
   sed -i "s|\(arch=\"x86_64\"[^>]*>\)|\1<status package=\"$2\" code=\"$3\"/>|" "$B/obs/results/$1/tesseract-ocr"
 }
@@ -491,7 +491,7 @@ case_ id-with-sr-prefix 0 "| SR | 100 | foo | openSUSE:Factory | ❌ declined |"
 # declined one fell off. --brief has no cap; the table keeps every decline and
 # says what it cut.
 OPEN=request_view_collection_states_new,review,declined_roles_creator_user_tester_types_submit
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 many() { # <count>: requests 1..count to openSUSE:Factory, #1 declined, the rest new
   echo '<collection>'; sreq 1 pkg1 openSUSE:Factory declined 'old decline'
   for i in $(seq 2 "$1"); do sreq "$i" "pkg$i" openSUSE:Factory new; done; echo '</collection>'
@@ -507,7 +507,7 @@ grep -q '^| SR | 1 | pkg1 ' <<<"$rows" && ! grep -qE '^\| SR \| [2-6] \|' <<<"$r
 case_ limit-zero-no-cap 0 "— 45 shown" "many 45 > \$B/obs/$OPEN" --no-prs --limit 0
 case_ limit-negative 2 "--limit takes 0 (no cap) or a positive number" ":" --limit -1
 # A PR leg that comes back at its page size may hold more: say so.
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 full_pr_page() { # <fixture tree>
   { echo '['; for i in $(seq 1 49); do
       printf '{"number": %s, "state": "open", "repository": {"full_name": "g/r"}},\n' "$i"; done
@@ -521,7 +521,7 @@ case_ summary-pr-page-full 0 "the created PR leg returned 50, its page size: mor
 # was filed for that package since (at the target and in the devel project the
 # fix goes to), the oldest new and review requests, and comments by others
 # newer than your own last action. A failed lookup is UNKNOWN, never "nothing".
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 vreq() { # <id> <package> <target> <state> <created> [decline comment] [a later own history entry]
   printf '<request id="%s" creator="tester"><action type="submit"><source project="devel:example" package="%s"/>
   <target project="%s" package="%s"/></action><state name="%s" who="a-reviewer" when="2026-10-18T10:00:00" created="%s">%s</state>
@@ -529,11 +529,11 @@ vreq() { # <id> <package> <target> <state> <created> [decline comment] [a later 
     "$1" "$2" "$3" "$2" "$4" "$5" "${6:+<comment>$6</comment>}" "$5" \
     "${7:+<history who=\"tester\" when=\"$7\"><description>Request got a new review</description></history>}"
 }
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 cmt() { # <who> <when> <text>
   printf '<comment who="%s" when="%s UTC" id="1">%s</comment>\n' "$1" "$2" "$3"
 }
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 comments() { # <fixture tree> <id> <who> <when> <text> [<who> <when> <text> ...]
   local B=$1 id=$2; shift 2
   { echo "<comments request=\"$id\">"; while [ $# -ge 3 ]; do cmt "$1" "$2" "$3"; shift 3; done
@@ -541,7 +541,7 @@ comments() { # <fixture tree> <id> <who> <when> <text> [<who> <when> <text> ...]
 }
 # XML carries no raw ESC, so OBS never sends one; C1 CSI, bidi and zero-width it can.
 CSI=$'\xc2\x9b'; RLO=$'\xe2\x80\xae'; ZWSP=$'\xe2\x80\x8b'  # UTF-8 bytes: \u needs a UTF-8 locale
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 summary_fixtures() { # <fixture tree>
   local B=$1
   mkdir -p "$B/obs/comments/request" "$B/obs/later/openSUSE:Factory" "$B/obs/later/devel:example"
@@ -619,7 +619,7 @@ grep -qF "@id>205" <<<"$CALLS" && grep -qF "libsigc%2B%2B2" <<<"$CALLS" \
 # Your PRs' comments are read too, only for PRs that have any: the newest by
 # someone else after your own last comment, bots (legaldb among them) aside.
 # The pool PRs' builds are not read here, and the summary says so.
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 pr_comments_fixtures() { # <fixture tree>
   local G=$1/gitea/repos
   printf '%s' '[
@@ -651,7 +651,7 @@ done
 # when it is short, the reviews are read too. A change request is to answer;
 # an approval ("merge ok", APPROVED) is listed apart. A failed reviews call
 # is UNKNOWN.
-# shellcheck disable=SC2317  # called from case mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 pr_review_fixtures() { # <fixture tree>
   local G=$1/gitea/repos
   pr_comments_fixtures "$1"

@@ -61,7 +61,7 @@ readable that way.
   returns, and make it loud — exit non-zero and say UNKNOWN rather than guess.
 - Output is compact plain text meant to be read by an agent in one tool result: no raw
   JSON dumps, no whole logs. Prefer one line per finding and a verdict line.
-- Standard library only, Python 3.9+. The suites are offline; network lookups are stubbed.
+- Standard library only, Python 3.11+. The suites are offline; network lookups are stubbed.
 - **The pool PR gate changes only with the maintainer's explicit approval** — `target-gate.sh`
   (builds and stamps a pool tree), `pool-pr.sh` (the only route to a pool PR), `leap-sync.sh`
   (sync, then the gate), `pr-guard.py` and `_pr_guard.py` (the harness hook and its rules).

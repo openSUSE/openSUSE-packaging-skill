@@ -33,7 +33,7 @@ case_() {
 }
 
 U=$SK/references/osc-usage.md; T=$SK/agents/triage.md
-# shellcheck disable=SC2317  # called from the mutations, through eval
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 add() { printf '%s\n' "$1" >> "$T" && grep -qF -- "$1" "$T"; }
 
 case_ clean 0 "osc citations match osc" ":"
