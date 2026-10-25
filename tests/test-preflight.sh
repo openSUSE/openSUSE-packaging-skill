@@ -58,6 +58,8 @@ obs '/request?view=collection&types=submit&states=new,review&project=openSUSE:Fa
 obs '/request?view=collection&types=submit&states=declined&project=openSUSE:Factory&package=foo' '<collection>
   <request id="1375013" creator="tester"><action type="submit"><source project="devel:example" package="foo"/>
   <target project="openSUSE:Factory" package="foo"/></action><state name="declined"/></request></collection>'
+SWEEP='/search/request?match=action/target/@package=%27foo%27%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)'
+obs "$SWEEP" '<collection/>'
 
 # case_ <name> <expected rc> <expected message> <mutation> [preflight args after foo]
 # XPATH, when set, goes first on PATH.
@@ -93,6 +95,25 @@ case_ declined-owner-unknown 4 "could not tell which are yours" ": > \$B/no-whoi
 case_ declined-user-flag 4 "-> 1375013 is yours" ": > \$B/no-whois" --user tester
 case_ no-declined 4 "$FWD -m \"<short message>\"" "echo '<collection/>' > \$B/obs/*states_declined*"
 ! grep -qF "DECLINED" <<<"$LAST" && pass "no-declined: nothing to supersede" || fail "no-declined: $LAST"
+
+# The anchored queries are read against the devel and target projects, and
+# the outgoing one is filtered to devel sources. The target-agnostic sweep
+# sees the rest: an SR filed straight at the target from a non-devel source
+# is in flight (STOP); one aimed at another target entirely is printed for
+# the report and changes no verdict; a failed sweep is CHECK-FAILED.
+case_ sweep-none 4 "sweep SRs:      none" ":"
+case_ sweep-other-target 4 "SR 2000001 [review] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
+  "echo '<collection><request id=\"2000001\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"review\"/></request></collection>' > \$B/obs/*search_request*"
+grep -qF "VERDICT: FORWARD" <<<"$LAST" && pass "sweep-other-target: verdict unchanged" || fail "sweep-other-target: $LAST"
+case_ sweep-direct-to-target 3 "VERDICT: STOP - already in flight: SR 2000002 [new] devel:other/foo -> openSUSE:Factory by someone-else" \
+  "echo '<collection><request id=\"2000002\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Factory\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+case_ sweep-lookup-failed 2 "CHECK FAILED: could not query other SRs targeting foo" \
+  "echo @500 > \$B/obs/*search_request*"
+case_ sweep-dedup 3 "SR 2000004 [new] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
+  "echo '<collection><request id=\"2000003\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*states_new_review_project_devel* && echo '<collection><request id=\"2000003\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request><request id=\"2000004\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+# SR 2000003 is named exactly twice — the incoming listing and the STOP
+# verdict line quoting it; a third naming would be the sweep repeating it.
+[ "$(grep -c 'SR 2000003' <<<"$LAST")" = 2 ] && pass "sweep-dedup: an SR the anchored checks listed is not repeated" || fail "sweep-dedup: $LAST"
 
 # A git devel project's in-flight update is a PR on src.opensuse.org, read
 # through git-obs pinned to that login. A failed or unreadable read is
