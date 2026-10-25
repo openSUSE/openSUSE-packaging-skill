@@ -7338,5 +7338,643 @@
     "tool_input": {
       "command": "osc api -X DELETE /source/home:tester:scratch/foo/%2e"
     }
+  },
+  "comment-osc-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Fixed in sr#1390001.' request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment list request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-api-post": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/request/1390001' -d 'Fixed.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-api-get": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api /comments/request/1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-comments-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comments ls 3 --repo AI/mistral-vibe"
+    }
+  },
+  "comment-tea-pr-approve": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls approve 3 --repo AI/mistral-vibe"
+    }
+  },
+  "comment-tea-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -X POST repos/AI/mistral-vibe/issues/3/comments -f body=ok"
+    }
+  },
+  "comment-git-obs-pr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr comment -m 'Rebased.' AI/mistral-vibe#3"
+    }
+  },
+  "comment-git-obs-review": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve AI/mistral-vibe#3"
+    }
+  },
+  "comment-git-obs-pr-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr list AI/mistral-vibe"
+    }
+  },
+  "comment-gh-pr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr comment 75 --repo example/tool -b 'Merged, thanks.'"
+    }
+  },
+  "comment-gh-issue": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh issue comment 9 -b 'Thanks.'"
+    }
+  },
+  "comment-gh-review": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr review 75 --approve"
+    }
+  },
+  "comment-gh-api-post": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh api repos/example/tool/issues/1/comments -f body=ok"
+    }
+  },
+  "comment-gh-api-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh api repos/example/tool/issues/1/comments --paginate"
+    }
+  },
+  "comment-gh-help": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr comment --help"
+    }
+  },
+  "comment-in-commit-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -q -m 'docs: say when to run osc comment create'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'gh pr comment 75 -b ok'"
+    }
+  },
+  "comment-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -c \"gh pr comment 75 -b ok\""
+    }
+  },
+  "comment-deny-wins": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request 1390001; osc sr --yes devel:tools pkg openSUSE:Factory -m 'Update pkg to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-own-eligible": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-own-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "R=1390001; osc request accept -m ok \"$R\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-others-request": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-not-yours-package": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390003"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-reviewer": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-unreadable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390005"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-delete-request": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390006"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-unknown-id": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m ok \"$(cat ids.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-not-yours": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr science:machinelearning dlib openSUSE:Factory -m 'Update dlib to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-wrong-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:x foo2 openSUSE:Factory -m 'Update foo2 to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-link-into-here": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:x foo3 openSUSE:Factory -m 'Update foo3 to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-project-reviewer": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:r foo4 openSUSE:Factory -m 'Update foo4 to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-unowned-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:u foo5 openSUSE:Factory -m 'Update foo5 to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-meta-fails": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:x foo6 openSUSE:Factory -m 'Update foo6 to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-from-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr openSUSE:Factory -m 'Update x to 1.1: fixes.'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-unstamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update y to 1.1'"
+    },
+    "cwd": "@OSC@/fresh/y"
+  },
+  "ci-edited-after-gate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update z to 1.1'"
+    },
+    "cwd": "@OSC@/edited/z"
+  },
+  "ci-project-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Rebuild'"
+    },
+    "cwd": "@OSC@/prjco"
+  },
+  "sr-unstamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark unstamped devel:tools -m 'Update unstamped to 1.1: fixes.'"
+    }
+  },
+  "sr-unreviewed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark unreviewed devel:tools -m 'Update unreviewed to 1.1: fixes.'"
+    }
+  },
+  "sr-restaged": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark restaged devel:tools -m 'Update restaged to 1.1: fixes.'"
+    }
+  },
+  "sr-unlistable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark unlistable devel:tools -m 'Update unlistable to 1.1: fixes.'"
+    }
+  },
+  "sr-no-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark nosuchpkg devel:tools -m 'Update nosuchpkg to 1.1: fixes.'"
+    }
+  },
+  "sr-dot-cwd-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd \"$D\" && osc sr . pkg devel:languages:python -m 'Update pkg to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sleep-hex-overflow": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 0x1p99999"
+    }
+  },
+  "accept-interactive-flag": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq -i accept -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-group-option": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq -G qa accept -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-user-option": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq --user tester accept -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-verb-variable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "A=accept; osc rq $A -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-approve": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq approve -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-approvenew": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq approvenew -m ok devel:x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-review-alias": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review accept -m ok 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-review-decline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review decline -m no 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-decline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq decline -m no 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-accepted": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390002?cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-declined": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390001?cmd=changestate&newstate=declined'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-review-own-eligible": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review accept -m ok 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390001?cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-revoke": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq revoke -m 'Superseded.' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-sub-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc $CMD -m ok 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-option-first": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment -c hi create request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create/request/1390001 -c hi"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-osc-sub-variable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "C=comment; osc $C create -c hi request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-gh-repo-first": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh -R example/tool pr comment 5 -b hi"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-subcommand": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr comment -m 'Rebased.' AI/mistral-vibe#3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-gh-pr-close": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr close 5 -c 'Superseded by #6.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-gh-issue-close": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh issue close 9 --comment 'Fixed.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-close": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr close -m 'Superseded.' AI/mistral-vibe#3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-gh-pr-close-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "gh pr close 5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-close-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr close AI/mistral-vibe#3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ci-after-append": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'Patch9: x.patch' >> x.spec; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-sr-after-append": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'Patch9: x.patch' >> x.spec; osc ci -m 'Update x to 1.1' && osc sr openSUSE:Factory -m 'Update x to 1.1: fixes.'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-after-sed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i 's/^Version:.*/Version: 2/' x.spec && osc ci -m 'Update x to 2'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-after-osc-add": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc add x.patch; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-after-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/backoff.sh && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-loop-edit-after": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for i in 1 2; do osc ci -m 'Rebuild'; touch x.spec; done"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-then-sr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' && osc sr openSUSE:Factory -m 'Update x to 1.1: fixes.'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-redirect-devnull": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' >/dev/null"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "forward-apiurl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc -A https://api.example.org sr devel:x foo openSUSE:Factory -m 'Update foo to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-approve": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390002?cmd=approve'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390002/?cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-others-maintained": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m ok 1390007"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-two-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m ok 1390001 1390004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-reopen": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr reopen -m 'Back.' AI/mistral-vibe#3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-reopen-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr reopen AI/mistral-vibe#3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ci-after-sort-o": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sort -o x.spec x.spec; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-after-uniq-out": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "uniq x.spec x.new; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-git-C-status": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C . status && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-log-redirect": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' > /tmp/osc-ci.log"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-log-tee": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' | tee /tmp/osc-ci.log"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-note-outside": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo done > /tmp/x-note.txt; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-while-edit-after": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "n=0; while [ $n -lt 2 ]; do osc ci -m 'Rebuild'; touch x.spec; n=$((n+1)); done"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "sr-after-write-anywhere": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo x > /tmp/x-note.txt; osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-devel-target-live": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark foo devel:x -m 'Update foo to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
   }
 }

@@ -1,0 +1,1 @@
+<request id="1390004" creator="tester"><action type="submit"><source project="home:tester:spark" package="foo4" rev="3"/><target project="devel:r" package="foo4"/></action><state name="new"/></request>

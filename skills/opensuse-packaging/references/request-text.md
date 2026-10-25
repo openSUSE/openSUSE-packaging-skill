@@ -33,8 +33,8 @@ Update python-comfyui-workflow-templates to 0.11.85: pins core 0.3.376, json 0.1
 These lines go in the message only, never in the `.changes` entry, which ships in the RPM
 (`changes-lint.sh` refuses a request number or a staging order there).
 
-The request you file second can name the first; add a one-line comment on the first naming
-the second ("Stage with sr#N."), since its message cannot be edited.
+The request you file second can name the first; a one-line comment on the first naming the
+second ("Stage with sr#N.") goes out only on the user's go, since pr-guard asks before it posts.
 
 **A forward carries the same headline as its devel request**, never "Forward X update to
 Factory" (refused) — the Factory reviewer sees only this one; "Forward X BR cleanup to
@@ -62,8 +62,9 @@ request back once filed (`references/osc-usage.md` "Requests").
 
 ## Answering a reviewer
 
-A reviewer's question on **your own** request is answered directly, in its thread, and
-reported to the user afterwards:
+A reviewer's question on **your own** request is answered in its thread. pr-guard asks the
+user before the reply posts (opencode cannot ask and refuses: give them the draft and the
+command):
 
 ```
 osc comment list request <id>                                  # "( ID ) On … <user> wrote:"
@@ -77,6 +78,8 @@ osc comment create -p <comment-id> -c "$(cat FILE)" request <id>
 - **When you do not know**, say what you will check, and check it before anything else.
 - **On anyone else's request**, draft the reply and post it only on the user's go
   (core directive 10).
+- **Speak only as what you are.** No first-person claim the user did not make ("I use this
+  daily"), and no request for maintainership or other roles unless the user asked for one.
 
 ## Comments: what OBS renders
 

@@ -6,8 +6,9 @@ import { join, normalize } from "node:path"
 
 // Pool PR guard for opencode: hands a matching bash/shell, write or edit call to
 // the pinned pr-guard.py (and the _pr_guard.py beside it) and refuses the call
-// when the guard exits non-zero. Install: contrib/harness/README.md. A missing
-// guard or python3 refuses only the calls that match the prefilter.
+// when the guard exits non-zero or asks for the user's go (this hook cannot
+// prompt). Install: contrib/harness/README.md. A missing guard or python3
+// refuses only the calls that match the prefilter.
 
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
@@ -79,6 +80,17 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
         const why = (r.stderr || "").trim()
           || (r.error ? `pr-guard could not run: ${r.error.message}` : `pr-guard exited ${r.status ?? r.signal}`)
         throw new Error(why)
+      }
+      // This hook cannot prompt: a call the guard leaves to the user ("ask") is refused.
+      if ((r.stdout || "").trim()) {
+        let d: Record<string, unknown> | undefined
+        try {
+          d = JSON.parse(r.stdout)?.hookSpecificOutput
+        } catch {
+          throw new Error(`pr-guard printed what it should not: ${r.stdout.trim().slice(0, 200)}`)
+        }
+        if (d?.permissionDecision === "ask")
+          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: show the user the command; they run it once they approve)`)
       }
     },
   }

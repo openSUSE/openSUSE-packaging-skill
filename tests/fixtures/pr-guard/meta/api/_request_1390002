@@ -1,0 +1,1 @@
+<request id="1390002" creator="other"><action type="submit"><source project="home:other:branches:devel:x" package="foo" rev="3"/><target project="devel:x" package="foo"/></action><state name="new"/></request>

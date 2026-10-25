@@ -25,12 +25,13 @@ work="$(mktemp -d /var/tmp/test-pr-guard.XXXXXX)"; trap 'rm -rf "$work"' EXIT
 # Nothing from the machine running the suite: no git config, no skill checkout,
 # no network, and an aarch64 host whatever the runner is.
 export HOME="$work/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs" PR_GUARD_META_DIR="$FX/meta"
+export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs" PR_GUARD_META_DIR="$work/meta"
+export PR_GUARD_OBS_USER=tester
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 unset PR_GUARD_SKILL_DIR
 mkdir -p "$HOME/work" "$work/plain" "$work/scripts" "$work/links" && ln -s "$HOME" "$work/links/home"
-cp -r "$FX/prs" "$work/prs"
+cp -r "$FX/prs" "$work/prs"; cp -r "$FX/meta" "$work/meta"
 python3 -c 'import json, sys
 prs = [{"number": n, "head": {"ref": "b%d" % n, "repo": {"owner": {"login": "x"}}}} for n in range(50)]
 json.dump(prs, open(sys.argv[1], "w"))' "$work/prs/many-prs.json"
@@ -132,6 +133,64 @@ osc_co_ "$work/osc/devel/x" devel:tools
 osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$work/osc/spark/libpqxx/.osc/_package"
 osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
   && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
+osc_co_ "$work/osc/fresh/y" devel:tools; osc_co_ "$work/osc/edited/z" devel:tools
+osc_co_ "$work/osc/prjco" devel:tools
+# What a commit, a submit or a forward the guard lets through unasked needs, from
+# fixtures/pr-guard/stamped.json: gate.sh's stamp of a reviewed tree (under this
+# suite's HOME) with the source listing it matches, and the _meta of a package
+# the account maintains; and the near misses the asks are tested on.
+python3 - "$FX/stamped.json" "$work/meta/api" "$HOME" "$work" <<'PY'
+import hashlib, json, os, sys
+spec, api, home, work = sys.argv[1:]
+os.makedirs(api, exist_ok=True)
+s = json.load(open(spec))
+def stub(path, text):
+    open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
+def stamp(prj, pkg, files, review=True):
+    d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
+    os.makedirs(d, exist_ok=True)
+    st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
+    if review:
+        st["review"] = {"verdict": "PASS"}
+    json.dump(st, open(os.path.join(d, prj + ".json"), "w"))
+def pairs(key):
+    return [tuple(e) for e in s[key]]
+def listing(prj, pkg):
+    md5 = hashlib.md5(f"{prj} {pkg}".encode()).hexdigest()
+    stub(f"/source/{prj}/{pkg}?expand=1",
+         f'<directory name="{pkg}"><entry name="_link" md5="0"/><entry name="{pkg}.spec" md5="{md5}"/></directory>')
+    return {f"{pkg}.spec": md5}
+for prj, pkg in pairs("stamped"):
+    stamp(prj, pkg, listing(prj, pkg))
+for prj, pkg in pairs("listed"):
+    listing(prj, pkg)
+for prj, pkg in pairs("noreview"):
+    stamp(prj, pkg, listing(prj, pkg), review=False)
+for prj, pkg in pairs("stale"):
+    listing(prj, pkg)
+    stamp(prj, pkg, {f"{pkg}.spec": "0" * 32})
+for prj, pkg in pairs("listing_err"):
+    stub(f"/source/{prj}/{pkg}?expand=1", "@ERR")
+for prj, pkg in pairs("own"):
+    stub(f"/source/{prj}/{pkg}/_meta",
+         f'<package name="{pkg}" project="{prj}"><person userid="tester" role="maintainer"/></package>')
+    stub(f"/source/{prj}/_meta", f'<project name="{prj}"/>')
+for key in ("checkouts", "unstamped", "edited"):
+    for rel, prj, pkg in s[key]:
+        d = os.path.join(work, rel)
+        open(os.path.join(d, ".osc/_package"), "w").write(pkg + "\n")
+        open(os.path.join(d, ".osc/_files"), "w").write(
+            f'<directory name="{pkg}"><entry name="{pkg}.spec" md5="0"/></directory>')
+        open(os.path.join(d, pkg + ".spec"), "w").write(f"Name: {pkg}\n")
+        md5 = hashlib.md5(f"Name: {pkg}\n".encode()).hexdigest()
+        if key == "checkouts":  # and committed: the source listing a submit reads
+            stub(f"/source/{prj}/{pkg}?expand=1",
+                 f'<directory name="{pkg}"><entry name="{pkg}.spec" md5="{md5}"/></directory>')
+        if key != "unstamped":
+            stamp(prj, pkg, {f"{pkg}.spec": md5})
+        if key == "edited":
+            open(os.path.join(d, pkg + ".spec"), "a").write("Version: 2\n")
+PY
 
 # ev <name>: the fixture event, placeholders filled in.
 ev() {
@@ -164,6 +223,22 @@ case_() {
   [ "$got" = "$rc" ] && grep -qF -- "BLOCKED [$rule]" <<<"$out" && grep -qF -- "$detail" <<<"$out" \
     && pass "$name (rc=$rc, $rule)" || {
       fail "$name: expected rc=$rc [$rule] '$detail', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+
+# ask_ <event> <rule> <detail> [VAR=value ...]: allowed only on the user's go --
+# rc 0 and the hook's "ask" decision on stdout, naming the rule and the detail.
+ask_() {
+  local name=$1 rule=$2 detail=$3 event out got; shift 3
+  used="$used$name "
+  event="$(ev "$name")" || { fail "$name: no such event"; return; }
+  out="$(printf '%s' "$event" | env "$@" python3 "$GUARD" 2>&1)"; got=$?
+  [ "$got" = 0 ] && python3 -c 'import json, sys
+d = json.loads(sys.stdin.read())["hookSpecificOutput"]
+why = d["permissionDecisionReason"]
+assert d["hookEventName"] == "PreToolUse" and d["permissionDecision"] == "ask"
+assert why.startswith("pr-guard: ASK [") and "ASK [%s]" % sys.argv[1] in why and sys.argv[2] in why' \
+    "$rule" "$detail" <<<"$out" 2>/dev/null && pass "$name (ask, $rule)" || {
+      fail "$name: expected an ask [$rule] '$detail', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
 }
 
 echo "--- pushes, judged by where they land"
@@ -297,7 +372,7 @@ case_ prog-node-execfilesync-merge 2 merge-tea  "tea PR merge"
 case_ prog-node-spawn-create    2 create-tea    "tea PR create"
 case_ prog-python-concat-merge  2 merge-tea     "tea PR merge"
 case_ write-script-node-merge   2 merge-tea     "a script running a tea PR merge"
-case_ tea-comment-quotes-merge  0 - ""
+ask_ tea-comment-quotes-merge  comment "tea comment"
 case_ tea-issue-quotes-create   0 - ""
 case_ tea-global-option-merge   2 merge-tea     "tea PR merge"
 case_ merge-urllib-ai           2 merge-api     "API merge"
@@ -768,7 +843,8 @@ case_ osc-sr-nodevelproject   2 nodevelproject "an osc request with --nodevelpro
 case_ osc-creq-nodevelproject 2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
-case_ osc-sr-devel-control    0 - ""
+# Read as bash reads it, home:<you>:... redirects into the file ":branches:devel:tools".
+ask_ osc-sr-devel-control    gate-stamp "a redirection to :branches:devel:tools"
 case_ osc-sr-nodevel-message  0 - ""
 # Maintenance and update projects take no direct write, by commit or by API;
 # a home: branch of one is the user's own, whatever its name ends in.
@@ -1087,6 +1163,7 @@ case_ interpreter-echo           0 - ""
 echo "--- a wait is on an event, not a fixed sleep of a minute or more"
 case_ sleep-long                 2 sleep "sleep 290"
 case_ sleep-minutes              2 sleep "sleep 5m"
+case_ sleep-hex-overflow         2 sleep "sleep 0x1p99999"
 case_ sleep-sum                  2 sleep "sleep 30 30"
 case_ sleep-loop                 2 sleep "sleep 290"
 case_ sleep-timeout              2 sleep "sleep 290"
@@ -1112,6 +1189,221 @@ case_ sleep-echo                 0 - ""
 case_ sleep-commit-message       0 - ""
 case_ sleep-background           0 - ""
 case_ sleep-in-script            0 - ""
+
+echo "--- comments speak for the user: posted only on their go"
+ask_ comment-osc-create         comment "osc comment create"
+case_ comment-osc-list          0 - ""
+ask_ comment-osc-api-post       comment "osc api POST"
+case_ comment-osc-api-get       0 - ""
+case_ comment-tea-comments-list 0 - ""
+ask_ comment-tea-pr-approve     comment "tea pulls approve"
+ask_ comment-tea-api            comment "tea api: a write to comments"
+ask_ comment-git-obs-pr         comment "git-obs pr comment"
+ask_ comment-git-obs-review     comment "git-obs pr review approve"
+case_ comment-git-obs-pr-list   0 - ""
+ask_ comment-gh-pr              comment "gh pr comment"
+ask_ comment-gh-issue           comment "gh issue comment"
+ask_ comment-gh-review          comment "gh pr review"
+ask_ comment-gh-api-post        comment "gh api: a write to comments"
+case_ comment-gh-api-read       0 - ""
+case_ comment-gh-help           0 - ""
+case_ comment-in-commit-message 0 - ""
+case_ comment-echo              0 - ""
+ask_ comment-bash-c             comment "gh pr comment"
+# An ask never outweighs a refusal elsewhere in the call.
+case_ comment-deny-wins         2 osc-yes "an osc request with --yes"
+# osc's options, its slash-split operands, a held subcommand; gh's -R; git obs; a closing comment.
+ask_ comment-osc-option-first   comment "osc comment create"
+ask_ comment-osc-slash          comment "osc comment create"
+ask_ comment-osc-sub-variable   comment "osc comment create"
+ask_ comment-gh-repo-first      comment "gh pr comment"
+ask_ comment-git-obs-subcommand comment "git-obs pr comment"
+ask_ comment-gh-pr-close        comment "gh pr close with a comment"
+ask_ comment-gh-issue-close     comment "gh issue close with a comment"
+ask_ comment-git-obs-close      comment "git-obs pr close with a comment"
+case_ comment-gh-pr-close-plain 0 - ""
+case_ comment-git-obs-close-plain 0 - ""
+
+echo "--- an accept or a forward is unattended only where autoforward-gate.sh says ELIGIBLE"
+case_ accept-own-eligible       0 - ""
+case_ accept-own-var            0 - ""
+ask_ accept-others-request      accept-forward "request 1390002 was filed by other, not by tester"
+ask_ accept-not-yours-package   accept-forward "science:machinelearning/dlib is maintained by other"
+ask_ accept-reviewer            accept-forward "a reviewer role is set (qa-team)"
+ask_ accept-unreadable          accept-forward "cannot read request 1390005"
+ask_ accept-delete-request      accept-forward "request 1390006 is no plain submit"
+ask_ accept-unknown-id          accept-forward "which request"
+ask_ forward-not-yours          accept-forward "science:machinelearning/dlib is maintained by other"
+ask_ forward-wrong-devel        accept-forward "openSUSE:Factory develops foo2 in devel:y"
+case_ forward-link-into-here    0 - ""
+ask_ forward-project-reviewer   accept-forward "a reviewer role is set (qa-team)"
+case_ forward-unowned-project   0 - ""
+ask_ forward-meta-fails         accept-forward "cannot read /source/devel:x/foo6/_meta"
+case_ forward-from-checkout     0 - ""
+# osc's own option table: -i and -G, --user are no request ids; the verb, as the call sets it.
+ask_ accept-interactive-flag    accept-forward "request 1390002 was filed by other"
+ask_ accept-group-option        accept-forward "request 1390002 was filed by other"
+ask_ accept-user-option         accept-forward "request 1390002 was filed by other"
+ask_ accept-verb-variable       accept-forward "request 1390002 was filed by other"
+ask_ accept-approve             accept-forward "request 1390002 was filed by other"
+ask_ accept-approvenew          accept-forward "osc rq approvenew"
+ask_ accept-review-alias        accept-forward "request 1390002 was filed by other"
+case_ accept-review-own-eligible 0 - ""
+ask_ accept-review-decline      accept-forward "osc review decline"
+ask_ accept-decline             accept-forward "osc rq decline"
+ask_ accept-api-accepted        accept-forward "request 1390002 was filed by other"
+case_ accept-api-own            0 - ""
+ask_ accept-api-declined        accept-forward "a decline through osc api"
+case_ accept-revoke             0 - ""
+ask_ osc-sub-unknown            accept-forward "which osc command"
+# Every lookup goes to the instance osc -A names: here, one with none of the stubs.
+ask_ forward-apiurl             accept-forward "cannot read"
+# The same fixtures for both: autoforward-gate.sh and the guard agree on each.
+mkdir -p "$work/afg/bin"
+cat > "$work/afg/bin/osc" <<'OSC'
+#!/bin/bash
+case $1 in
+  develproject) [ -f "$FIX/devel/$3" ] || exit 1; cat "$FIX/devel/$3" ;;
+  api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=' '____')"
+       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+       [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
+       cat "$f" ;;
+  *) exit 99 ;;
+esac
+OSC
+chmod +x "$work/afg/bin/osc"
+agree="$(python3 - "$work/afg" "$REPO/skills/opensuse-packaging/scripts" "$GUARD" <<'PY'
+import json, os, subprocess, sys
+root, scripts, guard = sys.argv[1:]
+me = '<person userid="tester" role="maintainer"/>'
+other = '<person userid="other" role="maintainer"/>'
+factory = '<package name="foo"><devel project="%s" package="foo"/></package>'
+variants = {
+    "eligible": {},
+    "project-maintainer": {"pkg": "", "prj": me},
+    "reviewer": {"pkg": me + '<person userid="rev" role="reviewer"/>'},
+    "project-reviewer": {"prj": '<group groupid="qa" role="reviewer"/>'},
+    "not-yours": {"pkg": other},
+    "unmaintained": {"pkg": ""},
+    "group-maintainer": {"pkg": '<group groupid="team" role="maintainer"/>', "prj": me},
+    "wrong-devel": {"devel": "devel:b"},
+    "link-into-here": {"devel": "devel:b", "link": '<link project="devel:a"/>'},
+    "link-other-package": {"devel": "devel:b", "link": '<link project="devel:a" package="bar"/>'},
+    "not-in-factory": {"devel": None},
+    "unreadable": {"pkg": "@ERR"},
+    "project-unreadable": {"prjmeta": "@ERR"},
+}
+out = []
+for name, v in variants.items():
+    d = os.path.join(root, name)
+    obs, api = os.path.join(d, "obs"), os.path.join(d, "meta", "api")
+    for x in (obs, api, os.path.join(d, "devel")):
+        os.makedirs(x)
+    def both(path, text):
+        for base in (obs, api):
+            open(os.path.join(base, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
+    pkg = v.get("pkg", me)
+    both("/source/devel:a/foo/_meta", pkg if pkg == "@ERR" else '<package name="foo">%s</package>' % pkg)
+    both("/source/devel:a/_meta", v.get("prjmeta") or '<project name="devel:a">%s</project>' % v.get("prj", ""))
+    devel = v.get("devel", "devel:a")
+    if devel:
+        open(os.path.join(d, "devel", "foo"), "w").write(devel + "/foo\n")
+        both("/source/openSUSE:Factory/foo/_meta", factory % devel)
+        open(os.path.join(d, "meta", "foo.xml"), "w").write(factory % devel)
+    if "link" in v:
+        both("/source/%s/foo/_link" % devel, v["link"])
+    env = dict(os.environ, FIX=d, PATH=os.path.join(root, "bin") + ":" + os.environ["PATH"])
+    rc = subprocess.run(["bash", os.path.join(scripts, "autoforward-gate.sh"), "devel:a", "foo",
+                         "--user", "tester"], env=env, capture_output=True).returncode
+    ev = {"tool_name": "Bash", "tool_input": {"command":
+          "osc sr devel:a foo openSUSE:Factory -m 'Update foo to 1.1: fixes.'"}}
+    g = subprocess.run(["python3", guard], input=json.dumps(ev), text=True, capture_output=True,
+                       env=dict(os.environ, PR_GUARD_META_DIR=os.path.join(d, "meta"),
+                                PR_GUARD_OBS_USER="tester"))
+    asked = "ASK [accept-forward]" in g.stdout
+    if g.returncode != 0 or (rc == 0) == asked:
+        out.append("%s(gate=%d guard=%s)" % (name, rc, "ask" if asked else g.returncode))
+print(len(variants), " ".join(out))
+PY
+)"
+[ -n "$agree" ] && [ "${agree#* }" = "" ] && pass "the guard's ELIGIBLE matches autoforward-gate.sh's (${agree%% *} fixtures)" \
+  || fail "the guard and autoforward-gate.sh disagree: ${agree#* }"
+
+echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
+ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
+ask_ ci-edited-after-gate       gate-stamp "osc commit of devel:tools/z: no GREEN gate.sh run of this tree"
+ask_ ci-project-checkout        gate-stamp "osc commit of the project checkout devel:tools"
+ask_ sr-unstamped               gate-stamp "unstamped: no GREEN gate.sh run with a recorded review PASS"
+ask_ sr-unreviewed              gate-stamp "unreviewed: no GREEN gate.sh run with a recorded review PASS"
+ask_ sr-restaged                gate-stamp "restaged: no GREEN gate.sh run with a recorded review PASS"
+ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
+ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
+# A "." the guard cannot place names no project it can judge.
+case_ sr-dot-cwd-unknown        2 request-target-unknown "the working directory is unknown"
+# Judged before the call runs: anything else in it that can write may change the tree first.
+ask_ ci-after-append            gate-stamp "this call also runs"
+ask_ ci-sr-after-append         gate-stamp "this call also runs"
+ask_ ci-after-sed               gate-stamp "sed"
+ask_ ci-after-osc-add           gate-stamp "osc add"
+ask_ ci-after-script            gate-stamp "bash"
+ask_ ci-loop-edit-after         gate-stamp "touch"
+ask_ ci-then-sr                 gate-stamp "osc commit"
+case_ ci-redirect-devnull       0 - ""
+ask_ accept-api-approve         accept-forward "request 1390002 was filed by other"
+ask_ accept-api-slash           accept-forward "request 1390002 was filed by other"
+ask_ comment-git-obs-reopen     comment "git-obs pr reopen with a comment"
+case_ comment-git-obs-reopen-plain 0 - ""
+# A commit asks only for a write that runs before it and lands in its checkout; a request
+# for any write anywhere in the call.
+ask_ ci-after-sort-o            gate-stamp "sort"
+ask_ ci-after-uniq-out          gate-stamp "uniq"
+case_ ci-git-C-status           0 - ""
+case_ ci-log-redirect           0 - ""
+case_ ci-log-tee                0 - ""
+case_ ci-note-outside           0 - ""
+ask_ ci-while-edit-after        gate-stamp "touch"
+ask_ sr-after-write-anywhere    gate-stamp "a redirection to /tmp/x-note.txt"
+# The account: osc whois, once per call and in memory only. A file a call can write is
+# no source for it: an earlier call could name someone else there.
+mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"
+# shellcheck disable=SC2016  # the fake osc's own $1 and $*, expanded when it runs
+printf '#!/bin/bash\n[ "$1" = whois ] || exit 99\necho "osc $*" >> "%s/calls"\necho "tester: \\"Tester\\" <t@example.com>"\n' \
+  "$work/whois" > "$work/whois/bin/osc"; chmod +x "$work/whois/bin/osc"
+for f in pr-guard-user-da39a3ee5e6b4b0d pr-guard-user; do
+  printf 'other\n' > "$work/whois/home/.cache/opensuse-packaging/$f"
+done
+used="$used accept-others-maintained accept-two-own sr-devel-target-live "
+whois_() { ev "$1" | env -u PR_GUARD_OBS_USER HOME="$work/whois/home" PATH="$work/whois/bin:$PATH" \
+  python3 "$GUARD" 2>&1; }
+out="$(whois_ accept-others-maintained)"
+grep -qF "ASK [accept-forward] request 1390007 was filed by other, not by tester" <<<"$out" \
+  && pass "an account written to a file is not taken: the accept of other's request asks" \
+  || fail "a planted account was taken: $out"
+touch "$work/whois/mark"; sleep 1
+out="$(whois_ accept-two-own)"
+[ "$(grep -c whois "$work/whois/calls")" = 2 ] && grep -qF "ASK [accept-forward] accepting request 1390004" <<<"$out" \
+  && [ -z "$(find "$work/whois/home" -newer "$work/whois/mark" 2>/dev/null)" ] \
+  && pass "osc whois runs once per call and nothing is written for the next one" \
+  || fail "whois: $(grep -c whois "$work/whois/calls") calls, written: $(find "$work/whois/home" -newer "$work/whois/mark")"
+# A python3 that cannot import osc's library: each lookup falls back to osc api.
+mkdir -p "$work/nolib/osc" "$work/nolib/bin"
+printf 'raise ImportError("no osc library here")\n' > "$work/nolib/osc/__init__.py"
+cat > "$work/nolib/bin/osc" <<'OSC'
+#!/bin/bash
+case $1 in
+  whois) echo 'tester: "Tester"' ;;
+  api) f="$FIX/$(printf %s "$2" | tr '/?&=' '____')"
+       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+       cat "$f" ;;
+  *) exit 99 ;;
+esac
+OSC
+chmod +x "$work/nolib/bin/osc"
+out="$(ev sr-devel-target-live | env -u PR_GUARD_META_DIR FIX="$work/meta/api" PYTHONPATH="$work/nolib" \
+  PATH="$work/nolib/bin:$PATH" python3 "$GUARD" 2>&1)"; got=$?
+[ "$got" = 0 ] && ! grep -qF BLOCKED <<<"$out" \
+  && pass "without osc's library the lookups go through osc api (rc=0)" \
+  || fail "without osc's library: rc=$got $out"
 
 echo "--- deletes never take requests with them: one package at a time, no force"
 case_ rdelete-force-recursive     2 rdelete-pending "osc rdelete --force"
@@ -1160,7 +1452,8 @@ case_ msg-declare-n              2 request-message-unknown "\$MSG"
 case_ msg-mapfile                2 request-message-unknown "\$MSG"
 case_ msg-subst-cd               2 request-message "an osc sr message with 380 characters of prose"
 case_ msg-subst-cd-unknown       2 request-message-unknown "a command substitution"
-case_ msg-loop-70-short          0 - ""
+# 70 packages are more spellings than the guard expands: which ones it forwards is unknown.
+ask_ msg-loop-70-short           accept-forward "cannot tell what osc sr forwards"
 case_ msg-loop-70-long           2 request-message-unknown "\$p: \$L"
 case_ msg-printf-width           2 request-message-unknown "a command substitution"
 case_ msg-printf-reuse           2 request-message-unknown "a command substitution"
@@ -1655,6 +1948,11 @@ grep -qF 'if (tool !== "shell" && tool !== "write" && tool !== "edit") return' "
   && grep -qxF 'import type { Plugin } from "@opencode/plugin"' "$V2PLUGIN" \
   && pass "opencode-v2: the plugin judges shell, write and edit by their 2.x fields and throws to refuse" \
   || fail "opencode-v2: the plugin's tool ids, input fields or refusal changed"
+# Neither plugin can prompt, so the guard's ask reaches the user as a refusal.
+grep -qF 'done(code === 0 ? asked(out) :' "$V2PLUGIN" && grep -qF 'd?.permissionDecision !== "ask"' "$V2PLUGIN" \
+  && grep -qF 'if (d?.permissionDecision === "ask")' "$V1PLUGIN" \
+  && pass "opencode: both plugins refuse a call the guard asks about" \
+  || fail "opencode: a plugin lets the guard's ask through"
 grep -qF 'setTimeout(() => child.kill("SIGKILL"), 60_000)' "$V2PLUGIN" \
   && pass "opencode-v2: the guard is killed at 60 s, and a kill refuses" || fail "opencode-v2: the 60 s kill changed"
 # The 2.x plugin run, where bun or a node that strips types is at hand, with a fake ctx as
@@ -1682,12 +1980,13 @@ console.log([
   await run({ tool: "shell", input: { command: push, workdir: pool } }),
   await run({ tool: "shell", input: { command: push } }),
   await run({ tool: "shell", input: "x" }),
+  await run({ tool: "shell", input: { command: ["osc", "comment", "create", "-c", "ok", "request", "1"].join(" ") } }),
 ].join(" "))
 JS
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$($tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
-  [ "$out" = "refused run refused refused run refused" ] \
-    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push and unreadable input" \
+  [ "$out" = "refused run refused refused run refused refused" ] \
+    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push, unreadable input and an ask" \
     || fail "opencode-v2: the plugin run gave '$out'"
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"
