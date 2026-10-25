@@ -50,20 +50,24 @@ decline and approvenew; an osc commit of a checkout whose files match no GREEN
 gate.sh run (or of a whole project checkout), or one after the call writes
 into its checkout; a submit request whose source files match no GREEN gate.sh
 run with the change review's PASS recorded, or in a call that writes anywhere.
-A failed lookup there asks too. Program code that runs osc itself (python3 -c) is not
-asked.
+A failed lookup there asks too, and so does an eval or trap string it cannot
+read (a substitution, a variable the call does not set); a trap's command is
+judged as running last, and with any & or coproc in the call every write counts
+as running before a commit. A command word only the shell knows asks when its
+arguments start a judged tool or a runner; program code that runs osc itself
+(python3 -c) is not asked.
 
 A command line is judged one parsed command at a time, so what a command only
 carries -- a commit message, a grep pattern, an echo -- is not read as a
 command. Program text is read whole: every script a command runs (its path
 expanded from what the call assigns, $PWD, $TMPDIR, $HOME and globs), inline
-code (-c, -e), and text fed to a shell or interpreter (heredoc, here-string,
-< FILE, a pipe from echo, printf or cat). A script the same call writes is not
-run: its content is not known yet. The scripts in the skill checkout's scripts/
-run unread only when run by path, while every file scripts/ tracks is
-byte-identical to its blob at the pinned ref (as merged, not as edited
-locally), with no environment change but TMPDIR, LC_ALL, LANG, NO_COLOR and
-CHANGES_AUTHOR.
+code (-c, -e, an eval or trap string), and text fed to a shell or interpreter
+(heredoc, here-string, < FILE, a pipe from echo, printf or cat). A script the
+same call writes is not run: its content is not known yet. The scripts in the
+skill checkout's scripts/ run unread only when run by path, while every file
+scripts/ tracks is byte-identical to its blob at the pinned ref (as merged,
+not as edited locally), with no environment change but TMPDIR, LC_ALL, LANG,
+NO_COLOR and CHANGES_AUTHOR.
 
 Usage: pr-guard.py < EVENT
   EVENT  the Claude Code PreToolUse JSON: {"tool_name", "cwd", "tool_input":

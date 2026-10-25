@@ -523,9 +523,15 @@ yourself. It asks before:
   the branch the devel project accepted.
 
 A commit the stamps let through still asks when the call writes into its checkout before
-it (a redirection there, `sed`, `sort -o`, `cp`, `osc add`, an editor, a script, an
-interpreter, or any of them in a loop around the commit); a request asks when the call
+it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`, `osc add`, an
+editor, a script, an interpreter, or any of them in a loop around the commit, in its
+pipeline or while it runs in the background); a request asks when the call
 writes anything anywhere, a commit included: commit, and file, each in a call of its own.
+An `eval` or `trap` string the guard cannot read (`eval "$(…)"`, a variable the call
+does not set) asks as `[eval-dynamic]`; one held in a variable the call sets is judged,
+as are `eval`, `trap` and `bash -c` named through a variable, and a trap's command
+counts as running last. A call with any `&` or `coproc` in it counts every write as
+running before its commits.
 A lookup there that fails or runs past the budget asks too; the lookups go to the
 instance `osc -A` names, in one process through osc's library (one `osc api` each where
 the hook's `python3` cannot import it), and the account comes from `osc whois`, once per
@@ -787,6 +793,11 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A merge through the pulls API is judged whatever its host; `gh` is judged only for comments, so
   `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
+- Indirection the asks do not follow: a command word only the shell knows (`$(…)`, a
+  variable the call does not set, `${!name}`, an alias) asks only when its arguments start
+  a judged tool or a runner (`$T osc …`, `$(echo eval) 'osc …'`); an `eval` or `trap`
+  string read from a file asks rather than being judged; and program code that runs the
+  tools itself (`python3 -c`, a compiled helper) is not asked.
 - Braces are expanded in every word of a command that may read, quoted ones too (the parser
   has dropped the quotes by then), so a quoted `{…}` can only refuse more: one past 64
   words, or a braced word over 1 KB, is refused as unknown.

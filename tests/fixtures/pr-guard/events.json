@@ -7976,5 +7976,257 @@
       "command": "osc sr --cleanup home:tester:spark foo devel:x -m 'Update foo to 1.1: fixes.'"
     },
     "cwd": "@PLAIN@"
+  },
+  "trap-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap 'git-obs pr merge pool/x#5' EXIT"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-signal-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap \"tea pulls merge 5 --repo pool/x\" INT TERM; true"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap 'gh pr comment 5 -b hi' EXIT; true"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-cleanup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap 'rm -f /tmp/x.$$' EXIT; true"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-reset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap - EXIT"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-list": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap -p"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ci-symlink-dotdot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo 'Patch9: x.patch' >> @LINKS@/co/../x.spec; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-background-then-edit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-pipe-tee-into": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' | tee x.spec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "sr-trap-wait": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap - EXIT; osc sr --cleanup home:tester:spark libpqxx server:database:postgresql -m 'Update libpqxx to 8.0.2'; wait"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-ci-then-append": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap \"osc ci -m 'Update x to 1.1'\" EXIT; echo 'Patch9: x.patch' >> x.spec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "trap-ci-then-sed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap \"osc ci -m 'Update x to 1.1'\" EXIT; sed -i 's/1.0/1.1/' x.spec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "trap-cleanup-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap 'rm -rf \"$tmp\"' EXIT; osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-brace-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "{ osc ci -m 'Update x to 1.1'; } & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-subshell-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "(osc ci -m 'Update x to 1.1'; true) & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-coproc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "coproc osc ci -m 'Update x to 1.1'; sed -i 's/1.0/1.1/' x.spec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "coproc-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "coproc git-obs pr merge pool/x#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-dynamic-subst": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval \"$(cat @WORK@/long.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-dynamic-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap \"$(cat @WORK@/merge-cmd.txt)\" EXIT"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-dynamic-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval \"$UNSET_THING\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-known-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "C='gh pr comment 5 -b x'; eval \"$C\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-ssh-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval \"$(ssh-agent -s)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-var-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "T=eval; $T 'gh pr comment 5 -b x'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-var-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "T=trap; $T 'gh pr comment 5 -b x' EXIT"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "bash-var-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "S=bash; $S -c 'gh pr comment 5 -b x'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-literal": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval 'echo hi'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "ci-if-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "if true; then osc ci -m 'Update x to 1.1'; fi & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-for-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for d in .; do osc ci -m 'Update x to 1.1'; done & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-and-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update x to 1.1' && true & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-subst-background": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo $(osc ci -m 'Update x to 1.1') & sed -i 's/1.0/1.1/' x.spec; wait"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-coproc-named": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "coproc C { osc ci -m 'Update x to 1.1'; }; sed -i 's/1.0/1.1/' x.spec"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "dyn-subst-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$(echo eval) 'osc rq accept -m ok 1390002'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "dyn-var-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "$T osc comment create -c hi request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "dyn-path-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "S=@WORK@; \"$S/iter.sh\" osc status"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "trap-mktemp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tmp=$(mktemp -d); trap \"rm -rf $tmp\" EXIT"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "eval-arg-var": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "eval \"echo $UNSET_X\""
+    },
+    "cwd": "@PLAIN@"
   }
 }

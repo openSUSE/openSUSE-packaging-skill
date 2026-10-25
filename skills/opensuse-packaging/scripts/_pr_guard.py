@@ -539,6 +539,8 @@ ASKS = {
     "unattended (your own request; no reviewer; your package, or an unowned one in "
     "a project you maintain; Factory's devel project). Otherwise it needs the "
     "user's go.",
+    "eval-dynamic": "{0}: the guard cannot read the commands this runs, so it "
+    "cannot judge them. Write them out literally, or it needs the user's go.",
     "gate-stamp": "{0}. Run scripts/gate.sh in the checkout, commit in the next "
     "call, and file once gate.sh --review recorded the change review's PASS.",
 }
@@ -635,6 +637,11 @@ class Ctx:
         self.writers = []  # what in the call can write (note_write)
         self.seq = 0  # the commands judged so far, for the writers' order
         self.loops = []  # where the loops around this command start
+        self.pipe = 0  # the pipelines judged so far; cur_pipe: this command's
+        self.cur_pipe = 0
+        self.bg = set()  # the commands sent to the background with &
+        self.traps = []  # trap commands, judged when the call has run
+        self.any_bg = False  # the call sends something to the background
         self.gate_pending = []  # stamped commits and submits, for gate_writers
 
 
@@ -1939,6 +1946,7 @@ READERS |= {
     "realpath",
 }
 READERS |= {"readlink", "command", "type", "which", "set", "export", "local"}
+READERS |= {"trap", "wait"}
 READERS |= {"for", "in", "do", "done", "if", "then", "else", "elif", "fi", "while"}
 READERS |= {"until", "case", "esac", "select", "function", "time", "{", "}", "!"}
 OSC_READS = {
@@ -1977,7 +1985,7 @@ GIT_READS = {
 }
 
 
-def note_writer(name, run, ctx):
+def note_writer(name, run, ctx, cwd):
     """Remember a command of this call that can write (judge() turns a
     stamped commit or submit in such a call into an ask). osc commit is its
     own kind: other commits do not change a checkout, but do change a source."""
@@ -2012,15 +2020,36 @@ def note_writer(name, run, ctx):
         valued = ("--skip-fields", "--skip-chars", "--check-chars")
         if len(parse_opts(run[1:], "fsw", valued)[1]) < 2:
             return
+    elif name == "tee":  # writes the files it names
+        files = [a for a in run[1:] if a[:1] != "-"]
+        if not files:
+            return
+        targets = [target_path(a, cwd) for a in files]
+        note_write(ctx, what, None if None in targets else tuple(targets))
+        return
     elif name in READERS:
         return
     note_write(ctx, what)
 
 
-def note_write(ctx, what, target=None):
+def note_write(ctx, what, targets=None):
     """One writer of the call: where it stands, what it is, the absolute
-    path it writes (None: unknown), the loops around it."""
-    ctx.writers.append((ctx.seq, what, target, tuple(ctx.loops)))
+    paths it writes (None: unknown), the loops around it, its pipeline."""
+    ctx.writers.append((ctx.seq, what, targets, tuple(ctx.loops), ctx.cur_pipe))
+
+
+def target_path(raw, cwd):
+    """The file a write to raw lands in, through symlinks, as the kernel
+    resolves it (a link's .. leaves its target, which normpath would not
+    see); None when only the shell can tell."""
+    p = os.path.expanduser(raw)
+    if (
+        re.search(r"[$`*?\[]", p)
+        or not os.path.isabs(p)
+        and (not cwd or isinstance(cwd, Dirs))
+    ):
+        return None
+    return os.path.realpath(os.path.join(cwd or "/", p))
 
 
 def within(path, d):
@@ -2131,7 +2160,7 @@ def gate_commit(run, ctx, cwd):
                 else:
                     what = f"osc commit of {prj}/{pkg}"
                     ctx.gate_pending.append(
-                        ("commit", what, co, ctx.seq, tuple(ctx.loops))
+                        ("commit", what, co, ctx.seq, tuple(ctx.loops), ctx.cur_pipe)
                     )
 
 
@@ -2181,7 +2210,7 @@ def gate_submit(run, ctx, cwd):
             else:
                 what = f"osc {sub} of {src}/{pkg}"
                 ctx.gate_pending.append(
-                    ("submit", what, None, ctx.seq, tuple(ctx.loops))
+                    ("submit", what, None, ctx.seq, tuple(ctx.loops), ctx.cur_pipe)
                 )
 
 
@@ -2189,15 +2218,21 @@ def gate_writers(ctx):
     """judge()'s last step: a stamped submit in a call that can write
     anywhere, and a stamped commit after a write into its checkout (before it,
     or in a loop around both), are asked about."""
-    for kind, what, co, seq, loops in ctx.gate_pending:
+    for kind, what, co, seq, loops, pipe in ctx.gate_pending:
         w = sorted(
             {
                 wh
-                for ws, wh, target, wl in ctx.writers
+                for ws, wh, targets, wl, wp in ctx.writers
                 if kind == "submit"
                 or wh != "osc commit"
-                and (ws < seq or set(wl) & set(loops))
-                and (target is None or within(target, co))
+                and (
+                    ws < seq
+                    or set(wl) & set(loops)
+                    or wp == pipe  # its pipeline runs beside it
+                    or seq in ctx.bg  # it runs in the background
+                    or ctx.any_bg  # something does: it may be the commit
+                )
+                and (targets is None or any(within(t, co) for t in targets))
             }
         )
         if w:
@@ -2621,6 +2656,56 @@ def line_rules(ln, ctx, cwd):
         osc_rules(seg)
 
 
+# What runs the text it is given in this shell, by name or held in a variable.
+RUNNERS = SHELLS | {"eval", "trap"}
+
+
+# The tools the asks judge, and what runs a command from its arguments.
+TOOL_WORDS = {"osc", "tea", "git-obs", "gh", "git", "eval", "trap", "coproc"}
+
+
+def starts_tool(args):
+    """Whether arguments hand a command word only the shell knows a judged
+    tool or a runner to start: their first word, or one of them read as a
+    command line ('osc rq accept N', bash -c)."""
+    words = [w for a in args for w in a.split()]
+    if any(os.path.basename(w) in TOOL_WORDS for w in words[:1]):
+        return True
+    if any(w in SHELLS and words[k + 1 : k + 2] == ["-c"] for k, w in enumerate(words)):
+        return True
+    return any(
+        a.split()[:1] and os.path.basename(a.split()[0]) in TOOL_WORDS for a in args
+    )
+
+
+def literal_commands(text):
+    """Whether every command word of shell text is literal: what only the
+    shell knows stands in argument positions alone."""
+    for item in commands(arrays(tokenize(text))):
+        if len(item) == 2 and item[0]:
+            run = unwrap(item[0])[0]
+            if run and VARIABLE.search(run[0]):
+                return False
+    return True
+
+
+def body_texts(words, lwords, what, ctx, cwd):
+    """The texts an eval or trap string stands for: itself when literal (the
+    literal-aware words show no expansion), each spelling of what the call
+    set; none, and an ask, when only the shell knows it."""
+    text = " ".join(words)
+    lit = " ".join(lwords) if lwords and len(lwords) == len(words) else text
+    if not VARIABLE.search(lit):
+        return [text]
+    vals = substitute(text, ctx, cwd)
+    if vals:
+        return vals
+    if literal_commands(text):  # unknown arguments only: judged as unknown
+        return [text]
+    ask(ctx, "eval-dynamic", f"{what} {shown(text)[:80]}")
+    return []
+
+
 def run_text(text, kind, ctx, cwd, depth):
     """A program read whole: inline code, or text fed to a shell or interpreter."""
     if kind == "shell":
@@ -2989,7 +3074,7 @@ def arrays(tokens):
 
 
 def commands(tokens):
-    """Yield "(", ")", "|", ";;" and (argv, redirections) per simple command;
+    """Yield "(", ")", "|", ";;", "&" and (argv, redirections) per simple command;
     a redirection is (operator, word)."""
     argv, redirs, op = [], [], None
     for tok in tokens:
@@ -3007,6 +3092,8 @@ def commands(tokens):
                     yield sep[0]
                 elif sep.startswith(";;") or sep == ";&":
                     yield ";;"
+                elif sep == "&":
+                    yield "&"
             continue
         if op is not None:
             redirs.append((op, tok))
@@ -3371,8 +3458,10 @@ def unwrap(argv):
 
     while i < n:
         w, base = argv[i], os.path.basename(argv[i])
-        if w in KEYWORDS:
+        if w in KEYWORDS or w == "coproc":
             i += 1
+            if w == "coproc" and argv[i + 1 : i + 2] == ["{"]:
+                i += 1  # coproc NAME { ...; }
         elif w == "function":
             i += 2
         elif ASSIGN.match(w):
@@ -4174,6 +4263,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     """Check one simple command: (the working directory after it, what it
     writes to a pipe). lit: its argv and stdin as literal-aware text."""
     ctx.seq += 1
+    if argv[:1] == ["coproc"]:  # it runs in the background
+        ctx.bg.add(ctx.seq)
+        ctx.any_bg = True
     if argv[:1] in (["for"], ["while"], ["until"], ["select"]):  # for note_write
         ctx.loops.append(ctx.seq)
     elif argv[:1] == ["done"] and ctx.loops:
@@ -4188,8 +4280,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             block("stamp", "a redirection into the stamp directory")
         note_written(t, ctx, cwd)
         if t != "/dev/null":
-            where = None if isinstance(cwd, Dirs) else resolve(t, cwd)[0]
-            note_write(ctx, f"a redirection to {t}", where)
+            where = target_path(t, cwd)
+            note_write(ctx, f"a redirection to {t}", where and (where,))
     for op, t in redirs:  # the credential rules judge the agent's own commands
         if depth == 0 and op.lstrip("0123456789") in ("<", "<>"):
             for w in braced([t], "a redirection"):
@@ -4234,12 +4326,18 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
                     one_command([*w, *run[1:]], redirs, stdin, ctx, here, depth)
             return cwd, ("unknown", name)
         tools = {os.path.basename(h) for h in substitute(run[0], ctx, here) or ()}
-        if len(tools) == 1 and tools <= GUARDED:  # a guarded tool in a variable
+        if not tools and "/" not in run[0] and starts_tool(run[1:]):
+            ask(
+                ctx,
+                "eval-dynamic",
+                f"{shown(run[0])} {shown(run[1])[:40]}: the command word is unknown",
+            )
+        if len(tools) == 1 and tools <= GUARDED | RUNNERS:  # held in a variable
             name = tools.pop()
             run = [name, *run[1:]]
     if name in ctx.wrappers and len(run) > 1:  # a function that runs "$@"
         one_command(run[1:], redirs, stdin, ctx, here, depth)
-    note_writer(name, run, ctx)
+    note_writer(name, run, ctx, here)
     for k in shell_assigned(name, run[1:]):
         ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
     out = ("unknown", name)
@@ -4324,8 +4422,17 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         write = name in HTTPIE and httpie_writes(run)
         reads = {"curl": curl_reads(run[1:]), "wget": wget_reads(run[1:])}
         api_rules(text, ctx, here, write, reads.get(name, httpie_reads(run, stdin)))
+    elif name == "trap":  # its command runs in this shell when the call ends
+        ops = [k for k, a in enumerate(run) if k and a not in ("--", "-p", "-l", "-P")]
+        if len(ops) >= 2 and run[ops[0]] != "-":
+            k = ops[0]
+            for text in body_texts(
+                [run[k]], lrun and lrun[k : k + 1], "trap", ctx, here
+            ):
+                ctx.traps.append((text, here, depth))
     elif name == "eval":
-        run_text(" ".join(run[1:]), "shell", ctx, here, depth)
+        for text in body_texts(run[1:], lrun and lrun[1:], "eval", ctx, here):
+            run_text(text, "shell", ctx, here, depth)
     elif name == "find":
         find_exec(run, ctx, here, depth)
     elif name in SHELLS:
@@ -4462,7 +4569,8 @@ def shell_pass(text, ctx, cwd, depth):
     if shape != [len(i) == 2 and (len(i[0]), len(i[1])) or i for i in lits]:
         lits = [None] * len(items)  # a literal $'...' split otherwise: all unknown
     stack, out, piped, case, pattern = [], None, None, 0, False
-    writers, lpiped = [], None
+    writers, lpiped, joined = [], None, False
+    groups, last = [], (0, -1)  # open ( and { groups; the last command or group
     loops = loop_assignments(items, lits)
     bodies = function_bodies(items, ctx)
     for k, (item, litem) in enumerate(zip(items, lits)):
@@ -4483,10 +4591,16 @@ def shell_pass(text, ctx, cwd, depth):
         elif item == "|":
             piped = out
             lpiped = writers.pop() if writers else None
+            joined = True
+        elif item == "&":  # every command of what it backgrounds
+            ctx.any_bg = True
+            ctx.bg.update(range(last[0], last[1] + 1))
         elif item == "(":
             stack.append(cwd)
+            groups.append(ctx.seq + 1)
         elif item == ")":
             cwd = stack.pop() if stack else cwd
+            last = (groups.pop() if groups else ctx.seq, ctx.seq)
             out = ("unknown", "a subshell")
             writers.append(out)
         else:
@@ -4508,7 +4622,13 @@ def shell_pass(text, ctx, cwd, depth):
                     stdin = lstdin = ("files", [word])
             lit = (largv, lstdin)
             before = cwd
+            ctx.pipe += not joined  # a pipeline's commands share its number
+            ctx.cur_pipe, joined = ctx.pipe, False
+            if argv[:1] == ["{"]:
+                groups.append(ctx.seq + 1)
             cwd, out = one_command(argv, redirs, stdin, ctx, cwd, depth, lit)
+            closes = argv[-1:] == ["}"] and groups
+            last = (groups.pop() if closes else ctx.seq, ctx.seq)
             writers.append(placed(lit_output(argv, redirs, out, lit), ctx, before))
     return [w for w in writers if w is not None]
 
@@ -4994,6 +5114,10 @@ def judge(ev):
     try:
         if isinstance(inp.get("command"), str):
             shell_pass(inp["command"], ctx, cwd, 0)
+            while ctx.traps:  # a trap's command runs last, after every write
+                text, here, depth = ctx.traps.pop(0)
+                ctx.loops = []
+                run_text(text, "shell", ctx, here, depth)
         elif isinstance(inp.get("file_path"), str):
             body = inp.get("content", inp.get("new_string"))
             check_write(inp["file_path"], body if isinstance(body, str) else "", ctx)

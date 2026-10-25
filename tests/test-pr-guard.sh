@@ -483,6 +483,39 @@ case_ parse-quoted-heredoc        2 push-pr-head "pool/tesseract-ocr#3"
 case_ parse-quoted-then-heredoc   2 push-pr-head "pool/tesseract-ocr#3"
 
 echo "--- text fed to a shell or interpreter is a program"
+# A trap's command runs in this shell, as an eval string does.
+case_ trap-merge                2 merge-git-obs "a git-obs PR merge"
+case_ trap-signal-merge         2 merge-tea "tea PR merge"
+ask_ trap-comment               comment "gh pr comment"
+case_ trap-cleanup              0 - ""
+case_ trap-reset                0 - ""
+case_ trap-list                 0 - ""
+# An eval or trap string the guard cannot read is asked about; one it can is judged, and
+# so is a command word (eval, trap, bash) held in a variable the call sets.
+m=mer; printf 'git-obs pr %sge pool/x#5\n' "$m" > "$W/merge-cmd.txt"
+case_ coproc-merge              2 merge-git-obs "a git-obs PR merge"
+ask_ eval-dynamic-subst         eval-dynamic "eval"
+ask_ trap-dynamic-merge         eval-dynamic "trap"
+ask_ eval-dynamic-unset         eval-dynamic "eval"
+ask_ eval-ssh-agent             eval-dynamic "eval"
+ask_ eval-known-var             comment "gh pr comment"
+ask_ eval-var-command           comment "gh pr comment"
+ask_ trap-var-command           comment "gh pr comment"
+ask_ bash-var-command           comment "gh pr comment"
+case_ eval-literal              0 - ""
+# Any & or coproc in the call: every write in it may run while the commit does.
+ask_ ci-if-background           gate-stamp "sed"
+ask_ ci-for-background          gate-stamp "sed"
+ask_ ci-and-background          gate-stamp "sed"
+ask_ ci-subst-background        gate-stamp "sed"
+ask_ ci-coproc-named            gate-stamp "sed"
+# A command word only the shell knows, given a judged tool or a runner to start.
+ask_ dyn-subst-command          eval-dynamic "the command word is unknown"
+ask_ dyn-var-command            eval-dynamic "the command word is unknown"
+case_ dyn-path-script           0 - ""
+# Unknown words in argument positions leave the commands readable.
+case_ trap-mktemp               0 - ""
+case_ eval-arg-var              0 - ""
 case_ fed-cat-heredoc-bash        2 push-pr-head "pool/tesseract-ocr#3"
 case_ fed-here-string             2 push-pr-head "pool/tesseract-ocr#3"
 case_ fed-echo-sh                 2 push-pr-head "pool/tesseract-ocr#3"
@@ -1362,6 +1395,22 @@ case_ ci-log-redirect           0 - ""
 case_ ci-log-tee                0 - ""
 case_ ci-note-outside           0 - ""
 ask_ ci-while-edit-after        gate-stamp "touch"
+# A path through a link and .. lands where the link points, not where normpath says.
+mkdir -p "$work/osc/devel/x/sub" && ln -sfn "$work/osc/devel/x/sub" "$work/links/co"
+ask_ ci-symlink-dotdot          gate-stamp "a redirection to"
+# What runs beside the commit, backgrounded or in its pipeline, writes during it.
+ask_ ci-background-then-edit    gate-stamp "sed"
+ask_ ci-pipe-tee-into           gate-stamp "tee"
+# Registering a trap and waiting write nothing: a request beside them stays unasked.
+case_ sr-trap-wait              0 - ""
+# A trap's command runs when the call ends, after every write in it.
+ask_ trap-ci-then-append        gate-stamp "a redirection to"
+ask_ trap-ci-then-sed           gate-stamp "sed"
+case_ trap-cleanup-then-ci      0 - ""
+# A backgrounded group, every command of it; coproc runs in the background too.
+ask_ ci-brace-background        gate-stamp "sed"
+ask_ ci-subshell-background     gate-stamp "sed"
+ask_ ci-coproc                  gate-stamp "sed"
 ask_ sr-after-write-anywhere    gate-stamp "a redirection to /tmp/x-note.txt"
 # The account: osc whois, once per call and in memory only. A file a call can write is
 # no source for it: an earlier call could name someone else there.
