@@ -210,5 +210,46 @@ case_ author-old-entry-in-scope 1 "au-old.changes:7: author" --author "$ME" --en
 case_ author-bad-value 2 "--author takes 'Name <email>'" --author "jane@suse.example" --entries 1 "$work/au-ok.changes"
 case_ author-option-order 1 "is not what osc vc writes" --entries 1 --author "$ME" "$work/au-git.changes"
 
+# A security claim without its CVE ids took nine fix rounds in one week: the
+# tracker keys off the literal ids. An incomplete id is always a finding; a
+# security claim passes with a full id, a boo#/bsc# or a GHSA id somewhere in
+# its top-level bullet (sub-bullets included); "CVEs" passes only with an id.
+while IFS='|' read -r name rc text <&3; do
+  IFS='^' read -r -a lines <<<"$text"
+  entry "sec-$name.changes" "${lines[@]}"
+  if [ "$rc" = 0 ]; then
+    case_ "sec-$name" 0 "OK: clean" --entries 1 "$work/sec-$name.changes"
+  elif [ "$rc" = partial ]; then
+    case_ "sec-$name" 1 "sec-$name.changes:4: bullet has an incomplete CVE id" --entries 1 "$work/sec-$name.changes"
+  else
+    case_ "sec-$name" 1 "sec-$name.changes:4: bullet claims security fixes without a full CVE id" \
+      --entries 1 "$work/sec-$name.changes"
+  fi
+done 3<<'EOF'
+cves|1|- Update to 2.0, fixes multiple CVEs
+cve-word|1|- Security hardening (CVE)
+security-fixes|1|- Update to 2.0:^  * Several security fixes
+security-update|1|- Update to 2.0 (security update)
+vulnerability|1|- Fix a vulnerability in the HTTP parser
+vulnerabilities-wrapped|1|- Update to 2.0, which closes two^  vulnerabilities in the parser
+placeholder|partial|- CVE-2026-XXXX: heap overflow in the parser
+year-only|partial|- Fix CVE-2026 in the parser
+short|partial|- CVE-2026-12: heap overflow in the parser
+placeholder-beside-full|partial|- CVE-2026-1234 and CVE-2026-XXXX: overflows
+full-id|0|- Update to 2.0 (security release):^  * CVE-2026-1234: heap overflow in the parser (boo#1)
+cves-with-ids|0|- Security fixes for two CVEs: CVE-2026-1234,^  CVE-2026-5678
+bug-ref|0|- Fix a vulnerability in the HTTP parser (boo#1284176)
+ghsa|0|- Fix a vulnerability in the parser (GHSA-abcd-efgh-ijkl)
+not-affected|0|- Refresh the vendored crates:^  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11 fix
+no-cve|0|- Fix a heap overflow in the parser (no CVE assigned)
+hardening|0|- Build with -D_FORTIFY_SOURCE=3 for stronger hardening
+security-policy|0|- Ship the upstream security policy file
+patch-name|0|- Add fix-CVE-2026-54886.patch:^  * CVE-2026-54886: SFTP server loop (bsc#1270246)
+EOF
+# Only the entries in scope are judged: an old vague entry is history.
+{ printf '%s\nMon Oct 19 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n' "$SEP"
+  cat "$work/sec-cves.changes"; } > "$work/sec-old.changes"
+case_ sec-old-entry-not-linted 0 "OK: clean" --entries 1 "$work/sec-old.changes"
+
 echo "---"; [ "$fails" = 0 ] && echo "all changes-lint checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

@@ -9,7 +9,7 @@ Renders a Markdown table (so it looks nice in a chat/terminal that renders MD).
 
 Usage:
   sr-status.py [--user U] [--state open|all|declined|accepted] [--target PRJ]
-               [--limit N] [--format table|blocks] [--brief] [--summary]
+               [--limit N] [--format table|blocks] [--brief] [--summary] [--days N]
                [--deadline SECONDS] [--no-prs] [ID ...]
   sr-status.py --pr pool/<pkg>#<n>
     ID ...      specific OBS request ids, N, #N or sr#N (overrides discovery;
@@ -28,6 +28,9 @@ Usage:
                 oldest new and review requests, and comments by others since your
                 last action on your SRs and PRs (one call each); never capped, so
                 no --limit. Pool PR builds are not read there: --pr reads them.
+    --days      with --summary: also the requests accepted, revoked or
+                superseded in the last N days (default 14), so "was it ever
+                filed?" is never answered from the open list alone
     --deadline  start no per-item lookup after this many seconds (default 80):
                 the rest print as UNKNOWN, so a long queue still prints
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
@@ -42,6 +45,11 @@ header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
 created, and PRs awaiting your review. `--no-prs` skips both. Every osc /
 git-obs call times out after 60s and then counts as a failed lookup (a network
 failure for --pr), never as an empty answer.
+
+A new or review SR whose source changed after the revision it pins is STALE
+(outside --brief: one or two calls per request): osc sr does not follow the
+branch, so a fix committed after filing reaches nobody until it is filed again
+with -s. Equal files at another srcmd5 (a link) are not stale.
 
 A declined SR that a later accepted one for the same package and target
 replaced is annotated with the revoke that clears it and stays at the top:
@@ -697,6 +705,108 @@ def comments_for(rows, fn):
         return list(ex.map(one, rows))
 
 
+# ---------- stale requests ----------
+
+LOOKUP_FAILED = object()
+
+
+def source_files(prj, pkg, rev=None):
+    """(srcmd5, {(name, md5)}) of prj/pkg expanded (at revision rev): files,
+    not srcmd5s, decide, since a link's srcmd5 also covers its base. None on
+    a 404, LOOKUP_FAILED on any other failure."""
+
+    def q(x):
+        return urllib.parse.quote(x, safe=":")
+
+    errors = []
+    path = f"/source/{q(prj)}/{q(pkg)}?expand=1" + (f"&rev={q(rev)}" if rev else "")
+    raw = api(path, hard=False, errors=errors)
+    if raw is None:
+        return None if any("HTTP Error 404" in e for e in errors) else LOOKUP_FAILED
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return LOOKUP_FAILED
+    if root.tag != "directory":
+        return LOOKUP_FAILED
+    return root.get("srcmd5"), frozenset(
+        (e.get("name"), e.get("md5")) for e in root.findall("entry")
+    )
+
+
+def refile(row, prj, pkg):
+    """The osc sr that files the source's current state over the request."""
+    cmd = "osc sr -m MSG"
+    if re.match(r"home:[^:]+:", prj):
+        cmd += " --cleanup"
+    cmd += f" -s {row['id']} {prj} {pkg} {row['target']}"
+    return cmd + (f" {row['pkg']}" if row["pkg"] != pkg else "")
+
+
+def staleness(row):
+    """What to say about an open request whose source moved on; empty when
+    it still carries its source's current files or pins no revision."""
+    act = row["el"].find("action")
+    src = act.find("source") if act is not None else None
+    if src is None or not (
+        src.get("rev") and src.get("project") and src.get("package")
+    ):
+        return ""
+    prj, pkg, rev = src.get("project"), src.get("package"), src.get("rev")
+    head = source_files(prj, pkg)
+    if head is LOOKUP_FAILED:
+        return "STALE UNKNOWN (source lookup failed)"
+    if head is None:
+        return f"source gone: {prj}/{pkg}"
+    if head[0] == rev:
+        return ""
+    pinned = source_files(prj, pkg, rev)
+    if pinned is LOOKUP_FAILED or pinned is None:
+        return "STALE UNKNOWN (pinned revision lookup failed)"
+    if pinned[1] == head[1]:
+        return ""
+    return f"STALE — source changed after the pinned revision: {refile(row, prj, pkg)}"
+
+
+def closed_since(user, days):
+    """(since, [request]) for your submit requests accepted, revoked or
+    superseded since `days` ago, each request a dict; requests None when the
+    search failed, SKIPPED past the deadline."""
+    since = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+    ).strftime("%Y-%m-%d")
+    if DEADLINE is not None and time.monotonic() >= DEADLINE:
+        return since, SKIPPED
+    match = (
+        f"@creator='{urllib.parse.quote(user, safe='')}'+and+action/@type='submit'"
+        "+and+(state/@name='accepted'+or+state/@name='revoked'"
+        f"+or+state/@name='superseded')+and+state/@when>='{since}'"
+    )
+    raw = api(f"/search/request?match={match}", hard=False)
+    try:
+        root = ET.fromstring(raw) if raw is not None else None
+    except ET.ParseError:
+        root = None
+    if root is None or root.tag != "collection":
+        return since, None
+    out = []
+    for r in root.findall("request"):
+        st, act = r.find("state"), r.find("action")
+        tgt = act.find("target") if act is not None else None
+        out.append(
+            {
+                "id": r.get("id", "?"),
+                "state": st.get("name", "") if st is not None else "",
+                "who": st.get("who", "?") if st is not None else "?",
+                "by": st.get("superseded_by", "?") if st is not None else "?",
+                "why": (st.findtext("comment") if st is not None else "") or "",
+                "target": tgt.get("project", "?") if tgt is not None else "?",
+                "pkg": tgt.get("package", "?") if tgt is not None else "?",
+            }
+        )
+    return since, sorted(out, key=lambda r: int(r["id"]) if r["id"].isdigit() else 0)
+
+
 # ---------- --summary ----------
 
 
@@ -855,7 +965,7 @@ def pr_others_comments(pr):
     return sorted(out, key=lambda x: iso(x[0]) or floor)
 
 
-def summary(user, rows, prs, failed_legs, no_prs):
+def summary(user, rows, prs, failed_legs, no_prs, days):
     """--summary: what needs reading at volume, in one screen."""
     srs = [r for r in rows if r["kind"] == "SR"]
     by_state = Counter(r["state"] for r in srs)
@@ -917,6 +1027,52 @@ def summary(user, rows, prs, failed_legs, no_prs):
                 else:
                     after = "nothing filed since"
                 print(f"    {where}: {after}")
+    waiting = [r for r in srs if r["state"] in ("new", "review")]
+    if waiting:
+        found = comments_for(waiting, staleness)
+        stale = [(r, s) for r, s in zip(waiting, found) if s and s is not SKIPPED]
+        unchecked = [r for r, s in zip(waiting, found) if s is SKIPPED]
+        hits = [x for x in stale if x[1].startswith("STALE —")]
+        print(
+            f"\nstale ({len(hits)}): source changed after the revision the request pins"
+            + (" — refile with -s:" if hits else "")
+        )
+        for r, s in stale:
+            what = s.split(": ", 1)[1] if s.startswith("STALE —") else s
+            print(f"  SR {r['id']} {r['pkg']} -> {r['target']}: {what}")
+        if unchecked:
+            print(
+                "  not checked (--deadline reached): "
+                + ", ".join(f"SR {r['id']} {r['pkg']}" for r in unchecked)
+            )
+    since, closed = closed_since(user, days)
+    head = f"\nclosed in the last {days} days (since {since})"
+    if closed is SKIPPED:
+        print(f"{head}: UNKNOWN (not looked up: --deadline reached)")
+    elif closed is None:
+        print(f"{head}: UNKNOWN (lookup failed)")
+    else:
+        by = Counter(r["state"] for r in closed)
+        print(
+            f"{head}: {len(closed)}"
+            + (" — " + " · ".join(f"{s} {by[s]}" for s in sorted(by)) if closed else "")
+        )
+        for state, show in (
+            ("accepted", lambda r: f"{r['pkg']} #{r['id']}"),
+            ("superseded", lambda r: f"{r['pkg']} #{r['id']}→#{r['by']}"),
+        ):
+            per = defaultdict(list)
+            for r in closed:
+                if r["state"] == state:
+                    per[r["target"]].append(show(r))
+            for tgt in sorted(per):
+                print(f"  {state} in {tgt}: " + ", ".join(per[tgt]))
+        for r in closed:
+            if r["state"] == "revoked":
+                print(
+                    f"  revoked: SR {r['id']} {r['pkg']} -> {r['target']} by "
+                    f'{clip(r["who"], 40)}: "{clip(r["why"], 100)}"'
+                )
     open_srs = [r for r in srs if r["state"] in ("new", "review", "declined")]
     prs_ok = not no_prs and not failed_legs
     mine = [p for p in prs if not p.get("review")]
@@ -1051,6 +1207,14 @@ def main():
         "request, comments by others since your last action",
     )
     ap.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="with --summary: also the requests accepted, revoked or superseded "
+        "in the last N days (default 14)",
+    )
+    ap.add_argument(
         "--deadline",
         type=float,
         default=80,
@@ -1080,6 +1244,8 @@ def main():
         ap.error("--summary takes no request ids")
     if a.summary and a.limit is not None:
         ap.error("--summary is never capped: drop --limit")
+    if a.days is not None and (not a.summary or a.days < 1):
+        ap.error("--days N (1 or more) goes with --summary")
     ids = []
     for raw in a.ids:
         rid = re.sub(r"^(?:sr)?#", "", raw.strip(), flags=re.I)
@@ -1163,6 +1329,15 @@ def main():
             ),
         ):
             r["comment"] = "(not fetched: --deadline reached)" if c is SKIPPED else c
+        # a fix committed to the branch after filing reaches nobody: say so,
+        # and sort it with the declines
+        waiting = [r for r in rows if "el" in r and r["state"] in ("new", "review")]
+        for r, s in zip(waiting, comments_for(waiting, staleness)):
+            if s is SKIPPED:
+                r["note"] = "; STALE not checked (--deadline reached)"
+            elif s:
+                r["note"] = f"; {s}"
+                r["bad"] = r["bad"] or s.startswith("STALE")
 
     # A decline that a later accepted request for the same package and target
     # replaced is cleanup, not done: osc still counts it, and the next `osc sr`
@@ -1202,7 +1377,7 @@ def main():
     rows.extend(prs)
 
     if a.summary:
-        summary(user, rows, prs, failed_legs, a.no_prs)
+        summary(user, rows, prs, failed_legs, a.no_prs, a.days or 14)
         if full_legs:
             print(
                 f"  (the {' and '.join(full_legs)} PR leg returned {PR_PAGE}, its page size: more may exist)"

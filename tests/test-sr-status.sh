@@ -46,6 +46,8 @@ case $1 in
       echo '<collection>'; for id in $ids; do cat "$FIX/obs/req/$id" 2>/dev/null; done; echo '</collection>' ;;
     # A search for later requests to one target answers from obs/later/<prj>/<pkg>,
     # after decoding the query as the server does: '+' is a space, %XX a byte.
+    # Your closed requests (--summary --days) answer from obs/closed.
+    /search/request\?match=@creator=*) exec serve "$FIX/obs/closed" ;;
     /search/request\?match=action/target/*)
       q=$(printf %s "$2" | tr '+' ' '); q=$(printf '%b' "${q//%/\\x}")
       prj=$(printf %s "$q" | sed -n "s/.*@project='\([^']*\)'.*/\1/p")
@@ -165,6 +167,7 @@ put "$G/somegroup/example/pulls/2" '{"number": 2, "state": "open", "mergeable": 
 put "$G/somegroup/example/issues/2/comments" '[{"user": {"login": "autogits_obs_staging_bot"}, "body": "Build successful"}]'
 put "$B/obs/request_view_collection_states_new,review,declined_roles_creator_user_tester_types_submit" '<collection matches="0"/>'
 put "$B/obs/whois" 'tester: "Tester"'
+put "$B/obs/closed" '<collection matches="0"/>'
 
 # case_ <name> <expected rc> <expected message> <mutation> [sr-status args...]
 # Mutations run in the case's fixture tree ($B there), with $G/$P3/... to hand.
@@ -707,6 +710,102 @@ grep -qF "later requests UNKNOWN (not looked up: --deadline reached)" <<<"$LAST"
 # --summary is never capped: a cap would read 10 of 45 as the whole queue.
 case_ summary-refuses-limit 2 "--summary is never capped: drop --limit" ":" --summary --limit 10
 case_ summary-uncapped 0 "OBS submit requests: 45 (new 44 · declined 1)" "many 45 > \$B/obs/$OPEN" --summary --no-prs
+
+# ---------------------------------------------------------------- stale requests
+# osc sr pins the source revision it was filed from: a fix committed to the
+# branch afterwards reaches nobody until it is filed again with -s, yet three
+# such requests were reported as "intact". An open request whose source holds
+# other files than its pinned revision is STALE; equal files at another srcmd5
+# (a link) are not.
+H=home  # spelled apart: no literal home project in a public file
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
+rreq() { # <id> <package> <source project> <rev> [state] [target]
+  printf '<request id="%s" creator="tester"><action type="submit"><source project="%s" package="%s" rev="%s"/>
+  <target project="%s" package="%s"/></action><state name="%s" who="tester" when="2026-10-20T10:00:00" created="2026-10-20T10:00:00"/></request>\n' \
+    "$1" "$3" "$2" "$4" "${6:-openSUSE:Factory}" "$2" "${5:-new}"
+}
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
+srcl() { # <fixture tree> <project> <package> <srcmd5> <file md5> [rev]: an expanded listing
+  put "$1/obs/source/$2/$3_expand_1${6:+_rev_$6}" \
+    "<directory name=\"$3\" srcmd5=\"$4\"><entry name=\"$3.spec\" md5=\"$5\"/></directory>"
+}
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
+stale_fixtures() { # <fixture tree>: 301 stale, 302 current, 303 relinked (same files), 304 accepted elsewhere
+  { echo '<collection>'
+    rreq 301 foo devel:example r1
+    rreq 302 bar devel:example b2 review
+    rreq 303 baz devel:example z1
+    echo '</collection>'; } > "$1/obs/$OPEN"
+  srcl "$1" devel:example foo f2 m2; srcl "$1" devel:example foo r1 m1 r1
+  srcl "$1" devel:example bar b2 n2
+  srcl "$1" devel:example baz z9 k1; srcl "$1" devel:example baz z1 k1 z1
+}
+STALE1='STALE — source changed after the pinned revision: osc sr -m MSG -s 301 devel:example foo openSUSE:Factory'
+case_ table-stale 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; $STALE1 |" "stale_fixtures \$B" --no-prs
+rows=$(grep '^| SR ' <<<"$LAST")
+[ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " 301 " ] && pass "table-stale: a stale request sorts first" || fail "table-stale: order: $rows"
+! grep -qE '\| (302|303) \|.*STALE' <<<"$rows" && pass "table-stale: current and relinked requests are not stale" \
+  || fail "table-stale: $rows"
+! grep -q 'bar_expand_1_rev' <<<"$CALLS" && pass "table-stale: a matching srcmd5 needs no second call" || fail "table-stale: $CALLS"
+case_ table-stale-cleanup 0 "osc sr -m MSG --cleanup -s 301 $H:tester:spark foo openSUSE:Factory" \
+  "stale_fixtures \$B && sed -i 's/source project=\"devel:example\" package=\"foo\"/source project=\"$H:tester:spark\" package=\"foo\"/' \$B/obs/$OPEN &&
+   srcl \$B $H:tester:spark foo f2 m2 && srcl \$B $H:tester:spark foo r1 m1 r1" --no-prs
+case_ table-stale-unknown 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; STALE UNKNOWN (source lookup failed) |" \
+  "stale_fixtures \$B && echo @NET > \$B/obs/source/devel:example/foo_expand_1" --no-prs
+case_ table-stale-pinned-unknown 0 "STALE UNKNOWN (pinned revision lookup failed)" \
+  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_expand_1_rev_r1" --no-prs
+case_ table-source-gone 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; source gone: devel:example/foo |" \
+  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_expand_1" --no-prs
+case_ table-stale-deadline 0 "⏳ new; STALE not checked (--deadline reached)" "stale_fixtures \$B" --no-prs --deadline 0
+case_ brief-not-checked 0 "SR 301  [new" "stale_fixtures \$B" --brief --no-prs
+! grep -q '_expand_1' <<<"$CALLS" && ! grep -q STALE <<<"$LAST" && pass "brief-not-checked: --brief makes no source call" \
+  || fail "brief-not-checked: $CALLS"
+case_ summary-stale 0 "stale (1): source changed after the revision the request pins — refile with -s:" \
+  "stale_fixtures \$B" --summary --no-prs
+grep -qF "  SR 301 foo -> openSUSE:Factory: osc sr -m MSG -s 301 devel:example foo openSUSE:Factory" <<<"$LAST" \
+  && ! grep -qE '  SR 30[23] .*osc sr' <<<"$LAST" && pass "summary-stale: names the refile, only for the stale one" || fail "summary-stale: $LAST"
+case_ summary-stale-none 0 "stale (0): source changed after the revision the request pins" \
+  "stale_fixtures \$B && srcl \$B devel:example foo r1 m2" --summary --no-prs
+case_ summary-stale-deadline 0 "  not checked (--deadline reached): SR 301 foo, SR 302 bar, SR 303 baz" \
+  "stale_fixtures \$B" --summary --no-prs --deadline 0
+
+# --summary --days: "no SR of mine was ever filed" was said of a request that
+# had been accepted: the open list cannot answer it. Closed ones are listed
+# per target (accepted, superseded) or with their reason (revoked).
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
+creq() { # <id> <package> <target> <state> [who] [comment] [superseded_by]
+  printf '<request id="%s" creator="tester"><action type="submit"><source project="devel:example" package="%s"/>
+  <target project="%s" package="%s"/></action><state name="%s" who="%s"%s>%s</state></request>\n' \
+    "$1" "$2" "$3" "$2" "$4" "${5:-tester}" "${7:+ superseded_by=\"$7\"}" "${6:+<comment>$6</comment>}"
+}
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
+closed_fixtures() { # <fixture tree>
+  { echo '<collection>'
+    creq 1392106 hidapi hardware accepted maint
+    creq 1392121 libwacom hardware accepted maint
+    creq 1392209 dlib openSUSE:Factory revoked tester 'forwarder is not package maintainer'
+    creq 1386578 mariadb server:database superseded tester '' 1386595
+    echo '</collection>'; } > "$1/obs/closed"
+}
+SINCE=$(date -u -d '14 days ago' +%F)
+case_ summary-closed 0 "closed in the last 14 days (since $SINCE): 4 — accepted 2 · revoked 1 · superseded 1" \
+  "closed_fixtures \$B" --summary --no-prs
+for want in "  accepted in hardware: hidapi #1392106, libwacom #1392121" \
+            "  superseded in server:database: mariadb #1386578→#1386595" \
+            '  revoked: SR 1392209 dlib -> openSUSE:Factory by tester: "forwarder is not package maintainer"'; do
+  grep -qF -- "$want" <<<"$LAST" && pass "summary-closed: $want" || fail "summary-closed: missing '$want'"
+done
+grep -qF "state/@when>='$SINCE'" <<<"$CALLS" && grep -qF "@creator='tester'" <<<"$CALLS" \
+  && pass "summary-closed: one search for your requests closed since then" || fail "summary-closed: $CALLS"
+case_ summary-closed-none 0 "closed in the last 14 days (since $SINCE): 0" ":" --summary --no-prs
+case_ summary-closed-failed 0 "closed in the last 14 days (since $SINCE): UNKNOWN (lookup failed)" \
+  "echo @NET > \$B/obs/closed" --summary --no-prs
+case_ summary-closed-deadline 0 "closed in the last 14 days (since $SINCE): UNKNOWN (not looked up: --deadline reached)" \
+  "closed_fixtures \$B" --summary --no-prs --deadline 0
+case_ summary-days 0 "closed in the last 3 days (since $(date -u -d '3 days ago' +%F)): 4" \
+  "closed_fixtures \$B" --summary --no-prs --days 3
+case_ days-without-summary 2 "--days N (1 or more) goes with --summary" ":" --days 3
+case_ days-zero 2 "--days N (1 or more) goes with --summary" ":" --summary --days 0
 
 echo "---"; [ "$fails" = 0 ] && echo "all sr-status checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

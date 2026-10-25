@@ -21,7 +21,7 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 cat > "$work/bin/osc" <<'EOF'
 #!/usr/bin/env python3
-import os, re, sys, urllib.parse
+import os, re, sys, time, urllib.parse
 fix = os.environ["FIX"]
 args = sys.argv[1:]
 with open(os.path.join(fix, "calls"), "a") as fh:
@@ -33,6 +33,9 @@ def answer(path, missing):
         print(missing)
         return
     text = open(path).read()
+    if text.startswith("@SLOW\n"):  # answers after 3 s
+        time.sleep(3)
+        text = text[6:]
     if text.strip() == "@ERR":
         sys.exit("Server returned an error: HTTP Error 500: Internal Server Error")
     if text.strip() == "@ERR502":
@@ -227,9 +230,51 @@ absent "openSUSE:Factory/fwd" "--mine skips openSUSE: targets"
 case_ mine-unknown   3 "UNKNOWN: cannot list the requests" "echo @ERR > search/mine" --mine
 case_ mine-none      0 "# 0 package(s): none" "rm search/mine" --mine
 
+echo "--- several packages: pairs, prj/pkg and --batch"
+case_ pairs          4 "# 2 package(s): 1 DUE, 1 FORWARDED" : devel:a fwd devel:a due
+grep -qF "devel:a/fwd  FORWARDED 3000" <<<"$LAST" && grep -qF "devel:a/due  DUE" <<<"$LAST" \
+  && pass "pairs: one row per pair" || fail "pairs: $LAST"
+case_ slash          0 "devel:a/fwd  FORWARDED 3000 by maint review current" : devel:a/fwd
+case_ mixed          4 "# 2 package(s): 1 DUE, 1 FORWARDED" : devel:a/fwd devel:a due
+case_ duplicate      0 "# 1 package(s): 1 FORWARDED" : devel:a fwd devel:a/fwd
+case_ odd-words      2 "'devel:a' has no package" : devel:a fwd devel:a
+case_ empty-half     2 "not <project>/<package>: 'devel:a/'" : devel:a/
+case_ batch          4 "# 3 package(s): 1 DUE, 1 FORWARDED, 1 IN-FACTORY" \
+  "printf '# a comment\n\ndevel:a\tfwd\ndevel:a due\ndevel:a/infac\n' > list" --batch list
+case_ batch-empty    2 "--batch list: no packages" "printf '# only a comment\n' > list" --batch list
+case_ batch-missing  2 "--batch nolist: No such file or directory" : --batch nolist
+case_ batch-extra    2 "--batch list:1: more than one package" "printf 'devel:a fwd due\n' > list" --batch list
+case_ batch-and-pair 2 "give <devel-project> <package>, --batch FILE, or --mine" "printf 'devel:a fwd\n' > list" --batch list devel:a due
+# A package the own-request search cannot answer for is UNKNOWN on its own row:
+# the others are still decided.
+case_ own-search-fails 3 "devel:a/pend  UNKNOWN" "echo @ERR > search/own-devel:a-pend" devel:a pend devel:a fwd
+grep -qF "devel:a/fwd  FORWARDED 3000" <<<"$LAST" && pass "own-search-fails: the other package is decided" \
+  || fail "own-search-fails: $LAST"
+
+echo "--- --deadline: what it stops is UNKNOWN, and the run says it is incomplete"
+case_ deadline-zero  3 "# INCOMPLETE: 2 not looked up (--deadline reached; raise it, or ask for these): devel:a/due, devel:a/fwd" \
+  : devel:a fwd devel:a due --deadline 0
+grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
+  && [ "$(tail -2 <<<"$LAST" | head -1 | cut -c1-12)" = "# 2 package(" ] \
+  && pass "deadline-zero: rows UNKNOWN, the count before the INCOMPLETE line" || fail "deadline-zero: $LAST"
+! grep -q "^osc api" "$LASTDIR/calls" && pass "deadline-zero: no lookup started" || fail "deadline-zero: $(cat "$LASTDIR/calls")"
+# A lookup still running at the deadline is cut too: due's Factory search
+# answers after 3 s, the deadline is 1 s, so its next lookups never start.
+case_ deadline-cut   3 "# INCOMPLETE: 1 not looked up" \
+  "printf '@SLOW\\n<collection matches=\"0\"/>\\n' > search/factory-due" devel:a due --deadline 1
+grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
+  && pass "deadline-cut: the package is UNKNOWN, not DUE" || fail "deadline-cut: $LAST"
+case_ deadline-negative 2 "--deadline takes 0 or more seconds" : devel:a due --deadline -1
+# Killed by a harness timeout (SIGTERM), it still says the output is cut off.
+d="$work/sigterm"; cp -a "$work/base" "$d"; printf '@SLOW\n<collection matches="0"/>\n' > "$d/search/factory-due"
+( cd "$d" && FIX=$d PATH="$work/bin:$PATH" exec python3 "$FC" devel:a due > "$d/out" 2>&1 ) &
+pid=$!; sleep 1; kill -TERM "$pid"; wait "$pid"; got=$?
+[ "$got" = 3 ] && grep -qF "# INCOMPLETE: interrupted before every package was decided" "$d/out" \
+  && pass "sigterm: prints # INCOMPLETE and exits 3" || { fail "sigterm: rc=$got"; sed 's/^/    /' "$d/out"; }
+
 echo "--- usage"
-case_ no-args        2 "give <devel-project> <package>, or --mine" :
-case_ both           2 "give <devel-project> <package>, or --mine" : devel:a due --mine
+case_ no-args        2 "give <devel-project> <package>, --batch FILE, or --mine" :
+case_ both           2 "give <devel-project> <package>, --batch FILE, or --mine" : devel:a due --mine
 case_ since-alone    2 "--since YYYY-MM-DD goes with --mine" : devel:a due --since 2026-10-14
 case_ since-bad      2 "--since YYYY-MM-DD goes with --mine" : --mine --since 14days
 case_ help           0 "Exit:" : --help
