@@ -740,32 +740,44 @@ stale_fixtures() { # <fixture tree>
     rreq 304 qux "$d" 3                 # scmsync: only the obsinfo's branch changed
     printf '<request id="305" creator="tester"><action type="submit"><source project="%s" package="m1" rev="1"/><target project="openSUSE:Factory" package="m1"/></action><action type="submit"><source project="%s" package="m2" rev="1"/><target project="openSUSE:Factory" package="m2"/></action><state name="new" who="tester" created="2026-10-20T10:00:00"/></request>\n' "$d" "$d"
     rreq 306 quux "$d" u5               # pinned by srcmd5, still current
+    rreq 307 svc "$d" sx                # a server-side _service: pinned by its result's srcmd5
+    rreq 308 svc2 "$d" 2                # a _service, one revision back, same expanded files
     echo '</collection>'; } > "$1/obs/$OPEN"
-  lst "$1" "$d"/foo 5 f5 m5; lst "$1" "$d"/foo_rev_3 3 f3 m3
+  lst "$1" "$d"/foo 5 f5 m5; lst "$1" "$d"/foo_expand_1 5 f5 m5; lst "$1" "$d"/foo_expand_1_rev_3 3 f3 m3
   lst "$1" "$d"/bar 7 b7 n7
   lst "$1" "$d"/baz 9 z9 k1 '<linkinfo project="devel:base" package="baz" srcmd5="zz" xsrcmd5="x9" lsrcmd5="l9"/>'
   lst "$1" "$d"/baz_expand_1 9 x9 k1; lst "$1" "$d"/baz_expand_1_rev_8 8 x8 k1
   lst "$1" "$d"/qux 4 q4 s1 '<entry name="_scmsync.obsinfo" md5="branch-factory"/>'
-  lst "$1" "$d"/qux_rev_3 3 q3 s1 '<entry name="_scmsync.obsinfo" md5="branch-main"/>'
+  lst "$1" "$d"/qux_expand_1 4 q4 s1 '<entry name="_scmsync.obsinfo" md5="branch-factory"/>'
+  lst "$1" "$d"/qux_expand_1_rev_3 3 q3 s1 '<entry name="_scmsync.obsinfo" md5="branch-main"/>'
   lst "$1" "$d"/quux 5 u5 w5
+  # the unexpanded listing has no _service:* results; the pinned rev, and
+  # every expanded listing, has them
+  lst "$1" "$d"/svc 4 v4 c1 '<serviceinfo code="succeeded" xsrcmd5="sx" lsrcmd5="sl"/>'
+  lst "$1" "$d"/svc_rev_sx 4 sx c1 '<entry name="_service:obs_scm:svc.tar" md5="t1"/>'
+  lst "$1" "$d"/svc2 3 w3 c2 '<serviceinfo code="succeeded" xsrcmd5="y3"/>'
+  lst "$1" "$d"/svc2_rev_2 2 w2 c2 '<entry name="_service:obs_scm:svc2.tar" md5="t2"/>'
+  lst "$1" "$d"/svc2_expand_1 3 y3 c2 '<entry name="_service:obs_scm:svc2.tar" md5="t2"/>'
+  lst "$1" "$d"/svc2_expand_1_rev_2 2 y2 c2 '<entry name="_service:obs_scm:svc2.tar" md5="t2"/>'
 }
 STALE1='STALE — source changed after the pinned revision: run forward-check.py devel:example/foo before any refile'
 case_ table-stale 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; $STALE1 |" "stale_fixtures \$B" --no-prs
 rows=$(grep '^| SR ' <<<"$LAST")
 [ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " 301 " ] && pass "table-stale: a stale request sorts first" || fail "table-stale: order: $rows"
-! grep -qE '\| (302|303|304|306) \|.*STALE' <<<"$rows" && pass "table-stale: current, relinked, scmsync and srcmd5-pinned requests are not stale" \
+! grep -qE '\| (302|303|304|306|307|308) \|.*STALE' <<<"$rows" && pass "table-stale: current, relinked, scmsync, srcmd5-, service-pinned requests are not stale" \
   || fail "table-stale: $rows"
 grep -qF '| SR | 305 | m1 | openSUSE:Factory | ⏳ new; STALE not checked (2 actions) |' <<<"$rows" \
   && pass "table-stale: a multi-action request is not checked" || fail "table-stale: 305: $rows"
-! grep -qE '/source/devel:example/(bar|quux)\?' <<<"$CALLS" && ! grep -q 'foo?expand' <<<"$CALLS" \
-  && pass "table-stale: an unchanged rev takes one call, a non-link no expanded one" || fail "table-stale: $CALLS"
+! grep -qE '/source/devel:example/(bar|quux|svc)\?' <<<"$CALLS" \
+  && pass "table-stale: an unchanged rev or service result takes one call" || fail "table-stale: $CALLS"
 case_ table-stale-home 0 "STALE — source changed after the pinned revision: osc sr -m MSG --cleanup -s 301 $H:tester:spark foo openSUSE:Factory |" \
   "stale_fixtures \$B && sed -i 's/source project=\"devel:example\" package=\"foo\"/source project=\"$H:tester:spark\" package=\"foo\"/' \$B/obs/$OPEN &&
-   lst \$B $H:tester:spark/foo 5 f5 m5 && lst \$B $H:tester:spark/foo_rev_3 3 f3 m3" --no-prs
+   lst \$B $H:tester:spark/foo 5 f5 m5 && lst \$B $H:tester:spark/foo_expand_1 5 f5 m5 &&
+   lst \$B $H:tester:spark/foo_expand_1_rev_3 3 f3 m3" --no-prs
 case_ table-stale-unknown 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; STALE UNKNOWN (source lookup failed) |" \
   "stale_fixtures \$B && echo @NET > \$B/obs/source/devel:example/foo" --no-prs
 case_ table-stale-pinned-unknown 0 "STALE UNKNOWN (pinned revision lookup failed)" \
-  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_rev_3" --no-prs
+  "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo_expand_1_rev_3" --no-prs
 case_ table-source-gone 0 "| SR | 301 | foo | openSUSE:Factory | ⏳ new; source gone: devel:example/foo |" \
   "stale_fixtures \$B && rm \$B/obs/source/devel:example/foo" --no-prs
 case_ table-stale-deadline 0 "⏳ new; STALE not checked (--deadline reached)" "stale_fixtures \$B" --no-prs --deadline 0
@@ -776,10 +788,10 @@ case_ summary-stale 0 "stale (1): source changed after the revision the request 
   "stale_fixtures \$B" --summary --no-prs
 grep -qF "  SR 301 foo -> openSUSE:Factory: run forward-check.py devel:example/foo before any refile" <<<"$LAST" \
   && grep -qF "  SR 305 m1 -> openSUSE:Factory: STALE not checked (2 actions)" <<<"$LAST" \
-  && ! grep -qE '  SR 30[2346] [a-z]+ -> openSUSE:Factory: ' <<<"$LAST" && pass "summary-stale: the stale one and the unchecked one, nothing else" || fail "summary-stale: $LAST"
+  && ! grep -qE '  SR 30[234678] [a-z0-9]+ -> openSUSE:Factory: ' <<<"$LAST" && pass "summary-stale: the stale one and the unchecked one, nothing else" || fail "summary-stale: $LAST"
 case_ summary-stale-none 0 "stale (0): source changed after the revision the request pins" \
-  "stale_fixtures \$B && lst \$B devel:example/foo_rev_3 3 f3 m5" --summary --no-prs
-case_ summary-stale-deadline 0 "  not checked (--deadline reached): SR 301 foo, SR 302 bar, SR 303 baz, SR 304 qux, SR 305 m1, SR 306 quux" \
+  "stale_fixtures \$B && lst \$B devel:example/foo_expand_1_rev_3 3 f3 m5" --summary --no-prs
+case_ summary-stale-deadline 0 "  not checked (--deadline reached): SR 301 foo, SR 302 bar, SR 303 baz, SR 304 qux, SR 305 m1, SR 306 quux, SR 307 svc, SR 308 svc2" \
   "stale_fixtures \$B" --summary --no-prs --deadline 0
 
 # --summary --days: "no SR of mine was ever filed" was said of a request that

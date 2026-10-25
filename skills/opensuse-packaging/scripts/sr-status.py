@@ -762,8 +762,9 @@ def refile(row, prj, pkg):
 def staleness(row):
     """What to say about an open request whose source moved on; empty when
     it still carries its source's current files or pins no revision. The
-    pinned rev (most are revision numbers) is compared with the source's
-    current revision first: one call when nothing changed."""
+    pinned rev (most are revision numbers, some a link's or a service's
+    expanded srcmd5) is compared with the source's current revision first:
+    one call when nothing changed."""
     acts = row["el"].findall("action")
     if len(acts) > 1:
         return f"STALE not checked ({len(acts)} actions)"
@@ -778,15 +779,16 @@ def staleness(row):
         return "STALE UNKNOWN (source lookup failed)"
     if head is None:
         return f"source gone: {prj}/{pkg}"
-    link = head.find("linkinfo")
     current = {head.get("rev"), head.get("srcmd5")}
-    if link is not None:
-        current |= {link.get("xsrcmd5"), link.get("lsrcmd5")}
+    # a link pins its expanded srcmd5, a server-side _service its result's
+    for el in head.findall("linkinfo") + head.findall("serviceinfo"):
+        current |= {el.get("xsrcmd5"), el.get("lsrcmd5")}
     if rev in current - {None}:
         return ""
-    if link is not None:
-        head = listing(prj, pkg, expand=True)
-    pinned = listing(prj, pkg, rev, expand=link is not None)
+    # expanded on both sides: only an expanded listing carries a link's
+    # files and a service's _service:* results
+    head = listing(prj, pkg, expand=True)
+    pinned = listing(prj, pkg, rev, expand=True)
     if head in (None, LOOKUP_FAILED) or pinned in (None, LOOKUP_FAILED):
         return "STALE UNKNOWN (pinned revision lookup failed)"
     if files(pinned) == files(head):

@@ -252,6 +252,11 @@ without|0|- Refresh the bundled data without security fixes
 colon-lead|0|- Version 10.08.0 also fixes the following two security issues:^- CVE-2026-103226: stack buffer overflow (bsc#1283917)^- CVE-2026-101258: heap buffer overflow (bsc#1284397)
 colon-lead-no-ids|1|- Version 2.0 also fixes the following security issues:^- Faster start-up
 colon-not-last|1|- Fixes security issues: see upstream^- CVE-2026-103226: stack buffer overflow (bsc#1283917)
+patch-name-vuln|0|- Add patch 0012-Fix-two-NegoEx-parsing-vulnerabilities.patch
+url-security|0|- Point URL to https://example.org/security-fixes/archive
+cve-pending-ghsa|0|- Update to 5.8.4:^  * Fix an invalid memory access after a failed allocation^    (GHSA-5qpq-xqfv-j9pg, CVE pending, affects all versions)
+cve-pending-bug|0|- Fix an invalid memory access (boo#1284176, CVE pending)
+cve-pending-alone|1|- Fix an invalid memory access (CVE pending)
 EOF
 # Only the entries in scope are judged: an old vague entry is history.
 { printf '%s\nMon Oct 19 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n' "$SEP"
