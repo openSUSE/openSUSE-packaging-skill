@@ -57,6 +57,16 @@ are always-on, not a phase.
   children below the provider's concurrency limit.
 - **The review runs in a context of its own** — a changes-review sub-agent, never the author's own
   context. A PASS the author wrote for its own change is no review.
+- **Quote the user's request verbatim** in the brief, with every instruction it carries ("use the
+  cargo macros"): a paraphrase is where instructions get lost.
+- **Run children in the background and take each as it returns** — gate, review and file it, then
+  the next. A wave that waits for its slowest child leaves the finished ones idle, and a foreground
+  child is aborted by the user's next message. An agent that cannot spawn children at all (a
+  restricted agent or a permission rule) stops and asks the user to switch agents rather than run
+  the fan-out inline.
+- **Keep a ledger** in `/var/tmp/<task>/ledger.md`: the user's decisions and every landed id (rev,
+  SR/PR), appended on each `osc ci` and `osc sr`. Re-read it after a compaction — the summary can be
+  an hour stale.
 
 ## Tool output economy
 - **Build logs never enter context.** `osc build … > log 2>&1 </dev/null`, then

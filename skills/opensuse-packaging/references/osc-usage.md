@@ -10,6 +10,8 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 - **OBS: `osc`** — a subcommand from this page, else `osc api PATH` (it returns XML, not JSON). Never curl, wget or urllib `api.opensuse.org` or `build.opensuse.org`.
 - **src.opensuse.org: the bundled scripts, `tea` or `git-obs`**, and `git-obs -G src.opensuse.org api` when none of them fits — never curl or urllib its API, and never `tea api` for a lookup: it exits 0 on an HTTP 404. Name the forge on every call — `git-obs -G src.opensuse.org`, `tea … --login <login>` — or the tool takes its default login, possibly another forge's, and that forge's 404 reads as "not there". Push over SSH. Forms: `references/git-workflow.md` "Gitea CLI — tea 0.15.1 cheat sheet".
+- **GitHub: `gh api`**, which authenticates itself — never an unauthenticated `curl` of `api.github.com`, which runs into the rate limit within a sweep.
+- **Unpack into `/var/tmp`**, never `/tmp`: a vendor tree or an RPM extraction there runs `/tmp` out of space or inodes for every session on the host.
 - **Credentials stay inside the tools.** Never read an `oscrc`, `~/.config/osc/`, osc's cookie jar (`~/.local/state/osc/cookiejar`), `~/.config/tea/config.yml` or an API-key file, and never put a token in a URL, a header or argv — no `Authorization:` header, no `GIT_ASKPASS` script; the CLIs read their own config (`references/token-auth.md` "Agent rules"). A step that seems to need the raw token needs another tool.
 - **Maintained products only through `osc mbranch` + `osc mr`** (or a `home:` branch + `osc sr`) — never a commit, an `osc api` write or another direct write (copypac, linkpac, aggregatepac, rdelete, undelete, a meta `-F`/`-e`) into a `*:Update` or maintenance project: `references/maintenance-updates.md` "Maintenance updates (Backports / Leap)".
 - **Non-interactive forms only** — without a TTY a prompt hangs or takes its default:
@@ -88,3 +90,4 @@ Each was actually run by an agent, and each failed or did damage. The correct fo
 - `osc service runall` — mode-blind, also runs `buildtime` services on the host → name the service.
 - `osc rq accept` expecting a forward — there is no forward option; accept, then `osc sr` the next hop.
 - `osc build 16.0 aarch64 <pkg>.spec` in a devel checkout (its project's `16.0` repository), offered as proof for a Leap pool PR — another tree, built against another project than the PR bot's → `scripts/target-gate.sh <pool clone> --build`.
+- `osc rq diff ID` — there is no `diff` action on requests → `osc rq show -d ID`.
