@@ -503,15 +503,21 @@ yourself. It asks before:
 - **a comment or review on OBS or src.opensuse.org**: `osc comment create` or `delete`, `tea
   comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
   review approve`/`decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
-  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. GitHub (`gh`)
-  is not judged, so reviews on your own GitHub projects run;
+  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. A comment
+  on an OBS request whose every target package you maintain (a person entry, not a group)
+  runs, with the user's go left to the agent (`osc comment create request
+  N`, or the API's `/comments/request/N`). GitHub (`gh`) is not judged, so reviews on your own
+  GitHub projects run;
 - **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
   (also `rq` and `review`) `decline` and `approvenew`; its `accept` and `approve`, an
   `osc api` `changestate` to accepted or `cmd=approve`, and a submit to
   `openSUSE:Factory` from a project outside `home:`, unless the package passes the
-  guard's own copy of `autoforward-gate.sh`'s test (your own request with only submit
-  actions; no reviewer on package or project; you maintain the package, or it has no
-  maintainer and you maintain the project; Factory develops it there or links it there).
+  guard's own copy of `autoforward-gate.sh`'s test (only submit actions; no reviewer on
+  package or project; you maintain the package, or it has no maintainer and you maintain the
+  project; Factory develops it there or links it there). Who filed the request does not
+  matter to the guard, and a package a group maintains is someone else's. The skill still
+  wants the user's go for someone else's request (core directive 10); the guard no longer
+  asks for it on your own packages, so that go is the agent's to hold.
   The account is `PR_GUARD_OBS_USER`, else `osc whois`;
 - **a commit of a tree `gate.sh` did not judge**: an `osc commit` whose files (as osc
   commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a

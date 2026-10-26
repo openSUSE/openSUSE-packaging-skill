@@ -536,9 +536,8 @@ ASKS = {
     "comment": "{0}: a comment is public and speaks for the user. Post only "
     "what they asked for, as they approved it; a note for them goes in your report.",
     "accept-forward": "{0}: only autoforward-gate.sh's ELIGIBLE moves a package "
-    "unattended (your own request; no reviewer; your package, or an unowned one in "
-    "a project you maintain; Factory's devel project). Otherwise it needs the "
-    "user's go.",
+    "unattended (no reviewer; your package, or an unowned one in a project you "
+    "maintain; Factory's devel project). Otherwise it needs the user's go.",
     "eval-dynamic": "{0}: the guard cannot read the commands this runs, so it "
     "cannot judge them. Write them out literally, or it needs the user's go.",
     "gate-stamp": "{0}. Run scripts/gate.sh in the checkout, commit in the next "
@@ -1517,6 +1516,54 @@ def xml_root(text):
         return None
 
 
+def holders(root, role):
+    """The persons (a maintainer) or persons and groups (a reviewer) that hold
+    role in a _meta."""
+    tags = ("person",) if role == "maintainer" else ("person", "group")
+    return {
+        e.get("userid") or e.get("groupid")
+        for e in root
+        if e.tag in tags and e.get("role") == role
+    } - {None}
+
+
+def maintains(prj, pkg, ctx):
+    """(True, "") when this account maintains prj/pkg, or the package names no
+    maintainer and the account maintains prj; else (False, why)."""
+    user = obs_user(ctx)
+    if not user:
+        return False, "the account is unknown (osc whois failed)"
+    obs_batch([f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"], ctx)
+    metas = []
+    for path in (f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"):
+        ok, text = obs_get(path, ctx)
+        root = xml_root(text) if ok and text else None
+        if root is None:
+            return False, f"cannot read {text if not ok else path}"
+        metas.append(root)
+    maints = holders(metas[0], "maintainer")
+    groups = {
+        e.get("groupid")
+        for e in metas[0]
+        if e.tag == "group" and e.get("role") == "maintainer"
+    } - {None}
+    if user in maints:
+        return True, ""
+    if groups:
+        return (
+            False,
+            f"{prj}/{pkg} is maintained by {', '.join(sorted(maints | groups))}",
+        )
+    if not maints and user in holders(metas[1], "maintainer"):
+        return True, ""
+    if not maints:
+        return (
+            False,
+            f"{prj}/{pkg} has no maintainer and {user} does not maintain {prj}",
+        )
+    return False, f"{prj}/{pkg} is maintained by {', '.join(sorted(maints))}"
+
+
 def eligible(prj, pkg, ctx):
     """(True, "") when this account may move prj/pkg unattended, decided as
     autoforward-gate.sh decides ELIGIBLE (the suite runs both on the same
@@ -1556,15 +1603,6 @@ def eligible(prj, pkg, ctx):
     pmeta = xml_root(text)
     if meta is None or pmeta is None:
         return False, f"{prj}/{pkg}'s or {prj}'s _meta did not parse"
-
-    def holders(root, role):
-        tags = ("person",) if role == "maintainer" else ("person", "group")
-        return {
-            e.get("userid") or e.get("groupid")
-            for e in root
-            if e.tag in tags and e.get("role") == role
-        } - {None}
-
     revs = holders(meta, "reviewer") | holders(pmeta, "reviewer")
     if revs:
         return False, f"a reviewer role is set ({', '.join(sorted(revs))})"
@@ -1653,9 +1691,11 @@ def obs_prefetch(run, ctx, cwd):
 def accept_forward(run, ctx, cwd):
     """An accept, approve or decline of a request (osc request, rq or review,
     or the API's changestate), or a forward of a devel package to Factory,
-    that autoforward-gate.sh would not call ELIGIBLE: someone else's request,
-    a reviewer set, a package someone else maintains. A decline is always the
-    user's call."""
+    that autoforward-gate.sh would not call ELIGIBLE: a reviewer set, a
+    package someone else (or a group) maintains. Who filed the request does not
+    matter here; the skill still wants the user's go for someone else's request
+    (core directive 10), and the guard leaves that go to the agent. A decline
+    is always the user's call."""
     for one in osc_runs(run, ctx, cwd):
         if one is None:
             ask(
@@ -1771,13 +1811,8 @@ def accept_one(rid, ctx):
     if req is None:
         ask(ctx, "accept-forward", f"cannot read request {rid}")
         return
-    user, who = obs_user(ctx), req.get("creator") or "someone unknown"
-    if not user or who != user:
-        ask(
-            ctx,
-            "accept-forward",
-            f"request {rid} was filed by {who}, not by {user or 'you'}",
-        )
+    if req.tag != "request" or not req.findall("action"):
+        ask(ctx, "accept-forward", f"request {rid} has no action")
         return
     for a in req.findall("action"):
         src, dst = a.find("source"), a.find("target")
@@ -1786,8 +1821,10 @@ def accept_one(rid, ctx):
             continue
         pkg = dst.get("package") or (src.get("package") if src is not None else None)
         ok, why = (
-            eligible(dst.get("project"), pkg, ctx) if pkg else (False, "no package")
+            maintains(dst.get("project"), pkg, ctx) if pkg else (False, "no package")
         )
+        if ok:
+            ok, why = eligible(dst.get("project"), pkg, ctx)
         if not ok:
             ask(ctx, "accept-forward", f"accepting request {rid}: {why}")
 
@@ -1795,6 +1832,39 @@ def accept_one(rid, ctx):
 # Where comments and reviews are posted: OBS's /comments/..., Gitea's
 # .../comments and .../reviews.
 COMMENT_API = Rx(r"/(?:comments?|reviews)(?=[/?#\s\"']|$)")
+
+
+# The OBS comments endpoint of one request.
+REQUEST_COMMENT = Rx(r"^/*comments/request/(\d+)/*(?:[?#]|$)")
+
+
+def maintained_requests(ids, ctx):
+    """Why a comment on these requests needs the user's go; empty when each id
+    names a request whose every action targets a package this account
+    maintains (maintains())."""
+    if not ids or not all(r.isdigit() for r in ids):
+        return "cannot tell which request it comments on"
+    obs_batch([f"/request/{r}" for r in ids], ctx)
+    for rid in ids:
+        ok, text = obs_get(f"/request/{rid}", ctx)
+        req = xml_root(text) if ok and text else None
+        if req is None or req.tag != "request":
+            return f"cannot read request {rid}"
+        actions = req.findall("action")
+        if not actions:
+            return f"request {rid} has no action"
+        for a in actions:
+            src, dst = a.find("source"), a.find("target")
+            prj = dst.get("project") if dst is not None else None
+            pkg = (dst.get("package") if dst is not None else None) or (
+                src.get("package") if src is not None else None
+            )
+            if not prj or not pkg:
+                return f"request {rid} names no target package"
+            ok, why = maintains(prj, pkg, ctx)
+            if not ok:
+                return f"request {rid}: {why}"
+    return ""
 
 
 def comment_rules(name, run, ctx, cwd):
@@ -1824,7 +1894,16 @@ def comment_rules(name, run, ctx, cwd):
                         f"cannot tell what osc comment {shown(words[0])} does",
                     )
                 for v in verbs:
-                    if v in ("create", "delete"):
+                    if v == "create" and words[1:2] == ["request"]:
+                        ids = [
+                            r
+                            for w in words[2:]
+                            for r in spellings(w, ctx, cwd, False) or [""]
+                        ]
+                        why = maintained_requests(ids, ctx)
+                        if why:
+                            ask(ctx, "comment", f"osc comment create: {why}")
+                    elif v in ("create", "delete"):
                         ask(ctx, "comment", f"osc comment {v}")
             elif sub == "api":
                 opts, pos = osc_args("api", rest)
@@ -1835,16 +1914,20 @@ def comment_rules(name, run, ctx, cwd):
                 method = method or (
                     "POST" if keys & {"-d", "--data", "-T", "-f", "--file"} else "GET"
                 )
+                urls = [u for a in pos for u in substitute(a, ctx, cwd) or [a]]
                 if method.upper() not in ("GET", "HEAD") and any(
-                    COMMENT_API.search(u)
-                    for a in pos
-                    for u in substitute(a, ctx, cwd) or [a]
+                    COMMENT_API.search(u) for u in urls
                 ):
-                    ask(
-                        ctx,
-                        "comment",
-                        f"osc api {method} {shown(pos[0]) if pos else ''}",
+                    on = [REQUEST_COMMENT.search(u) for u in urls]
+                    mine = all(on) and not maintained_requests(
+                        [m.group(1) for m in on], ctx
                     )
+                    if not mine:
+                        ask(
+                            ctx,
+                            "comment",
+                            f"osc api {method} {shown(pos[0]) if pos else ''}",
+                        )
         return
     if name == "tea":
         words = tea_words(args)
