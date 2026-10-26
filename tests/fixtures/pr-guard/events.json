@@ -7342,7 +7342,7 @@
   "comment-osc-create": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc comment create -c 'Fixed in sr#1390001.' request 1390001"
+      "command": "osc comment create -c 'Fixed in sr#1390007.' request 1390007"
     },
     "cwd": "@PLAIN@"
   },
@@ -7356,7 +7356,7 @@
   "comment-osc-api-post": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc api -X POST '/comments/request/1390001' -d 'Fixed.'"
+      "command": "osc api -X POST '/comments/request/1390007' -d 'Fixed.'"
     },
     "cwd": "@PLAIN@"
   },
@@ -7637,35 +7637,35 @@
   "accept-interactive-flag": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc rq -i accept -m ok 1390002"
+      "command": "osc rq -i accept -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
   "accept-group-option": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc rq -G qa accept -m ok 1390002"
+      "command": "osc rq -G qa accept -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
   "accept-user-option": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc rq --user tester accept -m ok 1390002"
+      "command": "osc rq --user tester accept -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
   "accept-verb-variable": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "A=accept; osc rq $A -m ok 1390002"
+      "command": "A=accept; osc rq $A -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
   "accept-approve": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc rq approve -m ok 1390002"
+      "command": "osc rq approve -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
@@ -7679,7 +7679,7 @@
   "accept-review-alias": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc review accept -m ok 1390002"
+      "command": "osc review accept -m ok 1390007"
     },
     "cwd": "@PLAIN@"
   },
@@ -7700,7 +7700,7 @@
   "accept-api-accepted": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc api -X POST '/request/1390002?cmd=changestate&newstate=accepted'"
+      "command": "osc api -X POST '/request/1390007?cmd=changestate&newstate=accepted'"
     },
     "cwd": "@PLAIN@"
   },
@@ -7742,21 +7742,21 @@
   "comment-osc-option-first": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc comment -c hi create request 1390001"
+      "command": "osc comment -c hi create request 1390007"
     },
     "cwd": "@PLAIN@"
   },
   "comment-osc-slash": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc comment create/request/1390001 -c hi"
+      "command": "osc comment create/request/1390007 -c hi"
     },
     "cwd": "@PLAIN@"
   },
   "comment-osc-sub-variable": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "C=comment; osc $C create -c hi request 1390001"
+      "command": "C=comment; osc $C create -c hi request 1390007"
     },
     "cwd": "@PLAIN@"
   },
@@ -7875,14 +7875,14 @@
   "accept-api-approve": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc api -X POST '/request/1390002?cmd=approve'"
+      "command": "osc api -X POST '/request/1390007?cmd=approve'"
     },
     "cwd": "@PLAIN@"
   },
   "accept-api-slash": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "osc api -X POST '/request/1390002/?cmd=changestate&newstate=accepted'"
+      "command": "osc api -X POST '/request/1390007/?cmd=changestate&newstate=accepted'"
     },
     "cwd": "@PLAIN@"
   },
@@ -8226,6 +8226,111 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "eval \"echo $UNSET_X\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-own-pkg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Thanks, applied.' request 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-own-req": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-unreadable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request 1390005"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-two-mixed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for r in 1390002 1390007; do osc comment create -c ok request \"$r\"; done"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-id-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request \"$ID\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-api-own-pkg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/request/1390002' -d ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-api-package-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/package/devel:x/foo' -d ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-package-create": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok package devel:x foo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-no-action": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m ok 1390008"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-no-action": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390008?cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-group-maintained": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m ok 1390009"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-group": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request 1390009"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-request-no-action": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c ok request 1390008"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-api-full-host": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST 'https://api.opensuse.org/comments/request/1390002' -d ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-api-query": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/request/1390002?parent_id=5' -d ok"
     },
     "cwd": "@PLAIN@"
   }
