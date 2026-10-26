@@ -7449,13 +7449,13 @@
   "comment-echo": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "echo 'gh pr comment 75 -b ok'"
+      "command": "echo 'tea comment 75 ok'"
     }
   },
   "comment-bash-c": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "bash -c \"gh pr comment 75 -b ok\""
+      "command": "bash -c \"tea comment 75 ok\""
     }
   },
   "comment-deny-wins": {
@@ -7994,7 +7994,7 @@
   "trap-comment": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "trap 'gh pr comment 5 -b hi' EXIT; true"
+      "command": "trap 'tea comment 5 hi' EXIT; true"
     },
     "cwd": "@PLAIN@"
   },
@@ -8120,7 +8120,7 @@
   "eval-known-var": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "C='gh pr comment 5 -b x'; eval \"$C\""
+      "command": "C='tea comment 5 x'; eval \"$C\""
     },
     "cwd": "@PLAIN@"
   },
@@ -8134,21 +8134,21 @@
   "eval-var-command": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "T=eval; $T 'gh pr comment 5 -b x'"
+      "command": "T=eval; $T 'tea comment 5 x'"
     },
     "cwd": "@PLAIN@"
   },
   "trap-var-command": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "T=trap; $T 'gh pr comment 5 -b x' EXIT"
+      "command": "T=trap; $T 'tea comment 5 x' EXIT"
     },
     "cwd": "@PLAIN@"
   },
   "bash-var-command": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "S=bash; $S -c 'gh pr comment 5 -b x'"
+      "command": "S=bash; $S -c 'tea comment 5 x'"
     },
     "cwd": "@PLAIN@"
   },

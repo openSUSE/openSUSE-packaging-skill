@@ -1795,15 +1795,13 @@ def accept_one(rid, ctx):
 # Where comments and reviews are posted: OBS's /comments/..., Gitea's
 # .../comments and .../reviews.
 COMMENT_API = Rx(r"/(?:comments?|reviews)(?=[/?#\s\"']|$)")
-# gh's options that take a value before its subcommand.
-GH_VALUED = ("-R", "--repo", "--hostname")
 
 
 def comment_rules(name, run, ctx, cwd):
-    """A command that posts a comment or a review: osc comment create, tea
-    comment, git-obs pr comment|review, gh pr|issue comment, gh pr review, a
-    close with a comment (gh -c, git-obs -m), and an API write to comments
-    or reviews."""
+    """A command that posts a comment or a review on OBS or src.opensuse.org:
+    osc comment create, tea comment, git-obs pr comment|review, a close with a
+    comment (git-obs -m), and an API write to comments or reviews. gh is not
+    judged: GitHub is outside the packaging forges, as for merges."""
     args = run[1:]
     if name == "osc":
         for one in osc_runs(run, ctx, cwd):
@@ -1876,48 +1874,10 @@ def comment_rules(name, run, ctx, cwd):
         ):
             ask(ctx, "comment", f"git-obs pr {words[1]} with a comment")
         api, reads = words[:1] == ["api"], git_obs_reads(args)
-    else:  # gh
-        words, i = [], 0
-        while i < len(args):
-            a, i = args[i], i + 1
-            if a in GH_VALUED:
-                i += 1
-            elif a[:1] != "-":
-                words.append(a)
-        if words[:2] in (["pr", "comment"], ["issue", "comment"], ["pr", "review"]):
-            ask(ctx, "comment", "gh " + " ".join(words[:2]))
-        if words[:2] in (["pr", "close"], ["issue", "close"]) and any(
-            a.split("=")[0] in ("-c", "--comment") or a[:2] == "-c" for a in args
-        ):
-            ask(ctx, "comment", f"gh {words[0]} close with a comment")
-        api, reads = words[:1] == ["api"], gh_api_reads(args)
     if api and not reads:
         text = " ".join([*args, *expansions(args, ctx, cwd)])
         if COMMENT_API.search(text):
             ask(ctx, "comment", f"{name} api: a write to comments or reviews")
-
-
-def gh_api_reads(args):
-    """Whether gh api arguments provably only read: no field or --input, which
-    make it a POST, and a method, if any, of GET or HEAD."""
-    for i, a in enumerate(args):
-        k, eq, v = a.partition("=")
-        if k in ("-f", "-F", "--field", "--raw-field", "--input") or a[:2] in (
-            "-f",
-            "-F",
-        ):
-            return False
-        if k in ("-X", "--method") or a[:2] == "-X":
-            m = (
-                v
-                if eq
-                else a[2:]
-                if a[:2] == "-X" and len(a) > 2
-                else "".join(args[i + 1 : i + 2])
-            )
-            if m.upper() not in ("GET", "HEAD"):
-                return False
-    return True
 
 
 # What a call may run beside an osc commit or a submit the gate stamp lets
@@ -4374,7 +4334,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             scan_file(run[0], "auto", ctx, here, depth, env, run=True)
         else:
             guess(run, ctx, here, depth == 0)
-    elif name in ("tea", "git-obs", "git", "osc", "gh") and asks_help(run[1:]):
+    elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
         pass
     elif name == "tea":
         args = [TEA_LONG.sub("--", a) for a in run[1:]]  # Go takes -repo as --repo
@@ -4391,8 +4351,6 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here)
-    elif name == "gh":
-        comment_rules("gh", run, ctx, here)
     elif name == "git":
         gparts = git_command(run, ctx, here)
     elif name == "osc":
