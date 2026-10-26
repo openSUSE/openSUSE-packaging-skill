@@ -468,7 +468,7 @@ git-credential-* packages through.
 
 The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
-merging any other src.opensuse.org PR the same ways (`gh` only for comments; a merge URL on a
+merging any other src.opensuse.org PR the same ways (`gh` is not judged; a merge URL on a
 pool or unnamed repository is refused however it is sent, and elsewhere counts unless the
 call provably only reads), pushing to a branch that heads an open pool PR, writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
@@ -500,11 +500,11 @@ from a sub-agent too; a headless `-p` run refuses it. Neither opencode plugin ca
 so both refuse the call with the guard's reason: approve it by running the command
 yourself. It asks before:
 
-- **a comment or review**: `osc comment create` or `delete`, `tea comment`, `tea pulls
-  approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr review
-  approve`/`decline`, `gh pr comment`, `gh issue comment`, `gh pr review`, a close that
-  carries a comment (`gh pr|issue close -c`, `git-obs pr close|reopen -m`), and a write through
-  `osc api`, `tea api`, `git-obs api` or `gh api` to `…/comments` or `…/reviews`;
+- **a comment or review on OBS or src.opensuse.org**: `osc comment create` or `delete`, `tea
+  comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
+  review approve`/`decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
+  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. GitHub (`gh`)
+  is not judged, so reviews on your own GitHub projects run;
 - **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
   (also `rq` and `review`) `decline` and `approvenew`; its `accept` and `approve`, an
   `osc api` `changestate` to accepted or `cmd=approve`, and a submit to
@@ -790,8 +790,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
   configs; nothing else of the Write and Edit judgement applies.
 - On opencode 2.x without the snippet's `execute` deny, Code Mode's `fetch` sends any
   request unjudged, a pulls API merge included.
-- A merge through the pulls API is judged whatever its host; `gh` is judged only for comments, so
-  `gh pr merge` on a GitHub repository runs. A curl or wget request whose URL or method
+- A merge through the pulls API is judged whatever its host; `gh` is not judged, so `gh pr merge`
+  and `gh pr comment`/`review` on a GitHub repository run. A curl or wget request whose URL or method
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
 - Indirection the asks do not follow: a command word only the shell knows (`$(…)`, a
   variable the call does not set, `${!name}`, an alias) asks only when its arguments start

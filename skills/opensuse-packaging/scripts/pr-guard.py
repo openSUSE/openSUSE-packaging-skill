@@ -4,7 +4,7 @@
 Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
 update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
 (tea, git-obs, a merge URL on pool, or elsewhere an API call that does not
-provably only read; gh only for comments), push to a branch that heads an open pool
+provably only read; gh is not judged), push to a branch that heads an open pool
 PR, write a target-gate.sh stamp, run an emulated osc build, file a request
 against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
@@ -40,8 +40,9 @@ git-obs.
 
 Some calls are left to the user instead (exit 0 with the hook's "ask"
 decision on stdout; a refusal anywhere in the call still wins): a comment or
-review posted with osc, tea, git-obs or gh (a close carrying one included), or
-an API write to comments or reviews; an osc request (rq, review) accept or
+review posted with osc, tea or git-obs (a close carrying one included), or
+an API write to OBS or Gitea comments or reviews (gh, on GitHub, is not
+judged); an osc request (rq, review) accept or
 approve, or the API's changestate to accepted, or a submit to openSUSE:Factory
 from a devel project, unless autoforward-gate.sh would call the package
 ELIGIBLE (the user's own request, no reviewer, the user's package or an
