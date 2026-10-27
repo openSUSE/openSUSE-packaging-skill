@@ -155,8 +155,9 @@ check(len(bg_hooks) == 1 and bg_hooks[0]["matcher"] == "mcp__bugzilla__.*"
       and [h["command"] for h in bg_hooks[0]["hooks"]] == ['python3 "$HOME/.claude/hooks/bug-guard.py"'],
       "claude: the bug-guard hook runs the pinned guard on every bugzilla MCP tool")
 bg_allow = bg["permissions"]["allow"]
-check(bg_allow and all(r.startswith("mcp__bugzilla__") and r[len("mcp__bugzilla__"):] in BUG_READ for r in bg_allow),
-      "claude: the bug-guard snippet allows bugzilla read tools only")
+check(bg_allow and all(r.startswith("mcp__bugzilla__") for r in bg_allow)
+      and {r[len("mcp__bugzilla__"):] for r in bg_allow} == BUG_READ,
+      "claude: the bug-guard snippet allows exactly the bugzilla read tools")
 # The opencode plugin judges each call's own arguments: all the inner calls of one Code
 # Mode execute share a call id, and a cache keyed by it let one call ride another's allow.
 bgts = open(os.path.join(H, "opencode-v2", "bug-guard.ts"), encoding="utf-8").read()
@@ -229,8 +230,9 @@ check(all(r["action"] in ("edit", "execute") and (r["effect"] == "deny" or r == 
 # proven hand-back's ask into an allow, so no write is allowed here.
 check(v2_bug[:1] == [{"action": "bugzilla_*", "resource": "*", "effect": "ask"}]
       and all(r["effect"] == "allow" and r["resource"] == "*" and r["action"][len("bugzilla_"):] in BUG_READ
-              for r in v2_bug[1:]) and len(v2_bug) > 1 and v2_tail[-len(v2_bug):] == v2_bug,
-      "opencode-v2: the bugzilla block comes last, asks for every tool, then allows reads only")
+              for r in v2_bug[1:]) and len(v2_bug) > 1 and v2_tail[-len(v2_bug):] == v2_bug
+      and {r["action"][len("bugzilla_"):] for r in v2_bug[1:]} == BUG_READ,
+      "opencode-v2: the bugzilla block comes last, asks for every tool, then allows exactly the reads")
 # opencode drops a tool only when the last entry whose action matches it ("*" does too) is a "*" deny.
 last_execute = [r for r in v2 if r["action"] in ("execute", "*")][-1:]
 check(last_execute == [{"action": "execute", "resource": "*", "effect": "deny"}],

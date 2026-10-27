@@ -172,6 +172,10 @@
     { "action": "bugzilla_bug_comments", "resource": "*", "effect": "allow" },
     { "action": "bugzilla_bug_history", "resource": "*", "effect": "allow" },
     { "action": "bugzilla_summarize_bug", "resource": "*", "effect": "allow" },
-    { "action": "bugzilla_bug_url", "resource": "*", "effect": "allow" }
+    { "action": "bugzilla_bug_url", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_list_attachments", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_download_attachment", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_bugzilla_server_info", "resource": "*", "effect": "allow" },
+    { "action": "bugzilla_mcp_server_info", "resource": "*", "effect": "allow" }
   ]
 }
