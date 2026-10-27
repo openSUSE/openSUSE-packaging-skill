@@ -7,7 +7,11 @@
       "mcp__bugzilla__bug_comments",
       "mcp__bugzilla__bug_history",
       "mcp__bugzilla__summarize_bug",
-      "mcp__bugzilla__bug_url"
+      "mcp__bugzilla__bug_url",
+      "mcp__bugzilla__list_attachments",
+      "mcp__bugzilla__download_attachment",
+      "mcp__bugzilla__bugzilla_server_info",
+      "mcp__bugzilla__mcp_server_info"
     ]
   },
   "hooks": {
