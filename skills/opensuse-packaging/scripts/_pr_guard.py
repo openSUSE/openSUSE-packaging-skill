@@ -1840,8 +1840,8 @@ REQUEST_COMMENT = Rx(r"^/*comments/request/(\d+)/*(?:[?#]|$)")
 
 def maintained_requests(ids, ctx):
     """Why a comment on these requests needs the user's go; empty when each id
-    names a request whose every action targets a package this account
-    maintains (maintains())."""
+    names a request this account filed (a reply to its reviewers), or one
+    whose every action targets a package it maintains (maintains())."""
     if not ids or not all(r.isdigit() for r in ids):
         return "cannot tell which request it comments on"
     obs_batch([f"/request/{r}" for r in ids], ctx)
@@ -1853,6 +1853,9 @@ def maintained_requests(ids, ctx):
         actions = req.findall("action")
         if not actions:
             return f"request {rid} has no action"
+        user = obs_user(ctx)
+        if user and req.get("creator") == user:
+            continue
         for a in actions:
             src, dst = a.find("source"), a.find("target")
             prj = dst.get("project") if dst is not None else None

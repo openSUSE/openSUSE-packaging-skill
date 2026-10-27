@@ -504,7 +504,7 @@ yourself. It asks before:
   comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
   review approve`/`decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
   write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. A comment
-  on an OBS request whose every target package you maintain (a person entry, not a group)
+  on an OBS request you filed (a reply to its reviewers), or whose every target package you maintain (a person entry, not a group)
   runs, with the user's go left to the agent (`osc comment create request
   N`, or the API's `/comments/request/N`). GitHub (`gh`) is not judged, so reviews on your own
   GitHub projects run;

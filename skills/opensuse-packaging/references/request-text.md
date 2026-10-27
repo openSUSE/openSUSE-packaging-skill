@@ -62,9 +62,8 @@ request back once filed (`references/osc-usage.md` "Requests").
 
 ## Answering a reviewer
 
-A reviewer's question on **your own** request is answered in its thread. pr-guard asks the
-user before the reply posts (opencode cannot ask and refuses: give them the draft and the
-command):
+A reviewer's question on **your own** request is answered in its thread. pr-guard lets that
+reply post without asking, so hold it for the user's go: give them the draft first:
 
 ```
 osc comment list request <id>                                  # "( ID ) On … <user> wrote:"

@@ -1241,6 +1241,10 @@ ask_ comment-request-group        comment "osc comment create: request 1390009: 
 ask_ comment-request-no-action    comment "osc comment create: request 1390008 has no action"
 ask_ comment-api-full-host        comment "osc api POST"
 case_ comment-api-query           0 - ""
+# The requester replies to its reviewers on a request it filed, whoever maintains the target.
+case_ comment-reply-own-request   0 - ""
+case_ comment-api-own-request     0 - ""
+ask_ comment-own-and-others       comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
 case_ comment-tea-comments-list 0 - ""
 ask_ comment-tea-pr-approve     comment "tea pulls approve"
 ask_ comment-tea-api            comment "tea api: a write to comments"

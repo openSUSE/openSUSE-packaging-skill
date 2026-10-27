@@ -42,8 +42,8 @@ Some calls are left to the user instead (exit 0 with the hook's "ask"
 decision on stdout; a refusal anywhere in the call still wins): a comment or
 review posted with osc, tea or git-obs (a close carrying one included), or
 an API write to OBS or Gitea comments or reviews (gh, on GitHub, is not
-judged; a comment on an OBS request whose every target package the user
-maintains runs); an osc request (rq, review) accept or
+judged; a comment on an OBS request the user filed, or whose every target
+package the user maintains, runs); an osc request (rq, review) accept or
 approve, or the API's changestate to accepted, or a submit to openSUSE:Factory
 from a devel project, unless autoforward-gate.sh would call the package
 ELIGIBLE (no reviewer, the user's package or an unowned one in a project
