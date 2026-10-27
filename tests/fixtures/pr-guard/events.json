@@ -8354,5 +8354,257 @@
       "command": "for r in 1390003 1390007; do osc comment create -c ok request \"$r\"; done"
     },
     "cwd": "@PLAIN@"
+  },
+  "comment-tea-own-item": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe 'Fixed in the new revision.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-maintained-pkg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 2 --login src.opensuse.org --repo perl/perl-Foo ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-maintained-prj": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-maintained": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 -l src.opensuse.org -r pool/foo4 ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-api-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api --login src.opensuse.org -X POST repos/AI/mistral-vibe/issues/7/comments -f body=ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-others-item": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 3 --login src.opensuse.org --repo AI/mistral-vibe ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pkg-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 5 --login src.opensuse.org --repo lua/lua-y ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-prj-not-pkg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 2 --login src.opensuse.org --repo perl/perl-Bar ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 --login src.opensuse.org --repo pool/dlib ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-no-login": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --repo AI/mistral-vibe ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-other-login": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --l=gitea.com --repo AI/mistral-vibe ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-no-repo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-remote-opt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --remote origin ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-double-dash-short": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment --login src.opensuse.org --r=lua/lua-y 5 ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-description": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment --login src.opensuse.org --repo AI/mistral-vibe -d 7 3"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-repo-twice": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe --repo lua/lua-y ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-repo-is-path": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@HOME@"
+  },
+  "comment-tea-env-chdir-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env --ch=@HOME@ tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-env-chdir-cluster": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env -iC@HOME@ tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-case": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 5 --login src.opensuse.org --repo lua/LUA-Y ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-wrong-repo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 5 --login src.opensuse.org --repo lua/lua-z ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-var-index": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment \"$N\" --login src.opensuse.org --repo AI/mistral-vibe ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-lookup-fails": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 1 --login src.opensuse.org --repo AI/err ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-maint-fails": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 1 --login src.opensuse.org --repo bad/pkg ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-api-patch": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api --login src.opensuse.org -X PATCH repos/AI/mistral-vibe/issues/7/comments -f body=ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-api-header": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api --login src.opensuse.org -H X-HTTP-Method-Override:DELETE -X POST repos/AI/mistral-vibe/issues/7/comments -f body=ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-mkdir-first": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p lua/lua-x && tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-clone-first": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git clone https://src.opensuse.org/lua/lua-y.git lua/lua-x; tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-newline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 4 --login src.opensuse.org --repo lua/lua-x ok\nln -s /tmp lua"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-env-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=x tea comment 4 --login src.opensuse.org --repo lua/lua-x ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-triple-dash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org ---repo=AI/mistral-vibe ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-ansi-quote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 4 --login src.opensuse.org --repo lua/lua-x $'\\'';mkdir -p lua/lua-x;'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-hash-in-word": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 4 --login src.opensuse.org --repo lua/lua-x ok#;mkdir -p lua/lua-x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-brace": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment --login src.opensuse.org --repo AI/mistral-vibe 7 {--repo,AI/err}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-glob": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment --login src.opensuse.org --repo AI/mistral-vibe 7 [-]-repo=x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "env-argv0-osc-yes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env -a x osc sr --yes"
+    },
+    "cwd": "@PLAIN@"
   }
 }

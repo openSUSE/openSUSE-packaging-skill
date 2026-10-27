@@ -506,8 +506,15 @@ yourself. It asks before:
   write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. A comment
   on an OBS request you filed (a reply to its reviewers), or whose every target package you maintain (a person entry, not a group)
   runs, with the user's go left to the agent (`osc comment create request
-  N`, or the API's `/comments/request/N`). GitHub (`gh`) is not judged, so reviews on your own
-  GitHub projects run;
+  N`, or the API's `/comments/request/N`). So does a `tea comment` (or a `tea api` POST to
+  `repos/<owner>/<repo>/issues/<n>/comments`) on a src.opensuse.org issue or PR you opened, or in
+  a repository you maintain: listed for it, or for its project when its own entry is empty, in
+  `<owner>/_ObsPrj`'s `_maintainership.json`; for `pool/<pkg>`, the package in Factory's devel
+  project. Only the plain form is judged: `--login src.opensuse.org`, a literal `--repo
+  owner/name` that is no local path (tea reads one as a checkout), no other option, and the tea
+  command alone in the call with nothing for the shell to expand outside quotes; anything
+  else asks, because tea's own remote and login choice can point elsewhere. GitHub (`gh`) is not
+  judged, so reviews on your own GitHub projects run;
 - **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
   (also `rq` and `review`) `decline` and `approvenew`; its `accept` and `approve`, an
   `osc api` `changestate` to accepted or `cmd=approve`, and a submit to
