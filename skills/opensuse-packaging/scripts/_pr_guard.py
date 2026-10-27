@@ -435,6 +435,8 @@ UV_RUN_VALUED = (
     "--directory", "--package", "--extra", "--group", "--env-file", "--index",
     "--default-index", "-w",
 )  # fmt: skip
+# env's long options that take a value, and their short letter.
+ENV_LONG = (("chdir", "C"), ("unset", "u"), ("split-string", "S"), ("argv0", "a"))
 DOCS = (".md", ".rst", ".txt", ".json", ".jsonc", ".changes")
 
 ROUTE = (
@@ -635,6 +637,7 @@ class Ctx:
         self.apiurl = ""  # the instance the osc command judged names with -A
         self.writers = []  # what in the call can write (note_write)
         self.seq = 0  # the commands judged so far, for the writers' order
+        self.command = None  # the Bash call's whole text
         self.loops = []  # where the loops around this command start
         self.pipe = 0  # the pipelines judged so far; cur_pipe: this command's
         self.cur_pipe = 0
@@ -1870,6 +1873,191 @@ def maintained_requests(ids, ctx):
     return ""
 
 
+# A src.opensuse.org repository named literally, owner/name.
+OWNER_REPO = Rx(r"([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*)")
+# The API endpoint that posts a comment on one issue or PR.
+ISSUE_COMMENT = Rx(
+    r"/*repos/([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*)/issues/(\d+)/comments/*"
+)
+# The options a judged tea comment may carry, and those a tea api POST adds;
+# any other option asks, since it can change where the comment goes.
+TEA_COMMENT_OPTS = {"repo": "repo", "r": "repo", "login": "login", "l": "login"}
+TEA_API_OPTS = {"X": "method", "method": "method", "f": "field", "field": "field"}
+TEA_API_OPTS |= {"F": "field", "Field": "field", "d": "data", "data": "data"}
+
+
+def gitea_get(path, ctx):
+    """(True, data) for an anonymous src.opensuse.org API GET of path, (True,
+    None) for a 404, (False, what failed) otherwise. Offline,
+    PR_GUARD_GITEA_DIR/<path, with / as _> answers ("@ERR" fails)."""
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+
+    key = ("gitea", path)
+    if key in ctx.devel:
+        return ctx.devel[key]
+    stub = os.environ.get("PR_GUARD_GITEA_DIR")
+    try:
+        if stub:
+            f = os.path.join(stub, path.replace("/", "_"))
+            text = open(f, encoding="utf-8").read() if os.path.exists(f) else None
+            if text is not None and text.strip() == "@ERR":
+                raise OSError("failed")
+        else:
+            left = ctx.deadline - time.monotonic()
+            if left <= 0:
+                raise OSError(f"the lookups of this call ran past {NET_BUDGET} s")
+            try:
+                with urllib.request.urlopen(
+                    f"{GITEA}/{path}", timeout=min(15, left)
+                ) as r:
+                    text = r.read().decode("utf-8")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                text = None
+        got = (True, None if text is None else json.loads(text))
+    except Exception as e:  # any failure asks
+        got = (False, f"{path} ({type(e).__name__}: {e})")
+    ctx.devel[key] = got
+    return got
+
+
+def tea_item(owner, repo, n, ctx):
+    """Why a comment on src.opensuse.org issue or PR owner/repo#n needs the
+    user's go; empty when this account opened it, or maintains the repository:
+    in its project's _maintainership.json, or for pool in Factory's devel
+    project of the package (maintains())."""
+    user = obs_user(ctx)
+    if not user:
+        return "the account is unknown (osc whois failed)"
+    ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
+    if not ok:
+        return f"cannot read {item}"
+    if not isinstance(item, dict):
+        return f"{owner}/{repo}#{n} does not exist"
+    # Gitea matches owner and name in any case: judge the canonical ones.
+    full = (item.get("repository") or {}).get("full_name") or ""
+    if full.lower() != f"{owner}/{repo}".lower() or not OWNER_REPO.fullmatch(full):
+        return f"cannot tell which repository {owner}/{repo}#{n} is in"
+    owner, repo = full.split("/")
+    poster = item.get("user")
+    if isinstance(poster, dict) and poster.get("login") == user:
+        return ""
+    if owner == "pool":
+        ok, text = obs_get(f"/source/openSUSE:Factory/{repo}/_meta", ctx)
+        root = xml_root(text) if ok and text else None
+        dev = root.find("devel") if root is not None else None
+        if dev is None or not dev.get("project"):
+            return f"pool/{repo} has no Factory devel project to read"
+        ok, why = maintains(dev.get("project"), dev.get("package") or repo, ctx)
+        return "" if ok else f"pool/{repo}: {why}"
+    ok, m = gitea_get(f"repos/{owner}/_ObsPrj/raw/_maintainership.json", ctx)
+    if not ok:
+        return f"cannot read {m}"
+    if not isinstance(m, dict):
+        return f"{owner} has no _maintainership.json"
+    pkg, prj = m.get(repo) or [], m.get("") or []
+    if not isinstance(pkg, list) or not isinstance(prj, list):
+        return f"{owner}'s _maintainership.json did not parse"
+    if user in pkg or not pkg and user in prj:
+        return ""
+    return f"{owner}/{repo} is maintained by {', '.join(sorted(set(pkg or prj))) or 'nobody'}"
+
+
+def lone_tea(text):
+    """Whether a shell call is one bare tea command and nothing else: no
+    other command, wrapper, redirect or substitution that could make the
+    path a --repo names, or move the directory tea resolves it in."""
+    import shlex
+
+    # Without $, \ and `, bash and shlex split the same quotes and words
+    # ($'\'' and "\"" are where they part).
+    if not isinstance(text, str) or "\n" in text.strip() or set("$\\`") & set(text):
+        return False
+    # Outside quotes only plain characters: no brace, glob, tilde or history
+    # expansion can add a word the guard did not judge.
+    quote = None
+    for c in text.strip():
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif not (c.isascii() and (c.isalnum() or c in " _./:=@%+,-")):
+            return False
+    if quote:
+        return False
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""  # bash reads a # inside a word as text
+        words = list(lex)
+    except ValueError:
+        return False
+    return words[:1] == ["tea"] and not any(
+        w and set(w) <= set("();<>|&") for w in words
+    )
+
+
+def tea_comment(args, ctx, cwd, api=False):
+    """Why a tea comment, or a tea api POST to an issue's comments, needs the
+    user's go; empty when the item passes tea_item(). Only the plain form is
+    judged -- --login src.opensuse.org and a --repo owner/name that is no local
+    path (tea reads one as a checkout), or the API's literal endpoint -- since
+    tea's own remote and login choice is not the guard's to replay. The call
+    must be the tea command alone (lone_tea())."""
+
+    def one(w):
+        vals = spellings(w, ctx, cwd, False)
+        return vals[0] if len(vals) == 1 else None
+
+    names = TEA_COMMENT_OPTS | (TEA_API_OPTS if api else {})
+    opts, pos, i, done = {}, [], 0, False
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if done or a[:1] != "-" or a == "-":
+            pos.append(a)
+            continue
+        if a == "--":
+            done = True
+            continue
+        k, eq, v = (a[2:] if a[:2] == "--" else a[1:]).partition("=")
+        key = names.get(k)
+        if key is None:
+            return f"tea's option {shown(a)} is not judged"
+        if not eq:
+            v, i = (args[i] if i < len(args) else ""), i + 1
+        if key in opts and key != "field" and key != "data":
+            return f"{shown(a)} is given twice"
+        opts[key] = one(v)
+    if opts.get("login") != "src.opensuse.org":
+        return "it names no --login src.opensuse.org"
+    if not lone_tea(ctx.command):
+        return "it is not one literal tea command alone"
+    if api:
+        if opts.get("method", "POST").upper() != "POST":
+            return f"tea api {opts.get('method')}"
+        m = ISSUE_COMMENT.fullmatch((one(pos[1]) or "") if len(pos) == 2 else "")
+        if not m:
+            return "a write to comments or reviews"
+        return tea_item(m.group(1), m.group(2), m.group(3), ctx)
+    n = one(pos[1]) if len(pos) > 1 else None
+    if not n or not n.isdigit():
+        return "cannot tell which issue or PR it comments on"
+    m = OWNER_REPO.fullmatch(opts.get("repo") or "")
+    if not m:
+        return "it names no --repo owner/name"
+    here = cwd.dirs if isinstance(cwd, Dirs) else [cwd]
+    if not all(isinstance(d, str) and d for d in here) or any(
+        os.path.lexists(os.path.join(d, m.group(0))) for d in here
+    ):
+        return f"--repo {m.group(0)} may be a local checkout"
+    return tea_item(m.group(1), m.group(2), n, ctx)
+
+
 def comment_rules(name, run, ctx, cwd):
     """A command that posts a comment or a review on OBS or src.opensuse.org:
     osc comment create, tea comment, git-obs pr comment|review, a close with a
@@ -1938,7 +2126,9 @@ def comment_rules(name, run, ctx, cwd):
             ["list"],
             ["ls"],
         ):
-            ask(ctx, "comment", f"tea {words[0]}")
+            why = tea_comment(args, ctx, cwd)
+            if why:
+                ask(ctx, "comment", f"tea {words[0]}: {why}")
         if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] in (
             [w] for w in ("review", "approve", "lgtm", "a", "reject", "reply")
         ):
@@ -1963,7 +2153,13 @@ def comment_rules(name, run, ctx, cwd):
     if api and not reads:
         text = " ".join([*args, *expansions(args, ctx, cwd)])
         if COMMENT_API.search(text):
-            ask(ctx, "comment", f"{name} api: a write to comments or reviews")
+            why = (
+                tea_comment(args, ctx, cwd, api=True)
+                if name == "tea"
+                else "a write to comments or reviews"
+            )
+            if why:
+                ask(ctx, "comment", f"{name} api: {why}")
 
 
 # What a call may run beside an osc commit or a submit the gate stamp lets
@@ -3527,13 +3723,30 @@ def unwrap(argv):
                 if a == "--":
                     j += 1
                     break
-                if a in ("-S", "--split-string") and j + 1 < n:
-                    return [], " ".join(argv[j + 1 :]), changes, chdir
                 if a.startswith("-"):
                     changes.append("env " + a)
-                    if a in ("-C", "--chdir") and j + 1 < n:
-                        chdir = argv[j + 1]
-                    j += 2 if a in ("-u", "-C", "--unset", "--chdir") else 1
+                    # Short options cluster (-iC DIR, -CDIR); long ones take
+                    # =VALUE and any unique prefix (--ch=DIR), as getopt does.
+                    opt, val = None, None
+                    if a.startswith("--"):
+                        k, eq, v = a[2:].partition("=")
+                        for name, short in ENV_LONG:
+                            if len(k) >= 1 and name.startswith(k):
+                                opt, val = short, (v if eq else None)
+                                break
+                    else:
+                        for c_i, c in enumerate(a[1:], 1):
+                            if c in "uCSa":
+                                opt, val = c, a[c_i + 1 :] or None
+                                break
+                    j += 1
+                    if opt in ("u", "C", "S", "a") and val is None:
+                        val = argv[j] if j < n else ""
+                        j += 1
+                    if opt == "S":
+                        return [], " ".join([val, *argv[j:]]), changes, chdir
+                    if opt == "C":
+                        chdir = val
                 else:
                     changes.append(a.split("=", 1)[0])
                     j += 1
@@ -5157,6 +5370,7 @@ def judge(ev):
     ctx = Ctx(cwd, ev.get("tool_name"), inp.get("run_in_background") is True)
     try:
         if isinstance(inp.get("command"), str):
+            ctx.command = inp["command"]
             shell_pass(inp["command"], ctx, cwd, 0)
             while ctx.traps:  # a trap's command runs last, after every write
                 text, here, depth = ctx.traps.pop(0)

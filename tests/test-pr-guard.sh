@@ -26,11 +26,12 @@ work="$(mktemp -d /var/tmp/test-pr-guard.XXXXXX)"; trap 'rm -rf "$work"' EXIT
 # no network, and an aarch64 host whatever the runner is.
 export HOME="$work/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export PR_GUARD_ARCH=aarch64 PR_GUARD_PULLS_DIR="$work/prs" PR_GUARD_META_DIR="$work/meta"
+export PR_GUARD_GITEA_DIR="$FX/gitea"
 export PR_GUARD_OBS_USER=tester
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 unset PR_GUARD_SKILL_DIR
-mkdir -p "$HOME/work" "$work/plain" "$work/scripts" "$work/links" && ln -s "$HOME" "$work/links/home"
+mkdir -p "$HOME/lua/lua-x" "$HOME/work" "$work/plain" "$work/scripts" "$work/links" && ln -s "$HOME" "$work/links/home"
 cp -r "$FX/prs" "$work/prs"; cp -r "$FX/meta" "$work/meta"
 python3 -c 'import json, sys
 prs = [{"number": n, "head": {"ref": "b%d" % n, "repo": {"owner": {"login": "x"}}}} for n in range(50)]
@@ -1246,8 +1247,50 @@ case_ comment-reply-own-request   0 - ""
 case_ comment-api-own-request     0 - ""
 ask_ comment-own-and-others       comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
 case_ comment-tea-comments-list 0 - ""
+# A tea comment on an issue or PR the user opened, or in a repository the user
+# maintains -- judged only in the plain form: --login src.opensuse.org and a literal
+# --repo owner/name that is no local path.
+case_ comment-tea-own-item        0 - ""
+case_ comment-tea-maintained-pkg  0 - ""
+case_ comment-tea-maintained-prj  0 - ""
+case_ comment-tea-pool-maintained 0 - ""
+case_ comment-tea-api-own         0 - ""
+ask_ comment-tea-others-item      comment "tea comment: AI has no _maintainership.json"
+ask_ comment-tea-pkg-other        comment "tea comment: lua/lua-y is maintained by other"
+ask_ comment-tea-prj-not-pkg      comment "tea comment: perl/perl-Bar is maintained by boss"
+ask_ comment-tea-pool-other       comment "tea comment: pool/dlib: science:machinelearning/dlib is maintained by other"
+ask_ comment-tea-no-login         comment "tea comment: it names no --login src.opensuse.org"
+ask_ comment-tea-other-login      comment "tea comment: it names no --login src.opensuse.org"
+ask_ comment-tea-no-repo          comment "tea comment: it names no --repo owner/name"
+ask_ comment-tea-remote-opt       comment "tea comment: tea's option --remote is not judged"
+ask_ comment-tea-double-dash-short comment "tea comment: lua/lua-y is maintained by other"
+ask_ comment-tea-description      comment "tea comment: tea's option -d is not judged"
+ask_ comment-tea-repo-twice       comment "tea comment: --repo is given twice"
+ask_ comment-tea-repo-is-path     comment "tea comment: --repo lua/lua-x may be a local checkout"
+ask_ comment-tea-env-chdir-eq     comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-env-chdir-cluster comment "tea comment: it is not one literal tea command alone"
+# The pass needs the tea command alone: nothing else in the call can make the path a
+# --repo names, or move the directory tea resolves it in.
+ask_ comment-tea-mkdir-first      comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-clone-first      comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-newline          comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-env-prefix       comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-ansi-quote       comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-hash-in-word     comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-brace            comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-glob             comment "tea comment: it is not one literal tea command alone"
+# env -a NAME runs the command under another argv[0]; the command is still judged.
+case_ env-argv0-osc-yes 2 osc-yes "an osc request with --yes"
+ask_ comment-tea-triple-dash      comment "tea comment: tea's option ---repo=AI/mistral-vibe is not judged"
+ask_ comment-tea-case             comment "tea comment: lua/lua-y is maintained by other"
+ask_ comment-tea-wrong-repo       comment "tea comment: cannot tell which repository lua/lua-z#5 is in"
+ask_ comment-tea-var-index        comment "tea comment: it is not one literal tea command alone"
+ask_ comment-tea-lookup-fails     comment "tea comment: cannot read repos/AI/err/issues/1"
+ask_ comment-tea-maint-fails      comment "tea comment: cannot read repos/bad/_ObsPrj/raw/_maintainership.json"
+ask_ comment-tea-api-patch        comment "tea api: tea api PATCH"
+ask_ comment-tea-api-header       comment "tea api: tea's option -H is not judged"
 ask_ comment-tea-pr-approve     comment "tea pulls approve"
-ask_ comment-tea-api            comment "tea api: a write to comments"
+ask_ comment-tea-api            comment "tea api: it names no --login src.opensuse.org"
 ask_ comment-git-obs-pr         comment "git-obs pr comment"
 ask_ comment-git-obs-review     comment "git-obs pr review approve"
 case_ comment-git-obs-pr-list   0 - ""

@@ -327,7 +327,7 @@ delete request 1369573.)
 
 Yours or someone else's, the comment gives the people who read it what is relevant and nothing more:
 
-- **Asked to fix or follow up a failure: the fix, no comment.** On your own declined request the superseding request carries what changed. An ack ("I'm on it.") goes out only when the user asks for one; pr-guard asks before a comment posts, except on a request you filed or one to a package you maintain, where you hold it for the user's go.
+- **Asked to fix or follow up a failure: the fix, no comment.** On your own declined request the superseding request carries what changed. An ack ("I'm on it.") goes out only when the user asks for one; pr-guard asks before a comment posts, except on a request, issue or PR you opened or one to a package you maintain, where you hold it for the user's go.
 - **First look for a fix already filed** (an open request of yours to that devel package, perhaps from another session). If there is one, do nothing.
 - **A triage or any other comment only when the user asks for it.** Post exactly what was asked for, with every claim checked first (fetch the URL the bot quotes). A reviewer's question on your own request still gets the short threaded reply of `agents/submit-watch.md` step 5, drafted for the user.
 - Unasked triage essays went out on libpinyin sr#1385979 and ibus-typing-booster sr#1385674. The second blamed a Source0 that downloads fine, and both had to be deleted.
