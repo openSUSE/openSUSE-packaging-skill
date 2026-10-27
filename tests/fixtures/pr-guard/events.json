@@ -8333,5 +8333,26 @@
       "command": "osc api -X POST '/comments/request/1390002?parent_id=5' -d ok"
     },
     "cwd": "@PLAIN@"
+  },
+  "comment-reply-own-request": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -p 5 -c 'Yes, tested.' request 1390003"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-api-own-request": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/request/1390003?parent_id=5' -d ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-own-and-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for r in 1390003 1390007; do osc comment create -c ok request \"$r\"; done"
+    },
+    "cwd": "@PLAIN@"
   }
 }
