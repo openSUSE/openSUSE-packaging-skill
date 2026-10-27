@@ -34,7 +34,8 @@ These lines go in the message only, never in the `.changes` entry, which ships i
 (`changes-lint.sh` refuses a request number or a staging order there).
 
 The request you file second can name the first; a one-line comment on the first naming the
-second ("Stage with sr#N.") goes out only on the user's go, since pr-guard asks before it posts.
+second ("Stage with sr#N.") goes out only on the user's go; pr-guard lets it post on your own request, so
+hold it yourself.
 
 **A forward carries the same headline as its devel request**, never "Forward X update to
 Factory" (refused) — the Factory reviewer sees only this one; "Forward X BR cleanup to
