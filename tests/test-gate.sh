@@ -188,10 +188,15 @@ grep -qF "## source-binaries: rc=3" <<<"$out" && grep -qF "HIT esbuild: ELF" <<<
   && grep -q "^VERDICT: RED — .*source-binaries" <<<"$out" \
   && pass "a prebuilt binary in the sources: source-binaries is red" \
   || { fail "prebuilt binary in the sources"; printf '%s\n' "$out" | sed 's/^/    /'; }
-printf '# Source-Binary-Exception: esbuild -- test-data: a fixture\n' >> "$work/binary/p.spec"
+printf '# Source-Binary-Exception: esbuild -- firmware: a blob no source exists for\n' >> "$work/binary/p.spec"
 out="$(XDG_CACHE_HOME="$work/cache" bash "$GATE" "$work/binary" 2>&1)"
 grep -qF "## source-binaries: rc=0" <<<"$out" && pass "the binary named by an exception: source-binaries is green" \
   || { fail "excepted binary"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# --rpms reaches the scan: a directory without a binary RPM is no clean bill.
+mkdir -p "$work/norpms"
+out="$(XDG_CACHE_HOME="$work/cache" bash "$GATE" "$work/binary" --rpms "$work/norpms" 2>&1)"
+grep -qF "## source-binaries: rc=2" <<<"$out" && grep -qF "no binary RPM to read" <<<"$out" \
+  && pass "--rpms reaches source-binaries.py" || { fail "--rpms passthrough"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # Every Patch line needs a PATCH-* tag that names its file; an UPSTREAM tag
 # also says where upstream has it (a devel reviewer asked on sr#1385879).

@@ -10,7 +10,7 @@
 # still follows — it is a judgement, not a check, and stays outside this script.
 #
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
-#                [--git-base REF] [--build-log FILE] [--cleaner-deviation REASON] [--full]
+#                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
 #        gate.sh [DIR] --review FILE
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
@@ -32,6 +32,9 @@
 #   --git-base   git checkout: the target's ref for changes-patches and patch-tags
 #                (a fork PR's upstream is the pushed fork branch, which compares clean)
 #   --build-log  also run build-summary.sh on this osc build log (verdict only)
+#   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
+#                also refuses a prebuilt binary the package ships, whatever its
+#                exception line says (firmware alone may ship)
 #   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
 #                (references/spec-cleaner.md "Checking a spec file"): name it.
 #                The gate passes, prints the reason and keeps the diff for the
@@ -359,10 +362,10 @@ fn = {"link": link, "stamp": stamp, "review": review, "copyright": copyright, "t
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
-dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlog=""; deviation=""; full=0; review=""; nopts=0
+dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlog=""; rpms=""; deviation=""; full=0; review=""; nopts=0
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--cleaner-deviation|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--cleaner-deviation|--full) nopts=$((nopts+1)) ;; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--full) nopts=$((nopts+1)) ;; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "gate.sh: --entries takes a positive integer, got '$2'" >&2; exit 2; }
@@ -372,6 +375,7 @@ while [ $# -gt 0 ]; do
     --target) target=$2; shift 2 ;;
     --git-base) gitbase=$2; shift 2 ;;
     --build-log) buildlog=$2; shift 2 ;;
+    --rpms) rpms=$(realpath -m -- "$2"); shift 2 ;;
     --cleaner-deviation) [ -n "$2" ] || { echo "gate.sh: --cleaner-deviation needs the reason" >&2; exit 2; }
                          deviation=$2; shift 2 ;;
     --full) full=1; shift ;;
@@ -662,8 +666,11 @@ show patch-tags $rc "$log/patch-tags.txt"
 # Prebuilt binaries in any file the checkout carries, inside archives too:
 # "build-time only" still ships them in the SRPM (references/specfile-guidelines.md
 # "Spec file — general rules"). nodejs-electron 44.10.0 kept CIPD Go, esbuild and
-# rolldown binaries that way, and the change review passed them.
-"$HERE/source-binaries.py" . > "$log/source-binaries.txt" 2>&1; rc=$?
+# rolldown binaries that way, and the change review passed them. With --rpms, one
+# the built RPMs carry is red whatever its exception says (opencode 2.2.5 called
+# its shipped pty helper a bootstrap).
+sb_args=(.); [ -z "$rpms" ] || sb_args+=(--rpms "$rpms")
+"$HERE/source-binaries.py" "${sb_args[@]}" > "$log/source-binaries.txt" 2>&1; rc=$?
 show source-binaries $rc "$log/source-binaries.txt"
 
 if [ ${#red[@]} -eq 0 ]; then

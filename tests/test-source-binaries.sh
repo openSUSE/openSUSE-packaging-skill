@@ -96,23 +96,49 @@ grep -qF "HIT p.obscpio:p/A.class: Java class" <<<"$LAST" && grep -qF "HIT p.obs
   || fail "cpio kinds: $LAST"
 
 # An exception line names the allowed ones; a malformed one is red.
+BOOT='the go compiler is written in go and needs a previous go build to compile itself'
 d=$(pkg except); cp "$work/tarball/vendor.tar.gz" "$d/"
-printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: go needs a go to build\n' >> "$d/p.spec"
-case_ exception-partial 3 "EXCEPTION vendor.tar.gz:./bin/* (bootstrap: go needs a go to build): 1 hit(s)" "$d"
+printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
+case_ exception-partial 3 "EXCEPTION vendor.tar.gz:./bin/* (bootstrap: $BOOT): 1 hit(s)" "$d"
 grep -qF "HIT vendor.tar.gz:./pkg.tgz!package/addon.node" <<<"$LAST" && ! grep -qF "HIT vendor.tar.gz:./bin/go" <<<"$LAST" \
   && pass "exception: covers its glob only" || fail "exception scope: $LAST"
-printf '# Source-Binary-Exception: vendor.tar.gz:./pkg.tgz!* -- test-data: a fixture the tests read\n' >> "$d/p.spec"
-case_ exception-all 0 "OK: no prebuilt binaries in the sources outside the 2 excepted" "$d"
+grep -qF "FIX: a binary the package ships, embeds, loads or links is never an exception: build it from source or unbundle it" <<<"$LAST" \
+  && pass "red names build from source or unbundle" || fail "red without the fix: $LAST"
+printf '# Source-Binary-Exception: vendor.tar.gz:./pkg.tgz!* -- firmware: a blob no source exists for\n' >> "$d/p.spec"
+case_ exception-all 0 "OK: no prebuilt binaries in the sources outside the 2 excepted (bootstrap: vendor.tar.gz:./bin/*: $BOOT)" "$d"
 printf '# Source-Binary-Exception: ./bin/* because I said so\n' >> "$d/p.spec"
 case_ exception-malformed 3 "MALFORMED p.spec:4:" "$d"
+
+# test-data names a fixture inside a test directory: a library's lib/ is a build
+# input (goose called winapi's MinGW import libraries test-data), and a short
+# bootstrap why says nothing (opencode called its shipped pty helper a bootstrap).
+d=$(pkg testdata); mkdir -p "$work/t/td/tests/data" "$work/t/td/lib"
+elf "$work/t/td/tests/data/sample.so"; printf '!<arch>\nlibwinapi.a' > "$work/t/td/lib/libwinapi_x.a"
+tar -C "$work/t/td" -czf "$d/vendor.tar.gz" .
+printf '# Source-Binary-Exception: vendor.tar.gz:./lib/* -- test-data: import libs linked only on windows\n' >> "$d/p.spec"
+case_ testdata-lib 3 "test-data names a test fixture, and vendor.tar.gz:./lib/* is not inside a test directory" "$d"
+printf '# Source-Binary-Exception: latest.tar.gz:latest/* -- test-data: not a test dir\n' >> "$d/p.spec"
+grep -qF "latest.tar.gz:latest/* is not inside a test directory" <<<"$(python3 "$SB" "$d" 2>&1)" \
+  && pass "test-data: latest/ is no test directory" || fail "test-data: latest/ accepted"
+d=$(pkg testdata-ok); cp "$work/testdata/vendor.tar.gz" "$d/"
+printf '# Source-Binary-Exception: vendor.tar.gz:./tests/* -- test-data: an ELF parser sample\n' >> "$d/p.spec"
+case_ testdata-tests 3 "EXCEPTION vendor.tar.gz:./tests/* (test-data: an ELF parser sample): 1 hit(s)" "$d"
+grep -qF "HIT vendor.tar.gz:./lib/libwinapi_x.a: ar archive" <<<"$LAST" && pass "test-data: lib/ stays a hit" \
+  || fail "test-data scope: $LAST"
+d=$(pkg shortboot); cp "$work/tarball/vendor.tar.gz" "$d/"
+printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: upstream-built helper embedded by the build\n' >> "$d/p.spec"
+case_ bootstrap-short 3 "a bootstrap needs a why of 8+ words" "$d"
 
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
 case_ 7z-unknown 2 "UNKNOWN legacy.7z: a 7z archive" "$d"
 printf 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n' > "$d/big.tar.zst"
 case_ lfs-pointer 2 "UNKNOWN big.tar.zst: a git-lfs pointer" "$d"
-rm -f "$d/big.tar.zst"; printf '# Source-Binary-Exception: legacy.7z -- test-data: an extractor test archive\n' >> "$d/p.spec"
-case_ unknown-excepted 0 "EXCEPTION legacy.7z" "$d"
+rm -f "$d/big.tar.zst" "$d/legacy.7z"; mkdir -p "$work/t/u7/tests"; printf '7z\274\257\047\034rest' > "$work/t/u7/tests/legacy.7z"
+tar -C "$work/t/u7" -czf "$d/t.tar.gz" .
+case_ 7z-member-unknown 2 "UNKNOWN t.tar.gz:./tests/legacy.7z: a 7z archive" "$d"
+printf '# Source-Binary-Exception: t.tar.gz:./tests/* -- test-data: an extractor test archive\n' >> "$d/p.spec"
+case_ unknown-excepted 0 "EXCEPTION t.tar.gz:./tests/*" "$d"
 d=$(pkg truncated); head -c 40 "$work/tarball/vendor.tar.gz" > "$d/cut.tar.gz"
 case_ truncated-gzip 2 "UNKNOWN cut.tar.gz" "$d"
 
@@ -124,6 +150,31 @@ n=$(find "$XDG_CACHE_HOME" -name 'v*-*.json' | wc -l)
 mv "$d/a.tar.gz" "$d/b.tar.gz"
 case_ cache-renamed 3 "HIT b.tar.gz:./bin/go: ELF" "$d"
 case_ usage 2 "is not a directory" "$work/nonexistent"
+
+# --rpms: a payload file with a source binary's bytes ships it, red whatever
+# its exception says; so does one that carries them inside (opencode 2.2.5's
+# bun executable held its pty helper verbatim); firmware alone may ship.
+d=$(pkg ship); mkdir -p "$work/t/sh/bin"
+{ printf '\177ELF\002\001\001\000'; head -c 10000 /dev/urandom; } > "$work/t/sh/bin/helper"
+elf "$work/t/sh/bin/go"; tar -C "$work/t/sh" -czf "$d/vendor.tar.gz" .
+printf '# Source-Binary-Exception: vendor.tar.gz:./* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
+if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
+  mkdir -p "$work/rpm/SOURCES" "$work/rpms"; cp "$work/t/sh/bin/go" "$work/rpm/SOURCES/go"
+  { head -c 5000 /dev/urandom; cat "$work/t/sh/bin/helper"; head -c 3000 /dev/urandom; } > "$work/rpm/SOURCES/app"
+  printf 'Name: s\nVersion: 1\nRelease: 0\nSummary: s\nLicense: MIT\nBuildArch: noarch\nSource0: go\nSource1: app\n%%description\ns\n%%install\ninstall -D -m 0755 %%{SOURCE0} %%{buildroot}/usr/bin/go\ninstall -D -m 0755 %%{SOURCE1} %%{buildroot}/usr/bin/app\n%%files\n/usr/bin/go\n/usr/bin/app\n' > "$work/rpm/s.spec"
+  rpmbuild -bb --quiet --define "_topdir $work/rpm" --define 'debug_package %{nil}' --define '__os_install_post %{nil}' \
+    --define '_binaries_in_noarch_packages_terminate_build 0' "$work/rpm/s.spec" > /dev/null 2>&1
+  find "$work/rpm/RPMS" -name '*.rpm' -exec cp {} "$work/rpms/" \;
+  case_ shipped 3 "SHIPPED s-1-0.noarch.rpm:./usr/bin/go is the prebuilt vendor.tar.gz:./bin/go" "$d" --rpms "$work/rpms"
+  grep -qF "SHIPPED s-1-0.noarch.rpm:./usr/bin/app embeds the prebuilt vendor.tar.gz:./bin/helper" <<<"$LAST" \
+    && pass "shipped: a binary carried inside another file is found" || fail "embedded: $LAST"
+  sed -i 's/-- bootstrap: .*/-- firmware: a blob no source exists for/' "$d/p.spec"
+  case_ shipped-firmware 0 "read for shipped ones" "$d" --rpms "$work/rpms"
+else
+  echo "note: no rpmbuild/rpm2cpio here, the --rpms cases are not run"
+fi
+mkdir -p "$work/norpms"
+case_ no-rpms 2 "UNKNOWN $work/norpms: no binary RPM to read" "$d" --rpms "$work/norpms"
 
 echo "---"; [ "$fails" = 0 ] && echo "all source-binaries checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
