@@ -67,7 +67,16 @@ Related osc-side git support worth knowing: `osc maintained` also lists maintain
 - **osc ≥ 1.15.0** is required for `osc fork` (earlier versions have fork bugs). `osc build` and `osc sr` still work as documented elsewhere in this skill.
 - **`git-lfs` is mandatory** — source tarballs are stored in LFS, configured by the repo's `.gitattributes` (`*.gz *.xz *.zst *.bz2 *.tar … filter=lfs`). After `git add`-ing a tarball, confirm it's a pointer with `git cat-file -p :<tarball>` (should print `version https://git-lfs.github.com/spec/v1` + oid + size), **not** the raw binary. The working-tree file stays the real tarball, so `osc build` still sees real sources.
 - **CLI clients**: `osc` (forking + building + Factory SRs), `tea` (Gitea CLI — logins, fork, PR), and `git-obs` (bundled with osc; PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed. No curl against the API and no token handling: `references/osc-usage.md` "Tool discipline".
-- **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`. The pool PR scripts (`scripts/pool-pr.sh`, `scripts/target-gate.sh --remote`) push over SSH, LFS objects included, and read the forge through `git-obs -G src.opensuse.org api`: they need this key and a git-obs login, and read no token.
+- **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`. The pool PR scripts (`scripts/pool-pr.sh`, `scripts/target-gate.sh --remote`) push over SSH, LFS objects included, and read the forge through `git-obs -G src.opensuse.org api`: they need this key and a git-obs login, and read no token. Every push goes over SSH ("Push over SSH only" below).
+
+## Push over SSH only
+
+**Every push to src.opensuse.org goes over SSH**, to `gitea@src.opensuse.org:<owner>/<pkg>.git`: the SSH user is `gitea`, not `git`. `ssh -T gitea@src.opensuse.org` checks the key (Gitea greets the account and offers no shell). Over HTTPS a push authenticates only with a token, and an agent never handles one, so pr-guard refuses a push to an `https://` or `http://` src.opensuse.org URL, named or through a remote (`[push-https]`).
+
+- **A clone with HTTPS remotes**, fine for anonymous reads and fetches: repoint the remote before pushing, `git remote set-url <remote> gitea@src.opensuse.org:<owner>/<pkg>.git`, and confirm with `git remote -v`.
+- **LFS rides on the same key**: git-lfs gets its credentials over SSH (`git-lfs-authenticate`), so `git push` and `git lfs push` to the SSH remote need nothing else.
+- **No key, or `Permission denied (publickey)`**: the user's one-time setup (the SSH bullet above). Report it; never fall back to HTTPS.
+- **Never route a token** through a URL, an argument, an environment variable or the shell history, and never advise the user to: a token in a push URL is exactly that.
 
 ## Gitea CLI — tea 0.15.1 cheat sheet
 
@@ -78,7 +87,7 @@ Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea 
 - Open a PR: `tea pulls create --login <login> --repo <owner>/<pkg> --head <you>:<branch> --base main --title "<title>" --description "<text>"`.
 - Read a PR with its comments: `tea pulls --comments --login <login> --repo <owner>/<pkg> <n>`.
 - Edit its title or description: `tea pulls edit --login <login> --repo <owner>/<pkg> --title "<title>" --description "<text>" <n>`.
-- Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`; `tea comments list` with the same options reads them.
+- Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`; `tea comments list` with the same options reads them (without `list` it adds one: `references/request-text.md` "Comments: reading them, posting an approved one").
 - Reply inside a reviewer's thread: `tea pulls reply --login <login> --repo <owner>/<pkg> <n> <comment-id> "<text>"`, the id from `tea pulls review-comments`; resolving is in "Responding to a PR review" below.
 - Anything else: `git-obs -G src.opensuse.org api [-X METHOD] [--data JSON] /repos/<owner>/<pkg>/…` — the path is relative to `/api/v1`, and an HTTP error exits non-zero. `-G` picks the login by its name or by the forge's host name; without it git-obs takes the default login. Not `tea api`: it exits 0 on a 404, so a failed lookup reads as success.
 

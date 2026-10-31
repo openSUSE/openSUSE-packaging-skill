@@ -8606,5 +8606,228 @@
       "command": "env -a x osc sr --yes"
     },
     "cwd": "@PLAIN@"
+  },
+  "pr-create-work-notes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title \"Update to 44.10.0\" --description \"Update to 44.10.0.\n\nBuild status (home:<user>:branches:devel:languages:nodejs/nodejs-electron):\n- x86_64: green and published\n- aarch64: still building at filing time\n\ngate.sh GREEN (source_validator, spec-cleaner, changes-lint/guard/patches); adversarial review PASS.\n\nSame feature set as the Factory package.\nhttps://build.opensuse.org/package/show/home:<user>:branches:devel:languages:nodejs/nodejs-electron\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-terse": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title \"Update to 44.10.0: Chromium 140 security fixes\" --description \"Rebases the patch set; drops two patches merged upstream.\n- Stage with nodejs/electron-build-deps#5.\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-green-decoy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description 'Fixes green-tinted video frames on Wayland; the review comments on #3 are addressed.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-note-gate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description '- gate.sh: all checks passed.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-note-adversarial": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description 'Drops two upstreamed patches.\n- Adversarial review found nothing.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-note-review-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description 'Drops two upstreamed patches; change review PASS.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-note-green": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description 'Drops two upstreamed patches. x86_64 GREEN.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-title-note": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0 (aarch64 still building)'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-title-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0: Chromium 140.0.7339.80, V8 14.0 and Node 22.18.0; fixes the Wayland frame pacing regression, the PipeWire screen-share crash and the GTK4 file chooser hang'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-sub-same-call": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '%s\\n' 'Update to 44.10.0.' > /var/tmp/pr-body.md && tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description \"$(cat /var/tmp/pr-body.md)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-sub-readable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description \"$(cat @MSGS@/short.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-sub-readable-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description \"$(cat @MSGS@/long.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-var-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create --login src.opensuse.org --repo nodejs/nodejs-electron --head someone:electron-44 --base main --title 'Update to 44.10.0' --description \"$BODY\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-tea-short-opts": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pr c --login src.opensuse.org --repo nodejs/nodejs-electron -t 'Update to 44.10.0' -d '- gate.sh GREEN'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-tea-one-dash-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls create -repo nodejs/nodejs-electron -title 'Update to 44.10.0' -description='review PASS'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-git-obs-notes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr create --target nodejs/nodejs-electron:main --title 'Update to 44.10.0' --description 'x86_64 GREEN, aarch64 still building.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-git-obs-abbrev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org pr create --target nodejs/nodejs-electron:main --tit 'Update to 44.10.0' --desc='adversarial review PASS'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-git-space-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr create --target nodejs/nodejs-electron:main --title 'Update to 44.10.0' --description \"$(cat @MSGS@/long.txt)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-create-git-obs-terse": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr create --target nodejs/nodejs-electron:main --title 'Update to 44.10.0' --description 'Drops two patches merged upstream.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "msg-note-gate-sh": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3: parser crash fixes. gate.sh GREEN.'"
+    }
+  },
+  "push-https-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push https://src.opensuse.org/someone/other-pkg.git HEAD:update-1"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-http-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push http://src.opensuse.org/someone/other-pkg.git HEAD:update-1"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-https-remote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push fork electron-44"
+    },
+    "cwd": "@HTTPS@"
+  },
+  "push-https-origin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push origin HEAD:refs/heads/electron-44"
+    },
+    "cwd": "@HTTPS@"
+  },
+  "push-https-token-remote": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push fork update-1"
+    },
+    "cwd": "@TOKFORK@"
+  },
+  "push-ssh-url-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push gitea@src.opensuse.org:someone/other-pkg.git HEAD:update-1"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-ssh-scheme-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push ssh://gitea@src.opensuse.org/someone/other-pkg.git HEAD:update-1"
+    },
+    "cwd": "@OTHER@"
+  },
+  "comment-tea-issue-flag": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comments --login src.opensuse.org --repo nodejs/nodejs-electron --issue 4"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-list-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comments list --login src.opensuse.org --repo nodejs/nodejs-electron 4"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-review-comments": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls review-comments --login src.opensuse.org --repo nodejs/nodejs-electron 4"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "push-https-token-url": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git push https://someone:tok3n@src.opensuse.org/someone/other-pkg.git HEAD:update-1"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-https-set-url-first": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git remote set-url fork gitea@src.opensuse.org:someone/nodejs-electron.git && git push fork electron-44"
+    },
+    "cwd": "@HTTPS@"
   }
 }

@@ -5,8 +5,9 @@ Reads one tool-call event on stdin and refuses (exit 2) a call that would open,
 update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
 (tea, git-obs, a merge URL on pool, or elsewhere an API call that does not
 provably only read; gh is not judged), push to a branch that heads an open pool
-PR, write a target-gate.sh stamp, run an emulated osc build, file a request
-against the scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
+PR or over HTTPS to src.opensuse.org (SSH carries the login), write a
+target-gate.sh stamp, run an emulated osc build, file a request against the
+scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
 file a submit request to a project other than the package's devel project in
 Factory's _meta, or into an _aggregate or a _link of another project,
@@ -21,8 +22,10 @@ more in all (not in the Monitor tool, a background call or a script the call
 runs), file a request
 whose message is too long (over 160 characters of prose, which
 is every line but a "- " list item; a list line over 100; over 1000 in all),
-carries a work note for the user (build or sweep status, the session's tools),
-only says it forwards, or cannot be read, or write into a *:Update or *:Maintenance:* project outside
+carries a work note for the user (build, sweep, gate or review status, the
+session's tools), only says it forwards, or cannot be read, open a PR with tea or
+git-obs, on any repository, whose title or description breaks the same rules
+(the title one headline), or write into a *:Update or *:Maintenance:* project outside
 home: (commit, api, and osc's other writes) or one it cannot place. A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
@@ -40,7 +43,8 @@ git-obs.
 
 Some calls are left to the user instead (exit 0 with the hook's "ask"
 decision on stdout; a refusal anywhere in the call still wins): a comment or
-review posted with osc, tea or git-obs (a close carrying one included), or
+review posted with osc, tea or git-obs (a close carrying one included; a tea
+comment with no subcommand and no body also says how to read them), or
 an API write to OBS or Gitea comments or reviews (gh, on GitHub, is not
 judged; a comment on an OBS request the user filed, or whose every target
 package the user maintains, runs, and so does a tea comment on a
