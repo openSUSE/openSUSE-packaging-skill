@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prebuilt binaries in a package's sources: executables, shared and static
-libraries, native addons, wasm, Java bytecode and RPMs in every file of the
-checkout. Archives (tar, gzip, xz, zstd, bzip2, zip, cpio/obscpio) are streamed
+libraries, native addons, Windows COFF objects, wasm, Java bytecode and RPMs in
+every file of the checkout. Archives (tar, gzip, xz, zstd, bzip2, zip, cpio/obscpio) are streamed
 member by member, one level into nested archives (an npm .tgz inside a vendor
 tarball), and nothing is extracted.
 
@@ -31,8 +31,8 @@ the tests only read, so the glob must lie under a test directory (tests/,
 testdata/, fixtures/, corpus/, golden/, or an example's examples/ or
 samples/); bootstrap: a compiler or toolchain that needs a previous build of
 itself, used only during the build and never shipped, with a why of at least
-8 words saying what it builds and why no
-packaged predecessor can. Every bootstrap exception is named on the verdict
+8 words saying what it builds and why no packaged predecessor can. Every
+bootstrap exception is named on the verdict
 line (references/specfile-guidelines.md "Spec file — general rules"). The
 shipped check finds a binary copied into an RPM and one a bundler embeds
 verbatim in its single executable (a 4 KiB fingerprint of each hit of 1 KiB or
@@ -57,13 +57,14 @@ import lzma
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
 import zipfile
 import zlib
 
-VERSION = 3  # bump when detection changes, so cached results are rescanned
+VERSION = 4  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 CHUNK = 8 << 20
@@ -95,6 +96,10 @@ COMPRESSED = {  # magic: (external tool, python module)
     b"BZh": ("bzip2", "bz2"),
 }
 UNSUPPORTED = {b"7z\xbc\xaf\x27\x1c": "7z archive", b"Rar!\x1a\x07": "rar archive"}
+# i386, x86-64, arm64, ARMv7 Thumb-2, arm64ec: the machines a Windows object targets
+COFF_MACHINES = {0x014C, 0x8664, 0xAA64, 0x01C4, 0xA641}
+# ANON_OBJECT_HEADER_BIGOBJ's ClassID {D1BAA1C7-BAEE-4BA9-AF20-FAF66AA4DCB8}
+BIGOBJ_CLASS = bytes.fromhex("c7a1bad1eebaa94baf20faf66aa4dcb8")
 # what a corrupt or exotic archive raises while it is read
 DECODE = (
     tarfile.TarError,
@@ -135,7 +140,39 @@ def kind(head, name):
         return "wasm"
     if m == b"\xed\xab\xee\xdb":
         return "RPM"
+    if coff(head):
+        return "COFF object"
     return None
+
+
+def coff(head):
+    """Whether head starts a Windows COFF object file. COFF has no magic, so it
+    takes a known machine, a sane section count, no optional header (an image
+    has one, and is a PE behind MZ anyway) and section names that are names:
+    ring's pregenerated *.o and aws-lc-sys's prebuilt *.obj are this."""
+    if len(head) < 60:
+        return False
+    machine, nsec = struct.unpack_from("<HH", head, 0)
+    if machine == 0 and nsec == 0xFFFF:
+        # an anonymous object header: the bigobj form says what it is by its ClassID
+        version, machine = struct.unpack_from("<HH", head, 4)
+        return version >= 2 and machine in COFF_MACHINES and head[12:28] == BIGOBJ_CLASS
+    if machine not in COFF_MACHINES or not 1 <= nsec <= 96:
+        return False
+    symptr, nsym, opt = struct.unpack_from("<IIH", head, 8)
+    if opt != 0 or (nsym and symptr < 20 + 40 * nsec):
+        return False
+    names = [
+        head[20 + 40 * i : 28 + 40 * i]
+        for i in range(min(nsec, (len(head) - 20) // 40))
+    ]
+    return all(section_name(n) for n in names)
+
+
+def section_name(raw):
+    """A COFF section name: .text, .debug$S, or /4 for a long one, NUL-padded."""
+    s = raw.rstrip(b"\0")
+    return s[:1] in (b".", b"/") and b"\0" not in s and all(33 <= c < 127 for c in s)
 
 
 def archive(head):
