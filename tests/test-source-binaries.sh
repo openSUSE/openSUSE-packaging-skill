@@ -95,6 +95,30 @@ grep -qF "HIT p.obscpio:p/A.class: Java class" <<<"$LAST" && grep -qF "HIT p.obs
   && ! grep -qF "a.txt" <<<"$LAST" && pass "cpio: Java class and fat Mach-O told apart, text clean" \
   || fail "cpio kinds: $LAST"
 
+# Windows COFF objects have no magic (ring's pregenerated *.o, aws-lc-sys's
+# prebuilt *.obj): a known machine, no optional header, real section names.
+d=$(pkg coff); mkdir -p "$work/t/coff/pregenerated"
+python3 - "$work/t/coff/pregenerated" <<'PY'
+import os, struct, sys
+out = sys.argv[1]
+def obj(machine, names, opt=0):
+    hdr = struct.pack("<HHIIIHH", machine, len(names), 0, 0, 0, opt, 0)
+    secs = b"".join(n.ljust(8, b"\0") + b"\0" * 32 for n in names)
+    return hdr + secs + b"\0" * 64
+open(os.path.join(out, "x86_64-mont-nasm.o"), "wb").write(obj(0x8664, [b".text", b".data", b".debug$S"]))
+big = struct.pack("<HHHHI", 0, 0xFFFF, 2, 0x8664, 0) + bytes.fromhex("c7a1bad1eebaa94baf20faf66aa4dcb8") + b"\0" * 64
+open(os.path.join(out, "big.obj"), "wb").write(big)
+# near misses: an image's optional header, a name that is no name, a text file
+open(os.path.join(out, "opt.o"), "wb").write(obj(0x8664, [b".text"], opt=0xF0))
+open(os.path.join(out, "garbage.o"), "wb").write(obj(0x8664, [b"\x01\x02xyz"]))
+open(os.path.join(out, "notes.txt"), "wb").write(b"d\x86" + b"plain text that happens to start like an x86-64 COFF header " * 4)
+PY
+tar -C "$work/t/coff" -czf "$d/vendor.tar.gz" .
+case_ coff-object 3 "HIT vendor.tar.gz:./pregenerated/x86_64-mont-nasm.o: COFF object" "$d"
+grep -qF "HIT vendor.tar.gz:./pregenerated/big.obj: COFF object" <<<"$LAST" \
+  && ! grep -qE "opt\.o|garbage\.o|notes\.txt" <<<"$LAST" \
+  && pass "coff: a bigobj is one, an image header, a non-name and text are not" || fail "coff kinds: $LAST"
+
 # An exception line names the allowed ones; a malformed one is red.
 BOOT='the go compiler is written in go and needs a previous go build to compile itself'
 d=$(pkg except); cp "$work/tarball/vendor.tar.gz" "$d/"
