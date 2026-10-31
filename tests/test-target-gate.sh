@@ -96,18 +96,75 @@ case "$sub" in
       case "$x" in --alternative-project=*) prj=${x#*=};; *.spec) spec=$x;; esac
       prev=$x
     done
-    rm -rf "$root"; mkdir -p "$root/installed-pkg"
+    # osc failing before obs-build runs: an error line, the root untouched.
+    [ -z "${FAKE_OSC_ERROR:-}" ] || { printf 'Running build\n%s\n' "$FAKE_OSC_ERROR"; exit 1; }
     case "$prj" in *16.1) rel=160100;; *) rel=160000;; esac
-    echo "${FAKE_RPMCONFIG:-rpm-config-SUSE-20250328-$rel.2.2 1743178964-noarch}" > "$root/installed-pkg/rpm-config-SUSE"
+    pkgid=${FAKE_RPMCONFIG:-rpm-config-SUSE-20250328-$rel.2.2 1743178964-noarch}
     v=finished; [ "${FAKE_BUILD:-}" = failed ] && v=failed
-    # As obs-build leaves a chroot root: .build.packages links to the rpmbuild tree.
-    mkdir -p "$root/home/abuild/rpmbuild/SRPMS" && ln -s home/abuild/rpmbuild "$root/.build.packages"
-    [ "$v" = failed ] || : > "$root/home/abuild/rpmbuild/SRPMS/${spec%.spec}-1.0-0.src.rpm"
     readlink /proc/self/fd/0 > "$FAKE/build-stdin"
-    { printf '[    0s] Using BUILD_ROOT=%s\n' "$root"
+    if [ "${FAKE_VM:-}" = kvm ]; then
+      # A user's kvm build runs in $root/.mount inside $root/img, and --clean
+      # wipes only .mount: the chroot tree of an earlier build stays in the
+      # root, with the right base and an RPM requiring a user nothing provides.
+      br=$root/.mount
+      rm -rf "$br"; mkdir -p "$br/installed-pkg" "$root/installed-pkg" \
+        "$root/home/abuild/rpmbuild/RPMS/aarch64" "$root/home/abuild/rpmbuild/SRPMS"
+      echo "rpm-config-SUSE-20250328-$rel.2.2 1743178964-noarch" > "$root/installed-pkg/rpm-config-SUSE"
+      : > "$root/home/abuild/rpmbuild/RPMS/aarch64/stale-1.0-0.aarch64.rpm"
+      : > "$root/home/abuild/rpmbuild/SRPMS/stale-1.0-0.src.rpm"
+      ln -sfn home/abuild/rpmbuild "$root/.build.packages"
+      : > "$root/img"; : > "$root/swap"
+    else
+      # A chroot root: .build.packages links to the rpmbuild tree.
+      br=$root
+      rm -rf "$root"; mkdir -p "$root/installed-pkg" "$root/home/abuild/rpmbuild"
+      echo "$pkgid" > "$root/installed-pkg/rpm-config-SUSE"
+      ln -s home/abuild/rpmbuild "$root/.build.packages"
+    fi
+    pk=$br/.build.packages
+    if [ -z "${FAKE_NO_PACKAGES:-}" ]; then
+      mkdir -p "$pk/RPMS/aarch64" "$pk/SRPMS"
+      if [ "$v" = finished ]; then
+        # FAKE_NOSRC: a spec with NoSource writes a .nosrc.rpm.
+        : > "$pk/SRPMS/foo-1.0-0.${FAKE_NOSRC:+no}src.rpm"
+        # FAKE_SRPM_ONLY: a test flavor, whose %files are all conditional.
+        [ -n "${FAKE_SRPM_ONLY:-}" ] || : > "$pk/RPMS/aarch64/foo-1.0-0.aarch64.rpm"
+      fi
+      # extractbuild gives each package the guest's mtime in whole seconds.
+      [ "${FAKE_VM:-}" != kvm ] || find "$pk" -type f -exec touch -d "@$(date +%s)" {} +
+      # FAKE_STALE_RPM/SRPM: a root obs-build did not set up, with an earlier build's packages.
+      [ -z "${FAKE_STALE_RPM:-}" ] || { : > "$pk/RPMS/aarch64/old-0.9-0.aarch64.rpm"; touch -d 2026-01-01 "$pk/RPMS/aarch64/old-0.9-0.aarch64.rpm"; }
+      [ -z "${FAKE_STALE_SRPM:-}" ] || { : > "$pk/SRPMS/old-0.9-0.src.rpm"; touch -d 2026-01-01 "$pk/SRPMS/old-0.9-0.src.rpm"; }
+    fi
+    { printf '[    0s] Using BUILD_ROOT=%s\n' "${FAKE_BUILD_ROOT:-$br}"
+      [ "${FAKE_VM:-}" != kvm ] || printf '[    0s] Doing kvm build in %s/img\n' "$root"
       [ -n "${FAKE_NO_RECIPE:-}" ] || printf '[    1s] processing recipe %s/%s ...\n' "${FAKE_RECIPE_DIR:-$(pwd -P)}" "$spec"
-      printf '[   20s] fakehost %s "build %s" at Thu Sep 24 00:00:00 UTC 2026.\n' "$v" "$spec"
-    } > "$root/.build.log"
+      if [ "${FAKE_VM:-}" = kvm ]; then
+        # The guest's console: CRLF line ends, a NUL from its boot, and its own
+        # copy of the recipe.
+        printf '[    5s] 2nd stage started in virtual machine\r\n[    5s] \000\r\n'
+        printf '[    6s] processing recipe //.build-srcdir/%s ...\r\n' "${FAKE_GUEST_SPEC:-$spec}"
+        [ -n "${FAKE_NO_CUMULATE:-}" ] || printf '[    7s] [3/40] cumulate %s\r\n' "${pkgid%% *}"
+        printf '[   20s] fakehost %s "build %s" at Thu Sep 24 00:00:00 UTC 2026.\r\n' "$v" "$spec"
+      else
+        [ -n "${FAKE_NO_CUMULATE:-}" ] || printf '[    6s] [3/40] cumulate %s\n' "${pkgid%% *}"
+        printf '[   20s] fakehost %s "build %s" at Thu Sep 24 00:00:00 UTC 2026.\n' "$v" "$spec"
+      fi
+    } > "$FAKE/build-out"
+    if [ "${FAKE_VM:-}" != kvm ]; then
+      cp "$FAKE/build-out" "$root/.build.log"
+    elif [ "${FAKE_ROOTLOG:-}" = green ]; then
+      # Adversarial: obs-build recreates the log, but a GREEN one of this tree must not count.
+      printf '[    0s] Using BUILD_ROOT=%s\n[    1s] processing recipe %s/%s ...\n[    6s] [3/40] cumulate rpm-config-SUSE-20250328-%s.2.2\n[   20s] fakehost finished "build %s" at Wed Sep 23 00:00:00 UTC 2026.\n' \
+        "$root" "$(pwd -P)" "$spec" "$rel" "$spec" > "$root/.build.log"
+    else
+      : > "$root/.build.log"     # as issue #71 found it
+    fi
+    # osc's stdout carries the whole log, then the packages it found.
+    if [ -z "${FAKE_OSC_SILENT:-}" ]; then
+      cat "$FAKE/build-out"
+      [ "$v" != finished ] || printf '\n%s/RPMS/aarch64/foo-1.0-0.aarch64.rpm\n' "$pk"
+    fi
     [ -z "${FAKE_BUILD_TOUCH:-}" ] || : > "$FAKE_BUILD_TOUCH"
     [ -z "${FAKE_BUILD_COMMIT:-}" ] || { echo "- $FAKE_BUILD_COMMIT" >> foo.changes; git commit -qam "$FAKE_BUILD_COMMIT"; }
     [ -z "${FAKE_OSC_RC:-}" ] || exit "$FAKE_OSC_RC"
@@ -224,6 +281,18 @@ done
 case "$kind" in onlybuild) v=${FAKE_QC_ONLY:-};; excludebuild) v=${FAKE_QC_EXCL:-};; *) exit 2;; esac
 for e in $v; do [ "${e%%=*}" = "$arch" ] && tr ',' '\n' <<<"${e#*=}"; done
 exit 0
+EOF
+# The built RPMs' answers: foo-* requires and creates FAKE_RPM_USER's user(),
+# stale-* (an earlier build's) user(stale); nothing provides either.
+cat > "$work/bin/rpm" <<'EOF'
+#!/bin/bash
+[ "$1" = -qp ] || { echo "fake rpm: unexpected $*" >&2; exit 9; }
+q=$2; shift 2
+for f in "$@"; do
+  case "${f##*/}" in foo-*) u=${FAKE_RPM_USER:-};; stale-*) u=stale;; *) u="";; esac
+  [ -n "$u" ] || continue
+  case "$q" in --requires) echo "user($u)";; --scripts) echo "useradd -r $u";; esac
+done
 EOF
 chmod +x "$work/bin/"* "$BUILD_DIR/queryrecipe" "$BUILD_DIR/queryconfig"
 
@@ -392,6 +461,31 @@ C=$(fresh mbpkg)
 case_ multibuild-package-entry 0 "flavor test: build aarch64, resolve i586 x86_64 ppc64le s390x" \
   "cd $C && FAKE_QR_EXCL='=do_not_build' bash $TG --build"
 
+# --- build-type=kvm: osc builds in <root>/.mount inside the image <root>/img -----
+# The fake leaves an earlier chroot build's tree in the root, the right base
+# included; the verdict comes from osc's own output and the RPMs the VM handed
+# back, never from that tree or the root's .build.log.
+C=$(fresh kvm)
+case_ kvm-build-green 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64, resolves i586 x86_64 ppc64le s390x" \
+  "cd $C && FAKE_VM=kvm bash $TG --build"
+C=$(fresh kvm161)
+case_ kvm-build-16.1 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.1: built aarch64, resolves i586 x86_64; stamped" \
+  "FAKE_VM=kvm bash $TG $C --branch leap-16.1 --build"
+# A test flavor guards every %files, so it writes the source RPM alone.
+C=$(fresh srponly)
+(cd "$C" && printf '<multibuild>\n  <flavor>test</flavor>\n</multibuild>\n' > _multibuild && git add _multibuild && git commit -qm mb)
+case_ test-flavor-srpm-only 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64" \
+  "cd $C && FAKE_QR_EXCL='=do_not_build' FAKE_SRPM_ONLY=1 bash $TG --build"
+case_ kvm-test-flavor-srpm-only 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64" \
+  "cd $C && FAKE_VM=kvm FAKE_QR_EXCL='=do_not_build' FAKE_SRPM_ONLY=1 bash $TG --build"
+# NoSource/NoPatch: the source RPM is a .nosrc.rpm.
+C=$(fresh nosrc)
+case_ nosrc 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64, resolves i586 x86_64 ppc64le s390x" \
+  "cd $C && FAKE_NOSRC=1 bash $TG --build"
+C=$(fresh kvmnosrc)
+case_ kvm-nosrc 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64, resolves i586 x86_64 ppc64le s390x" \
+  "cd $C && FAKE_VM=kvm FAKE_NOSRC=1 bash $TG --build"
+
 # --- red: the build is not evidence for this tree on this base -------------------
 C=$(fresh red)
 case_ tesseract-replay 1 "RED: recipe: the log built /var/tmp/tess-fix/foo.spec, not $C/foo.spec" \
@@ -423,6 +517,56 @@ mkdir -p "$work/link" && ln -s "$TG" "$work/link/target-gate.sh"
 printf '#!/bin/sh\necho "VERDICT: GREEN"\n' > "$work/link/build-summary.sh" && chmod +x "$work/link/build-summary.sh"
 case_ symlink-uses-real-siblings 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=0" \
   "cd $(fresh symlink) && FAKE_BUILD=failed FAKE_OSC_RC=0 bash $work/link/target-gate.sh --build"
+C=$(fresh kvmred); R0="$ROOTS/foo-leap-16.0-aarch64"
+case_ kvm-failed-build 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=1" \
+  "cd $C && FAKE_VM=kvm FAKE_BUILD=failed bash $TG --build"
+case_ kvm-osc-exit-nonzero 1 "RED: build: build-summary rc=0 (VERDICT: GREEN), osc build rc=1" \
+  "cd $C && FAKE_VM=kvm FAKE_OSC_RC=1 bash $TG --build"
+# The guest names its own copy of the recipe: that line is dropped, nothing else.
+case_ kvm-tesseract-replay 1 "RED: recipe: the log built /var/tmp/tess-fix/foo.spec, not $C/foo.spec" \
+  "cd $C && FAKE_VM=kvm FAKE_RECIPE_DIR=/var/tmp/tess-fix bash $TG --build"
+case_ kvm-guest-recipe-only 1 "RED: recipe: the log built no recipe, not $C/foo.spec" \
+  "cd $C && FAKE_VM=kvm FAKE_NO_RECIPE=1 bash $TG --build"
+# The root's .build.log names this very recipe, from an earlier build.
+case_ kvm-recipe-not-from-root-log 1 "RED: recipe: the log built no recipe, not $C/foo.spec" \
+  "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_NO_RECIPE=1 bash $TG --build"
+case_ kvm-guest-other-spec 1 "RED: recipe: the log built //.build-srcdir/bar.spec $C/foo.spec, not $C/foo.spec" \
+  "cd $C && FAKE_VM=kvm FAKE_GUEST_SPEC=bar.spec bash $TG --build"
+# The guest's install line ends in CRLF: the release is read without the CR.
+case_ kvm-wrong-base-marker 1 "RED: base: root has rpm-config-SUSE-20250328-160100.2.1, want release -160000.* for leap-16.0" \
+  "cd $C && FAKE_VM=kvm FAKE_RPMCONFIG='rpm-config-SUSE-20250328-160100.2.1 1743178964-noarch' bash $TG --build"
+# The root still holds the earlier build's GREEN log and installed-pkg of the
+# right base: neither stands in for what this build logged.
+case_ kvm-no-install-line 1 "RED: base: root has no rpm-config-SUSE, want release -160000.* for leap-16.0" \
+  "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_NO_CUMULATE=1 bash $TG --build"
+case_ kvm-log-failed-osc-zero 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=0" \
+  "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_BUILD=failed FAKE_OSC_RC=0 bash $TG --build"
+# The user()/group() check runs on the RPMs the build made, in either mode.
+case_ kvm-unprovided-user 1 "RED: build: build-summary rc=1 (VERDICT: FAILED (not installable: nothing provides user(foo)))" \
+  "cd $C && FAKE_VM=kvm FAKE_RPM_USER=foo bash $TG --build"
+case_ unprovided-user 1 "RED: build: build-summary rc=1 (VERDICT: FAILED (not installable: nothing provides user(foo)))" \
+  "cd $C && FAKE_RPM_USER=foo bash $TG --build"
+case_ kvm-no-srpm 1 "RED: build: build-summary rc=3 (VERDICT: NO VERDICT — no source RPM under $R0/.mount/.build.packages/SRPMS" \
+  "cd $C && FAKE_VM=kvm FAKE_NO_PACKAGES=1 bash $TG --build"
+case_ kvm-stale-rpm 1 "RED: rpms: $R0/.mount/.build.packages holds files from before this build (old-0.9-0.aarch64.rpm)" \
+  "cd $C && FAKE_VM=kvm FAKE_STALE_RPM=1 bash $TG --build"
+case_ kvm-stale-srpm 1 "RED: rpms: $R0/.mount/.build.packages holds files from before this build (old-0.9-0.src.rpm)" \
+  "cd $C && FAKE_VM=kvm FAKE_STALE_SRPM=1 bash $TG --build"
+case_ log-built-elsewhere 1 "RED: build: the log built in /var/tmp/elsewhere, not $R0, osc build rc=0" \
+  "cd $C && FAKE_BUILD_ROOT=/var/tmp/elsewhere bash $TG --build"
+# osc printed nothing, and the root holds a GREEN log: every check reds, so
+# this is no single-RED case_.
+out=$(cd "$C" && FAKE_OSC_SILENT=1 bash "$TG" --build 2>&1); rc=$?
+check_ osc-output-is-the-log "[ $rc = 1 ] && grep -qF 'RED: build: the log built in no build root, not $R0, osc build rc=0' <<<\"\$out\""
+# osc failed before the build: its error line is shown, sanitized.
+esc=$'\e' bel=$'\a'
+out=$(cd "$C" && FAKE_OSC_ERROR="Server returned an error: HTTP Error 502: ${esc}[31mBad Gateway" bash "$TG" --build 2>&1); rc=$?
+check_ osc-error-shown-sanitized "[ $rc = 1 ] && grep -qF 'Server returned an error: HTTP Error 502: Bad Gateway' <<<\"\$out\" && ! grep -qF \"\$esc\" <<<\"\$out\""
+# So are the recipe and the rpm-config-SUSE the log names: an OSC 52 and an SGR.
+out=$(cd "$C" && FAKE_RECIPE_DIR="/var/tmp/x${esc}]52;c;aGk=${bel}" bash "$TG" --build 2>&1); rc=$?
+check_ recipe-shown-sanitized "[ $rc = 1 ] && grep -qF 'RED: recipe: the log built /var/tmp/x/foo.spec, not $C/foo.spec' <<<\"\$out\" && ! grep -qF -e \"\$esc\" -e \"\$bel\" <<<\"\$out\""
+out=$(cd "$C" && FAKE_RPMCONFIG="rpm-config-SUSE-20250328-160100${esc}[8m.2.1 1743178964-noarch" bash "$TG" --build 2>&1); rc=$?
+check_ base-shown-sanitized "[ $rc = 1 ] && grep -qF 'RED: base: root has rpm-config-SUSE-20250328-160100.2.1, want release -160000.* for leap-16.0' <<<\"\$out\" && ! grep -qF \"\$esc\" <<<\"\$out\""
 
 # --- refused before building --------------------------------------------------------
 X=$(fresh refuse)

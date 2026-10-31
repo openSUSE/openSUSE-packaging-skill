@@ -809,6 +809,18 @@ done
 
 reds=()
 red() { reds+=("$*"); say "RED: $*"; }
+# osc's own error lines (its stdout is block-buffered, so they can land after
+# the build's), else the log's tail; sanitized, as build output is third-party.
+excerpt() {
+  local ex
+  ex=$(grep -aE 'Build failed with exit code|Server returned an error|^Error' "$1" | tail -n 3)
+  [ -n "$ex" ] || ex=$(tail -n 3 "$1")
+  [ -n "$ex" ] || return 0
+  printf '%s\n' "$ex" | python3 "$HERE/_sanitize.py" | sed 's/^/  /' \
+    || say "  (log excerpt withheld: $HERE/_sanitize.py failed)"
+}
+# Log text quoted in a RED line, sanitized the same way.
+clean() { printf '%s' "$1" | python3 "$HERE/_sanitize.py" || printf '(withheld: %s failed)' "$HERE/_sanitize.py"; }
 for k in "${!todo[@]}"; do
   f=${flavors[${todo[$k]}]}; fs=${f:+ -M $f}
   say "flavor ${f:-(none)}: build $native, resolve ${others[$k]:-nothing else}"
@@ -833,28 +845,52 @@ for k in "${!todo[@]}"; do
   [ -z "$jobs" ] || cmd+=(--jobs "$jobs")
   [ -z "$f" ] || cmd+=(-M "$f")
   cmd+=(standard "$native" "$pkg.spec")
-  "${cmd[@]}" </dev/null 2>&1 | tail -n 30 > "$tmpd/osc.tail"; orc=${PIPESTATUS[0]}
+  # osc's output is the build log: a VM build (build-type=kvm) puts no
+  # installed-pkg in the root, and the root's .build.log can be empty (e.g.
+  # with build-shell-after-fail). The guest's console adds CRs and NULs.
+  blog="$tmpd/build.log"
+  # A second early: the RPMs a VM hands back carry whole-second times.
+  touch -d '1 second ago' "$tmpd/start" || refuse "cannot write $tmpd/start"
+  "${cmd[@]}" </dev/null 2>&1 | tr -d '\000\r' > "$blog"; orc=${PIPESTATUS[0]}
 
-  bs=$("$HERE/build-summary.sh" "$root" 2>&1); brc=$?
-  if [ $brc -ne 0 ] || [ "$orc" -ne 0 ]; then
-    red "build$fs: build-summary rc=$brc ($(grep -m1 -o 'VERDICT: .*\|no readable build log' <<<"$bs")), osc build rc=$orc"
-    [ $brc -ne 2 ] || tail -n 5 "$tmpd/osc.tail"
+  # osc builds in $root, or in $root/.mount under a VM, and leaves the
+  # packages in that root's .build.packages.
+  broot=$(sed -n '/Using BUILD_ROOT=/{s/.*Using BUILD_ROOT=//p;q;}' "$blog")
+  if [ "$broot" != "$root" ] && [ "$broot" != "$root/.mount" ]; then
+    red "build$fs: the log built in $(clean "${broot:-no build root}"), not $root, osc build rc=$orc"
+    excerpt "$blog"
+  else
+    bs=$("$HERE/build-summary.sh" --rpms "$broot/.build.packages" "$blog" 2>&1); brc=$?
+    if [ $brc -ne 0 ] || [ "$orc" -ne 0 ]; then
+      red "build$fs: build-summary rc=$brc ($(grep -m1 -o 'VERDICT: .*\|no readable build log' <<<"$bs")), osc build rc=$orc"
+    fi
+    # obs-build empties .build.packages first; in a root it did not set up, files
+    # older than this build are an earlier build's.
+    old=$(find "$broot/.build.packages/RPMS" "$broot/.build.packages/SRPMS" -type f ! -newer "$tmpd/start" 2>/dev/null \
+      | sed 's#.*/##' | sort | head -3 | paste -sd' ')
+    [ -z "$old" ] || red "rpms$fs: $broot/.build.packages holds files from before this build ($old) — an earlier build's RPMs are no evidence"
   fi
-  # The tesseract discriminator: the log names the recipe it built.
-  recipes=$(grep -ho 'processing recipe [^ ]*' "$root/.build.log" 2>/dev/null | sed 's/^processing recipe //' | sort -u | paste -sd' ')
-  [ "$recipes" = "$rdir/$pkg.spec" ] \
-    || red "recipe$fs: the log built ${recipes:-no recipe}, not $rdir/$pkg.spec${recipes:+ — a build of another checkout is no evidence}"
+  # The tesseract discriminator: the log names the recipe it built (a VM
+  # guest also names its own copy, //.build-srcdir/<pkg>.spec).
+  recipes=$(grep -ao 'processing recipe [^ ]*' "$blog" | sed 's/^processing recipe //' \
+    | grep -vxF "//.build-srcdir/$pkg.spec" | sort -u | paste -sd' ')
+  if [ "$recipes" != "$rdir/$pkg.spec" ]; then
+    [ -z "$recipes" ] || recipes=$(clean "$recipes")
+    red "recipe$fs: the log built ${recipes:-no recipe}, not $rdir/$pkg.spec${recipes:+ — a build of another checkout is no evidence}"
+  fi
   st=$(git status --porcelain --ignored --untracked-files=all)
   if [ "$(git rev-parse 'HEAD^{tree}')" != "$tree" ]; then
     red "worktree$fs: HEAD's tree changed during the build — the built tree is not the one stamped"
   elif [ -n "$st" ]; then
     red "worktree$fs: the build left it dirty ($(printf '%s\n' "$st" | head -3 | paste -sd';')) — the built tree is not HEAD's"
   fi
-  # Tripwire: the root really is the base's product (release 16.0.x/16.1.x).
-  rcs=$(cat "$root/installed-pkg/rpm-config-SUSE" 2>/dev/null)
+  # Tripwire: the root really is the base's product (release 16.0.x/16.1.x),
+  # as init_buildsystem logs installing it.
+  rcs=$(grep -m1 -aoE '(^| )(cumulate|installing|keeping|preinstalled) rpm-config-SUSE-[0-9][^ ]*' "$blog" | sed 's/^ *[a-z]* //')
   case "$rcs" in
     *"-$marker."*) ;;
-    *) red "base$fs: root has ${rcs:-no rpm-config-SUSE}, want release -$marker.* for $base" ;;
+    *) [ -z "$rcs" ] || rcs=$(clean "$rcs")
+       red "base$fs: root has ${rcs:-no rpm-config-SUSE}, want release -$marker.* for $base" ;;
   esac
   [ ${#reds[@]} -eq 0 ] || break
   built+=("$f")
