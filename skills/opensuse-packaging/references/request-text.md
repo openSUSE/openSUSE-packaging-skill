@@ -42,13 +42,19 @@ Factory" (refused) — the Factory reviewer sees only this one; "Forward X BR cl
 Factory." passes, but the devel headline says it better.
 
 **Never in a message:** build or rpmlint status, test counts, whether a VUL sweep or bug
-check ran, what tools the session had, how you verified something, a paste of the
-`.changes`, or an apology for any of these. That is your report to the user. The hook
-refuses the usual phrases (`not done`, `bugwarden`, `VUL sweep`, `built green`,
-`still building`, `this env`, `sub-agent`, `no access`) and a bare forward.
+check ran, what the gate or the change review said, what tools the session had, how you
+verified something, links to your home project, a paste of the `.changes`, or an apology
+for any of these. That is your report to the user. The hook refuses the usual phrases
+(`not done`, `bugwarden`, `VUL sweep`, `built green`, `still building`, `this env`,
+`sub-agent`, `no access`, `gate.sh`, `adversarial review`, `review PASS`, a capitalised
+`GREEN`) and a bare forward.
 
 A request description renders as **plain text**: line breaks stay, Markdown and `sr#`
-links do not render. A Gitea PR body renders Markdown, but takes the same brevity.
+links do not render. A Gitea PR body renders Markdown, but takes the same brevity, and
+pr-guard lints PR text like SR text, towards any repository (`tea pulls create`,
+`git-obs pr create`): the title is the headline (160 characters at most), the description
+is held to a message's caps (160 characters of prose, `- ` lines of 100, 1000 in all), and
+both are refused for the phrases above, or when the guard cannot read them now.
 
 | Message | Why |
 |---|---|
@@ -58,8 +64,8 @@ links do not render. A Gitea PR body renders Markdown, but takes the same brevit
 | `Forward python-langsmith update to Factory.` (sr#1385057) | says nothing about the update; refused |
 | `Update python-comfyui-workflow-templates to 0.11.85 (metadata-only bump, pins core 0.3.376 / json 0.1.111).` (sr#1385053) | names the pins, not the two requests to stage with |
 
-Pass the text by file (`-m "$(cat FILE)"`, written in an earlier call) and read the
-request back once filed (`references/osc-usage.md` "Requests").
+Pass the text by file (`-m "$(cat FILE)"`, a PR's `--description "$(cat FILE)"`, written in
+an earlier call) and read the request back once filed (`references/osc-usage.md` "Requests").
 
 ## Answering a reviewer
 
@@ -80,6 +86,28 @@ osc comment create -p <comment-id> -c "$(cat FILE)" request <id>
   (core directive 10).
 - **Speak only as what you are.** No first-person claim the user did not make ("I use this
   daily"), and no request for maintainership or other roles unless the user asked for one.
+
+## Comments: reading them, posting an approved one
+
+Reading a thread never needs the user's go:
+
+```
+osc comment list request <id>                                                # an OBS request
+tea comments list --login src.opensuse.org --repo <owner>/<pkg> <n>          # a Gitea issue or PR
+tea pulls review-comments --login src.opensuse.org --repo <owner>/<pkg> <n>  # inline review comments, ids
+git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # any other read: a GET
+```
+
+`tea comments` with no subcommand **adds** a comment, whatever flag follows (there is no
+`--issue`), so pr-guard asks before it and names the read above.
+
+**Once the user has approved the exact text, post it yourself** on your own request or PR,
+or one in a repository you maintain: pr-guard lets the plain form through,
+`osc comment create -c "$(cat FILE)" request <id>`, or
+`tea comments --login src.opensuse.org --repo <owner>/<pkg> <n> '<text>'` with the text
+inline on one line, no `$`, backslash or backtick, and the command alone in the call. Hand
+the user a command only when the guard asks: someone else's item, or any other form.
+opencode refuses an ask, so there the user runs it.
 
 ## Comments: what OBS renders
 

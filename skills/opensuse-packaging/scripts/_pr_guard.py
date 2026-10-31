@@ -208,6 +208,7 @@ MAY_WRITE = Rx(
 PUSH = Rx(r"(?<![-\w])push(?![-\w])")
 STASH_PUSH = Rx(r"\bstash\s+push\b")
 PUSH_POOL = Rx(r"src\.opensuse\.org(?::\d+)?[:/]+pool/|refs\/for\/")
+HTTPS = Rx(r"(?i)https?://")
 # git push spelled inside program text: judged only by a literal remote.
 CODE_PUSH = Rx(
     r"[\"']git[\"']?[\s,]+(?:[\"']?-[Cc][\"']?[\s,]+[\"']?[^\"',\s]+[\"']?[\s,]+)*[\"']?push\b"
@@ -453,6 +454,10 @@ MESSAGES = {
     "Push from the clone to an explicit fork remote and a literal branch, or: "
     + ROUTE
     + ".",
+    "push-https": "{0}: a push over HTTPS needs a token, and an agent never handles "
+    "one or hands one to the user. Push over SSH: git remote set-url <remote> "
+    "gitea@src.opensuse.org:<owner>/<repo>.git (ssh -T gitea@src.opensuse.org "
+    "checks the key).",
     "stamp": "{0}: only target-gate.sh writes its stamps. Run target-gate.sh DIR "
     "--build (or --remote), then target-gate.sh DIR --review FILE.",
     "emulated-build": "{0}: that build is emulated, and builds are native only. "
@@ -477,6 +482,12 @@ MESSAGES = {
     "the command literally.",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
     "message inline, or write its file in one call and file the request in the next.",
+    "pr-message": "{0}: a PR's title is one headline of ≤160 characters saying what it "
+    "does, and its description takes a request message's brevity: ≤160 characters of "
+    'prose, "- " lines of ≤100, 1000 in all. Build, gate and review status go to the '
+    'user, not here (references/request-text.md "SR and PR messages").',
+    "pr-message-unknown": "cannot read {0} now, so it is refused. Pass the text "
+    'inline, or write its file in one call and pass "$(cat FILE)" in the next.',
     "request-target": "{0}: submit to the devel project Factory names for the package "
     "(scripts/devel-packages.sh lists it beside each name), or to the project a link "
     "points at, never to the project a sweep went through.",
@@ -545,6 +556,10 @@ ASKS = {
     "gate-stamp": "{0}. Run scripts/gate.sh in the checkout, commit in the next "
     "call, and file once gate.sh --review recorded the change review's PASS.",
 }
+# The read a tea comment with no subcommand and no body may have meant.
+COMMENT_READ = (
+    "To read them: tea comments list --login src.opensuse.org --repo OWNER/NAME N."
+)
 
 
 # Credentials a message may echo from a remote URL or a command: a URL's
@@ -597,10 +612,10 @@ class Asked(str):
     ask = True
 
 
-def ask(ctx, rule, detail):
+def ask(ctx, rule, detail, hint=""):
     """Record that the call needs the user's go; judging goes on, and a
-    refusal anywhere in the call still wins."""
-    msg = redact(f"ASK [{rule}] " + ASKS[rule].format(detail))
+    refusal anywhere in the call still wins. hint: a sentence to append."""
+    msg = redact(f"ASK [{rule}] " + ASKS[rule].format(detail) + (hint and " " + hint))
     if msg not in ctx.asks:
         ctx.asks.append(msg)
 
@@ -847,30 +862,97 @@ def request_message(run, lit, ctx, cwd):
         if flag not in ("-m", "--message", "-F", "--file"):
             continue
         is_file = flag in ("-F", "--file")
-        texts = [word]
-        if is_file:
-            names = lit_texts(word, ctx, cwd) or [None]
-            outs = [lstdin if f in STDIN else f and ("files", [f]) for f in names]
-            texts = [t for o in outs for t in piped(o, ctx, cwd) or [None]]
-        texts = [lit_texts(t, ctx, cwd) if t is not None else None for t in texts]
-        texts = None if None in texts else [t for ts in texts for t in ts]
-        if texts is None and not is_file:  # too many spellings: fine if all short
-            top = lit_texts(word, ctx, cwd, longest=True)
-            texts = top if top and len(top[0].strip()) <= 100 else None
+        texts = message_texts(word, ctx, cwd, is_file, lstdin)
         if texts is None:
-            what = "a command substitution" if SUB_WORD.search(word) else word
-            what = ("stdin" if word in STDIN else f"-F {word}") if is_file else what
-            what = what.translate(UNLITERAL)
-            fresh = written_by_call(word.translate(UNLITERAL), ctx, cwd)
-            if fresh:
-                what += f": {fresh} is written by this same call"
-            elif (
-                ctx.written
-            ):  # a substitution hides its file: name what the call writes
-                what += "; this call also writes " + ", ".join(sorted(ctx.written)[:2])
+            what = unread(word, ctx, cwd, is_file)
             block("request-message-unknown", f"the osc {sub} message ({what})")
         for fault in filter(None, map(message_fault, texts)):
             block("request-message", f"an osc {sub} message {fault}")
+
+
+def message_texts(word, ctx, cwd, is_file=False, stdin=None):
+    """Every text a literal-aware message word stands for -- for is_file, what
+    the file it names (or stdin) holds -- or None when one cannot be read now."""
+    texts = [word]
+    if is_file:
+        names = lit_texts(word, ctx, cwd) or [None]
+        outs = [stdin if f in STDIN else f and ("files", [f]) for f in names]
+        texts = [t for o in outs for t in piped(o, ctx, cwd) or [None]]
+    texts = [lit_texts(t, ctx, cwd) if t is not None else None for t in texts]
+    texts = None if None in texts else [t for ts in texts for t in ts]
+    if texts is None and not is_file:  # too many spellings: fine if all short
+        top = lit_texts(word, ctx, cwd, longest=True)
+        texts = top if top and len(top[0].strip()) <= 100 else None
+    return texts
+
+
+def unread(word, ctx, cwd, is_file=False):
+    """A message word message_texts() cannot read, as a refusal names it."""
+    what = "a command substitution" if SUB_WORD.search(word) else word
+    what = ("stdin" if word in STDIN else f"-F {word}") if is_file else what
+    what = what.translate(UNLITERAL)
+    fresh = written_by_call(word.translate(UNLITERAL), ctx, cwd)
+    if fresh:
+        what += f": {fresh} is written by this same call"
+    elif ctx.written:  # a substitution hides its file: name what the call writes
+        what += "; this call also writes " + ", ".join(sorted(ctx.written)[:2])
+    return what
+
+
+# The options of tea pulls create that carry the PR's text, and its others that
+# take a value; git-obs pr create's long options, which argparse takes by prefix.
+PR_TEXT = {"--title": "title", "-t": "title", "--description": "description"}
+PR_TEXT["-d"] = "description"
+TEA_CREATES = {(p, c) for p in ("pr", "pulls", "pull") for c in ("create", "c")}
+TEA_CREATE_VALUED = {"--head", "--base", "-b", "--topic", "--assignees", "-a"}
+TEA_CREATE_VALUED |= {"--labels", "-L", "--referenced-version", "-v", "--milestone"}
+TEA_CREATE_VALUED |= {"-m", "--deadline", "-D", "--output", "-o"}
+GIT_OBS_FLAGS = ("--self", "--separate-requests", "--dry-run", "--allow-empty")
+GIT_OBS_CREATE = GIT_OBS_FLAGS + ("--title", "--description", "--source", "--target")
+GIT_OBS_CREATE += ("--source-owner", "--source-repo", "--source-branch")
+GIT_OBS_CREATE += ("--target-owner", "--target-repo", "--target-branch")
+GIT_OBS_CREATE += ("--allow-maintainer-edit",)
+
+
+def pr_message(tool, args, largs, ctx, cwd):
+    """A PR title or description that message_fault() faults, or one that
+    cannot be read now, towards any repository. tool: "tea", whose pulls
+    create (pr c) carries them, args with its long options as --, or
+    "git-obs" (pr create). largs: args as literal-aware text, or None."""
+    if tool == "tea":
+        words = tea_words(args)
+        if tuple(words[:2]) not in TEA_CREATES:
+            return
+        start, cmd = 0, " ".join(["tea", *words[:2]])
+    else:
+        rest = git_obs_rest(args)
+        if [a for a in rest if a[:1] != "-"][:2] != ["pr", "create"]:
+            return
+        start, cmd = len(args) - len(rest), "git-obs pr create"
+    if largs is None or len(largs) != len(args):  # any $ or backtick is unknown
+        largs = [literal(a) if not VARIABLE.search(a) else a for a in args]
+    i = start
+    while i < len(args):
+        a = args[i] if tool == "tea" else long_prefix(args[i], GIT_OBS_CREATE)
+        k, eq, _ = a.partition("=")
+        i += 1
+        if a == "--":
+            break
+        if k in PR_TEXT and (tool == "tea" or k in GIT_OBS_CREATE):
+            word = largs[i - 1].partition("=")[2] if eq else "".join(largs[i : i + 1])
+            i += 0 if eq else 1
+            named = f"the {cmd} {PR_TEXT[k]}"
+            texts = message_texts(word, ctx, cwd)
+            if texts is None:
+                block("pr-message-unknown", f"{named} ({unread(word, ctx, cwd)})")
+            for fault in filter(None, map(message_fault, texts)):
+                block("pr-message", f"{named} {fault}")
+        elif not eq and (
+            k in TEA_VALUED | TEA_CREATE_VALUED
+            if tool == "tea"
+            else k in GIT_OBS_CREATE and k not in GIT_OBS_FLAGS
+        ):
+            i += 1
 
 
 def written_by_call(word, ctx, cwd):
@@ -885,10 +967,12 @@ def written_by_call(word, ctx, cwd):
     return None
 
 
-# Status meant for the user that keeps landing in requests: never a reviewer's business.
+# Status meant for the user that keeps landing in requests and PRs: never a
+# reviewer's business. GREEN and PASS are verdict words, so only in capitals.
 WORK_NOTE = re.compile(
     r"\b(?:not done|bugwarden|vul[- ](?:sweep|bug cross-check)|(?:builds?|built) green"
-    r"|still building|this env(?:ironment)?|sub-?agents?|no (?:bugzilla )?access)\b",
+    r"|still building|this env(?:ironment)?|sub-?agents?|no (?:bugzilla )?access"
+    r"|gate\.sh|adversarial review|review (?-i:PASS)|(?-i:GREEN))\b",
     re.I,
 )
 BARE_FORWARD = re.compile(
@@ -2128,7 +2212,13 @@ def comment_rules(name, run, ctx, cwd):
         ):
             why = tea_comment(args, ctx, cwd)
             if why:
-                ask(ctx, "comment", f"tea {words[0]}: {why}")
+                # No subcommand and no body: tea still adds one, but a read was meant.
+                verb = words[1:2] in (
+                    [w] for w in ("add", "a", "edit", "e", "delete", "rm")
+                )
+                body = any(a.split("=")[0] in ("-d", "--description") for a in args)
+                hint = "" if verb or body or len(words) > 2 else COMMENT_READ
+                ask(ctx, "comment", f"tea {words[0]}: {why}", hint)
         if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] in (
             [w] for w in ("review", "approve", "lgtm", "a", "reject", "reply")
         ):
@@ -4027,6 +4117,11 @@ def check_push(args, ctx, cwd, gargs, send=False):
                 "push-pr-head",
                 f"{owner}:{head.get('ref')} heads open PR pool/{repo}#{pr.get('number')}",
             )
+    # Last, so a push the pool rules refuse keeps its reason.
+    if HTTPS.match(url):
+        block(
+            "push-https", f"a push to {url if url == remote else f'{remote} ({url})'}"
+        )
 
 
 def current_branch(cwd, gargs):
@@ -4133,7 +4228,8 @@ def open_pool_prs(ctx, repo):
     return data
 
 
-def git_command(argv, ctx, cwd):
+def git_command(argv, ctx, cwd, lit=None):
+    """lit: argv as literal-aware text, or None."""
     i, gargs = 1, []
     while i < len(argv) and argv[i].startswith("-"):
         a = argv[i]
@@ -4155,6 +4251,8 @@ def git_command(argv, ctx, cwd):
     elif sub[:1] == ["obs"]:
         ln = " ".join(["git-obs", *sub[1:]])
         tool_rules(ln, ctx, cwd)
+        lsub = lit[i + 1 :] if lit and len(lit) == len(argv) else None
+        pr_message("git-obs", sub[1:], lsub, ctx, cwd)
         wide = " ".join([ln, *expansions(sub[1:], ctx, cwd)])
         api_rules(wide, ctx, cwd, reads=git_obs_reads(sub[1:]))
         comment_rules("git-obs", ["git-obs", *sub[1:]], ctx, cwd)
@@ -4641,17 +4739,20 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         reads = only_reads("tea", args)
         tea_api_merge(wide, ctx, here, reads)
         tool_rules(" ".join(["tea", *args]), ctx, here, argv=True)
+        largs = lrun and [TEA_LONG.sub("--", a) for a in lrun[1:]]
+        pr_message("tea", args, largs, ctx, here)
         if TEA_API.search(wide) and "pulls" in wide and not reads:
             if pool_or_unknown(wide, ctx, here, cmd=True):
                 block("create-tea-api", "a tea api write to pool pulls")
         comment_rules("tea", ["tea", *args], ctx, here)
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
+        pr_message("git-obs", run[1:], lrun and lrun[1:], ctx, here)
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here)
     elif name == "git":
-        gparts = git_command(run, ctx, here)
+        gparts = git_command(run, ctx, here, lrun)
     elif name == "osc":
         ctx.apiurl = osc_apiurl(run, ctx, here)
         obs_prefetch(run, ctx, here)

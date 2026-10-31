@@ -44,17 +44,22 @@ clone_() {
   for r in "$@"; do git -C "$d" remote add "${r%%=*}" "${r#*=}"; done
 }
 F=https://src.opensuse.org
-clone_ "$work/clone" leap-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
+# Pushes go over SSH: the clones whose pushes pass have SSH remotes, since a push over
+# HTTPS is refused (push-https) whatever the pool rules say.
+G=gitea@src.opensuse.org:
+clone_ "$work/clone" leap-16.0 origin=$F/pool/tesseract-ocr.git fork=${G}someone/tesseract-ocr.git
 git -C "$work/clone" branch tess-88053-16.0
 clone_ "$work/track" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
 git -C "$work/track" config branch.tess-88053-16.0.pushRemote fork
-clone_ "$work/other" factory origin=$F/AI/other-pkg.git fork=$F/someone/other-pkg.git
-clone_ "$work/devel" factory origin=$F/javascript/js-pkg.git fork=$F/someone/js-pkg.git
+clone_ "$work/other" factory origin=${G}AI/other-pkg.git fork=${G}someone/other-pkg.git
+clone_ "$work/devel" factory origin=${G}javascript/js-pkg.git fork=${G}someone/js-pkg.git
+clone_ "$work/https" electron-44 origin=$F/nodejs/nodejs-electron.git fork=$F/someone/nodejs-electron.git
+clone_ "$work/tokfork" update-1 "fork=https://user:tok3n@${F#https://}/someone/x.git"
 clone_ "$work/broken" leap-16.0 fork=$F/someone/broken-pkg.git
 clone_ "$work/many" leap-16.0 fork=$F/someone/many-prs.git
 clone_ "$work/odd" leap-16.0 fork=$F/someone/odd-pkg.git
 clone_ "$work/github" main origin=https://github.com/example/tool.git
-clone_ "$work/stranger" leap-16.0 fork=$F/stranger/tesseract-ocr.git
+clone_ "$work/stranger" leap-16.0 fork=${G}stranger/tesseract-ocr.git
 # A local branch that pushes to a differently named remote branch.
 clone_ "$work/mapped" wip-tess fork=$F/someone/tesseract-ocr.git
 git -C "$work/mapped" config branch.wip-tess.remote fork
@@ -63,7 +68,7 @@ git -C "$work/mapped" config push.default upstream
 clone_ "$work/refspec" leap-16.0 fork=$F/someone/tesseract-ocr.git
 git -C "$work/refspec" config remote.fork.push 'refs/heads/*:refs/heads/*'
 # On the PR branch with no push config (a bare push goes to origin), and with remote.pushDefault.
-clone_ "$work/onpr" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
+clone_ "$work/onpr" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=${G}someone/tesseract-ocr.git
 clone_ "$work/pdef" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/someone/tesseract-ocr.git
 git -C "$work/pdef" config remote.pushDefault fork
 # A remote URL that carries a token, which no refusal may print.
@@ -205,7 +210,8 @@ print(text)' "$1" "$FX/events.json" CLONE="$work/clone" TRACK="$work/track" \
     GITHUB="$work/github" STRANGER="$work/stranger" MAPPED="$work/mapped" \
     REFSPEC="$work/refspec" ONPR="$work/onpr" PDEF="$work/pdef" PLAIN="$work/plain" \
     WORK="$W" SKILL="$S" BARE="$work/barerepo" TOKENED="$work/tokened" OSC="$work/osc" \
-    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME" LINKS="$work/links"
+    DEVEL="$work/devel" MSGS="$FX/messages" HOME="$HOME" LINKS="$work/links" \
+    HTTPS="$work/https" TOKFORK="$work/tokfork"
 }
 
 # case_ <event> <rc> <rule|-> <detail> [VAR=value ...]
@@ -318,13 +324,26 @@ case_ lfs-push-all-fork-pr-clone 0 - ""
 case_ push-force-lease-devel    0 - ""
 case_ push-force-lease-fork     0 - ""
 case_ push-force-lease-pool-head 2 push-pr-head "pool/js-pkg#7"
+# An HTTPS push needs a token, which an agent never handles: over SSH it passes as before.
+case_ push-https-url            2 push-https   "a push to $F/someone/other-pkg.git"
+case_ push-http-url             2 push-https   "a push to http://src.opensuse.org/someone/other-pkg.git"
+case_ push-https-remote         2 push-https   "a push to fork ($F/someone/nodejs-electron.git)"
+case_ push-https-origin         2 push-https   "git remote set-url <remote> gitea@src.opensuse.org:<owner>/<repo>.git"
+case_ push-ssh-url-other        0 - ""
+case_ push-ssh-scheme-other     0 - ""
+# The fix the refusal names, in the same call: the push then goes over SSH.
+case_ push-https-set-url-first  0 - ""
 echo "--- a refusal prints no credential"
 case_ push-token-remote         2 push-pool    "a push to https://user:[REDACTED]@src.opensuse.org/pool/x.git"
 case_ push-token-query          2 push-unknown "x.git?access_token=[REDACTED] is named by a variable"
+case_ push-https-token-remote   2 push-https   "a push to fork (https://user:[REDACTED]@src.opensuse.org/someone/x.git)"
+# A token in the push URL itself: refused as an HTTPS push, which says what to do instead.
+case_ push-https-token-url      2 push-https   "a push to https://someone:[REDACTED]@src.opensuse.org/someone/other-pkg.git"
 # Whatever a message echoes is redacted, a script path included.
 case_ redact-authorization-token 2 exec-unreadable "Authorization: token [REDACTED]"
 case_ redact-bearer             2 exec-unreadable "Bearer [REDACTED]"
-for name in push-token-remote push-token-query redact-authorization-token redact-bearer; do
+for name in push-token-remote push-token-query push-https-token-remote push-https-token-url \
+  redact-authorization-token redact-bearer; do
   out="$(ev "$name" | python3 "$GUARD" 2>&1)"
   grep -qF tok3n <<<"$out" && fail "$name: the refusal prints the token" || pass "$name: token redacted"
 done
@@ -576,7 +595,9 @@ case_ create-curl-update-branch 2 create-api       "a write to pool pulls"
 case_ create-curl-data          2 create-api       "a write to pool pulls"
 case_ create-python-argv        2 create-api       "a write to pool pulls"
 case_ create-python-requests    2 create-api       "a write to pool pulls"
-case_ create-ai-mistral-vibe    0 - ""
+# Past the pool rules, the PR's text is held to a request message's (see below):
+# this real body, build status included, is refused on any repository.
+case_ create-ai-mistral-vibe    2 pr-message "create description with 357 characters of prose"
 case_ create-git-obs-ai         0 - ""
 case_ create-git-obs-target-owner-ai 0 - ""
 case_ create-tea-api-ai         0 - ""
@@ -1106,12 +1127,36 @@ case_ msg-note-this-env          2 request-message 'with a work note ("this envi
 case_ msg-note-subagent          2 request-message 'with a work note ("sub-agent")'
 case_ msg-note-no-access         2 request-message 'with a work note ("no bugzilla access")'
 case_ msg-note-in-list           2 request-message 'with a work note ("builds green")'
+case_ msg-note-gate-sh           2 request-message 'with a work note ("gate.sh")'
 # A forward says what it forwards.
 case_ msg-forward-bare           2 request-message "that only says it forwards"
 case_ msg-forward-with-content   0 - ""
 case_ msg-forward-described     0 - ""
 # A message file the same call writes cannot be read yet: the refusal says so.
 case_ msg-same-call-file         2 request-message-unknown "/var/tmp/sr-msg.txt is written by this same call"
+
+echo "--- a PR's title and description are held to a request message's rules, on any repository"
+# A real body: build status, the gate's and the review's verdicts, the agent's home project.
+case_ pr-create-work-notes        2 pr-message "create description with 339 characters of prose"
+case_ pr-create-terse             0 - ""
+case_ pr-create-green-decoy       0 - ""
+case_ pr-create-note-gate         2 pr-message 'description with a work note ("gate.sh")'
+case_ pr-create-note-adversarial  2 pr-message 'description with a work note ("Adversarial review")'
+case_ pr-create-note-review-pass  2 pr-message 'description with a work note ("review PASS")'
+case_ pr-create-note-green        2 pr-message 'description with a work note ("GREEN")'
+case_ pr-create-title-note        2 pr-message 'title with a work note ("still building")'
+case_ pr-create-title-long        2 pr-message "title with 174 characters of prose"
+case_ pr-create-tea-short-opts    2 pr-message 'description with a work note ("gate.sh")'
+case_ pr-create-tea-one-dash-eq   2 pr-message 'description with a work note ("review PASS")'
+case_ pr-create-git-obs-notes     2 pr-message 'description with a work note ("GREEN")'
+case_ pr-create-git-obs-abbrev    2 pr-message 'description with a work note ("adversarial review")'
+case_ pr-create-git-space-obs     2 pr-message "description with 380 characters of prose"
+case_ pr-create-git-obs-terse     0 - ""
+# Text it cannot read now is refused; a file an earlier call wrote is read.
+case_ pr-create-sub-same-call     2 pr-message-unknown "this call also writes /var/tmp/pr-body.md"
+case_ pr-create-var-unset         2 pr-message-unknown "(\$BODY)"
+case_ pr-create-sub-readable      0 - ""
+case_ pr-create-sub-readable-long 2 pr-message "description with 380 characters of prose"
 
 echo "--- a submit request goes to the devel project Factory's _meta names"
 case_ sr-target-swept            2 request-target "libpqxx's devel project is server:database:postgresql (Factory _meta), not server:database"
@@ -1247,6 +1292,17 @@ case_ comment-reply-own-request   0 - ""
 case_ comment-api-own-request     0 - ""
 ask_ comment-own-and-others       comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
 case_ comment-tea-comments-list 0 - ""
+case_ comment-tea-list-read       0 - ""
+case_ comment-tea-review-comments 0 - ""
+# Without a subcommand tea adds a comment, so a read spelled that way asks, and the
+# ask says how to read; a comment that carries its body gets no such hint.
+ask_ comment-tea-issue-flag       comment "tea comments: tea's option --issue is not judged"
+ask_ comment-tea-issue-flag       comment "To read them: tea comments list --login src.opensuse.org --repo OWNER/NAME N."
+for name in comment-tea-others-item comment-tea-pkg-other comment-tea-description; do
+  out="$(ev "$name" | python3 "$GUARD" 2>&1)"
+  grep -qF "To read them" <<<"$out" && fail "$name: a comment with a body gets the read hint" \
+    || pass "$name: no read hint beside a body"
+done
 # A tea comment on an issue or PR the user opened, or in a repository the user
 # maintains -- judged only in the plain form: --login src.opensuse.org and a literal
 # --repo owner/name that is no local path.
@@ -2078,7 +2134,7 @@ if [ -z "$tsrun" ]; then echo "SKIP: opencode-v2 plugin run (no bun, no node tha
   mkdir -p "$HOME/.claude/hooks" && cp "$GUARD" "${GUARD%/*}/_pr_guard.py" "$HOME/.claude/hooks/"
   cp "$V2PLUGIN" "$work/v2.mts"
   for d in pool AI; do
-    git init -q -b main "$work/v2-$d" && git -C "$work/v2-$d" remote add origin "https://src.opensuse.org/$d/x.git"
+    git init -q -b main "$work/v2-$d" && git -C "$work/v2-$d" remote add origin "gitea@src.opensuse.org:$d/x.git"
   done
   cat >"$work/drive.mjs" <<'JS'
 const [plugin, loc, pool] = process.argv.slice(-3)

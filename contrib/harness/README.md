@@ -470,7 +470,8 @@ The guard keeps every agent from opening, updating or merging a `pool/` PR on
 src.opensuse.org outside `pool-pr.sh` (through `tea`, `git-obs` or `git obs`, or the API),
 merging any other src.opensuse.org PR the same ways (`gh` is not judged; a merge URL on a
 pool or unnamed repository is refused however it is sent, and elsewhere counts unless the
-call provably only reads), pushing to a branch that heads an open pool PR, writing a
+call provably only reads), pushing to a branch that heads an open pool PR or to
+src.opensuse.org over HTTPS (a token would carry it; SSH carries the login), writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
 `--nodevelproject` or `--yes`, a request through the API (`/request?cmd=create`) , a submit request to a project other
@@ -479,9 +480,11 @@ of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branc
 package links to a project other than the target (a link within the branch's own project
 passes), or one whose message
 has over 160 characters of prose (every line but a `- ` list item), a list line over 100
-characters or over 1000 in all, a work note for the user (build or sweep status, the
-session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
-`echo`/`printf`/`cat` substitution; one it cannot read is refused), or writing into a
+characters or over 1000 in all, a work note for the user (build, sweep, gate or review
+status, the session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
+`echo`/`printf`/`cat` substitution; one it cannot read is refused), opening a PR on any
+repository whose title or description breaks the same rules (`tea pulls create`,
+`git-obs pr create`; the title is the headline), or writing into a
 `*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
 another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
 or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
@@ -503,7 +506,9 @@ yourself. It asks before:
 - **a comment or review on OBS or src.opensuse.org**: `osc comment create` or `delete`, `tea
   comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
   review approve`/`decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
-  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`. A comment
+  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`; a `tea
+  comment` with no subcommand and no body, which tea still posts, also names the read
+  (`tea comments list`). A comment
   on an OBS request you filed (a reply to its reviewers), or whose every target package you maintain (a person entry, not a group)
   runs, with the user's go left to the agent (`osc comment create request
   N`, or the API's `/comments/request/N`). So does a `tea comment` (or a `tea api` POST to
