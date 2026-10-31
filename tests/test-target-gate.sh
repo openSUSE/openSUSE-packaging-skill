@@ -100,6 +100,9 @@ case "$sub" in
     case "$prj" in *16.1) rel=160100;; *) rel=160000;; esac
     echo "${FAKE_RPMCONFIG:-rpm-config-SUSE-20250328-$rel.2.2 1743178964-noarch}" > "$root/installed-pkg/rpm-config-SUSE"
     v=finished; [ "${FAKE_BUILD:-}" = failed ] && v=failed
+    # As obs-build leaves a chroot root: .build.packages links to the rpmbuild tree.
+    mkdir -p "$root/home/abuild/rpmbuild/SRPMS" && ln -s home/abuild/rpmbuild "$root/.build.packages"
+    [ "$v" = failed ] || : > "$root/home/abuild/rpmbuild/SRPMS/${spec%.spec}-1.0-0.src.rpm"
     readlink /proc/self/fd/0 > "$FAKE/build-stdin"
     { printf '[    0s] Using BUILD_ROOT=%s\n' "$root"
       [ -n "${FAKE_NO_RECIPE:-}" ] || printf '[    1s] processing recipe %s/%s ...\n' "${FAKE_RECIPE_DIR:-$(pwd -P)}" "$spec"
