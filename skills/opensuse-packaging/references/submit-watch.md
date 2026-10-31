@@ -83,6 +83,8 @@ After committing, OBS reschedules every enabled `<repo, arch>` target. `osc resu
 
 Rule of thumb: only `failed`, `unresolvable`, and `broken` are real problems. `succeeded*` and `finished` look alarming but usually aren't — always run `osc results --verbose` before reporting a failure, and prefer the verbose form when communicating status back to the user.
 
+**Report status from a read made in that turn:** "blocked" names its `needed by <X>`, "nothing failing" follows reading every line (electron r6 was reported blocked by churn after failing in `gn gen`).
+
 ### `osc rbl` — remote build log
 
 `osc rbl <repo> <arch>` (when invoked inside a package checkout) streams the build log for that target. Aliases / siblings:
