@@ -178,6 +178,21 @@ out="$(bash "$GATE" "$work/notice-sub" 2>&1)"
 grep -qF "## spec-notices: rc=0" <<<"$out" && pass "one notice per subpackage License tag: green" \
   || { fail "one notice per subpackage License tag"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# A prebuilt binary among the sources is its own red gate; an exception line
+# naming it turns that gate green.
+mkdir -p "$work/binary"
+printf 'Name: p\nLicense: MIT\n' > "$work/binary/p.spec"
+printf '\177ELF\002\001\001\000rest' > "$work/binary/esbuild"
+out="$(XDG_CACHE_HOME="$work/cache" bash "$GATE" "$work/binary" 2>&1)"
+grep -qF "## source-binaries: rc=3" <<<"$out" && grep -qF "HIT esbuild: ELF" <<<"$out" \
+  && grep -q "^VERDICT: RED — .*source-binaries" <<<"$out" \
+  && pass "a prebuilt binary in the sources: source-binaries is red" \
+  || { fail "prebuilt binary in the sources"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf '# Source-Binary-Exception: esbuild -- test-data: a fixture\n' >> "$work/binary/p.spec"
+out="$(XDG_CACHE_HOME="$work/cache" bash "$GATE" "$work/binary" 2>&1)"
+grep -qF "## source-binaries: rc=0" <<<"$out" && pass "the binary named by an exception: source-binaries is green" \
+  || { fail "excepted binary"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 # Every Patch line needs a PATCH-* tag that names its file; an UPSTREAM tag
 # also says where upstream has it (a devel reviewer asked on sr#1385879).
 # ptag <name> <rc> <expected line> [<copy of pt-ok as a second spec>] < spec body
