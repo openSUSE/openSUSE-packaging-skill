@@ -122,3 +122,12 @@ For an **autotools** package, whether you still need `autoconf`/`automake`/`libt
 - A **real `make dist` release tarball** (a maintainer-uploaded release asset) ships a pre-generated `./configure` — so `autoreconf` and the autoconf/automake/libtool BuildRequires can be **dropped**.
 
 **Check:** extract the tarball and `ls configure Makefile.in aclocal.m4`. `configure` present → drop the regen tooling; absent (only `configure.ac`/`autogen.sh`) → keep it. (Real case: libiscsi 1.20.3 — no release asset, so the tag archive lacked `configure`; autoconf/automake/libtool and the `autoreconf -fiv` were kept. nbd 3.27.1 — same situation, autoreconf added in `%build`.) Run the regen in whichever phase the spec already uses (`%prep` is typical; `%build` before `%configure` is also fine). Note that this distinction also means **the SR's `factory-auto` download check still verifies the auto-archive URL** — that's fetchable on a standard GitHub port, so it passes.
+
+## Packages that ship a generator (`pre_checkin.sh`)
+
+Some packages generate part of their own sources with a script they carry, `pre_checkin.sh`: the flavour specs of a multi-spec package, the per-arch lists of the patterns packages, one `.changes` copied to every sibling spec. Those files are outputs; the script and its inputs are what you edit.
+
+- **Run it before you finalize any change, and check the run:** it exits 0; every file it rewrote is in the change (`osc status`, or `git status`, right after the run); a second run leaves no diff. A generator that is not idempotent is a bug to fix before anything ships.
+- **Never hand-edit a generated file.** When the output is wrong, change the generator, its input or its skip list, and regenerate: a hand edit drifts from what the next run writes. Real case: patterns-server SR 1392454 copied its changes into `pattern-definition-32bit.txt` by hand and missed the postfix/dovecot additions its own spec change made.
+- **A generator can write more than the package owns.** The patterns generators emit sections the spec disowns, so their raw output is not shippable as-is; reconcile by extending the skip list until a plain run is, never by trimming the output by hand (patterns-base SR 1393422 is that regenerate-and-reconcile form).
+- **It is the package's code, run on your host as you.** Run it only in a checkout you are changing yourself, never on someone else's submission or a checkout you are reviewing — the same line as `osc service run` (`references/untrusted-content.md` "The two sharp local-execution vectors").
