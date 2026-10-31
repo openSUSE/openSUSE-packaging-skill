@@ -106,14 +106,14 @@ spec-cleaner invocation, the four always-pass flags, the documented over-expansi
 ### The build root — rerunning, artifacts, inspecting the RPMs
 
   - **`--no-verify` is a different switch** — it skips GPG signature verification of the packages installed into the build root — and stays opt-in by the user only.
-- After a failed build, the build root is preserved at `/var/tmp/build-root/<repo>-<arch>/home/abuild/rpmbuild/BUILD/<pkg>-<ver>-build/<pkg>-<ver>/`. Use it to reproduce and diagnose runtime failures (e.g. running the failing binary directly, inspecting intermediate files) rather than re-running the full build to gather one more line of output.
+- After a failed chroot build, the build root is preserved at `/var/tmp/build-root/<repo>-<arch>/home/abuild/rpmbuild/BUILD/<pkg>-<ver>-build/<pkg>-<ver>/`. Use it to reproduce and diagnose runtime failures (e.g. running the failing binary directly, inspecting intermediate files) rather than re-running the full build to gather one more line of output.
 - **HARD RULE: when *rerunning* `osc build` after a failed build, always pass `--clean`.** A failed build leaves the root in a partial/dirty state — half-installed deps, a stale CMake cache (old `-D` values, cached `find_package` results), leftover object files — and reusing it can mask the real fix or surface misleading errors that have nothing to do with your change. `osc build --clean ...` rebuilds the root from a well-defined state so the rerun actually tests what you changed. The *first* build of a package in a session can reuse an existing root (faster), but the moment a build fails, every subsequent rerun for that package uses `--clean` until it goes green. (If iterating only on `%check`/`%install` after a known-good `%build`, the preserved root is still useful for `osc chroot` reproduction — that's inspection, not a rerun.)
 - **To enumerate installed files (for `%files` clean-up, replacing a `%{_bindir}/*` glob with explicit entries, etc.), query the previous build's RPM with `rpm -qlp`** — do not `find` or `ls` the `BUILDROOT/` tree. The buildroot is owned by the `abuild` user (uid 399) and often unreadable; the RPM under `RPMS/<arch>/` is authoritative for "what got installed" and has no permissions hassle. Example:
   ```
-  rpm -qlp /var/tmp/build-root/<repo>-<arch>/home/abuild/rpmbuild/RPMS/<arch>/<name>-*.<arch>.rpm \
+  rpm -qlp <build-root>/.build.packages/RPMS/<arch>/<name>-*.<arch>.rpm \
       | grep -E "^/usr/bin/|/man[15]/" | sort
   ```
-  For a multi-subpackage build, run once per subpackage RPM in the same dir (each has its own `.rpm`).
+  For a multi-subpackage build, run once per subpackage RPM in the same dir (each has its own `.rpm`). Under `build-type=kvm` the build runs inside a VM image (`<build-root>/img` unless oscrc sets `build-device`) and only its packages come back, to `<build-root>/.mount/.build.packages`; a `home/abuild` tree in that root is an earlier chroot build's.
 - **Not every rpmlint `E:` is actionable — weigh it against what the package *does*.** A package that compiles software *at runtime* (e.g. kcbench, which builds a Linux kernel to benchmark the machine) legitimately `Requires:` `*-devel` packages (`libelf-devel`, `openssl-devel`), which trips `E: devel-dependency` and `E: explicit-lib-dependency`. Those are false positives here — the headers really are needed at run time — and rpmlint scores them at **badness 1 each**, far below the 999 abort threshold, so the build still passes. Don't "fix" a correct dependency to silence rpmlint; confirm the badness total stays under threshold and move on. (Contrast with the relative-RPATH error, badness 10000, which *must* be fixed.)
 
 ### Python packages: local-build gotchas
@@ -138,7 +138,7 @@ The same gate leaves Block 2 **and** gates any commit to a devel project, not ju
 something the others structurally cannot:
 
 1. **A clean `osc build` in the chosen mode** (local, or its OBS log in OBS-ONLY mode — "Build modes" above) — read the rpmlint summary and let `%check` run. `scripts/build-summary.sh`'s
-   exit code *is* the verdict (0 green / 1 failed / 2 no log / 3 never concluded); gate on it rather
+   exit code *is* the verdict (0 green / 1 failed / 2 no log / 3 no verdict); gate on it rather
    than eyeballing a log tail, which is the mechanical enforcement of "never state a build result you
    have not read". In a fan-out this means **every** package, **every** arch the repo enables
    (including `i586`) and every `:test`/multibuild flavor.

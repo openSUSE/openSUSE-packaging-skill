@@ -31,24 +31,54 @@
 #   exit 2  usage error / no RPMs found
 #
 # Usage: soname-check.sh <file.rpm> [file.rpm ...]
-#        soname-check.sh --build-root <dir>   # audit that root's RPMS/ tree
-#        soname-check.sh                      # auto-detect the last osc build
+#        soname-check.sh --build-root <dir>   # audit that root's built RPMs
+#        soname-check.sh                      # the newest root under oscrc's build-root
+# A root's built RPMs: .build.packages/RPMS of the build root its log names
+# (<root>/.mount for build-type=kvm), else of <root>/.mount beside <root>/img,
+# else of <root>; a --build-root dir that is no build root is searched whole.
 set -uo pipefail
 
 usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 case "${1:-}" in -h|--help) usage; exit 0;; esac
 
+# A VM build's --clean wipes only .mount, so a chroot tree in the root is stale,
+# and an oscrc build-device leaves no img in the root: the log knows.
+rpmdir_of() {
+  local b
+  b=$(sed -n '/Using BUILD_ROOT=/{s/.*Using BUILD_ROOT=//p;q;}' "$1/.build.log" 2>/dev/null)
+  if [ -n "$b" ]; then echo "$b/.build.packages/RPMS"
+  elif [ -e "$1/img" ] && [ -d "$1/.mount" ]; then echo "$1/.mount/.build.packages/RPMS"
+  else echo "$1/.build.packages/RPMS"; fi
+}
+
 rpms=()
 if [ "${1:-}" = "--build-root" ]; then
   [ -n "${2:-}" ] || { usage; exit 2; }
-  mapfile -t rpms < <(find "$2" -name '*.rpm' ! -name '*debuginfo*' \
+  dir=${2%/}
+  if [ -e "$dir/.build.log" ] || [ -e "$dir/.build.packages" ] || [ -e "$dir/img" ]; then
+    dir=$(rpmdir_of "$dir")
+  fi
+  mapfile -t rpms < <(find "$dir" -name '*.rpm' ! -name '*debuginfo*' \
                       ! -name '*debugsource*' ! -name '*.src.rpm' 2>/dev/null)
 elif [ $# -gt 0 ]; then
   rpms=("$@")
 else
-  # auto-detect: newest RPMS dir under any build root this user owns
-  root="$(ls -dt /var/tmp/build-root*/*/home/abuild/rpmbuild/RPMS 2>/dev/null | head -1)"
-  [ -n "$root" ] || root="$(ls -dt /var/tmp/build-root*/home/abuild/rpmbuild/RPMS 2>/dev/null | head -1)"
+  # The build-root base from oscrc, as build-summary.sh reads it.
+  base=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
+         | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
+  : "${base:=/var/tmp/build-root/%(repo)s-%(arch)s}"
+  # strip trailing path components that are templated (%(package)s etc.)
+  while case "$base" in */*) [[ "${base##*/}" == *'%('* ]];; *) false;; esac; do base=${base%/*}; done
+  : "${base:=/var/tmp/build-root}"
+  newest() {
+    local r d
+    for r in "$@"; do
+      d=$(rpmdir_of "${r%/}")
+      [ -d "$d" ] && printf '%s\n' "$d"
+    done | xargs -r -d '\n' ls -dt 2>/dev/null | head -1
+  }
+  root="$(newest "$base"/*/)"
+  [ -n "$root" ] || root="$(newest "$base")"
   [ -n "$root" ] || { echo "no build root found; pass RPMs explicitly" >&2; exit 2; }
   mapfile -t rpms < <(find "$root" -name '*.rpm' ! -name '*debuginfo*' \
                       ! -name '*debugsource*' 2>/dev/null)
