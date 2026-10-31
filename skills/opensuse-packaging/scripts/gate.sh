@@ -2,7 +2,8 @@
 # The commit/SR gate chain as ONE tool call: the SR target, source_validator,
 # factory-auto's URL check (download_files), spec-cleaner, changes-lint.sh,
 # changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
-# check, the spec header and the patch tags, each run unpiped with its exit
+# check, the spec header, the patch tags and the sources' prebuilt binaries
+# (source-binaries.py), each run unpiped with its exit
 # code read directly, then one VERDICT line. Five separate calls cost five provider
 # steps and five result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
@@ -657,6 +658,13 @@ done
 { grep '^note:' "$log/patch-tags.raw"; grep -v '^note:' "$log/patch-tags.raw"; } >> "$log/patch-tags.txt" 2>/dev/null
 [ $rc -eq 0 ] && echo "OK: every changed patch tagged by name, every UPSTREAM tag with its reference" >> "$log/patch-tags.txt"
 show patch-tags $rc "$log/patch-tags.txt"
+
+# Prebuilt binaries in any file the checkout carries, inside archives too:
+# "build-time only" still ships them in the SRPM (references/specfile-guidelines.md
+# "Spec file — general rules"). nodejs-electron 44.10.0 kept CIPD Go, esbuild and
+# rolldown binaries that way, and the change review passed them.
+"$HERE/source-binaries.py" . > "$log/source-binaries.txt" 2>&1; rc=$?
+show source-binaries $rc "$log/source-binaries.txt"
 
 if [ ${#red[@]} -eq 0 ]; then
   t=""

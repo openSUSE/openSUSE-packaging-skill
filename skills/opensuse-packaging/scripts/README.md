@@ -191,6 +191,10 @@ new entry is prepended to carry it; the same reference without a new entry is re
 and you proceed anyway, but only with the evidence the rule demands — `references/changelog-rules.md`
 "Sanctioned exception 2". Every *other* red guard is a real defect.
 
+## `source-binaries.py`
+
+Prebuilt binaries in the sources, the rule in `references/specfile-guidelines.md` "Spec file — general rules": ELF, PE, Mach-O, `ar` archives (static libraries, `.rlib`, `.deb`), wasm, Java classes and RPMs in every file of the checkout. Archives are streamed member by member through the system `zstd`/`xz`/`gzip`/`bzip2` (tar, cpio/obscpio, zip), one level into nested ones — an npm `.tgz` inside a vendor tarball is where the native addons hide. The trap it closes: "only run at build time, never in an RPM" reads as harmless, and the SRPM still redistributes the binary (nodejs-electron 44.10.0 kept CIPD Go, esbuild and rolldown binaries that way through a passing review). Test corpora hit too — an extractor's sample `.exe`, a loader's test `.dll` in a vendored crate — and pass only by a `test-data` exception line naming them; a format the scan cannot read (a 7z, an encrypted or deflate64 zip member, a truncated test `.gz`, a git-lfs pointer) is UNKNOWN until an exception names it, never clean. Results are cached by the archive's sha256, so a re-gate of a multi-GB tarball costs the hash, not the scan.
+
 ## Bugzilla — no bundled script
 
 Bugzilla has **no bundled script** — **HARD RULE: all bugzilla access (reads AND writes) goes through the connected bugwarden MCP server** (`bugs_quicksearch`, `bug_info`, `bug_comments`, write tools); setup + migration in `references/bugzilla-cve-triage.md` §6, the maintained-packages bug sweep (with its false-positive pruning heuristics) in §1b.
