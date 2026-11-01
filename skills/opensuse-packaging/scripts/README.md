@@ -272,15 +272,18 @@ the mechanics byte-compatible so fixes port both ways.
 
 ## gate.sh
 
-The commit/SR gate chain as ONE tool call: source_validator, changes-lint.sh,
-changes-guard.sh, changes-patches.sh and a one-Legal-Review-Notice-per-License
-check, each run unpiped with its exit code read directly, then one VERDICT line. Five separate calls cost five provider
+The commit/SR gate chain as ONE tool call: the SR target, the tracked files
+(osc checkouts), source_validator, factory-auto's URL check (download_files),
+spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
+one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
+the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
+code read directly, then one VERDICT line. Five separate calls cost five provider
 steps and five result blocks that ride along in context for the rest of the
 session; this costs one. The adversarial change review (agents/changes-review.md)
 still follows — it is a judgement, not a check, and stays outside this script.
 
 Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
-               [--git-base REF] [--build-log FILE] [--cleaner-deviation REASON] [--full]
+               [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
        gate.sh [DIR] --review FILE
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
@@ -302,6 +305,9 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
   --git-base   git checkout: the target's ref for changes-patches and patch-tags
                (a fork PR's upstream is the pushed fork branch, which compares clean)
   --build-log  also run build-summary.sh on this osc build log (verdict only)
+  --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
+               also refuses a prebuilt binary the package ships, whatever its
+               exception line says (firmware alone may ship)
   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
                (references/spec-cleaner.md "Checking a spec file"): name it.
                The gate passes, prints the reason and keeps the diff for the
@@ -314,7 +320,8 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
 Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 the md5 and name of every file osc would commit (no _link, no _service:*), in
 ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
-it. A rerun of the same tree keeps its review.
+it. A rerun of the same tree keeps its review. Nothing tracked (osc mkpac
+before osc add) is red and stamps nothing, and --review refuses it.
 Exit: 0 = every gate green (--review: recorded), 1 = at least one red (VERDICT
       names them; --review: the verdict file is not a PASS of this tree),
       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
@@ -326,7 +333,7 @@ The target comes first. Without `--target` it is Factory's devel project (`devel
 
 `patch-tags` is red on a patch the change adds or edits against the target — absent there, or a different md5 (the target's expanded listing; for a direct commit the committed copy; in git the upstream ref) — whose comment block directly above, past any `%if`, has no `PATCH-{FIX,FEATURE}-{UPSTREAM,OPENSUSE,SLE}` or `PATCH-NEEDS-REBASE` line naming its file (literally or with `%{name}`/`%{version}` and plain `%define`s expanded), and on an UPSTREAM tag that cites no reference: an http(s) URL, `gh#owner/repo#N`, a commit hash or a bug id (`bsc#N`, `boo#N`, `fdo#N`, …). Each spec of a `_multibuild` package counts; a commented-out `#PatchN:` is skipped. A patch the target ships unchanged only gets a `note:` line (31 of 33 sampled Factory specs had untagged ones) — unless the target's spec tags it correctly: that tag cannot be dropped. Without the target's files — a new package, a failed listing, or in git an upstream other than its remote's default branch that already holds HEAD (a pushed fork or topic branch: a fork PR passes `--git-base <target ref>`, which is always taken as the base) — every patch counts as changed. Uncommitted edits on the default branch compare against it as they should. A devel reviewer asked for the tags on sr#1385879; tag one only after finding where it came from (`references/patches.md`).
 
-A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the md5 and name of every file `osc ci` would commit, without `_link` and `_service:*` — in `~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json`, and prints its first 12 characters; a red run deletes the stamp. `--review FILE` records the change review against it: the first non-empty line starts with `PASS` and names that `tree <key12>`, as target-gate.sh's `--review` does for pool PRs. It records the GREEN tree and its review; it is a record, not proof, and a forged PASS line passes it.
+A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the md5 and name of every file `osc ci` would commit, without `_link` and `_service:*` — in `~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json`, and prints its first 12 characters; a red run deletes the stamp. A checkout that tracks no file it still has — a fresh `osc mkpac` before `osc add`, or an added file deleted since — is red (`tracked`) and stamps nothing: its key (`e3b0c44298fc`, the sha256 of nothing, when nothing is tracked) binds no content, so `--review` refuses it too and deletes a stale stamp of no content. `--review FILE` records the change review against it: the first non-empty line starts with `PASS` and names that `tree <key12>`, as target-gate.sh's `--review` does for pool PRs. It records the GREEN tree and its review; it is a record, not proof, and a forged PASS line passes it.
 
 It also runs spec-cleaner itself, the canonical four-flag invocation with a fresh `-o` per spec, so the check happens in every build mode (OBS-ONLY included): an empty diff is green, any diff red unless `--cleaner-deviation REASON` names a documented deviation (the gate then passes, prints the reason and keeps the diff for the change review), and a missing or failing spec-cleaner is red, never "no diff".
 

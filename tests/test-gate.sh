@@ -688,6 +688,8 @@ out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$work/rv.txt" --ent
 mkstamp > /dev/null; og "$work/t-st"
 grep -q "^VERDICT: RED" <<<"$out" && [ ! -e "$SF" ] && pass "a red gate run deletes the stamp" \
   || { fail "red run and the stamp"; printf '%s\n' "$out" | tail -3 | sed 's/^/    /'; }
+grep -qF "## tracked: rc=0" <<<"$out" && pass "a checkout whose files osc tracks: tracked green" \
+  || { fail "tracked checkout: tracked not green"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A GREEN run writes the stamp its GREEN line names: that needs the real OBS
 # services, so only where they are installed.
 if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
@@ -701,6 +703,54 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
     && pass "a GREEN run stamps the tree its verdict names" || { fail "GREEN stamp"; printf '%s\n' "$out" | sed 's/^/    /'; }
 else
   echo "SKIP: GREEN stamp (no OBS source_validator/download_files)"
+fi
+
+# A fresh `osc mkpac` whose files were never `osc add`ed tracks nothing: its
+# tree is the sha256 of nothing, e3b0c44298fc for any content, so a review
+# bound to it binds nothing. Red, nothing stamped, and --review refuses it.
+mkpac() {   # <dir>: `osc mkpac bar` in devel:example, its files written, none added
+  rm -rf "$1"; mkdir -p "$1/.osc"; printf 'bar\n' > "$1/.osc/_package"; printf 'devel:example\n' > "$1/.osc/_project"
+  printf '2.0\n' > "$1/.osc/_osclib_version"; printf '<directory />' > "$1/.osc/_files"
+  printf 'Name:           bar\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
+    > "$1/bar.spec"
+  e "Thu Oct 22" "Initial package" > "$1/bar.changes"
+}
+SB="$work/home/.local/state/opensuse-packaging/gate/obs/bar/devel:example.json"
+EMPTY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+mkpac "$work/t-mkpac"
+out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-mkpac" 2>&1)"
+grep -qF "## tracked: rc=1" <<<"$out" && grep -qF "nothing to stamp: no tracked files (osc add the package files first)" <<<"$out" \
+  && grep -q "^VERDICT: RED — .*tracked" <<<"$out" && [ ! -e "$SB" ] \
+  && pass "fresh mkpac checkout, nothing osc added: red, nothing stamped" \
+  || { fail "fresh mkpac checkout"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Its one tracked file `osc add`ed, then deleted: a name with no content to key.
+mkpac "$work/t-gone"; printf 'bar-1.0.tar.xz\n' > "$work/t-gone/.osc/_to_be_added"
+out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-gone" 2>&1)"
+grep -qF "## tracked: rc=1" <<<"$out" && grep -qF "nothing to stamp: no tracked files (osc add the package files first)" <<<"$out" \
+  && [ ! -e "$SB" ] && pass "only tracked file deleted after osc add: red, nothing stamped" \
+  || { fail "tracked file deleted after osc add"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A GREEN stamp of the empty tree with its review, as gate.sh wrote them before
+# it went red: --review refuses the tree and deletes the stale stamp.
+mkdir -p "$(dirname "$SB")"
+printf '{"project": "devel:example", "package": "bar", "tree": "%s", "files": {}, "verdict": "GREEN", "review": {"verdict": "PASS"}}\n' "$EMPTY" > "$SB"
+echo "PASS — tree ${EMPTY:0:12} — clean" > "$work/rv.txt"
+out="$(HOME="$work/home" bash "$GATE" "$work/t-mkpac" --review "$work/rv.txt" 2>&1)"; rc=$?
+[ "$rc" = 3 ] && grep -qF "nothing to review: no tracked files (osc add the package files first)" <<<"$out" && [ ! -e "$SB" ] \
+  && pass "--review: a PASS naming the empty tree ${EMPTY:0:12} is refused, the stale stamp deleted" \
+  || { fail "--review of the empty tree: rc=$rc, stamp $([ -e "$SB" ] && echo kept || echo gone)"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -f "$SB"
+printf 'bar.changes\nbar.spec\n' > "$work/t-mkpac/.osc/_to_be_added"
+out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-mkpac" 2>&1)"
+grep -qF "## tracked: rc=0" <<<"$out" && pass "the mkpac checkout once osc added: tracked green" \
+  || { fail "mkpac checkout after osc add"; printf '%s\n' "$out" | sed 's/^/    /'; }
+if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  [ -n "$t12" ] && [ "$t12" != "${EMPTY:0:12}" ] \
+    && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d["tree"].startswith(sys.argv[2]) and set(d["files"])=={"bar.changes","bar.spec"}))' "$SB" "$t12" \
+    && pass "the mkpac checkout once osc added: GREEN, its two files stamped" \
+    || { fail "mkpac checkout after osc add: not GREEN"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: GREEN stamp after osc add (no OBS source_validator/download_files)"
 fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
