@@ -1,9 +1,9 @@
 #!/bin/bash
-# The commit/SR gate chain as ONE tool call: the SR target, source_validator,
-# factory-auto's URL check (download_files), spec-cleaner, changes-lint.sh,
-# changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
-# check, the spec header, the patch tags and the sources' prebuilt binaries
-# (source-binaries.py), each run unpiped with its exit
+# The commit/SR gate chain as ONE tool call: the SR target, the tracked files
+# (osc checkouts), source_validator, factory-auto's URL check (download_files),
+# spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
+# one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
+# the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
 # code read directly, then one VERDICT line. Five separate calls cost five provider
 # steps and five result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
@@ -47,7 +47,8 @@
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
-# it. A rerun of the same tree keeps its review.
+# it. A rerun of the same tree keeps its review. Nothing tracked (osc mkpac
+# before osc add) is red and stamps nothing, and --review refuses it.
 # Exit: 0 = every gate green (--review: recorded), 1 = at least one red (VERDICT
 #       names them; --review: the verdict file is not a PASS of this tree),
 #       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
@@ -146,9 +147,26 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def stamp(path, d, prj, pkg, target):
+def present(fm):
+    # a missing file ("-") has no content for the key to bind
+    return {n: m for n, m in fm.items() if m != "-"}
+
+
+def tracked(d):
     fm = files(d)
     if fm is None:
+        print("note: no .osc/_files, no tree to stamp")
+        return 0
+    if not present(fm):
+        print("nothing to stamp: no tracked files (osc add the package files first)")
+        return 1
+    print("OK: %d file(s) osc would commit" % len(present(fm)))
+    return 0
+
+
+def stamp(path, d, prj, pkg, target):
+    fm = files(d)
+    if fm is None or not present(fm):
         return 1
     st = {"project": prj, "package": pkg, "target": target, "tree": key(fm),
           "files": fm, "verdict": "GREEN", "time": now()}
@@ -163,6 +181,13 @@ def stamp(path, d, prj, pkg, target):
 
 def review(path, d, fpath):
     fm = files(d)
+    if fm is not None and not present(fm):
+        st = load(path)
+        # only a stamp of no content: another tree's may still match OBS's copy
+        if st and isinstance(st.get("files"), dict) and not present(st["files"]):
+            os.remove(path)
+        print("VERDICT: NO GATE — nothing to review: no tracked files (osc add the package files first)")
+        return 3
     t = key(fm) if fm is not None else ""
     st = load(path)
     if not st or st.get("verdict") != "GREEN" or not t or st.get("tree") != t:
@@ -358,7 +383,7 @@ def tags(spec, against="strict", basespec=""):
 
 
 cmd, args = sys.argv[1], sys.argv[2:]
-fn = {"link": link, "stamp": stamp, "review": review, "copyright": copyright, "tags": tags}[cmd]
+fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "copyright": copyright, "tags": tags}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -472,6 +497,12 @@ if [ -n "$own" ]; then
     fi
   fi
   show target $rc "$log/target.txt"
+fi
+
+# A fresh `osc mkpac` tracks nothing until `osc add`, and that tree's key is
+# the same whatever the files hold: a review bound to it would bind nothing.
+if [ -n "$stampf" ]; then
+  py tracked . > "$log/tracked.txt"; show tracked $? "$log/tracked.txt"
 fi
 
 if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
