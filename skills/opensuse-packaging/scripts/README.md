@@ -284,9 +284,10 @@ The commit/SR gate chain as ONE tool call: the SR target, the tracked files
 (osc checkouts), source_validator, factory-auto's URL check (download_files),
 the spec as rpm parses it (rpmspec -P), %prep (rpmbuild -bp, without
 --build-log), spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
-one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
-the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
-code read directly, then one VERDICT line. Five separate calls cost five provider
+one-Legal-Review-Notice-per-License check, the spec header, the patch tags, a
+new .changes entry for a changed tree and the sources' prebuilt binaries
+(source-binaries.py), each run unpiped with its exit code read directly, then
+one VERDICT line. Five separate calls cost five provider
 steps and five result blocks that ride along in context for the rest of the
 session; this costs one. The adversarial change review (agents/changes-review.md)
 still follows — it is a judgement, not a check, and stays outside this script.
@@ -356,6 +357,10 @@ package's code (sandboxed, which keeps it off the network and out of $HOME but
 is no reason to trust it): run the gate only on a checkout you are changing
 yourself, never on someone else's submission (references/untrusted-content.md
 "The two sharp local-execution vectors").
+Entry: a tree that differs from the target needs a .changes top entry the
+target lacks (factory-auto: "No changelog"), and one Factory lacks too when
+the target is Factory's devel project; --amend-top and --squash-mine take an
+entry Factory lacks.
 Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 the md5 and name of every file osc would commit (no _link, no _service:*), in
 ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -376,6 +381,8 @@ The target comes first. Without `--target` it is Factory's devel project (`devel
 `spec-header` is red on a second `# spec file for package` header (rpmcrab shipped one past three reviews) and on a `# Copyright` holder of the target's spec, other than SUSE or Novell, that the change drops (bluetui lost its maintainer's line to a format_spec_file run).
 
 `patch-tags` is red on a patch the change adds or edits against the target — absent there, or a different md5 (the target's expanded listing; for a direct commit the committed copy; in git the upstream ref) — whose comment block directly above, past any `%if`, has no `PATCH-{FIX,FEATURE}-{UPSTREAM,OPENSUSE,SLE}` or `PATCH-NEEDS-REBASE` line naming its file (literally or with `%{name}`/`%{version}` and plain `%define`s expanded), and on an UPSTREAM tag that cites no reference: an http(s) URL, `gh#owner/repo#N`, a commit hash or a bug id (`bsc#N`, `boo#N`, `fdo#N`, …). Each spec of a `_multibuild` package counts; a commented-out `#PatchN:` is skipped. A patch the target ships unchanged only gets a `note:` line (31 of 33 sampled Factory specs had untagged ones) — unless the target's spec tags it correctly: that tag cannot be dropped. Without the target's files — a new package, a failed listing, or in git an upstream other than its remote's default branch that already holds HEAD (a pushed fork or topic branch: a fork PR passes `--git-base <target ref>`, which is always taken as the base) — every patch counts as changed. Uncommitted edits on the default branch compare against it as they should. A devel reviewer asked for the tags on sr#1385879; tag one only after finding where it came from (`references/patches.md`).
+
+`changes-entry` is red when a file `osc ci` would commit (or, in git, a tracked file) differs from the target's copy and no `.changes` top entry is new there: factory-auto declines such a request, "No changelog. Please use 'osc vc'" (seventeen requests of one wave, sr#1394259 among them: vendor strips filed with the `.changes` untouched had passed every other gate). The target is the gate's: its expanded listing, the committed copy for a direct commit, the upstream ref in git. When the target is Factory's devel project — a branch of it, or a direct commit there — a tree that differs from `openSUSE:Factory`'s needs a top entry Factory lacks as well, since the change goes there next; that also catches a tree committed before the gate. Under `--amend-top` or `--squash-mine` an entry Factory lacks is the unaccepted draft that describes the change, so it counts. A new package (no target copy) is a note; a listing or `.changes` it cannot read is red.
 
 A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the md5 and name of every file `osc ci` would commit, without `_link` and `_service:*` — in `~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json`, and prints its first 12 characters; a red run deletes the stamp. A checkout that tracks no file it still has — a fresh `osc mkpac` before `osc add`, or an added file deleted since — is red (`tracked`) and stamps nothing: its key (`e3b0c44298fc`, the sha256 of nothing, when nothing is tracked) binds no content, so `--review` refuses it too and deletes a stale stamp of no content. `--review FILE` records the change review against it: the first non-empty line starts with `PASS` and names that `tree <key12>`, as target-gate.sh's `--review` does for pool PRs. It records the GREEN tree and its review; it is a record, not proof, and a forged PASS line passes it.
 
