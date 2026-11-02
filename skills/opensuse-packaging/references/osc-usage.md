@@ -29,7 +29,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc repairwc DIR` — only when osc asks for it; a fresh `osc co` is often faster.
 - `osc add FILE...` / `osc rm FILE...` (delete) / `osc addremove` (ar) — track new, dropped, or both.
 - `osc status` (st) · `osc diff` (di; `osc diff --link` = linkdiff) — what the commit will contain.
-- `osc commit -m MSG` (ci) — commit the checkout; `-F FILE` takes the message from a file.
+- `osc commit -m MSG` (ci) — commit the checkout; `-F FILE` takes the message from a file; `--noservice` skips the services it would run first, so a gated tree is committed as judged.
 - `osc vc -m MSG` — `.changes` entry in the osc format; prefer `scripts/changes-prepend.sh`.
 - `osc mkpac PKG` — **only inside a checked-out project** (`cd PRJ` first); takes ONE argument. For a new package in a project you don't have checked out, use `osc meta pkg` above.
 - `osc branch PRJ PKG [TGT_PRJ [TGT_PKG]]` — branch into `home:<you>:branches:PRJ` (or TGT_PRJ).
