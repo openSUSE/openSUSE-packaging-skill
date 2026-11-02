@@ -3,9 +3,10 @@
 # (osc checkouts), source_validator, factory-auto's URL check (download_files),
 # the spec as rpm parses it (rpmspec -P), %prep (rpmbuild -bp, without
 # --build-log), spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
-# one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
-# the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
-# code read directly, then one VERDICT line. Five separate calls cost five provider
+# one-Legal-Review-Notice-per-License check, the spec header, the patch tags, a
+# new .changes entry for a changed tree and the sources' prebuilt binaries
+# (source-binaries.py), each run unpiped with its exit code read directly, then
+# one VERDICT line. Five separate calls cost five provider
 # steps and five result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
 # still follows — it is a judgement, not a check, and stays outside this script.
@@ -75,6 +76,10 @@
 # is no reason to trust it): run the gate only on a checkout you are changing
 # yourself, never on someone else's submission (references/untrusted-content.md
 # "The two sharp local-execution vectors").
+# Entry: a tree that differs from the target needs a .changes top entry the
+# target lacks (factory-auto: "No changelog"), and one Factory lacks too when
+# the target is Factory's devel project; --amend-top and --squash-mine take an
+# entry Factory lacks.
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -1156,13 +1161,78 @@ def excerpt(logpath):
     for ln in text[-6:]:
         print("  " + ln[:300])
     return 0
+SEP = "-" * 67
+
+
+def entries(path):
+    """The entries of a .changes, each its lines with trailing blanks dropped;
+    None when there is no such file."""
+    try:
+        lines = read_lines(path)
+    except OSError:
+        return None
+    out = []
+    for line in lines:
+        if line == SEP:
+            out.append([])
+        elif out:
+            out[-1].append(line.rstrip())
+    for e in out:
+        while e and not e[-1]:
+            e.pop()
+    return [tuple(e) for e in out]
+
+
+def changed(against):
+    """The files that differ from against (a listing, or git:REF), or None
+    when they cannot be compared."""
+    if against.startswith("git:"):
+        p = subprocess.run(["git", "diff", "--relative", "--name-only", against[4:], "--", "."],
+                           capture_output=True, text=True)
+        return sorted(p.stdout.splitlines()) if p.returncode == 0 else None
+    work = files(".")
+    try:
+        root = ET.parse(against).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    if work is None:
+        return None
+    base = {e.get("name"): e.get("md5") for e in root.findall("entry")
+            if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    return sorted(n for n in set(work) | set(base) if work.get(n) != base.get(n))
+
+
+def entry(label, against, elabel, basedir, *changes):
+    # 0: no file differs from label's copy (against), or a top entry is new
+    # against elabel's .changes (in basedir; one missing there is new);
+    # 1: the files differ and none is; 2: the files cannot be compared
+    diff = changed(against)
+    if diff is None:
+        print("UNKNOWN: cannot compare the files with %s" % label)
+        return 2
+    if not diff:
+        print("OK: no file differs from %s" % label)
+        return 0
+    new = []
+    for ch in changes:
+        work, base = entries(ch), entries(os.path.join(basedir, ch))
+        if work and (base is None or work[0] not in base):
+            new.append(ch)
+    if new:
+        print("OK: %s: its top entry is new vs %s" % (", ".join(new), elabel))
+        return 0
+    few = ", ".join(diff[:4]) + (", …" if len(diff) > 4 else "")
+    lacks = "it lacks" if elabel == label else "%s lacks" % elabel
+    print("RED: %s changed vs %s, and no .changes has a top entry %s: add one for the"
+          " change (factory-auto declines \"No changelog\")" % (few, label, lacks))
+    return 1
 
 
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
       "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
       "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt,
-      "need": need}[cmd]
+      "need": need, "entry": entry}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -1619,6 +1689,71 @@ done
 { grep '^note:' "$log/patch-tags.raw"; grep -v '^note:' "$log/patch-tags.raw"; } >> "$log/patch-tags.txt" 2>/dev/null
 [ $rc -eq 0 ] && echo "OK: every changed patch tagged by name, every UPSTREAM tag with its reference" >> "$log/patch-tags.txt"
 show patch-tags $rc "$log/patch-tags.txt"
+
+# factory-auto declines a request whose .changes files all equal the target's
+# ("No changelog"; sr#1394259 and 16 more: vendor strips filed with the
+# .changes left as it was passed every gate). A tree that differs from the
+# target needs a top entry the target lacks; when the target is Factory's
+# devel project, a tree that differs from Factory needs one Factory lacks,
+# since the change goes there next. With --amend-top or --squash-mine, an
+# entry Factory lacks is the draft that describes the change.
+if [ -e "${changes[0]}" ]; then
+  : > "$log/changes-entry.txt"; rc=0; tlist=""; tlabel=""; tbase="$log/entry-target"; fbase="$log/entry-factory"
+  rm -rf "$tbase" "$fbase"; mkdir -p "$tbase" "$fbase"
+  if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
+    tlabel="$tprj/$tpkg"
+    if [ "$against" = "$log/target-files.xml" ]; then
+      tlist=$against
+      for ch in "${changes[@]}"; do   # changes-guard fetched them
+        if [ -s "$log/target-base/$ch" ]; then cp "$log/target-base/$ch" "$tbase/"
+        elif ! grep -q 'HTTP Error 404' "$log/target-base/$ch.err" 2>/dev/null; then
+          echo "UNKNOWN: no copy of $ch from $tlabel" >> "$log/changes-entry.txt"; rc=1; fi
+      done
+    elif grep -q 'HTTP Error 404' "$log/target-files.err" 2>/dev/null; then
+      echo "note: $tlabel does not exist: a new package there, no entry to compare" >> "$log/changes-entry.txt"
+    else
+      echo "UNKNOWN: cannot list $tlabel" >> "$log/changes-entry.txt"; rc=1
+    fi
+  elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
+    tlabel="the committed copy"; tlist=.osc/_files
+    for ch in "${changes[@]}"; do
+      if [ -r ".osc/sources/$ch" ]; then cp ".osc/sources/$ch" "$tbase/"; elif [ -r ".osc/$ch" ]; then cp ".osc/$ch" "$tbase/"; fi
+    done
+  elif [ -z "$own" ] && [ "${against#git:}" != "$against" ]; then
+    tlabel=${against#git:}; tlist=$against
+    for ch in "${changes[@]}"; do git show "$tlabel:./$ch" > "$tbase/$ch" 2>/dev/null || rm -f "$tbase/$ch"; done
+  else
+    echo "note: no target or base ref to compare the files with" >> "$log/changes-entry.txt"
+  fi
+  fbound=0; fseen=0; fac=openSUSE:Factory/$pkg
+  if [ $rc -eq 0 ] && [ -n "$own" ] && [ -n "$tprj" ] && [ "$tprj" != openSUSE:Factory ]; then
+    [ $drc -ge 0 ] || devel_of
+    [ $drc -eq 0 ] && [ "${devel%%/*}" = "$tprj" ] && fbound=1
+    if [ $fbound = 1 ] || [ -n "$amend$squash" ]; then
+      if timeout 60 osc api "/source/$fac?expand=1" > "$log/factory-files.xml" 2> "$log/factory-files.err"; then
+        fseen=1
+        for ch in "${changes[@]}"; do
+          if timeout 60 osc cat openSUSE:Factory "$pkg" "$ch" > "$fbase/$ch" 2> "$log/factory-cat.err"; then :
+          elif grep -q 'HTTP Error 404' "$log/factory-cat.err"; then rm -f "$fbase/$ch"
+          else echo "UNKNOWN: osc cat openSUSE:Factory $pkg $ch failed: $(head -n 1 "$log/factory-cat.err")" >> "$log/changes-entry.txt"; rc=1; fi
+        done
+      elif grep -q 'HTTP Error 404' "$log/factory-files.err"; then
+        fseen=2; fbound=0   # not in Factory: every entry is new there
+      else
+        echo "UNKNOWN: cannot list $fac: $(head -n 1 "$log/factory-files.err")" >> "$log/changes-entry.txt"; rc=1
+      fi
+    fi
+  fi
+  if [ $rc -eq 0 ] && [ -n "$tlist" ]; then
+    ebase=$tbase; elabel=$tlabel
+    [ -z "$amend$squash" ] || [ $fseen = 0 ] || { ebase=$fbase; elabel=$fac; }
+    py entry "$tlabel" "$tlist" "$elabel" "$ebase" "${changes[@]}" >> "$log/changes-entry.txt" || rc=1
+  fi
+  if [ $rc -eq 0 ] && [ $fbound = 1 ] && [ $fseen = 1 ]; then
+    py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt" || rc=1
+  fi
+  show changes-entry $rc "$log/changes-entry.txt"
+fi
 
 # Prebuilt binaries in any file the checkout carries, inside archives too:
 # "build-time only" still ships them in the SRPM (references/specfile-guidelines.md

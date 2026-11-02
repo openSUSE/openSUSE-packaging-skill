@@ -1419,6 +1419,65 @@ PY
 else
   echo "SKIP: rpmspec, %prep and spec-cleaner parse checks (no rpmspec, rpmbuild or bwrap)"
 fi
+# factory-auto declines a request whose .changes files all match the target's
+# ("No changelog": sr#1394259 and 16 more, vendor strips filed with the
+# .changes as it was). A tree that differs needs a top entry the target lacks,
+# and, when the target is Factory's devel project, one Factory lacks.
+md5_files() { # <dir>: .osc/_files listing the committed copies with their md5
+  python3 -I - "$1" <<'PY'
+import hashlib, os, sys
+d = sys.argv[1]
+src = os.path.join(d, ".osc", "sources")
+pkg = open(os.path.join(d, ".osc", "_package")).read().strip()
+ents = "".join('<entry name="%s" md5="%s"/>' % (n, hashlib.md5(open(os.path.join(src, n), "rb").read()).hexdigest())
+               for n in sorted(os.listdir(src)))
+open(os.path.join(d, ".osc", "_files"), "w").write('<directory name="%s" rev="1">%s</directory>\n' % (pkg, ents))
+PY
+}
+ce() { # <name> <rc> <expected line> <gate args...>
+  local n=$1 r=$2 m=$3; shift 3; og "$@"
+  grep -qF "## changes-entry: rc=$r" <<<"$out" && grep -qF -- "$m" <<<"$out" && pass "changes-entry $n (rc=$r)" \
+    || { fail "changes-entry $n: expected rc=$r and '$m'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+co "$work/t-ce-branch" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+cp "$work/t-ce-branch/.osc/sources/foo.changes" "$work/t-ce-branch/foo.changes"
+ce branch-no-entry 1 "RED: foo.spec changed vs devel:example/foo, and no .changes has a top entry it lacks" "$work/t-ce-branch"
+grep -q "^VERDICT: RED — .*changes-entry" <<<"$out" && pass "changes-entry branch-no-entry: the verdict names it" \
+  || fail "changes-entry branch-no-entry: not in the verdict"
+ce branch-entry 0 "OK: foo.changes: its top entry is new vs devel:example/foo" "$work/t-good"
+grep -qF "OK: foo.changes: its top entry is new vs openSUSE:Factory/foo" <<<"$out" \
+  && pass "changes-entry branch-entry: Factory's devel project as the target, so Factory too" \
+  || { fail "changes-entry branch-entry: Factory not compared"; printf '%s\n' "$out" | sed 's/^/    /'; }
+co "$work/t-ce-direct" devel:example - "$O/devel:example/foo"; md5_files "$work/t-ce-direct"
+cp "$work/t-ce-direct/.osc/sources/foo.changes" "$work/t-ce-direct/foo.changes"
+ce direct-no-entry 1 "RED: foo.spec changed vs the committed copy, and no .changes has a top entry it lacks" "$work/t-ce-direct"
+# Committed already, the tree is the committed copy: Factory, where it goes
+# next, still sees a change with no entry.
+printf 'Name: baz\nVersion: 1.0\n' | put openSUSE:Factory/baz baz.spec
+e "Mon Jan  5" "Update to 1.0" | put openSUSE:Factory/baz baz.changes
+echo full | put openSUSE:Factory/baz vendor.tar
+mkdir -p "$O/devel:example/baz"; cp "$O/openSUSE:Factory/baz/baz.spec" "$O/openSUSE:Factory/baz/baz.changes" "$O/devel:example/baz/"
+echo stripped > "$O/devel:example/baz/vendor.tar"; echo devel:example/baz > "$O/devel/baz"
+rm -rf "$work/t-ce-baz"; mkdir -p "$work/t-ce-baz/.osc/sources"; printf 'baz\n' > "$work/t-ce-baz/.osc/_package"
+printf 'devel:example\n' > "$work/t-ce-baz/.osc/_project"; printf '2.0\n' > "$work/t-ce-baz/.osc/_osclib_version"
+cp "$O/devel:example/baz/"* "$work/t-ce-baz/.osc/sources/"; cp "$O/devel:example/baz/"* "$work/t-ce-baz/"; md5_files "$work/t-ce-baz"
+ce committed-vs-factory 1 "RED: vendor.tar changed vs openSUSE:Factory/baz, and no .changes has a top entry it lacks" "$work/t-ce-baz"
+grep -qF "OK: no file differs from the committed copy" <<<"$out" && pass "changes-entry committed-vs-factory: nothing to commit" \
+  || fail "changes-entry committed-vs-factory: the committed copy differs"
+# --amend-top: devel's unaccepted top entry, which Factory lacks, still describes the fix.
+co "$work/t-ce-amend" devel:example - "$O/devel:example/foo"; md5_files "$work/t-ce-amend"
+cp "$work/t-ce-amend/.osc/sources/foo.changes" "$work/t-ce-amend/foo.changes"
+ce amend-top-draft 0 "OK: foo.changes: its top entry is new vs openSUSE:Factory/foo" "$work/t-ce-amend" --amend-top 'Jane Packager'
+# A new package has no entry to compare.
+ce new-package 0 "note: devel:other/foo does not exist: a new package there, no entry to compare" "$work/t-new" --target devel:other
+# A git checkout: against the base ref.
+{ g clone -q "$work/seed" "$work/ce-git" && printf 'Name: p\nVersion: 2\n' > "$work/ce-git/p.spec"; } || fail "could not build the git fixture"
+out="$(bash "$GATE" "$work/ce-git" 2>&1)"
+grep -qF "## changes-entry: rc=1" <<<"$out" && grep -qF "RED: p.spec changed vs origin/" <<<"$out" \
+  && pass "changes-entry git-no-entry (rc=1)" || { fail "changes-entry git-no-entry"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(bash "$GATE" "$work/clone" --entries 2 2>&1)"
+grep -qF "## changes-entry: rc=0" <<<"$out" && pass "changes-entry git-entry (rc=0)" \
+  || { fail "changes-entry git-entry"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
