@@ -521,7 +521,8 @@ MESSAGES = {
     "bash X.sh or python3 X.py, or the script by its path.",
     "sleep": "{0}: a fixed wait holds the session while nothing is checked. Wait on "
     "the event: {s}/obs-wait.py build PRJ PKG (or request ID), "
-    "{s}/build-wait.sh PGID LOG for a local build, or check back in a later call.",
+    "{s}/build-wait.sh PGID LOG for a local build (--no-summary: any other local "
+    "job, such as osc service mr, a vendor or cargo run), or check back in a later call.",
     "rdelete-pending": "{0}: OBS revokes every request that still comes from what "
     "it deletes, new, review and declined alike, and a project takes its packages' "
     "requests with it. Delete one package at a time with plain osc rdelete PRJ PKG "

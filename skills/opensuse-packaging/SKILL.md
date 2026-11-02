@@ -74,7 +74,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `forward-check.py` — before any Factory forward: already forwarded (by whom; carrying the devel sources or stale), in Factory, declined, or `DUE`? `--mine` for every request of yours accepted into a devel project.
 - `gpg-verify.sh` — verify a signed source tarball against a package keyring.
 - `build-summary.sh` — the last `osc build`'s verdict, `%check` count, rpmlint badness, produced RPMs. **Its exit code IS the verdict** — gate on it instead of eyeballing a tail.
-- `build-wait.sh` — one bounded wait for a local build started with `set +m; setsid -w`, then `build-summary.sh`'s verdict on its log; repeat while it exits 4 — never a `sleep` loop.
+- `build-wait.sh` — one bounded wait for a local build started with `set +m; setsid -w`, then `build-summary.sh`'s verdict on its log (`--no-summary`: any local job); repeat while it exits 4 — never a `sleep` loop.
 - `soname-check.sh` — **HARD RULE after building anything that ships a shared library**: audits the built RPMs for a versioned symlink that is not the SONAME.
 - `cone-status.sh` — per-package build-status table for a whole project with a loopable exit code.
 - `obs-wait.py` — one bounded wait (~80 s) for one OBS build or request, woken by OBS's event stream, verdict from osc; exit 1 = repeat the call, 4 = QUEUED-STUCK: report and move on, never file on 4. Never a `sleep` loop.

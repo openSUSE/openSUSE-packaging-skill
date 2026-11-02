@@ -1281,6 +1281,8 @@ case_ interpreter-echo           0 - ""
 echo "--- a wait is on an event, not a fixed sleep of a minute or more"
 case_ sleep-long                 2 sleep "sleep 290"
 case_ sleep-long                 2 sleep "$S/scripts/build-wait.sh PGID LOG" PR_GUARD_SKILL_DIR="$S"
+# A wait on a local service, vendor or cargo run has its tool too.
+case_ sleep-long                 2 sleep "(--no-summary: any other local job"
 case_ sleep-minutes              2 sleep "sleep 5m"
 case_ sleep-hex-overflow         2 sleep "sleep 0x1p99999"
 case_ sleep-sum                  2 sleep "sleep 30 30"

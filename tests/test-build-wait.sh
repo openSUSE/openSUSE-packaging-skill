@@ -84,4 +84,22 @@ run --max 0 999999 running.log
 run --max 0 999999 missing.log
 [ "$rc" = 2 ] && pass "no group, no log: exit 2" || fail "no log: rc=$rc $out"
 
+echo "--- any other local job: --no-summary"
+g=$(group 'sleep 30')
+run --no-summary --max 1 "$g" running.log
+[ "$rc" = 4 ] && grep -q '^STILL RUNNING after 1s' <<<"$out" && pass "--no-summary: a live group exits 4 at --max" \
+  || fail "--no-summary live group: rc=$rc $out"
+kill -- -"$g" 2>/dev/null
+sleep 30 & s1=$!
+run --no-summary --max 1 "$s1" running.log
+[ "$rc" = 4 ] && grep -q "^STILL RUNNING after 1s: pid $s1" <<<"$out" && pass "--no-summary: a plain pid is waited on" \
+  || fail "--no-summary pid: rc=$rc $out"
+kill "$s1" 2>/dev/null; wait "$s1" 2>/dev/null; s1=
+g=$(group 'sleep 1'); run --no-summary --max 20 "$g" running.log
+[ "$rc" = 0 ] && grep -q '^ENDED: process group' <<<"$out" && grep -q '^last: \[  1s\] compiling foo.c$' <<<"$out" \
+  && ! grep -q 'VERDICT' <<<"$out" && pass "--no-summary: once gone, exit 0 with the log's last line and no build verdict" \
+  || fail "--no-summary ended: rc=$rc $out"
+run --no-summary --max 0 999999 missing.log
+[ "$rc" = 2 ] && pass "--no-summary: no log, exit 2" || fail "--no-summary no log: rc=$rc $out"
+
 [ "$fails" -eq 0 ] && echo "ALL PASS" || { echo "$fails FAILED"; exit 1; }
