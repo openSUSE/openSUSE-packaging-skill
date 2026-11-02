@@ -31,7 +31,8 @@
 #   exit 5  package or project _meta unreadable (404, auth, network), or
 #           Factory's devel project lookup failed
 #   exit 6  WRONG-DEVEL — openSUSE:Factory develops the package in another
-#           project; accept nothing here, submit there
+#           project, or has it under another spelling; accept nothing here,
+#           submit there
 #   exit 2  usage error (also an empty --batch file)
 #
 # --batch exits with the worst row: 5 UNREADABLE > 6 WRONG-DEVEL > 3 BLOCKED >
@@ -100,6 +101,7 @@ check_one() {
            fi
          fi;;
       3|4) ;;  # not in Factory, or no devel project named: nothing to contradict
+      6) printf 'WRONG-DEVEL\t-\t-\t%s\n' "$devel"; return 6;;  # Factory has it under another spelling
       *) return 5;;
     esac
   fi

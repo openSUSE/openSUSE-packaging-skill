@@ -21,6 +21,8 @@ echo "osc $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
 case $1 in
   whois) [ -e "$FIX/no-whois" ] && exit 1; echo 'tester: "Tester"' ;;
   develproject) [ -e "$FIX/no-develproject" ] && exit 1; echo "devel:example/$3" ;;
+  ls) [ -f "$FIX/ls/$2" ] || { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+      cat "$FIX/ls/$2" ;;
   api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=,' '_____')"
        [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
        [ "$(cat "$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
@@ -58,6 +60,7 @@ obs '/request?view=collection&types=submit&states=new,review&project=openSUSE:Fa
 obs '/request?view=collection&types=submit&states=declined&project=openSUSE:Factory&package=foo' '<collection>
   <request id="1375013" creator="tester"><action type="submit"><source project="devel:example" package="foo"/>
   <target project="openSUSE:Factory" package="foo"/></action><state name="declined"/></request></collection>'
+mkdir -p "$B/ls" && printf 'foo\npython-Authlib\npython-Authlib:test\npython-zope.interface\npython-pytest-lazy-fixtures\n' > "$B/ls/openSUSE:Factory"
 SWEEP='/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27foo%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)'
 obs "$SWEEP" '<collection/>'
 
@@ -70,7 +73,7 @@ case_() {
   # shellcheck disable=SC2030  # rebinding B to the copy is the point; the parent's B stays the pristine tree
   (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   mkdir -p "$dir/tmp"
-  out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" foo "$@" 2>&1)"; got=$?
+  out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" "${PKG:-foo}" "$@" 2>&1)"; got=$?
   LAST=$out
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -203,6 +206,34 @@ case_ develproject-failed 2 "osc develproject failed, but openSUSE:Factory/foo/_
 ! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "develproject-failed: no PROCEED" || fail "develproject-failed: $LAST"
 case_ no-devel-set 0 "in openSUSE:Factory but no devel project set" \
   ": > \$B/no-develproject && echo '<package name=\"foo\"/>' > \$B/obs/_source_openSUSE:Factory_foo__meta" --from hardware
+
+# A name Factory lacks may be one it has under another spelling: case
+# (python-authlib was filed while Factory ships python-Authlib), -, _ and .,
+# or a python3-/python3XX- flavour prefix, as python3dist() names it. Each is
+# a STOP; a failed listing is CHECK-FAILED, never a new package.
+NEW=": > \$B/no-develproject"
+PKG=python-authlib case_ near-case 3 "VERDICT: STOP - not in openSUSE:Factory as python-authlib, but it has python-Authlib" "$NEW"
+! grep -qF "python-Authlib:test" <<<"$LAST" && pass "near-case: a multibuild flavour is no package" || fail "near-case: $LAST"
+PKG=python-zope_interface case_ near-separators 3 "but it has python-zope.interface" "$NEW"
+PKG=python3-pytest-lazy-fixtures case_ near-flavour 3 "but it has python-pytest-lazy-fixtures" "$NEW"
+PKG=python-brand-new case_ near-none 0 "VERDICT: PROCEED (new package" "$NEW"
+PKG=python-brand-new case_ near-list-failed 2 "CHECK FAILED" "$NEW && rm \$B/ls/openSUSE:Factory"
+! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "near-list-failed: no PROCEED" || fail "near-list-failed: $LAST"
+# devel-of.sh: the same lookup, its own exit 6.
+DEVEL_OF="$HERE/../skills/opensuse-packaging/scripts/devel-of.sh"
+devel_of_() { # <name> <rc> <expected> <pkg> [mutation]
+  local dir="$work/do-$1"
+  # shellcheck disable=SC2031  # B is rebound only inside the mutation subshells
+  cp -a "$B" "$dir"; : > "$dir/no-develproject"
+  # shellcheck disable=SC2030  # rebound in a subshell on purpose, as case_ does
+  [ -z "${5:-}" ] || (B=$dir; cd "$dir" && eval "$5")
+  out="$(FIX=$dir PATH="$work/bin:$PATH" bash "$DEVEL_OF" "$4" 2>&1)"; got=$?
+  [ "$got" = "$2" ] && grep -qF -- "$3" <<<"$out" && pass "devel-of $1 (rc=$2)" \
+    || { fail "devel-of $1: expected rc=$2 and '$3', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+devel_of_ near 6 "NOT IN openSUSE:Factory as python-authlib, but it has python-Authlib" python-authlib
+devel_of_ new 3 "NOT IN openSUSE:Factory (new package?)" python-brand-new
+devel_of_ list-failed 5 "cannot list openSUSE:Factory" python-brand-new "rm \$B/ls/openSUSE:Factory"
 
 echo "---"; [ "$fails" = 0 ] && echo "all preflight checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

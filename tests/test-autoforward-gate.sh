@@ -21,6 +21,7 @@ echo "osc $*" >> "$FIX/calls"
 case $1 in
   whois) echo 'tester: "Tester"' ;;
   develproject) [ -f "$FIX/devel/$3" ] || exit 1; cat "$FIX/devel/$3" ;;
+  ls) [ ! -f "$FIX/ls" ] || cat "$FIX/ls" ;;
   api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=' '____')"
        [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
        [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
@@ -86,6 +87,9 @@ case_ factory-itself    0 "ELIGIBLE" \
 grep -q develproject "$work/factory-itself/calls" && fail "factory-itself asked for a devel project" \
   || pass "factory-itself asks for no devel project"
 case_ not-in-factory    0 "ELIGIBLE" "rm devel/foo" devel:a foo
+# Not in Factory by this name, but under another spelling: forwarding it files a duplicate.
+case_ not-in-factory-near 6 "WRONG-DEVEL — NOT IN openSUSE:Factory as foo, but it has Foo" \
+  "rm devel/foo; echo Foo > ls" devel:a foo
 case_ no-devel-set      0 "ELIGIBLE" \
   "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta '<package name=\"foo\"/>'" devel:a foo
 case_ devel-lookup-fails 5 "or its Factory devel project" \

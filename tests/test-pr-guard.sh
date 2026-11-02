@@ -1460,6 +1460,7 @@ cat > "$work/afg/bin/osc" <<'OSC'
 #!/bin/bash
 case $1 in
   develproject) [ -f "$FIX/devel/$3" ] || exit 1; cat "$FIX/devel/$3" ;;
+  ls) exit 0 ;;
   api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=' '____')"
        [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
        [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }

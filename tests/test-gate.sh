@@ -73,6 +73,7 @@ case "$1" in
          && { echo '<directory name="foo"><entry name="foo.changes"/><entry name="foo.spec"/></directory>'; exit 0; } ;;
   cat) [ "$2 $3" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$4" ] && { cat "$FACTORY/$4"; exit 0; } ;;
   status) exit 0 ;;
+  ls) exit 0 ;;
   whois) echo 'jpackager: "Jane Packager" <jane@example.com>'; exit 0 ;;
   vc) [ -z "${VC_FAIL:-}" ] && printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4" && exit 0 ;;
 esac
@@ -459,6 +460,7 @@ case "$1" in
   cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 400: package 'foo-ui' does not exist" >&2; exit 1; }
        [ -f "$OBS/$2/$3/$4" ] && { cat "$OBS/$2/$3/$4"; exit 0; } ;;
   status) exit 0 ;;
+  ls) [ "$2" = openSUSE:Factory ] && { ls "$OBS/openSUSE:Factory"; exit 0; } ;;
   vc) printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4"; exit 0 ;;
 esac
 echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
@@ -629,6 +631,13 @@ grep -qF "## target: rc=0" <<<"$out" && grep -qF "devel:other/foo does not exist
   && ! grep -qF "osc branch devel:other" <<<"$out" \
   && pass "new package named with its target: a note, not red" \
   || { fail "new package with --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A package Factory has under another spelling is no new package
+# (python-authlib was filed while Factory had python-Authlib).
+co "$work/t-near" 'home:<you>:spark' - "$O/hardware/foo"; printf 'FOO\n' > "$work/t-near/.osc/_package"
+og "$work/t-near"
+grep -qF "## target: rc=1" <<<"$out" && grep -qF "RED: NOT IN openSUSE:Factory as FOO, but it has foo" <<<"$out" \
+  && pass "a package Factory has under another spelling: target red" \
+  || { fail "another spelling in Factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A misspelt target project is no new package: it would fall back to the
 # committed copy and pass a stale branch.
 og "$work/t-new" --target devel:exmaple
