@@ -8979,5 +8979,82 @@
     "cwd": "@OSC@/devel/x",
     "agent_id": "a52f",
     "agent_type": "changes-review"
+  },
+  "review-brace": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . {--review,/var/tmp/x-review/verdict.txt}"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-brace-empty": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . {--review,} /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-ifs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "IFS=,; a='--review,/var/tmp/x-review/verdict.txt'; @WORK@/gate.sh . $a"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -s . --review /var/tmp/x-review/verdict.txt < @WORK@/gate.sh"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-stdin-pipe": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat @WORK@/gate.sh | bash -s -- . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-unknown-word": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "G=$(ls @WORK@/gate.sh); \"$G\" . \"$(printf -- --review)\" /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-symlink": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/g-link . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-copy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/g-copy . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "gate-run-pwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh \"$(pwd)\""
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "gate-run-build-log": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . --build-log \"$(ls -t /var/tmp/*.log | head -n 1)\""
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "gate-run-loop": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "while read -r p; do @WORK@/gate.sh \"$p\"; done < /var/tmp/x-list.txt"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }
