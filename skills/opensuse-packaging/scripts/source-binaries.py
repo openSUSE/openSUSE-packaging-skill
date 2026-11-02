@@ -76,11 +76,11 @@ EXCEPTION = re.compile(r"^#\s*Source-Binary-Exception:(.*)$")
 EXCEPTION_BODY = re.compile(
     r"^\s*(\S+)\s+--\s+(bootstrap|firmware|test-data):\s*(\S.*)$"
 )
-# a test directory: tests/, testdata/, manual_tests/, AUTOTEST/, fixtures/, fuzz/corpus/, golden-*/,
+# a test directory: tests/, testdata/, manual_tests/, AUTOTEST/, autotests/, fixtures/, fuzz/corpus/, golden-*/,
 # examples/ and samples/ (an example's input data);
 # a word, so latest/ or googletest/ are not one
 TEST_PATH = re.compile(
-    r"(?:^|[^a-z0-9])(?:unit)?(?:tests?|testing|testdata|test[-_]data|autotest|fixtures?|corpus|golden|examples?|samples?)"
+    r"(?:^|[^a-z0-9])(?:unit)?(?:tests?|testing|testdata|test[-_]data|autotests?|fixtures?|corpus|golden|examples?|samples?)"
     r"(?:[^a-z0-9]|$)",
     re.I,
 )

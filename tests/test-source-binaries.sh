@@ -155,6 +155,11 @@ printf '7z\274\257\047\034rest' > "$work/t/zf/zpaqfranz-65.17/AUTOTEST/sha256.7z
 tar -C "$work/t/zf" -czf "$d/zpaqfranz-65.17.tar.gz" .
 printf '# Source-Binary-Exception: zpaqfranz-65.17.tar.gz:*/AUTOTEST/* -- test-data: archives the autotest command reads\n' >> "$d/p.spec"
 case_ testdata-autotest 0 "EXCEPTION zpaqfranz-65.17.tar.gz:*/AUTOTEST/* (test-data" "$d"
+# KDE keeps its test data in autotests/.
+d=$(pkg autotests); mkdir -p "$work/t/kde/kio-6.0/autotests/data"; elf "$work/t/kde/kio-6.0/autotests/data/elf-sample"
+tar -C "$work/t/kde" -czf "$d/kio-6.0.tar.gz" .
+printf '# Source-Binary-Exception: kio-6.0.tar.gz:*/autotests/data/* -- test-data: an ELF the mimetype tests read\n' >> "$d/p.spec"
+case_ testdata-autotests 0 "EXCEPTION kio-6.0.tar.gz:*/autotests/data/* (test-data" "$d"
 d=$(pkg shortboot); cp "$work/tarball/vendor.tar.gz" "$d/"
 printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: upstream-built helper embedded by the build\n' >> "$d/p.spec"
 case_ bootstrap-short 3 "a bootstrap needs a why of 8+ words" "$d"
