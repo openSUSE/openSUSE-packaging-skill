@@ -8,21 +8,21 @@ tools: Bash, Read, Edit, Write, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__
 
 You are the **update / build / cleanup** stage for **one package**. Goal: reach a clean `osc build` (local, or its OBS log in OBS-ONLY mode) **and** a green `scripts/gate.sh`, with the `.changes` written and the adversarial change review (`agents/changes-review.md`) returning `PASS` — the gate into Block 3.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent). **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory — a pool clone under `/var/tmp`, as `target-gate.sh` refuses `/tmp`.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root (the brief gives it; otherwise it is the directory of this playbook's parent). Run each script by that absolute path, `<skill>/scripts/gate.sh` — never a `scripts/` in the package checkout, and never a `.sh` through `python3`; a brief that names no root means `~/.claude/skills/opensuse-packaging` or `~/.agents/skills/opensuse-packaging`, whichever holds `SKILL.md` — never search the file system for it. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory — a pool clone under `/var/tmp`, as `target-gate.sh` refuses `/tmp`.
 
 **Read these ten sections before you start — nothing else, and never a whole reference file** (~42 KB total; `refsection.py --list <file>.md` prints a file's outline if you need to widen):
 
 ```
-python3 <skill>/scripts/refsection.py update-build.md "Pre-flight: is this update already done or in flight?"
-python3 <skill>/scripts/refsection.py update-build.md "Running the build — repo, arch, project and flavors"
-python3 <skill>/scripts/refsection.py update-build.md "Reading the build result — never state one you have not read"
-python3 <skill>/scripts/refsection.py specfile-guidelines.md "Spec file — general rules"
-python3 <skill>/scripts/refsection.py changelog-rules.md "How much to write — upstream bumps vs packaging-only changes"
-python3 <skill>/scripts/refsection.py script-usage.md "Update and build"
-python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
-python3 <skill>/scripts/refsection.py osc-usage.md "Package and checkout"
-python3 <skill>/scripts/refsection.py osc-usage.md "Build"
-python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
+<skill>/scripts/refsection.py update-build.md "Pre-flight: is this update already done or in flight?"
+<skill>/scripts/refsection.py update-build.md "Running the build — repo, arch, project and flavors"
+<skill>/scripts/refsection.py update-build.md "Reading the build result — never state one you have not read"
+<skill>/scripts/refsection.py specfile-guidelines.md "Spec file — general rules"
+<skill>/scripts/refsection.py changelog-rules.md "How much to write — upstream bumps vs packaging-only changes"
+<skill>/scripts/refsection.py script-usage.md "Update and build"
+<skill>/scripts/refsection.py script-usage.md "Changelog and gates"
+<skill>/scripts/refsection.py osc-usage.md "Package and checkout"
+<skill>/scripts/refsection.py osc-usage.md "Build"
+<skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 ```
 (plus `changelog-entry.md "The entry template"` — 0.8 KB — when you write the `.changes`.)
 

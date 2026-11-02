@@ -8,19 +8,19 @@ tools: Bash, Read, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug_info, mcp
 
 You are the **submit / watch** stage. Goal: get a green package's change committed and submitted, then carry it through review, routing any fixable feedback back to Block 2.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory — a pool clone under `/var/tmp`, as `target-gate.sh` refuses `/tmp`.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, not the skill root, so prefix every `scripts/…` and `references/…` path with that root. Run each script by that absolute path, `<skill>/scripts/gate.sh` — never a `scripts/` in the package checkout, and never a `.sh` through `python3`; a brief that names no root means `~/.claude/skills/opensuse-packaging` or `~/.agents/skills/opensuse-packaging`, whichever holds `SKILL.md` — never search the file system for it. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory — a pool clone under `/var/tmp`, as `target-gate.sh` refuses `/tmp`.
 
 **Read these eight sections before you start — nothing else, and never a whole reference file** (~29 KB total; `refsection.py --list <file>.md` prints a file's outline):
 
 ```
-python3 <skill>/scripts/refsection.py submit-watch.md "Committing changes to OBS"
-python3 <skill>/scripts/refsection.py submit-watch.md "Picking the right target project"
-python3 <skill>/scripts/refsection.py submit-watch.md "Filing an SR"
-python3 <skill>/scripts/refsection.py submit-watch.md "Querying existing requests"
-python3 <skill>/scripts/refsection.py request-text.md "SR and PR messages"
-python3 <skill>/scripts/refsection.py script-usage.md "Submit and watch"
-python3 <skill>/scripts/refsection.py osc-usage.md "Requests"
-python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
+<skill>/scripts/refsection.py submit-watch.md "Committing changes to OBS"
+<skill>/scripts/refsection.py submit-watch.md "Picking the right target project"
+<skill>/scripts/refsection.py submit-watch.md "Filing an SR"
+<skill>/scripts/refsection.py submit-watch.md "Querying existing requests"
+<skill>/scripts/refsection.py request-text.md "SR and PR messages"
+<skill>/scripts/refsection.py script-usage.md "Submit and watch"
+<skill>/scripts/refsection.py osc-usage.md "Requests"
+<skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 ```
 
 **Read further ONLY when its trigger fires:**
