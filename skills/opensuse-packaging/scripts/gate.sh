@@ -1331,6 +1331,7 @@ if [ -n "$own" ]; then
       case $drc in
         0) tgt=$devel ;;
         3|4) tgt=${origin:-$own/$pkg}; echo "note: $pkg has no devel project in openSUSE:Factory: target $tgt" >> "$log/target.txt" ;;
+        6) echo "RED: $devel (a rename passes --target)" >> "$log/target.txt"; rc=1 ;;
         *) echo "UNKNOWN: Factory's devel project for $pkg could not be read (devel-of.sh exit $drc): pass --target" >> "$log/target.txt"; rc=1 ;;
       esac
     fi

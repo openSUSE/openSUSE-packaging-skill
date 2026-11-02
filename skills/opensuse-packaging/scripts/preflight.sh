@@ -120,6 +120,14 @@ newpkg=0
 if [ -z "$devel" ]; then
   oapi "/source/$target/$pkg/_meta" || fail "could not probe $target/$pkg/_meta"
   if [ "$O_404" = 1 ]; then
+    # Absent by this spelling only? devel-of.sh checks the others (case, -/_/.,
+    # python3dist()'s): python-authlib was filed while Factory had python-Authlib.
+    near="$(timeout 120 "$SDIR/devel-of.sh" "$pkg" "$target" 2>"$errf")"; nrc=$?
+    case $nrc in
+      3) ;;
+      6) echo "VERDICT: STOP - not in $target as $pkg, but it has ${near#*, but it has }"; exit 3 ;;
+      *) fail "could not check $target for other spellings of $pkg: $(head -n 1 "$errf" 2>/dev/null)${near:+ $near}" ;;
+    esac
     echo "package:        $pkg — NOT in $target (new package)"
     newpkg=1
   elif printf '%s' "$O_OUT" | grep -q '<devel '; then
