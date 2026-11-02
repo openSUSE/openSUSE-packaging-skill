@@ -823,7 +823,7 @@ def host_parse(lines, err):
 
 
 def parse(spec, logdir):
-    # rpm expands macros in comments: a section name there broke opencode's
+    # rpm expands macros in comments: %prep there broke opencode's
     # build, and a multi-line macro there runs its lines as commands
     try:
         raw = read_lines(spec)
@@ -872,11 +872,14 @@ def parse(spec, logdir):
     for i, line in enumerate(lines[:end]):
         if not line.lstrip().startswith("#"):
             continue
-        m = SECTION.search(line)
-        if m:
-            print("%s:%d: %%%s in a comment: rpm expands macros in comments, and OBS declined opencode "
-                  "for one (sr#1394137, Unknown tag: %%prep): write %%%%%s" % (spec, i + 1, m.group(1), m.group(1)))
+        found = [m.group(1) for m in SECTION.finditer(line)]
+        if "prep" in found:
+            print("%s:%d: %%prep in a comment: rpm expands macros in comments, and OBS declined opencode "
+                  "for one (sr#1394137, Unknown tag: %%prep): write %%%%prep" % (spec, i + 1))
             bad = 1
+        elif found:
+            # only %prep is proven to break an OBS build
+            print("note: %s:%d: %%%s in a comment: rpm may expand it, write %%%%%s" % (spec, i + 1, found[0], found[0]))
         joined = line.rstrip().endswith("\\") or (i and lines[i - 1].rstrip().endswith("\\"))
         if MACROREF.search(line) and not joined:
             cand.append(i)

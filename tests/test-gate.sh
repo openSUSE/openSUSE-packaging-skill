@@ -1126,6 +1126,14 @@ t
 %prep
 %files
 EOF
+  # only %prep is proven to break OBS: another section name in a comment is a note
+  sp section-note rpmspec 0 "note: p.spec:6: %build in a comment" <<'EOF'
+# Built from source in %build, and %check runs the tests.
+%description
+t
+%prep
+%files
+EOF
   sp multiline-comment rpmspec 1 "p.spec:13: the comment's macro expands to 3 lines" <<'EOF'
 %define two_lines \
 echo one\
