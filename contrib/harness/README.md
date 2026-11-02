@@ -493,7 +493,7 @@ directory holding osc checkouts, or of several checkouts at once, running a `.sh
 with Python or a `.py` file with a shell, or
 fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
 Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
-`build-wait.sh`; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
+`build-wait.sh`, `--no-summary` for a job other than a build; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
 to the background with `&` are added up, and a shell function's body, `$((…))`,
 `time.sleep` and `watch -n` are not judged).
 A `-h`/`--help` call of `tea`, `git-obs`, `git`, `osc` or `gh` is not
