@@ -85,15 +85,42 @@ TEST_PATH = re.compile(
     re.I,
 )
 BOOTSTRAP_WORDS = 8
-# a why that says the build does not use the file: "never invokes it", "unused";
-# one about the installed package ("not needed at run time") says nothing of that
+# a why that says the build does not use the file: the build is what never
+# invokes it ("this Linux build never invokes it", "not required by the build",
+# "only the Android build invokes it", "unused"). What a real bootstrap says of a
+# packaged predecessor or the installed package ("Factory's go does not run it",
+# "not needed afterwards", "not used by anything the RPM installs") is no denial.
+_BUILD = r"(?:this|the|our|its)\s+(?:[\w'-]+\s+){0,2}?build"
+_VERB = r"(?:invok|use|using|run|ran|execut|call|load|need|requir|depend)\w*"
+_NEG = r"(?:never|not|doesn't|didn't|won't|can't|cannot|has\s+no)"
 UNUSED = re.compile(
-    r"(?:\b(?:never|not|no\s+longer)|n't)\s+(?:be\s+|been\s+|get\s+|gets\s+)?"
-    r"(?:invoke[sd]?|use[sd]?|run[s]?|ran|execute[sd]?|call(?:s|ed)?|load(?:s|ed)?|need(?:s|ed)?|touch(?:es|ed)?)\b"
-    r"(?!\s+(?:\S+\s+){0,2}?(?:at\s+run[\s-]?time|after\s+the\s+build|once\s+installed))"
-    r"|\bunused\b|\bnothing\s+(?:invokes|uses|runs|executes|calls|loads|needs)\b",
+    "|".join(
+        (
+            rf"\b{_BUILD}\s+(?:[\w'-]+\s+){{0,2}}?{_NEG}\s+(?:\w+\s+)?{_VERB}",
+            rf"\b(?:not|never)\s+(?:\w+\s+){{0,2}}?{_VERB}\s+(?:by|in|during|at|for)\s+"
+            rf"(?:(?:this|the|our|its)\s+)?(?:[\w'-]+\s+){{0,2}}?build\b",
+            rf"\bonly\s+the\s+(?:[\w'-]+\s+){{1,2}}build\s+{_VERB}",
+            r"\bunused\b",
+        )
+    ),
     re.I,
 )
+# a denial about what follows the build or what ships is a bootstrap's own claim
+NOT_DENIAL = re.compile(
+    r"[^.;]{0,40}?\b(?:afterwards|after\s+the\s+build|outside\s+the\s+build|at\s+run[\s-]?time"
+    r"|once\s+installed|by\s+the\s+(?:installed|shipped)\b)",
+    re.I,
+)
+
+
+def denial(why):
+    """The first phrase of why that says the build does not use the file, or None."""
+    for m in UNUSED.finditer(why):
+        if not NOT_DENIAL.match(why, m.end()):
+            return m.group(0)
+    return None
+
+
 FIX = (
     "a binary the package ships, embeds, loads or links is never an exception: build "
     "it from source or unbundle it (BuildRequires the system package; Rust: cargo_vendor "
@@ -570,10 +597,10 @@ def exceptions(d):
                     f"{where}: a bootstrap needs a why of {BOOTSTRAP_WORDS}+ words: what it "
                     "builds, and why no packaged predecessor can"
                 )
-            elif reason == "bootstrap" and UNUSED.search(why):
+            elif reason == "bootstrap" and denial(why):
                 bad.append(
                     f"{where}: a bootstrap is a toolchain the build runs, and this why says it "
-                    f"does not ('{UNUSED.search(why).group(0)}'): a file the build does not use "
+                    f"does not ('{denial(why)}'): a file the build does not use "
                     "is removed from the sources (the tarball repack or the _service exclude), "
                     "never excepted"
                 )
