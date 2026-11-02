@@ -1,0 +1,80 @@
+{
+ "releases": {
+  "0.8.45": [
+   {
+    "upload_time_iso_8601": "2026-06-22T21:35:10.252892Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-22T21:35:15.779914Z",
+    "yanked": false
+   }
+  ],
+  "0.8.46": [
+   {
+    "upload_time_iso_8601": "2026-06-23T12:31:55.061296Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-23T12:31:57.861799Z",
+    "yanked": false
+   }
+  ],
+  "0.8.47": [
+   {
+    "upload_time_iso_8601": "2026-06-24T10:55:21.547575Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-24T10:55:23.938391Z",
+    "yanked": false
+   }
+  ],
+  "0.8.48": [
+   {
+    "upload_time_iso_8601": "2026-06-25T08:56:18.609375Z",
+    "yanked": true
+   },
+   {
+    "upload_time_iso_8601": "2026-06-25T08:56:21.462574Z",
+    "yanked": true
+   }
+  ],
+  "0.8.49": [
+   {
+    "upload_time_iso_8601": "2026-06-25T09:03:46.054349Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-25T09:03:49.249631Z",
+    "yanked": false
+   }
+  ],
+  "0.8.50": [
+   {
+    "upload_time_iso_8601": "2026-06-27T09:27:39.326673Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-27T09:27:42.730526Z",
+    "yanked": false
+   }
+  ],
+  "0.8.50rc1": [
+   {
+    "upload_time_iso_8601": "2026-01-01T00:00:00.000000Z",
+    "yanked": false
+   }
+  ],
+  "0.8.51": [
+   {
+    "upload_time_iso_8601": "2026-06-28T10:24:42.217214Z",
+    "yanked": false
+   },
+   {
+    "upload_time_iso_8601": "2026-06-28T10:24:45.886739Z",
+    "yanked": false
+   }
+  ]
+ }
+}
