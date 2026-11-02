@@ -43,9 +43,10 @@ data".
 Most people guard the build and miss the *parse*:
 
 - **Parsing a foreign spec executes code.** `%(...)` in a tag is shell,
-  expanded at **parse** time — `rpmspec`, `rpm -q --specfile`, and anything
-  else that parses the spec runs it, on the host, as you. Inspect an untrusted
-  spec **as text** (grep/read), never by parsing it. This is also why the
+  expanded at **parse** time — `rpmspec`, `rpm -q --specfile`, `scripts/gate.sh`
+  (which also runs `%prep`), and anything else that parses the spec runs it,
+  on the host, as you. Inspect an untrusted spec **as text** (grep/read),
+  never by parsing it. This is also why the
   incoming-request review checklist flags `%()` in tags.
 - **`osc service run` executes `_service` on the host.** Source services are
   arbitrary programs run as your user — the chroot only contains the *build*.
@@ -54,7 +55,7 @@ Most people guard the build and miss the *parse*:
   containment; the parse/service paths are the ones with no sandbox.
 
 Safe-handling summary for a foreign checkout: read files as text; build in the
-chroot if you need build evidence; never `rpmspec`-parse, never service-run,
+chroot if you need build evidence; never `rpmspec`-parse or gate, never service-run,
 never execute anything from the tarball on the host.
 
 ## The rules
