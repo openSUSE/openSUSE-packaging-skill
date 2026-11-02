@@ -1159,6 +1159,45 @@ t
 EOF
   grep -qF "p.spec: rpmspec -P fails" "$work/gate-sp-flavor/rpmspec.txt" \
     && fail "rpmspec flavor: the default build was red" || pass "rpmspec flavor: the default build parses"
+  # A _multibuild spec whose default build is off (do_not_build) counts by its flavors.
+  mkdir -p "$work/sp-noflavor"; printf '<multibuild>\n  <package>qt6</package>\n</multibuild>\n' > "$work/sp-noflavor/_multibuild"
+  sp noflavor rpmspec 0 "note: p.spec: the default build does not parse, and the spec builds only its flavors" <<'EOF'
+%define flavor @BUILD_FLAVOR@%{nil}
+%if "%{flavor}" == ""
+ExclusiveArch:  do_not_build
+%endif
+%if "%{flavor}" == "qt6"
+%define libname libp-qt6
+%endif
+%description
+t
+%package devel
+Summary:        t
+Requires:       %{libname}
+%description devel
+t
+%files
+EOF
+  # What only the build root defines stops the parse here without saying the
+  # spec is wrong (Requires: %{apache_mmn} without apache2-devel); %patchN is wrong.
+  sp hostmacro rpmspec 0 "UNKNOWN: p.spec: rpmspec -P stopped on what this host lacks: macro %gate_test_no_such_macro" <<'EOF'
+Requires:       %{gate_test_no_such_macro}
+%description
+t
+%prep
+%files
+EOF
+  grep -qF "UNKNOWN: %prep of p.spec not run: rpmspec -P stopped on this host" "$work/gate-sp-hostmacro/prep.txt" \
+    && grep -q '^## prep: rc=0' <<<"$out" && pass "prep hostmacro: not run, not red" || { fail "prep hostmacro"; sed 's/^/    /' "$work/gate-sp-hostmacro/prep.txt"; }
+  grep -qE '^VERDICT: .*not proven on this host.*gate_test_no_such_macro' <<<"$out" \
+    && pass "hostmacro: named on the verdict line" || { fail "hostmacro: not on the verdict line"; grep VERDICT <<<"$out"; }
+  sp obsolete-patch rpmspec 1 "p.spec: rpmspec -P fails: error: %patchN is obsolete" <<'EOF'
+%description
+t
+%prep
+%patch0 -p1
+%files
+EOF
   # %prep: a tarball and a patch that applies, then one that does not.
   mkdir -p "$work/ppsrc/p-1"; echo hello > "$work/ppsrc/p-1/hello.txt"
   tar -C "$work/ppsrc" -czf "$work/p-1.tar.gz" p-1
@@ -1177,6 +1216,9 @@ EOF
     < <(pspec 'cp /usr/share/gate-test-no-such-pkg/* .')
   # only the command that failed counts: an earlier miss the spec tolerates is no excuse
   pfix prep-mixed hello; sp prep-mixed prep 1 "p.spec: %prep fails" < <(pspec 'gate-test-no-such-cmd || :' 'false')
+  # an x86_64-only package on an aarch64 host: the build root's arch, not this one
+  pfix prep-arch hello; sp prep-arch prep 0 "stopped on what this host lacks: a build arch (rpm: Architecture is excluded:" \
+    < <(echo 'ExcludeArch:    %{_target_cpu}'; pspec)
   pfix prep-noparse hello; sp prep-noparse prep 1 "p.spec: not run: the spec does not parse" < <(echo "Bogus: tag"; pspec)
   # spec-cleaner 1.3.2 unbraces %{cargo_build} -p foo, which rpm then parses as
   # the macro's options (goose failed in staging): a spec-cleaner defect, not a
