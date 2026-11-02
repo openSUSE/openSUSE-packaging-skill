@@ -482,6 +482,9 @@ MESSAGES = {
     "projects literally, or set them in this call.",
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
     "the command literally.",
+    "gate-sequence": "{0}. The guard judges the tree before the call runs, so "
+    "this one can commit or file a tree the gate never saw: run {s}/gate.sh (and "
+    "--review) in one call, osc commit alone in the next, and osc sr in the one after.",
     "rm-checkouts": "{0}, which other work may be using. Remove only the checkout "
     "this task made, by its own path (rm -r PRJ/PKG), one per call.",
     "request-no-message": "{0}: with no message osc opens an editor, and the call "
@@ -2505,21 +2508,17 @@ def gate_commit(run, ctx, cwd):
                     ask(ctx, "gate-stamp", f"osc commit of {what}: no package checkout")
                     continue
                 st = stamp_of(prj, pkg)
+                what = f"osc commit of {prj}/{pkg}"
                 if (
                     not st
                     or st.get("verdict") != "GREEN"
                     or not checkout_files(co, st.get("files"))
                 ):
-                    ask(
-                        ctx,
-                        "gate-stamp",
-                        f"osc commit of {prj}/{pkg}: no GREEN gate.sh run of this tree",
-                    )
-                else:
-                    what = f"osc commit of {prj}/{pkg}"
-                    ctx.gate_pending.append(
-                        ("commit", what, co, ctx.seq, tuple(ctx.loops), ctx.cur_pipe)
-                    )
+                    ask(ctx, "gate-stamp", f"{what}: no GREEN gate.sh run of this tree")
+                # either way, a write before it in this call is refused (gate_writers)
+                ctx.gate_pending.append(
+                    ("commit", what, co, ctx.seq, tuple(ctx.loops), ctx.cur_pipe)
+                )
 
 
 def gate_submit(run, ctx, cwd):
@@ -2582,7 +2581,8 @@ def gate_submit(run, ctx, cwd):
 def gate_writers(ctx):
     """judge()'s last step: a stamped submit in a call that can write
     anywhere, and a stamped commit after a write into its checkout (before it,
-    or in a loop around both), are asked about."""
+    or in a loop around both), are refused: a fault the agent fixes by
+    splitting the call, not one for the user to approve."""
     for kind, what, co, seq, loops, pipe in ctx.gate_pending:
         w = sorted(
             {
@@ -2602,11 +2602,9 @@ def gate_writers(ctx):
         )
         if w:
             more = ", ".join(w[:3]) + (", …" if len(w) > 3 else "")
-            ask(
-                ctx,
-                "gate-stamp",
-                f"{what}: this call also runs {more}, which can change the files "
-                "first; commit, and file, each in a call of its own",
+            block(
+                "gate-sequence",
+                f"{what}: this call also runs {more}, which can change the files first",
             )
 
 
@@ -5713,9 +5711,9 @@ def judge(ev):
         elif isinstance(inp.get("file_path"), str):
             body = inp.get("content", inp.get("new_string"))
             check_write(inp["file_path"], body if isinstance(body, str) else "", ctx)
+        gate_writers(ctx)
     except Blocked as b:
         return str(b)
-    gate_writers(ctx)
     if ctx.asks:
         return Asked("pr-guard: " + " · ".join(ctx.asks))
     return None

@@ -537,7 +537,7 @@ yourself. It asks before:
 - **a commit of a tree `gate.sh` did not judge**: an `osc commit` whose files (as osc
   commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a
   whole project checkout. Run `gate.sh`, then commit in the next call: a call that runs
-  both is judged before the gate writes its stamp;
+  both is judged before the gate writes its stamp, and refused;
 - **a request without a reviewed and built tree**: an `osc sr`, `submitpac` or `osc creq -a submit`
   whose source files (one expanded-listing lookup) match no stamp that is GREEN and holds
   the change review's PASS (`gate.sh DIR --review FILE`) and a GREEN build of that tree
@@ -553,11 +553,12 @@ yourself. It asks before:
   fills the field, not the model. opencode 1.x hands its hook no agent, so there every review is
   recorded by you.
 
-A commit the stamps let through still asks when the call writes into its checkout before
-it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`, `osc add`, an
-editor, a script, an interpreter, or any of them in a loop around the commit, in its
-pipeline or while it runs in the background); a request asks when the call
-writes anything anywhere, a commit included: commit, and file, each in a call of its own.
+A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
+checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
+`osc add`, an editor, a script, an interpreter, or any of them in a loop around the
+commit, in its pipeline or while it runs in the background); a request is refused when
+the call writes anything anywhere, a commit included: the agent commits, and files, each
+in a call of its own.
 An `eval` or `trap` string the guard cannot read (`eval "$(…)"`, a variable the call
 does not set) asks as `[eval-dynamic]`; one held in a variable the call sets is judged,
 as are `eval`, `trap` and `bash -c` named through a variable, and a trap's command
