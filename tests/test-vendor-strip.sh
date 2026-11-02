@@ -217,6 +217,71 @@ run 2 ".cargo-checksum.json" "$work/plain.tar" -o "$work/x.tar" 'a/*'
 echo "not a tarball" > "$work/junk.tar.zst"
 run 2 "cannot read" "$work/junk.tar.zst" -o "$work/x.tar" 'a/*'
 
+# A tarball tarfile stops reading early (a corrupt header mid-way) or that ends
+# early is unreadable, never "the rest": that would drop every member after it.
+python3 - "$work/vendor.tar" "$work/badhdr.tar" "$work/short.tar" <<'PY'
+import sys, tarfile
+src, bad, short = sys.argv[1:]
+data = bytearray(open(src, "rb").read())
+m = next(m for m in tarfile.open(src).getmembers() if m.name == "vendor/libc-0.2.170/src/lib.rs")
+data[m.offset + 148 : m.offset + 156] = b"0000000\0"   # a checksum that does not hold
+open(bad, "wb").write(data)
+lib = next(m for m in tarfile.open(src).getmembers() if m.name == "vendor/libc-0.2.170/Cargo.toml")
+open(short, "wb").write(open(src, "rb").read()[: lib.offset_data + 5])
+PY
+run 2 "cannot read" "$work/badhdr.tar" -o "$work/x.tar" 'ring-*/A-*.o'
+run 2 "cannot read" "$work/short.tar" -o "$work/x.tar" 'ring-*/A-*.o'
+head -c $(( $(wc -c < "$work/v-xz") / 2 )) "$work/v-xz" > "$work/short.tar.xz"
+run 2 "cannot read" "$work/short.tar.xz" -o "$work/x.tar" 'ring-*/A-*.o'
+printf '\037\213\010\000\000\000\000\000\000\003this is no deflate stream at all' > "$work/bad.tar.gz"
+run 2 "cannot read" "$work/bad.tar.gz" -o "$work/x.tar" 'ring-*/A-*.o'
+[ ! -e "$work/x.tar" ] && pass "unreadable input: nothing written" || fail "unreadable input wrote $work/x.tar"
+
+# An output that cannot be written is exit 2, and a compressor that fails half
+# way leaves the input as it was and no temporary file behind.
+run 2 "cannot write" "$work/vendor.tar" -o "$work/no-such-dir/out.tar" 'ring-*/A-*.o'
+if command -v zstd > /dev/null; then
+  mkdir -p "$work/fakebin" "$work/midfail"
+  zs=$(command -v zstd)
+  printf '#!/bin/bash\ncase " $* " in *" -dcq "*) exec %s "$@" ;; esac\ncat > /dev/null; exit 1\n' "$zs" > "$work/fakebin/zstd"
+  chmod +x "$work/fakebin/zstd"; cp "$work/v-zst" "$work/midfail/v.tar.zst"
+  out=$(PATH="$work/fakebin:$PATH" python3 "$VS" "$work/midfail/v.tar.zst" -o "$work/midfail/v.tar.zst" 'ring-*/A-*.o' 2>&1); rc=$?
+  [ $rc = 2 ] && cmp -s "$work/v-zst" "$work/midfail/v.tar.zst" && [ "$(ls -A "$work/midfail")" = v.tar.zst ] \
+    && pass "a compressor failing mid-write: exit 2, input intact, no temporary left" \
+    || { fail "mid-write failure: rc=$rc, dir: $(ls -A "$work/midfail")"; printf '%s\n' "$out" | sed 's/^/    /'; }
+fi
+
+# A glob naming a directory says how to take what is under it.
+run 1 "'ring-*/pregenerated/**'" "$work/vendor.tar" -o "$work/x.tar" 'ring-*/pregenerated'
+
+# Links: a kept hard link or symlink to a removed member would dangle (GNU tar
+# 1.35 spins on such a hard link at extract), so that is refused; removing the
+# links too is fine. A pretty-printed map keeps its layout.
+python3 - "$work/links.tar" <<'PY'
+import io, sys, tarfile
+pretty = (b'{\n  "files": {\n    "Cargo.toml": "aa",\n    "lib/a.o": "bb",\n'
+          b'    "lib/b.o": "cc",\n    "lib/c.rs": "dd"\n  },\n  "package": "ee"\n}')
+with tarfile.open(sys.argv[1], "w", format=tarfile.GNU_FORMAT) as t:
+    def add(name, data=None, kind=tarfile.REGTYPE, link=""):
+        ti = tarfile.TarInfo(name); ti.type, ti.linkname, ti.mtime = kind, link, 1700000000
+        ti.size = len(data or b"")
+        t.addfile(ti, io.BytesIO(data) if data else None)
+    add("vendor/foo-1.0/.cargo-checksum.json", pretty)
+    add("vendor/foo-1.0/Cargo.toml", b"[package]\n")
+    add("vendor/foo-1.0/lib/a.o", b"\0" * 64)
+    add("vendor/foo-1.0/lib/b.o", b"\1" * 64)
+    add("vendor/foo-1.0/lib/c.rs", b"// c\n")
+    add("vendor/foo-1.0/lib/hard.o", kind=tarfile.LNKTYPE, link="vendor/foo-1.0/lib/a.o")
+    add("vendor/foo-1.0/lib/sym.o", kind=tarfile.SYMTYPE, link="b.o")
+PY
+run 1 "hard link" "$work/links.tar" -o "$work/x.tar" 'foo-*/lib/a.o'
+run 1 "symlink" "$work/links.tar" -o "$work/x.tar" 'foo-*/lib/b.o'
+[ ! -e "$work/x.tar" ] && pass "dangling links: nothing written" || fail "a dangling-link run wrote $work/x.tar"
+run 0 "STRIPPED: 4 member(s)" "$work/links.tar" -o "$work/links-out.tar" 'foo-*/lib/*.o'
+got=$(tar -xOf "$work/links-out.tar" vendor/foo-1.0/.cargo-checksum.json)
+want=$(printf '{\n  "files": {\n    "Cargo.toml": "aa",\n    "lib/c.rs": "dd"\n  },\n  "package": "ee"\n}')
+[ "$got" = "$want" ] && pass "a pretty-printed map keeps its layout" || fail "pretty map: $got"
+
 # The point of it: source-binaries.py finds the Windows objects before, none after.
 mkdir -p "$work/pkg-before" "$work/pkg-after"
 printf 'Name: p\n' | tee "$work/pkg-before/p.spec" > "$work/pkg-after/p.spec"

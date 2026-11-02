@@ -18,9 +18,11 @@ pairs: cargo writes it compact, and so it stays. Members outside the vendor root
 (.cargo/config.toml, Cargo.lock) are never matched. The same tarball and globs
 give the same bytes.
 
-Refused, with nothing written: a glob that matches no file, and a crate's
+Refused, with nothing written: a glob that matches no file, a crate's
 Cargo.toml or .cargo-checksum.json (a crate goes whole, through cargo_vendor's
-filter=true, or not at all).
+filter=true, or not at all), and a kept hard link or symlink to a removed
+member. A tarball with anything but zeros after the last member tarfile can
+read is unreadable, not cut short.
 
 cargo_vendor writes the files back on every run: redo the strip after each
 re-vendor, and keep the command in a spec comment above the vendor Source line.
@@ -38,11 +40,13 @@ import gzip
 import json
 import lzma
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import zlib
 
 BLOCK = 512
 RECORD = 20 * BLOCK
@@ -55,7 +59,7 @@ MAGIC = (
     (b"BZh", "bzip2"),
 )
 OPEN = {"xz": lzma.open, "gzip": gzip.open, "bzip2": bz2.open, "tar": open}
-READ_ERRORS = (OSError, EOFError, lzma.LZMAError, tarfile.TarError)
+READ_ERRORS = (OSError, EOFError, lzma.LZMAError, zlib.error, tarfile.TarError)
 
 
 class Refused(Exception):
@@ -164,14 +168,14 @@ def glob_match(pat, parts):
     )
 
 
-def plan(names, globs):
+def plan(members, globs):
     """(vendor root, {member name: (crate, path in the crate)} to remove, crates).
 
-    names: (member name, is a directory) in archive order."""
+    members: the TarInfo of every member, in archive order."""
     sums = [
-        plain(n)
-        for n, isdir in names
-        if not isdir and plain(n).rsplit("/", 1)[-1] == CHECKSUM
+        plain(m.name)
+        for m in members
+        if not m.isdir() and plain(m.name).rsplit("/", 1)[-1] == CHECKSUM
     ]
     if not sums:
         raise Failed(f"no {CHECKSUM} in it: not a cargo vendor tarball")
@@ -181,22 +185,27 @@ def plan(names, globs):
     root = roots.most_common(1)[0][0]
     prefix = f"{root}/" if root else ""
     files = []
-    for n, isdir in names:
-        p = plain(n)
-        if isdir or not p.startswith(prefix) or "/" not in p[len(prefix) :]:
+    for m in members:
+        p = plain(m.name)
+        if m.isdir() or not p.startswith(prefix) or "/" not in p[len(prefix) :]:
             continue
         crate, rel = p[len(prefix) :].split("/", 1)
-        files.append((n, crate, rel))
+        files.append((m.name, crate, rel))
     refused, gone = [], {}
     for g in globs:
         pat = [s for s in g.split("/") if s]
         hit = [f for f in files if glob_match(pat, [f[1], *f[2].split("/")])]
         if not hit:
-            hint = (
-                f" (globs are relative to {prefix})"
-                if prefix and g.startswith(prefix)
-                else ""
-            )
+            hint = ""
+            if prefix and g.startswith(prefix):
+                hint = f" (globs are relative to {prefix})"
+            elif any(
+                glob_match(pat, parts[:k])
+                for f in files
+                for parts in [[f[1], *f[2].split("/")]]
+                for k in range(1, len(parts))
+            ):
+                hint = f" (a directory: '{g.rstrip('/')}/**' takes what is under it)"
             refused.append(
                 f"'{g}' matches nothing under {prefix or 'the archive root'}{hint}"
             )
@@ -207,6 +216,20 @@ def plan(names, globs):
                     f"{CHECKSUM} go only with the whole crate (cargo_vendor filter=true)"
                 )
             gone[n] = (crate, rel)
+    # a kept link to a removed member would dangle: GNU tar 1.35 spins on such
+    # a hard link at extract
+    left = {plain(n) for n in gone}
+    for m in members:
+        if m.name in gone or not (m.islnk() or m.issym()):
+            continue
+        to = plain(m.linkname)
+        if m.issym():
+            to = posixpath.normpath(
+                posixpath.join(posixpath.dirname(plain(m.name)), to)
+            )
+        if to in left:
+            kind = "hard link" if m.islnk() else "symlink"
+            refused.append(f"{m.name} is a {kind} to {to}, which goes: strip it too")
     if refused:
         raise Refused("\n".join(dict.fromkeys(refused)))
     return root, gone, len({f[1] for f in files})
@@ -290,27 +313,48 @@ def data_end(m):
     return m.offset_data + n + (-n % BLOCK)
 
 
+def load(src, fmt, tmp):
+    """The members of src, decompressed into tmp, and the tar's length.
+
+    tarfile ends a listing quietly at a header it cannot parse: what follows
+    the last member must be the end-of-archive zeros, or the rest is lost."""
+    try:
+        with tar_stream(src, fmt) as stream:
+            shutil.copyfileobj(stream, tmp, 1 << 20)
+        total = tmp.tell()
+        tmp.seek(0)
+        members = tarfile.open(fileobj=tmp, mode="r:").getmembers()
+    except READ_ERRORS as e:
+        raise Failed(f"cannot read {src}: {e}") from e
+    end = data_end(members[-1]) if members else 0
+    tmp.seek(end)
+    while buf := tmp.read(1 << 20):
+        rest = buf.lstrip(b"\0")
+        if rest:
+            at = end + len(buf) - len(rest)
+            raise Failed(f"cannot read {src}: no tar header it can read at {at}")
+        end += len(buf)
+    sparse = [m.name for m in members if m.issparse()]
+    if sparse:
+        raise Failed(f"cannot rewrite {src}: {sparse[0]} is a sparse member")
+    return members, total
+
+
 def strip(src, fmt, out, globs):
     """Write out; returns (root, gone, crates, {crate: entries dropped}, notes)."""
     outdir = os.path.dirname(os.path.abspath(out))
-    with tempfile.TemporaryFile(dir=outdir) as tmp:
-        try:
-            with tar_stream(src, fmt) as stream:
-                shutil.copyfileobj(stream, tmp, 1 << 20)
-            tmp.seek(0)
-            members = tarfile.open(fileobj=tmp, mode="r:").getmembers()
-        except READ_ERRORS as e:
-            raise Failed(f"cannot read {src}: {e}") from e
-        sparse = [m.name for m in members if m.issparse()]
-        if sparse:
-            raise Failed(f"cannot rewrite {src}: {sparse[0]} is a sparse member")
-        root, gone, ncrates = plan([(m.name, m.isdir()) for m in members], globs)
+    try:
+        tmp = tempfile.TemporaryFile(dir=outdir)
+    except OSError as e:
+        raise Failed(f"cannot write {out}: {e}") from e
+    with tmp:
+        members, total = load(src, fmt, tmp)
+        root, gone, ncrates = plan(members, globs)
         by_crate = collections.defaultdict(set)
         for crate, rel in gone.values():
             by_crate[crate].add(rel)
         prefix = f"{root}/" if root else ""
         dropped, notes = {}, []
-        total = tmp.seek(0, os.SEEK_END)
         fd, tmp_out = tempfile.mkstemp(prefix=".vendor-strip.", dir=outdir)
         try:
             with os.fdopen(fd, "wb") as raw, compressor(raw, fmt) as cw:
@@ -380,14 +424,14 @@ def main():
     try:
         fmt = compression(a.tarball)
         if a.dry_run:
-            try:
-                with tar_stream(a.tarball, fmt) as s:
-                    names = [
-                        (m.name, m.isdir()) for m in tarfile.open(fileobj=s, mode="r|")
-                    ]
-            except READ_ERRORS as e:
-                raise Failed(f"cannot read {a.tarball}: {e}") from e
-            root, gone, ncrates = plan(names, a.globs)
+            try:  # beside the tarball, unlinked: not in a tmpfs /tmp
+                tmp = tempfile.TemporaryFile(
+                    dir=os.path.dirname(os.path.abspath(a.tarball))
+                )
+            except OSError:
+                tmp = tempfile.TemporaryFile()
+            with tmp:
+                root, gone, ncrates = plan(load(a.tarball, fmt, tmp)[0], a.globs)
             dropped, notes = None, []
         else:
             root, gone, ncrates, dropped, notes = strip(
@@ -429,4 +473,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # an uncaught exception would exit 1, which reads as a refusal
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        print("vendor-strip: internal error, nothing written", file=sys.stderr)
+        sys.exit(2)
