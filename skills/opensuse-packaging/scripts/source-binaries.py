@@ -7,10 +7,11 @@ tarball), and nothing is extracted.
 
   source-binaries.py [DIR] [--rpms RPMDIR] [--all] [--no-cache]
   DIR         package checkout (default .)
-  --rpms RPMDIR  also read the built RPMs in RPMDIR (osc getbinaries -d, or a
-              build root's RPMS): a payload file that is, or carries verbatim, a
-              prebuilt binary from the sources is SHIPPED, red whatever its
-              exception says, firmware alone excepted
+  --rpms RPMDIR  also read the built RPMs in RPMDIR and its subdirectories
+              (osc getbinaries -d, or a build root's RPMS): a payload file
+              that is, or carries verbatim, a prebuilt binary from the sources
+              is SHIPPED, red whatever its exception says, firmware alone
+              excepted
   --all       list every hit (default: the first 20, then a count per kind and
               per directory)
   --no-cache  rescan archives scanned before (results are cached by sha256
@@ -571,8 +572,9 @@ def rpm_payloads(rpmdir, prebuilt, prints):
     s, rpms, found = Scan(), 0, []
     overlap = max((len(f) for f in prints), default=1) - 1
     names = sorted(
-        f
-        for f in os.listdir(rpmdir)
+        os.path.relpath(os.path.join(root, f), rpmdir)
+        for root, _, fs in os.walk(rpmdir)
+        for f in fs
         if f.endswith(".rpm")
         and not f.endswith((".src.rpm", ".nosrc.rpm"))
         and "-debuginfo-" not in f
@@ -580,7 +582,7 @@ def rpm_payloads(rpmdir, prebuilt, prints):
     )
     if not shutil.which("rpm2cpio"):
         s.unknown.append((rpmdir, "no rpm2cpio to read the RPMs"))
-        return s, 0
+        return [], s.unknown, 0
     for f in names:
         proc = subprocess.Popen(
             ["rpm2cpio", os.path.join(rpmdir, f)],
