@@ -34,9 +34,12 @@
 #                changes-patches against the target
 #   --git-base   git checkout: the target's ref for changes-patches and patch-tags
 #                (a fork PR's upstream is the pushed fork branch, which compares clean)
-#   --build-log  also run build-summary.sh on this osc build log (verdict only);
-#                red when the log built another spec. GREEN records it as the
-#                tree's build
+#   --build-log  also run build-summary.sh on this osc build log, in any form
+#                build-summary.sh takes (verdict only). Red unless it is a build
+#                of this tree: a spec of the checkout, its source RPM of the
+#                spec's name and version, started after the last change to any
+#                file but a .changes; a _multibuild package passes it once per
+#                flavor. GREEN records them as the tree's build
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
@@ -73,6 +76,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 read -r -d '' PY <<'PYEOF'
+import calendar
 import hashlib
 import json
 import os
@@ -202,12 +206,103 @@ def build_note(st):
     if b.get("kind") == "obs":
         return "build: OBS, sources %s" % (b.get("srcmd5") or "?")[:12]
     if b.get("kind") == "log":
-        return "build: %s" % b.get("log")
+        more = len(b.get("logs") or [1]) - 1
+        return "build: %s%s" % (b.get("log"), " and %d more" % more if more > 0 else "")
     return ("build: none recorded for this tree; osc sr asks for one (--build-log LOG,"
             " or --obs-build once OBS built the commit)")
 
 
-def stamp(path, d, prj, pkg, target, buildlog="", rpms=""):
+STARTED = re.compile(r'started "build ([^"]+)" at (.+?)\.?\s*$')
+RECIPE = re.compile(r'(?:finished|failed) "build ([^"]+)"')
+WROTE_SRPM = re.compile(r"Wrote: \S*/SRPMS/(\S+?)\.(?:no)?src\.rpm\b")
+
+
+def log_facts(log):
+    # (the spec it built, when it started, its source RPM's n-v-r)
+    recipe, started, srpm = None, None, None
+    with open(log, encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            m = STARTED.search(ln)
+            if m:
+                recipe, started = m.group(1), m.group(2)
+            m = RECIPE.search(ln)
+            if m:
+                recipe = m.group(1)
+            m = srpm is None and WROTE_SRPM.search(ln)
+            if m:
+                srpm = m.group(1)
+    when = None
+    if started:
+        try:
+            when = calendar.timegm(time.strptime(" ".join(started.split()), "%a %b %d %H:%M:%S UTC %Y"))
+        except ValueError:
+            pass
+    return recipe, when if when is not None else os.path.getmtime(log), srpm
+
+
+def flavors(d):
+    try:
+        root = ET.parse(os.path.join(d, "_multibuild")).getroot()
+    except FileNotFoundError:
+        return []
+    except (OSError, ET.ParseError):
+        return None
+    return [e.text.strip() for e in root.iter() if e.tag in ("package", "flavor") and (e.text or "").strip()]
+
+
+def buildlogs(d, *logs):
+    # Whether GREEN logs are builds of this tree: a spec of it, the source RPM
+    # of its name and version, started after the newest file but a .changes,
+    # one per flavor of a _multibuild. A log of an older version, of another
+    # package or of an edited tree is no build of it.
+    want = {}
+    for spec in sorted(os.listdir(d)):
+        if spec.endswith(".spec"):
+            mac = spec_macros(read_lines(os.path.join(d, spec)))
+            want[spec] = (expand_macros(mac.get("name", ""), mac), expand_macros(mac.get("version", ""), mac))
+    fm = files(d)
+    names = [n for n in fm if fm[n] != "-"] if fm is not None else list(want)
+    stamps = [(os.path.getmtime(os.path.join(d, n)), n) for n in names
+              if not n.endswith(".changes") and os.path.isfile(os.path.join(d, n))]
+    newest = max(stamps, default=(0, ""))
+    bad, seen = [], set()
+    for log in logs:
+        recipe, start, srpm = log_facts(log)
+        seen.add(sha256(log))
+        if recipe and recipe not in want:
+            bad.append("%s built %s, not this checkout's %s" % (log, recipe, ", ".join(want) or "spec"))
+            continue
+        if not srpm:
+            bad.append("%s names no source RPM it wrote (Wrote: …/SRPMS/…src.rpm): not known to be a build of this tree" % log)
+            continue
+        parts = srpm.rsplit("-", 2)
+        n, v = (parts[0], parts[1]) if len(parts) == 3 else (srpm, "")
+        ok = False
+        for spec, (name, version) in want.items():
+            if recipe and spec != recipe:
+                continue
+            prefix = name.split("%")[0]
+            if prefix and n.startswith(prefix) and ("%" in version or v == version):
+                ok = True
+        if not ok:
+            said = ", ".join("%s %s" % nv for spec, nv in want.items() if not recipe or spec == recipe)
+            bad.append("%s built %s, the spec says %s" % (log, srpm, said or "nothing"))
+        if newest[0] > start + 1:
+            bad.append("%s changed after %s started: rebuild" % (newest[1], log))
+    fl = flavors(d)
+    if fl is None:
+        bad.append("_multibuild: cannot read it")
+    elif fl and len(seen) < len(fl):
+        bad.append("a _multibuild package: %d flavor(s) (%s), %d distinct build log(s): pass --build-log once per flavor"
+                   % (len(fl), ", ".join(fl), len(seen)))
+    for b in bad:
+        print("RED: " + b)
+    if not bad:
+        print("OK: %d log(s), each a build of this tree" % len(logs))
+    return 1 if bad else 0
+
+
+def stamp(path, d, prj, pkg, target, rpms="", *logs):
     fm = files(d)
     if fm is None or not present(fm):
         return 1
@@ -224,9 +319,9 @@ def stamp(path, d, prj, pkg, target, buildlog="", rpms=""):
         for k in ("build", "rpms"):
             if isinstance(old.get(k), dict):
                 st[k] = dict(old[k], carried=old.get("tree", "")[:12])
-    if buildlog:
-        st["build"] = {"verdict": "GREEN", "kind": "log", "log": buildlog,
-                       "sha256": sha256(buildlog), "time": now()}
+    if logs:
+        st["build"] = {"verdict": "GREEN", "kind": "log", "log": logs[0], "logs": list(logs),
+                       "sha256": [sha256(x) for x in logs], "time": now()}
     if rpms:
         st["rpms"] = {"dir": rpms, "time": now()}
     save(path, st)
@@ -328,9 +423,14 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
         return 1
 
     def red(why):
-        if st.pop("build", None) is not None:
-            save(path, st)
+        cur = load(path)  # as it is now: a review may have been recorded meanwhile
+        if cur and cur.get("tree") == t and cur.pop("build", None) is not None:
+            save(path, cur)
         print("VERDICT: RED — %s: %s" % (who, why))
+        return 1
+
+    def unknown(why):
+        print("VERDICT: UNKNOWN — %s: %s; the recorded build stays" % (who, why))
         return 1
 
     def pending(why):
@@ -343,7 +443,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
     if res is None:
         print("VERDICT: UNKNOWN — cannot read the build results of %s: %s" % (who, err or "unparseable"))
         return 1
-    rows, bad, waiting = [], [], []
+    rows, bad, odd, waiting = [], [], [], []
     for r in res.findall("result"):
         for s in r.findall("status"):
             name = s.get("package") or ""
@@ -355,14 +455,18 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
                 waiting.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code))
             elif code in ("succeeded", "failed"):
                 rows.append((r.get("repository"), r.get("arch"), name, label))
+            elif code in ("unresolvable", "broken"):
+                bad.append("%s %s" % (label, code))
             elif code not in SKIPPED:
-                bad.append("%s %s" % (label, code or "no code"))
+                odd.append("%s %s" % (label, code or "no code"))
     if bad:
         return red(", ".join(bad))
+    if odd:
+        return unknown("states the gate cannot judge: " + ", ".join(odd[:6]))
     if waiting:
         return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
     if not rows:
-        return red("nothing built: every repo/arch disabled or excluded")
+        return unknown("nothing built: no repo/arch builds it (no results, or all disabled or excluded)")
     os.makedirs(outdir, exist_ok=True)
     reds, older, done = [], [], []
     for repo, arch, name, label in rows:
@@ -370,8 +474,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
         with open(logf, "w", encoding="utf-8") as fh:
             _, err = osc_run(["rbl", prj, name, repo, arch], out=fh)
         if err:
-            print("VERDICT: UNKNOWN — cannot read the build log of %s %s: %s" % (who, label, err))
-            return 1
+            return unknown("cannot read the build log of %s: %s" % (label, err))
         with open(logf, encoding="utf-8", errors="replace") as fh:
             m = next((m for m in (SRCMD5.search(ln) for _, ln in zip(range(400), fh)) if m), None)
         if not m or m.group(1) != srcmd5:
@@ -397,9 +500,14 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
             last = (p.stdout.strip().splitlines() or ["exit %d" % p.returncode])[-1]
             print("VERDICT: RED — source-binaries --rpms %s: %s (full output: %s)" % (rpms, last, outdir))
             return 1
-        st["rpms"] = {"dir": rpms, "time": now()}
-    st["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done, "time": now()}
-    save(path, st)
+    cur = load(path)  # as it is now: a review recorded meanwhile stays
+    if not cur or cur.get("verdict") != "GREEN" or cur.get("tree") != t:
+        print("VERDICT: UNKNOWN — the stamp of %s changed during the run: rerun --obs-build" % who)
+        return 1
+    if rpms:
+        cur["rpms"] = {"dir": rpms, "time": now()}
+    cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done, "time": now()}
+    save(path, cur)
     shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""
     print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s (summaries: %s)" % (t[:12], srcmd5[:12], shown, rp, outdir))
@@ -487,8 +595,8 @@ def untouched(against):
     return same
 
 
-def verdicts(lines):
-    # (line number, patch file, what is wrong with its tag or None) per Patch line
+def spec_macros(lines):
+    # Name, Version and plain %define/%global values, the first of each
     macros = {}
     for line in lines:
         m = re.match(r"(name|version)\s*:\s*(\S+)", line, re.I)
@@ -497,14 +605,24 @@ def verdicts(lines):
         m = re.match(r"%(?:define|global)\s+(\w+)\s+(\S+)\s*$", line)
         if m:
             macros.setdefault(m.group(1), m.group(2))
+    return macros
+
+
+def expand_macros(s, macros):
+    for _ in range(5):
+        t = MACRO.sub(lambda m: macros.get(m.group(1) or m.group(2), m.group(0)), s)
+        if t == s:
+            break
+        s = t
+    return s
+
+
+def verdicts(lines):
+    # (line number, patch file, what is wrong with its tag or None) per Patch line
+    macros = spec_macros(lines)
 
     def expand(s):
-        for _ in range(5):
-            t = MACRO.sub(lambda m: macros.get(m.group(1) or m.group(2), m.group(0)), s)
-            if t == s:
-                break
-            s = t
-        return s
+        return expand_macros(s, macros)
 
     def base(s):  # a URL Patch names its file after #/, else by its last path part
         return s.split("#/")[-1] if "#/" in s else s.rsplit("/", 1)[-1]
@@ -567,11 +685,11 @@ def tags(spec, against="strict", basespec=""):
 
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
-      "copyright": copyright, "tags": tags}[cmd]
+      "buildlogs": buildlogs, "copyright": copyright, "tags": tags}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
-dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlog=""; rpms=""; deviation=""; full=0; review=""; nopts=0
+dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; full=0; review=""; nopts=0
 obsbuild=0
 while [ $# -gt 0 ]; do
   case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
@@ -584,7 +702,7 @@ while [ $# -gt 0 ]; do
     --squash-mine) squash=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;
     --git-base) gitbase=$2; shift 2 ;;
-    --build-log) buildlog=$(realpath -m -- "$2"); shift 2 ;;
+    --build-log) if [ -e "$2" ]; then buildlogs+=("$(realpath -- "$2")"); else buildlogs+=("$2"); fi; shift 2 ;;
     --rpms) rpms=$(realpath -m -- "$2"); shift 2 ;;
     --cleaner-deviation) [ -n "$2" ] || { echo "gate.sh: --cleaner-deviation needs the reason" >&2; exit 2; }
                          deviation=$2; shift 2 ;;
@@ -810,14 +928,20 @@ timeout 120 "$HERE/changes-range.py" "${cp_args[0]}" "${cp_args[@]:3}" > "$log/c
 printf '## changes-range: rc=%s (a note, never red)\n' "$rc"
 if [ $full -eq 1 ]; then cat "$log/changes-range.txt"; else tail -n 12 "$log/changes-range.txt"; fi
 
-if [ -n "$buildlog" ]; then
-  "$HERE/build-summary.sh" "$buildlog" > "$log/build-summary.txt" 2>&1; rc=$?
-  { grep -m1 'VERDICT' "$log/build-summary.txt"; grep -A1 '^### rpmlint' "$log/build-summary.txt" | tail -1; } > "$log/build-summary.short.txt"
-  # A green log of another package is no build of this tree.
-  built=$(grep -ahoE '(finished|failed) "build [^"]+"' "$buildlog" 2>/dev/null | tail -n 1 | sed -E 's/^[a-z]+ "build (.*)"$/\1/')
-  if [ -n "$built" ] && [ -e "${specs[0]}" ] && ! printf '%s\n' "${specs[@]}" | grep -qxF -- "$built"; then
-    echo "RED: the log built $built, not this checkout's ${specs[*]}" >> "$log/build-summary.short.txt"; [ $rc -ne 0 ] || rc=1
-  fi
+# Each --build-log in any form build-summary.sh takes (a log, a build root, its
+# name, repo-arch); the log file it read is the one checked and recorded.
+blogs=()
+if [ ${#buildlogs[@]} -gt 0 ]; then
+  : > "$log/build-summary.short.txt"; rc=0
+  for i in "${!buildlogs[@]}"; do
+    out="$log/build-summary.txt"; [ "$i" = 0 ] || out="$log/build-summary.$i.txt"
+    "$HERE/build-summary.sh" "${buildlogs[$i]}" > "$out" 2>&1 || rc=1
+    { grep -m1 'VERDICT' "$out"; grep -A1 '^### rpmlint' "$out" | tail -1; } >> "$log/build-summary.short.txt"
+    f=$(sed -n 's/^log: \(.*\)  (last written .*)$/\1/p' "$out" | head -n 1)
+    if [ -n "$f" ] && [ -f "$f" ]; then blogs+=("$(realpath -- "$f")")
+    else echo "RED: no build log behind --build-log ${buildlogs[$i]}: $(tail -n 1 "$out")" >> "$log/build-summary.short.txt"; rc=1; fi
+  done
+  if [ $rc -eq 0 ]; then py buildlogs . "${blogs[@]}" >> "$log/build-summary.short.txt" || rc=1; fi
   show build-summary $rc "$log/build-summary.short.txt"
 fi
 
@@ -915,7 +1039,7 @@ show source-binaries $rc "$log/source-binaries.txt"
 if [ ${#red[@]} -eq 0 ]; then
   t=""
   if [ -n "$stampf" ]; then
-    if t=$(py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$buildlog" "$rpms"); then
+    if t=$(py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$rpms" "${blogs[@]}"); then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
