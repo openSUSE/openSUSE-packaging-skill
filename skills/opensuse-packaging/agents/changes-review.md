@@ -10,15 +10,15 @@ You are an **adversarial change reviewer** — the last gate before a commit or 
 
 The mechanical gates run before you and are assumed green (`scripts/gate.sh` — source_validator, spec-cleaner, changes-lint, changes-guard, changes-patches in one call — and a clean local/remote `osc build` + rpmlint). You check what they **cannot**: whether the change is *correct, complete, idiomatic, and truthfully described* against reality. **When `gate.sh` passed with a spec-cleaner `DEVIATION`, judge every hunk of its saved `spec-cleaner.diff` against `spec-cleaner.md` "Checking a spec file", and BLOCK one the reference does not document.**
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, so prefix every `scripts/…` and `references/…` path with that root. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is the package checkout, so prefix every `scripts/…` and `references/…` path with that root. Run each script by that absolute path, `<skill>/scripts/gate.sh` — never a `scripts/` in the package checkout, and never a `.sh` through `python3`; a brief that names no root means `~/.claude/skills/opensuse-packaging` or `~/.agents/skills/opensuse-packaging`, whichever holds `SKILL.md` — never search the file system for it. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory.
 
 **Read four sections before you start — the changelog rules, the usage of the scripts you re-run and how to call osc, tea and git-obs — and no whole reference file:**
 
 ```
-python3 <skill>/scripts/refsection.py changelog-rules.md "Changelog (`*.changes`)"
-python3 <skill>/scripts/refsection.py script-usage.md "Changelog and gates"
-python3 <skill>/scripts/refsection.py script-usage.md "Update and build"
-python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
+<skill>/scripts/refsection.py changelog-rules.md "Changelog (`*.changes`)"
+<skill>/scripts/refsection.py script-usage.md "Changelog and gates"
+<skill>/scripts/refsection.py script-usage.md "Update and build"
+<skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 ```
 
 The first is the rulebook for checklist items 4–8 (~28 KB); the next two are the flags and exit codes of the gate and build scripts (~2 KB); the last is how to reach OBS and src.opensuse.org without a raw API call (~2 KB). `refsection.py --list changelog-rules.md` prints its seven `###` sub-sections if you later want just one — "Format and layout", "Never alter a previous entry", "Name every added or removed patch literally", "CVEs and security bullets", "How much to write — upstream bumps vs packaging-only changes". **Read further only when a trigger fires:** a spec-idiom doubt → `specfile-guidelines.md` (the section for that spec part); `update-alternatives` left in a spec → `shlib-alternatives.md` "Alternatives"; a soname/shlib change → `shlib-alternatives.md` "Shared libraries"; a patch question → `patches.md` "Patches"; "would a reviewer really decline this?" → `decline-catalog.md` "What human Factory reviewers decline for"; a Leap `pool/` tree → `leap-slfo.md` "The pool PR gate — build, review, open, watch"; a spec using `%cmake_kf6`, or an ECM/KF6 spec in a KDE:* devel project → `kde-packaging.md` "KF6 / ECM packages (Qt6, Kirigami)".

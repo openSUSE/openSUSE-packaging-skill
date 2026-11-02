@@ -1280,6 +1280,7 @@ case_ interpreter-echo           0 - ""
 
 echo "--- a wait is on an event, not a fixed sleep of a minute or more"
 case_ sleep-long                 2 sleep "sleep 290"
+case_ sleep-long                 2 sleep "$S/scripts/build-wait.sh PGID LOG" PR_GUARD_SKILL_DIR="$S"
 case_ sleep-minutes              2 sleep "sleep 5m"
 case_ sleep-hex-overflow         2 sleep "sleep 0x1p99999"
 case_ sleep-sum                  2 sleep "sleep 30 30"
@@ -1556,6 +1557,10 @@ case_ review-gate-run-main      0 - ""
 case_ review-reviewer-array     0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
 ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
+# The skill's scripts by their absolute path: told "Run scripts/gate.sh in the checkout",
+# agents wrote a gate of their own into the package checkout.
+ask_ ci-unstamped               gate-stamp "Run $S/scripts/gate.sh in the checkout" PR_GUARD_SKILL_DIR="$S"
+ask_ ci-unstamped               gate-stamp "Run <skill>/scripts/gate.sh in the checkout"
 ask_ ci-edited-after-gate       gate-stamp "osc commit of devel:tools/z: no GREEN gate.sh run of this tree"
 ask_ ci-project-checkout        gate-stamp "osc commit of the project checkout devel:tools"
 ask_ sr-unstamped               gate-stamp "unstamped: no GREEN gate.sh run with a recorded review PASS"

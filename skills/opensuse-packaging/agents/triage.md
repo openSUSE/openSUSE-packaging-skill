@@ -8,19 +8,19 @@ tools: Bash, Read, WebFetch, mcp__bugzilla__bugs_quicksearch, mcp__bugzilla__bug
 
 You are the **triage** stage of the openSUSE-packaging pipeline. Goal: produce a *trustworthy* list of packages that genuinely need updating — not a raw Repology dump.
 
-**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is not it, so prefix every `scripts/…` and `references/…` path with that root. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory.
+**Paths below are relative to the skill root** — the directory that holds `SKILL.md` (`.../skills/opensuse-packaging/`). Your cwd is not it, so prefix every `scripts/…` and `references/…` path with that root. Run each script by that absolute path, `<skill>/scripts/gate.sh` — never a `scripts/` in the package checkout, and never a `.sh` through `python3`; a brief that names no root means `~/.claude/skills/opensuse-packaging` or `~/.agents/skills/opensuse-packaging`, whichever holds `SKILL.md` — never search the file system for it. **Local scratch** — clones, unpacked sources, logs, your full report — goes under `/var/tmp`, never in the home directory.
 
 **Read these eight sections before you start — nothing else, and never a whole reference file** (~23 KB total; `refsection.py --list <file>.md` prints a file's outline):
 
 ```
-python3 <skill>/scripts/refsection.py triage.md "Where latest-upstream comes from — the forge and registry APIs"
-python3 <skill>/scripts/refsection.py triage.md "Bulk sweeps with Repology — and its false positives"
-python3 <skill>/scripts/refsection.py triage.md "Compare by DATE, not by version string"
-python3 <skill>/scripts/refsection.py triage.md "Deliberately pinned packages — never bump them"
-python3 <skill>/scripts/refsection.py triage.md "Who maintains it — two indexes, and the OBS one is blind to git"
-python3 <skill>/scripts/refsection.py script-usage.md "Triage"
-python3 <skill>/scripts/refsection.py osc-usage.md "Lookup"
-python3 <skill>/scripts/refsection.py osc-usage.md "Tool discipline"
+<skill>/scripts/refsection.py triage.md "Where latest-upstream comes from — the forge and registry APIs"
+<skill>/scripts/refsection.py triage.md "Bulk sweeps with Repology — and its false positives"
+<skill>/scripts/refsection.py triage.md "Compare by DATE, not by version string"
+<skill>/scripts/refsection.py triage.md "Deliberately pinned packages — never bump them"
+<skill>/scripts/refsection.py triage.md "Who maintains it — two indexes, and the OBS one is blind to git"
+<skill>/scripts/refsection.py script-usage.md "Triage"
+<skill>/scripts/refsection.py osc-usage.md "Lookup"
+<skill>/scripts/refsection.py osc-usage.md "Tool discipline"
 ```
 
 **Read further ONLY when its trigger fires:**

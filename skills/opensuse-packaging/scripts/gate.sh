@@ -1,8 +1,9 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-# (osc checkouts), source_validator, factory-auto's URL check (download_files),
-# the spec as rpm parses it (rpmspec -P), %prep (rpmbuild -bp, without
-# --build-log), spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
+# (osc checkouts), no copy of a skill script, source_validator, factory-auto's URL
+# check (download_files), the spec as rpm parses it (rpmspec -P), %prep
+# (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
+# changes-guard.sh, changes-patches.sh, a
 # one-Legal-Review-Notice-per-License check, the spec header, the patch tags, a
 # new .changes entry for a changed tree and the sources' prebuilt binaries
 # (source-binaries.py), each run unpiped with its exit code read directly, then
@@ -1374,6 +1375,18 @@ fi
 if [ -n "$stampf" ]; then
   py tracked . > "$log/tracked.txt"; show tracked $? "$log/tracked.txt"
 fi
+
+# A package never ships a file named like one of this skill's scripts: told to
+# "run scripts/gate.sh in the checkout", agents wrote their own there, and one
+# printed GREEN for a tree the real gate called red.
+: > "$log/skill-scripts.txt"; rc=0
+for f in "$HERE"/*.sh "$HERE"/*.py; do
+  for c in "scripts/${f##*/}" "${f##*/}"; do
+    [ ! -e "$c" ] || { echo "$c: named like the skill's own ${f##*/}: delete it, and run $f itself" >> "$log/skill-scripts.txt"; rc=1; }
+  done
+done
+[ $rc -eq 0 ] && echo "OK: no file named like a skill script" >> "$log/skill-scripts.txt"
+show skill-scripts $rc "$log/skill-scripts.txt"
 
 if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
   /usr/lib/obs/service/source_validator --outdir "$log/sv" > "$log/source_validator.txt" 2>&1; rc=$?

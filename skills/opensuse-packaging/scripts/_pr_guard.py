@@ -443,12 +443,12 @@ ENV_LONG = (("chdir", "C"), ("unset", "u"), ("split-string", "S"), ("argv0", "a"
 DOCS = (".md", ".rst", ".txt", ".json", ".jsonc", ".changes")
 
 ROUTE = (
-    "pool PRs are opened and updated only by pool-pr.sh DIR, once target-gate.sh "
-    "DIR is green and reviewed for that tree"
+    "pool PRs are opened and updated only by {s}/pool-pr.sh DIR, once "
+    "{s}/target-gate.sh DIR is green and reviewed for that tree"
 )
 MESSAGES = {
     "merge": "{0}: agents never merge a PR, not even their own. Watch it "
-    "instead: sr-status.py --pr <owner>/<pkg>#<n>.",
+    "instead: {s}/sr-status.py --pr <owner>/<pkg>#<n>.",
     "create": "{0}: " + ROUTE + ".",
     "push-pr-head": "{0}; a push moves that PR to a tree nobody built. " + ROUTE + ".",
     "push-pool": "{0} opens or moves a pool PR; " + ROUTE + ".",
@@ -460,10 +460,10 @@ MESSAGES = {
     "one or hands one to the user. Push over SSH: git remote set-url <remote> "
     "gitea@src.opensuse.org:<owner>/<repo>.git (ssh -T gitea@src.opensuse.org "
     "checks the key).",
-    "stamp": "{0}: only target-gate.sh writes its stamps. Run target-gate.sh DIR "
-    "--build (or --remote), then target-gate.sh DIR --review FILE.",
+    "stamp": "{0}: only target-gate.sh writes its stamps. Run {s}/target-gate.sh "
+    "DIR --build (or --remote), then {s}/target-gate.sh DIR --review FILE.",
     "emulated-build": "{0}: that build is emulated, and builds are native only. "
-    "For a foreign-arch proof run target-gate.sh DIR --remote.",
+    "For a foreign-arch proof run {s}/target-gate.sh DIR --remote.",
     "backports": "{0}: openSUSE:Backports:SLE-16.x is scmsync'd from pool and "
     "takes no requests; " + ROUTE + ".",
     "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
@@ -495,7 +495,7 @@ MESSAGES = {
     "pr-message-unknown": "cannot read {0} now, so it is refused. Pass the text "
     'inline, or write its file in one call and pass "$(cat FILE)" in the next.',
     "request-target": "{0}: submit to the devel project Factory names for the package "
-    "(scripts/devel-packages.sh lists it beside each name), or to the project a link "
+    "({s}/devel-packages.sh lists it beside each name), or to the project a link "
     "points at, never to the project a sweep went through.",
     "request-target-unknown": "cannot read {0}, so it is refused. Retry, or name the "
     "source and target literally: osc sr SRC_PRJ PKG DST_PRJ.",
@@ -517,8 +517,8 @@ MESSAGES = {
     "the wrong interpreter fails on its first lines, and a pipe hides that. Run "
     "bash X.sh or python3 X.py, or the script by its path.",
     "sleep": "{0}: a fixed wait holds the session while nothing is checked. Wait on "
-    "the event: scripts/obs-wait.py build PRJ PKG (or request ID), "
-    "scripts/build-wait.sh PGID LOG for a local build, or check back in a later call.",
+    "the event: {s}/obs-wait.py build PRJ PKG (or request ID), "
+    "{s}/build-wait.sh PGID LOG for a local build, or check back in a later call.",
     "rdelete-pending": "{0}: OBS revokes every request that still comes from what "
     "it deletes, new, review and declined alike, and a project takes its packages' "
     "requests with it. Delete one package at a time with plain osc rdelete PRJ PKG "
@@ -536,8 +536,7 @@ MESSAGES = {
     "they were given. Drop the change (allowed: TMPDIR, LC_ALL, LANG, NO_COLOR, "
     "CHANGES_AUTHOR) and pass values as arguments.",
     "canonical-read": "{0}: the skill's scripts find their siblings from their own "
-    "path, so they are run by path (bash <skill>/scripts/NAME ...), never sourced "
-    "or fed on stdin.",
+    "path, so they are run by path ({s}/NAME ...), never sourced or fed on stdin.",
     "credential": "{0}: a login is read only by the tool that owns it (osc, tea, "
     "git-obs, gh). Run that tool or a skill script; ls and stat may look.",
     "askpass": "{0}: an askpass program hands git or ssh a password. git-obs's "
@@ -554,12 +553,12 @@ MESSAGES = {
 ASKS = {
     "comment": "{0}: a comment is public and speaks for the user. Post only "
     "what they asked for, as they approved it; a note for them goes in your report.",
-    "accept-forward": "{0}: only autoforward-gate.sh's ELIGIBLE moves a package "
+    "accept-forward": "{0}: only {s}/autoforward-gate.sh's ELIGIBLE moves a package "
     "unattended (no reviewer; your package, or an unowned one in a project you "
     "maintain; Factory's devel project). Otherwise it needs the user's go.",
     "eval-dynamic": "{0}: the guard cannot read the commands this runs, so it "
     "cannot judge them. Write them out literally, or it needs the user's go.",
-    "gate-stamp": "{0}. Run scripts/gate.sh in the checkout, commit in the next "
+    "gate-stamp": "{0}. Run {s}/gate.sh in the checkout, commit in the next "
     "call, and file once gate.sh --review recorded the change review's PASS.",
     "build-evidence": "{0}. Record its build first: gate.sh with --build-log LOG "
     "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
@@ -607,7 +606,7 @@ class Blocked(Exception):
     def __str__(self):
         return redact(
             f"pr-guard: BLOCKED [{self.rule}] "
-            + MESSAGES[self.kind].format(self.detail)
+            + MESSAGES[self.kind].format(self.detail, s=scripts_path())
         )
 
 
@@ -630,7 +629,8 @@ class Asked(str):
 def ask(ctx, rule, detail, hint=""):
     """Record that the call needs the user's go; judging goes on, and a
     refusal anywhere in the call still wins. hint: a sentence to append."""
-    msg = redact(f"ASK [{rule}] " + ASKS[rule].format(detail) + (hint and " " + hint))
+    text = ASKS[rule].format(detail, s=scripts_path())
+    msg = redact(f"ASK [{rule}] " + text + (hint and " " + hint))
     if msg not in ctx.asks:
         ctx.asks.append(msg)
 
@@ -3769,6 +3769,13 @@ def skill_dir():
         if os.path.isdir(os.path.expanduser(cand)):
             return os.path.realpath(os.path.expanduser(cand))
     return None
+
+
+def scripts_path():
+    """The skill's scripts/ for a message, absolute: a relative scripts/gate.sh
+    had agents write their own gate into the package checkout."""
+    skill = skill_dir()
+    return os.path.join(skill, "scripts") if skill else "<skill>/scripts"
 
 
 def in_skill(real):

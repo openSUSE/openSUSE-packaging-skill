@@ -13,7 +13,7 @@ are always-on, not a phase.
 
 ## Reading this skill
 - **A section, not the file.** Every pointer in this skill is `references/<file>.md "<Section>"`;
-  the pointer *is* the command: `python3 <skill>/scripts/refsection.py <file>.md "<Section>"`.
+  the pointer *is* the command: `<skill>/scripts/refsection.py <file>.md "<Section>"`.
   `--list <file>.md` prints the outline; `--lines` numbers the output so a follow-up
   `Read offset=/limit=` can widen it. A bare file pointer means `--list` it first.
 - **Never Read a reference whole.** The biggest (`submit-watch.md`, `specfile-guidelines.md`,
