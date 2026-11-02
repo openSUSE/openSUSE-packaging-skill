@@ -330,6 +330,8 @@ OSC_ALIAS.update(
 REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
 REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
 REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
+# The osc request (rq, review) verbs that open an editor without -m.
+EDITED_VERBS = {"accept", "decline", "reopen", "revoke", "supersede"}
 # Their long options that take a value (osc 1.27.3), and the -F files that
 # are stdin.
 REQUEST_VALUED = tuple(
@@ -480,6 +482,8 @@ MESSAGES = {
     "projects literally, or set them in this call.",
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
     "the command literally.",
+    "request-no-message": "{0}: with no message osc opens an editor, and the call "
+    "hangs until it times out. Pass -m MSG (osc sr also takes -F FILE).",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
     "message inline, or write its file in one call and file the request in the next.",
     "pr-message": "{0}: a PR's title is one headline of ≤160 characters saying what it "
@@ -857,10 +861,16 @@ def request_args(run, ctx, cwd):
 
 
 def request_message(run, lit, ctx, cwd):
-    """A request message too long for its reviewers, or one that cannot be
-    read now. lit: the argv as literal-aware text and the stdin of the call.
+    """A request (or an osc request verb that would open an editor) with no
+    message, one too long for its reviewers, or one that cannot be read now. lit: the argv as literal-aware text and the stdin of the call.
     -m of other subcommands is a commit message, or osc api's method."""
     sub, args = osc_sub(run)
+    if sub in ("rq", "request", "review"):
+        opts, pos = osc_args("request", args, OSC_OPTS_ASK)
+        verbs = (spellings(pos[0], ctx, cwd, False) or []) if pos else []
+        edited = [v for v in verbs if v in EDITED_VERBS]
+        if edited and not {k for k, _ in opts} & {"-m", "--message"}:
+            block("request-no-message", f"osc {sub} {edited[0]} without -m")
     if sub not in REQUESTS:
         return
     largv, lstdin = lit or (None, None)
@@ -869,7 +879,10 @@ def request_message(run, lit, ctx, cwd):
     else:  # no literal-aware text: any $ or backtick is unknown
         args = [literal(a) if not VARIABLE.search(a) else a for a in args]
     args = [long_prefix(a, ("--message", "--file")) for a in args]
-    for flag, word in parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]:
+    opts = parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
+    if not {k for k, _ in opts} & {"-m", "--message", "-F", "--file"}:
+        block("request-no-message", f"osc {sub} without -m")
+    for flag, word in opts:
         if flag not in ("-m", "--message", "-F", "--file"):
             continue
         is_file = flag in ("-F", "--file")

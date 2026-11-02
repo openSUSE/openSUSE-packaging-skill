@@ -9063,5 +9063,78 @@
       "command": "@WORK@/gate.sh . $(echo --review /var/tmp/x-review/verdict.txt)"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "nomsg-sr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory </dev/null"
+    }
+  },
+  "nomsg-submitreq-supersede": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc submitreq -s 1386001 devel:tools tesseract-ocr openSUSE:Factory"
+    }
+  },
+  "nomsg-creq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc creq -a submit devel:tools tesseract-ocr openSUSE:Factory"
+    }
+  },
+  "nomsg-rq-accept": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-request-decline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc request decline 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-rq-revoke": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq revoke 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-rq-supersede": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq supersede 1390001 1390004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-review-accept": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review accept -G factory-staging 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-rq-revoke-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq revoke -m 'Superseded by the 1.2 update.' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-sr-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -F @MSGS@/short.txt"
+    }
+  },
+  "nomsg-rq-show": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq show 1390001"
+    },
+    "cwd": "@PLAIN@"
   }
 }
