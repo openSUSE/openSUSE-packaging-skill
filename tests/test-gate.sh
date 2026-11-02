@@ -103,6 +103,19 @@ grep -qF "foo.changes: 3 new entries vs openSUSE:Factory/foo" <<<"$out" \
   && pass "non-link checkout, explicit --target: counted against the target" \
   || { fail "non-link checkout, explicit --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# changes-range.py is a note: what it finds is printed and never red. This
+# checkout is behind its committed copy (1.2 < 1.3), which it finds without a lookup.
+devel "$work/devel-older" 1; sed -i 's/^Version: 1.3$/Version: 1.2/' "$work/devel-older/foo.spec"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-older" 2>&1)"
+grep -qF "## changes-range: rc=1 (a note, never red)" <<<"$out" && grep -qF "OLDER: 1.2 here is older than 1.3" <<<"$out" \
+  && grep -q '^VERDICT: ' <<<"$out" && ! grep -q '^VERDICT: RED — .*changes-range' <<<"$out" \
+  && pass "changes-range: a finding is printed, never red" \
+  || { fail "changes-range: the note"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
+grep -qF "## changes-range: rc=0 (a note, never red)" <<<"$out" && grep -qF "no version change (1.3" <<<"$out" \
+  && pass "changes-range: no version change against the committed copy" \
+  || { fail "changes-range: no version change"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 # --amend-top reaches changes-guard, which asks Factory whether the committed
 # top entry is still a draft: devel's own unaccepted entry is, Factory's is not.
 devel "$work/amend-draft" 1; cp "$work/amend-draft/.osc/sources/foo.changes" "$work/amend-draft/foo.changes"

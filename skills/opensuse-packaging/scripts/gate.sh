@@ -8,6 +8,8 @@
 # steps and five result blocks that ride along in context for the rest of the
 # session; this costs one. The adversarial change review (agents/changes-review.md)
 # still follows — it is a judgement, not a check, and stays outside this script.
+# changes-range.py runs as a note that is never red: the upstream releases the
+# bump crosses that the new .changes entries never name, or describe again.
 #
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
 #                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
@@ -607,6 +609,11 @@ elif [ -n "$target" ]; then cp_args+=(--target "$target"); fi
 [ -n "$gitbase" ] && cp_args+=(--git-base "$gitbase")
 "$HERE/changes-patches.sh" "${cp_args[@]}" > "$log/changes-patches.txt" 2>&1; rc=$?
 show changes-patches $rc "$log/changes-patches.txt"
+
+# Releases the bump crosses that the new entries never name, or describe again:
+# a note, never red, as it reads free-text headings. cp_args minus --entries N.
+timeout 120 "$HERE/changes-range.py" "${cp_args[0]}" "${cp_args[@]:3}" > "$log/changes-range.txt" 2>&1; rc=$?
+printf '## changes-range: rc=%s (a note, never red)\n' "$rc"; tail -n 12 "$log/changes-range.txt"
 
 if [ -n "$buildlog" ]; then
   "$HERE/build-summary.sh" "$buildlog" > "$log/build-summary.txt" 2>&1; rc=$?
