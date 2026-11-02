@@ -1,0 +1,7 @@
+[
+ {"tag_name": "v1.2.4", "prerelease": false, "draft": false, "published_at": "2026-03-01T10:00:00Z"},
+ {"tag_name": "v1.3.0", "prerelease": false, "draft": false, "published_at": "2026-02-01T10:00:00Z"},
+ {"tag_name": "v1.2.9", "prerelease": false, "draft": true, "published_at": null},
+ {"tag_name": "v1.3.0-rc.1", "prerelease": true, "draft": false, "published_at": "2026-01-20T10:00:00Z"},
+ {"tag_name": "v1.2.3", "prerelease": false, "draft": false, "published_at": "2026-01-01T10:00:00Z"}
+]

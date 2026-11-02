@@ -747,3 +747,168 @@ def label_results(rows, with_index=False):
         results[label] = facts
         index[(kind, host, name)] = label
     return (results, index) if with_index else results
+
+
+# ---------- every release of a source, for a version range ---------------------
+# changes-range.py needs the releases between two versions, not the latest one.
+# The filters are the probes': drafts and versions that read as pre-releases
+# are dropped, and a tag must follow the Source0 tag scheme. GitHub's own
+# prerelease flag is kept as a field, since whether such a release counts
+# depends on the package (zpaqfranz ships the ones upstream flags), and so is
+# whether a GitHub tag has a release object: a version tag without one is
+# still a version the update crosses (craft-launcher tagged v0.10.0 and
+# v0.11.0 without releases).
+RELEASE_PAGES = 10
+TAG_PAGES = 20
+# PEP 440 spells pre-releases without a separator (1.2rc1, 2.0a1), which
+# PRERELEASE does not see
+PEP440_PRE = re.compile(r"\d(?:a|b|c|rc|alpha|beta|pre|preview|dev)\d*$", re.I)
+# a tag with no release behind it is a release only when its version is a number:
+# not a fork's 7.1.1.noahp, nor a registry patch's 1.1.0.bcr.1
+NUMERIC = re.compile(r"\d+(?:\.\d+)*")
+
+
+def _in_scheme(tag, prefix):
+    """None: no tag scheme known; "": bare version tags; else tag_matches_prefix."""
+    if prefix == "":
+        return tag[:1].isdigit()
+    return tag_matches_prefix(tag, prefix)
+
+
+def _tag_version(tag, prefix):
+    return tag[len(prefix) :] if prefix else norm(tag)
+
+
+def _paged(fetch, cap):
+    """Every item fetch(page) returns, 100 per page; None when page 1 is a 404.
+
+    A list longer than the cap is not returned cut short: a release beyond it
+    could be the one the range needs."""
+    out = []
+    for page in range(1, cap + 1):
+        items = fetch(page)
+        if items is None:
+            return None if page == 1 else out
+        if not isinstance(items, list):
+            raise SourceDown(f"page {page} is not a list: {str(items)[:120]}")
+        out.extend(items)
+        if len(items) < 100:
+            return out
+    raise RuntimeError(f"more than {cap * 100} entries: the list would be incomplete")
+
+
+def _release(version, tag, date=None, flagged=False, has_object=True):
+    return {
+        "version": version,
+        "tag": tag,
+        "date": date,
+        "flagged": flagged,
+        "object": has_object,
+    }
+
+
+def releases_github(owner, repo, prefix=None):
+    base = f"repos/{owner}/{repo}"
+    rels = _paged(
+        lambda p: gh_json(f"{base}/releases?per_page=100&page={p}"), RELEASE_PAGES
+    )
+    if rels is None:
+        raise RuntimeError(f"github {owner}/{repo}: no such repository")
+    tags = _paged(lambda p: gh_json(f"{base}/tags?per_page=100&page={p}"), TAG_PAGES)
+    out, objects = [], set()
+    for rel in rels:
+        tag = rel.get("tag_name") or ""
+        objects.add(tag)
+        if rel.get("draft") or is_prerelease(tag) or not _in_scheme(tag, prefix):
+            continue
+        out.append(
+            _release(
+                _tag_version(tag, prefix),
+                tag,
+                parse_date(rel.get("published_at")),
+                bool(rel.get("prerelease")),
+            )
+        )
+    for t in tags or []:
+        tag = t.get("name") or ""
+        if tag in objects or not _in_scheme(tag, prefix):
+            continue
+        if NUMERIC.fullmatch(_tag_version(tag, prefix)):
+            out.append(_release(_tag_version(tag, prefix), tag, has_object=False))
+    return out
+
+
+def releases_gitlab(host, proj, prefix=None):
+    enc = urllib.parse.quote(proj, safe="")
+    url = f"https://{host}/api/v4/projects/{enc}/repository/tags?per_page=100"
+    tags = _paged(lambda p: http_json(f"{url}&page={p}", missing_ok=True), TAG_PAGES)
+    if tags is None:
+        raise RuntimeError(f"gitlab {proj}: no such project")
+    out = []
+    for t in tags:
+        tag = t.get("name") or ""
+        if _in_scheme(tag, prefix) and NUMERIC.fullmatch(_tag_version(tag, prefix)):
+            date = parse_date((t.get("commit") or {}).get("committed_date"))
+            out.append(_release(_tag_version(tag, prefix), tag, date))
+    return out
+
+
+def releases_pypi(name):
+    d = http_json(f"https://pypi.org/pypi/{name}/json", missing_ok=True)
+    if d is None:
+        raise RuntimeError(f"pypi {name}: no such project")
+    out = []
+    for v, files in (d.get("releases") or {}).items():
+        live = [f for f in files or [] if not f.get("yanked")]
+        if not live or is_prerelease(v) or PEP440_PRE.search(v):
+            continue
+        dates = [parse_date(f.get("upload_time_iso_8601")) for f in live]
+        out.append(_release(v, v, max((x for x in dates if x), default=None)))
+    return out
+
+
+def releases_npm(name):
+    d = http_json(
+        f"https://registry.npmjs.org/{urllib.parse.quote(name, safe='@')}",
+        missing_ok=True,
+    )
+    if not d:
+        raise RuntimeError(f"npm {name}: no such package")
+    times = d.get("time") or {}
+    return [
+        _release(v, v, parse_date(times.get(v)))
+        for v in d.get("versions") or {}
+        if not is_prerelease(v)
+    ]
+
+
+def releases_crates(name):
+    d = http_json(
+        f"https://crates.io/api/v1/crates/{urllib.parse.quote(name)}",
+        missing_ok=True,
+        ua=CRATES_UA,
+    )
+    if not d:
+        raise RuntimeError(f"crates.io {name}: no such crate")
+    return [
+        _release(v["num"], v["num"], parse_date(v.get("created_at")))
+        for v in d.get("versions") or []
+        if v.get("num") and not v.get("yanked") and not is_prerelease(v["num"])
+    ]
+
+
+def list_releases(kind, host, name, prefix=None):
+    """Every release of one parse_forge source: [{version, tag, date, flagged,
+    object}]. Raises like the probes: SourceDown or a transport error when the
+    source did not answer, RuntimeError for a fact about it."""
+    if kind == "github":
+        return releases_github(host, name, prefix)
+    if kind == "gitlab":
+        return releases_gitlab(host, name, prefix)
+    if kind == "pypi":
+        return releases_pypi(name)
+    if kind == "npm":
+        return releases_npm(name)
+    if kind == "crates":
+        return releases_crates(name)
+    raise RuntimeError(f"unknown forge {kind}")
