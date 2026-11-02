@@ -32,10 +32,11 @@ the tests only read, so the glob must lie under a test directory (tests/,
 testdata/, fixtures/, corpus/, golden/, or an example's examples/ or
 samples/); bootstrap: a compiler or toolchain that needs a previous build of
 itself, used only during the build and never shipped, with a why of at least
-8 words saying what it builds and why no packaged predecessor can. Every
-bootstrap exception is named on the verdict
-line (references/specfile-guidelines.md "Spec file — general rules"). The
-shipped check finds a binary copied into an RPM and one a bundler embeds
+8 words saying what it builds and why no packaged predecessor can; a why
+saying the build does not use the file (never invoked, unused) is refused:
+that file is removed from the sources. Every bootstrap exception is named
+on the verdict line (references/specfile-guidelines.md "Spec file — general
+rules"). The shipped check finds a binary copied into an RPM and one a bundler embeds
 verbatim in its single executable (a 4 KiB fingerprint of each hit of 1 KiB or
 more); one stored compressed or encoded stays the review's to find.
 
@@ -84,6 +85,15 @@ TEST_PATH = re.compile(
     re.I,
 )
 BOOTSTRAP_WORDS = 8
+# a why that says the build does not use the file: "never invokes it", "unused";
+# one about the installed package ("not needed at run time") says nothing of that
+UNUSED = re.compile(
+    r"(?:\b(?:never|not|no\s+longer)|n't)\s+(?:be\s+|been\s+|get\s+|gets\s+)?"
+    r"(?:invoke[sd]?|use[sd]?|run[s]?|ran|execute[sd]?|call(?:s|ed)?|load(?:s|ed)?|need(?:s|ed)?|touch(?:es|ed)?)\b"
+    r"(?!\s+(?:\S+\s+){0,2}?(?:at\s+run[\s-]?time|after\s+the\s+build|once\s+installed))"
+    r"|\bunused\b|\bnothing\s+(?:invokes|uses|runs|executes|calls|loads|needs)\b",
+    re.I,
+)
 FIX = (
     "a binary the package ships, embeds, loads or links is never an exception: build "
     "it from source or unbundle it (BuildRequires the system package; Rust: cargo_vendor "
@@ -559,6 +569,13 @@ def exceptions(d):
                 bad.append(
                     f"{where}: a bootstrap needs a why of {BOOTSTRAP_WORDS}+ words: what it "
                     "builds, and why no packaged predecessor can"
+                )
+            elif reason == "bootstrap" and UNUSED.search(why):
+                bad.append(
+                    f"{where}: a bootstrap is a toolchain the build runs, and this why says it "
+                    f"does not ('{UNUSED.search(why).group(0)}'): a file the build does not use "
+                    "is removed from the sources (the tarball repack or the _service exclude), "
+                    "never excepted"
                 )
             else:
                 out.append((glob, reason, why))
