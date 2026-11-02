@@ -111,6 +111,9 @@ cp "$FX/quoting.sh" "$W/quoting"; tail -n +2 "$FX/quoting.sh" > "$W/quoting-plai
 { printf '\177ELF\n'; cat "$FX/open_pr.py"; } > "$W/tool"
 chmod +x "$W/open-pr.sh"
 printf '#!/bin/bash\nbash %s/open-pr.sh\n' "$W" > "$W/outer.sh"
+# A gate.sh by its name, and a script that records a review with it.
+printf 'echo gate "$@"\n' > "$W/gate.sh"; chmod +x "$W/gate.sh"
+printf '%s/gate.sh . --review /var/tmp/x-review/verdict.txt\n' "$W" > "$W/record-review.sh"
 # Harmless now; the calls that run them rewrite them first.
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
 # A script with its own backoff: its sleep is the script's, not the call's.
@@ -152,12 +155,14 @@ os.makedirs(api, exist_ok=True)
 s = json.load(open(spec))
 def stub(path, text):
     open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
-def stamp(prj, pkg, files, review=True):
+def stamp(prj, pkg, files, review=True, build=True):
     d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
     os.makedirs(d, exist_ok=True)
     st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
     if review:
         st["review"] = {"verdict": "PASS"}
+    if build:
+        st["build"] = {"verdict": "GREEN", "kind": "log"}
     json.dump(st, open(os.path.join(d, prj + ".json"), "w"))
 def pairs(key):
     return [tuple(e) for e in s[key]]
@@ -172,6 +177,8 @@ for prj, pkg in pairs("listed"):
     listing(prj, pkg)
 for prj, pkg in pairs("noreview"):
     stamp(prj, pkg, listing(prj, pkg), review=False)
+for prj, pkg in pairs("nobuild"):
+    stamp(prj, pkg, listing(prj, pkg), build=False)
 for prj, pkg in pairs("stale"):
     listing(prj, pkg)
     stamp(prj, pkg, {f"{pkg}.spec": "0" * 32})
@@ -1483,6 +1490,14 @@ PY
 [ -n "$agree" ] && [ "${agree#* }" = "" ] && pass "the guard's ELIGIBLE matches autoforward-gate.sh's (${agree%% *} fixtures)" \
   || fail "the guard and autoforward-gate.sh disagree: ${agree#* }"
 
+echo "--- a change review is recorded by the changes-review agent that ran it"
+ask_ review-main-session        review-self "gate.sh --review from the main session"
+ask_ review-author-agent        review-self "gate.sh --review from agent osc-update-build"
+ask_ review-bash-wrapped        review-self "gate.sh --review from agent general-purpose"
+ask_ review-in-script           review-self "gate.sh --review from the main session"
+case_ review-reviewer-agent     0 - ""
+case_ review-reviewer-session   0 - ""
+case_ review-gate-run           0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
 ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
 ask_ ci-edited-after-gate       gate-stamp "osc commit of devel:tools/z: no GREEN gate.sh run of this tree"
@@ -1490,6 +1505,7 @@ ask_ ci-project-checkout        gate-stamp "osc commit of the project checkout d
 ask_ sr-unstamped               gate-stamp "unstamped: no GREEN gate.sh run with a recorded review PASS"
 ask_ sr-unreviewed              gate-stamp "unreviewed: no GREEN gate.sh run with a recorded review PASS"
 ask_ sr-restaged                gate-stamp "restaged: no GREEN gate.sh run with a recorded review PASS"
+ask_ sr-unbuilt                 build-evidence "osc sr of $h:tester:spark/unbuilt: the reviewed tree has no GREEN build recorded"
 ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
 ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
 # A "." the guard cannot place names no project it can judge.
@@ -2143,6 +2159,7 @@ await (await import(plugin)).default.setup({ location: { directory: loc }, tool:
 const run = async (e) => { try { await Promise.resolve(fire(e)); return "run" } catch { return "refused" } }
 const merge = ["tea", "pulls", "mer" + "ge", "1"].join(" ")
 const push = "git " + "pu" + "sh origin HEAD:refs/heads/x"
+const review = process.env.V2_GATE + " . --review /var/tmp/x-review/verdict.txt"
 console.log([
   await run({ tool: "shell", input: { command: merge } }),
   await run({ tool: "shell", input: { command: "ls" } }),
@@ -2151,12 +2168,14 @@ console.log([
   await run({ tool: "shell", input: { command: push } }),
   await run({ tool: "shell", input: "x" }),
   await run({ tool: "shell", input: { command: ["osc", "comment", "create", "-c", "ok", "request", "1"].join(" ") } }),
+  await run({ tool: "shell", agent: "changes-review", input: { command: review } }),
+  await run({ tool: "shell", agent: "build", input: { command: review } }),
 ].join(" "))
 JS
   # shellcheck disable=SC2086  # tsrun is a command line
-  out="$($tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
-  [ "$out" = "refused run refused refused run refused refused" ] \
-    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push, unreadable input and an ask" \
+  out="$(V2_GATE="$W/gate.sh" $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
+  [ "$out" = "refused run refused refused run refused refused run refused" ] \
+    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push, unreadable input and an ask, and hands the guard the agent" \
     || fail "opencode-v2: the plugin run gave '$out'"
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"

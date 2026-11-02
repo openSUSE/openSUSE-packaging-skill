@@ -555,6 +555,13 @@ ASKS = {
     "cannot judge them. Write them out literally, or it needs the user's go.",
     "gate-stamp": "{0}. Run scripts/gate.sh in the checkout, commit in the next "
     "call, and file once gate.sh --review recorded the change review's PASS.",
+    "build-evidence": "{0}. Record its build first: gate.sh with --build-log LOG "
+    "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
+    "commit; then file.",
+    "review-self": "{0}: only the changes-review agent that ran the review records "
+    "it (agents/changes-review.md runs gate.sh --review itself), and a PASS the "
+    "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
+    "leave this command to the user.",
 }
 # The read a tea comment with no subcommand and no body may have meant.
 COMMENT_READ = (
@@ -660,6 +667,7 @@ class Ctx:
         self.traps = []  # trap commands, judged when the call has run
         self.any_bg = False  # the call sends something to the background
         self.gate_pending = []  # stamped commits and submits, for gate_writers
+        self.agent = None  # the harness's agent type for the call (agent_type)
 
 
 def git(cwd, gargs, *args):
@@ -2539,6 +2547,13 @@ def gate_submit(run, ctx, cwd):
                     f"osc {sub} of {src}/{pkg}: no GREEN gate.sh run with a recorded "
                     "review PASS has these files",
                 )
+            elif not any(reviewed(path, files, True) for path in glob.glob(stamps)):
+                ask(
+                    ctx,
+                    "build-evidence",
+                    f"osc {sub} of {src}/{pkg}: the reviewed tree has no GREEN build "
+                    "recorded",
+                )
             else:
                 what = f"osc {sub} of {src}/{pkg}"
                 ctx.gate_pending.append(
@@ -2577,9 +2592,10 @@ def gate_writers(ctx):
             )
 
 
-def reviewed(path, files):
-    """Whether gate.sh's stamp at path is GREEN, holds a review PASS, and
-    judged exactly files ({name: md5})."""
+def reviewed(path, files, built=False):
+    """Whether gate.sh's stamp at path is GREEN, holds a review PASS (built:
+    and a GREEN build, a local log's or OBS's), and judged exactly files
+    ({name: md5})."""
     import json
 
     try:
@@ -2588,12 +2604,35 @@ def reviewed(path, files):
     except (OSError, ValueError):
         return False
     review = st.get("review") if isinstance(st, dict) else None
+    build = st.get("build") if isinstance(st, dict) else None
     return (
         isinstance(review, dict)
         and st.get("verdict") == "GREEN"
         and review.get("verdict") == "PASS"
         and st.get("files") == files
+        and (not built or isinstance(build, dict) and build.get("verdict") == "GREEN")
     )
+
+
+REVIEWER = "changes-review"
+
+
+def review_record(name, run, ctx, cwd):
+    """A gate.sh --review run outside a changes-review agent. The harness names
+    the agent (Claude Code's agent_type, the opencode 2.x plugin's agent), which
+    the model cannot set; with none named, the call is the main session's."""
+    k = 0
+    if name in SHELLS:  # bash [options] gate.sh ...
+        k = next((j for j, w in enumerate(run) if j and w[:1] != "-"), None)
+        if k is None:
+            return
+    words = [run[k], *(substitute(run[k], ctx, cwd) or ())]
+    if ctx.agent == REVIEWER or "--review" not in run[k + 1 :]:
+        return
+    if "gate.sh" not in {os.path.basename(w) for w in words}:
+        return
+    who = f"agent {ctx.agent}" if ctx.agent else "the main session"
+    ask(ctx, "review-self", f"gate.sh --review from {who}")
 
 
 def factory_devel(pkg, ctx):
@@ -4716,6 +4755,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
     note_writes(name, run[1:], ctx, here)
+    review_record(name, run, ctx, here)
     gparts = None
     if name in DECLARE or name == "set":
         note_env(run, ctx)
@@ -5469,6 +5509,8 @@ def judge(ev):
         return None
     cwd = ev.get("cwd") if isinstance(ev.get("cwd"), str) and ev.get("cwd") else None
     ctx = Ctx(cwd, ev.get("tool_name"), inp.get("run_in_background") is True)
+    if isinstance(ev.get("agent_type"), str) and ev["agent_type"]:
+        ctx.agent = ev["agent_type"]
     try:
         if isinstance(inp.get("command"), str):
             ctx.command = inp["command"]
