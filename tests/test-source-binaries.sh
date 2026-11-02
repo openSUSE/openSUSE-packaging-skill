@@ -179,6 +179,31 @@ d=$(boot doesnt 'the upstream build script fetches it for macOS, and the Linux b
 case_ bootstrap-not-needed 3 "$UNUSED" "$d"
 d=$(boot runtime 'the go compiler is written in go and needs a previous go build to compile itself; not needed at run time and never shipped')
 case_ bootstrap-runtime-denial 0 "EXCEPTION vendor.tar.gz:./bin/* (bootstrap:" "$d"
+# A why is a denial only when the build is what does not use the file; a real
+# bootstrap says what no packaged predecessor can do, and that nothing installed uses it.
+for why in \
+  "the go 1.23 compiler is written in go and Factory's go 1.22 does not run the new bootstrap code path" \
+  "ghc is written in haskell; the packaged ghc can not be used because it is two major versions behind" \
+  "the stage0 rustc builds stage1 of the compiler from source and is not needed afterwards" \
+  "the bootstrap jdk compiles the new jdk, which needs a previous build of itself, and is never used outside the build" \
+  "the bootstrap sbcl compiles sbcl itself since lisp needs a lisp to build; nothing loads it at run time" \
+  "the seed swift toolchain compiles swift itself, since swift needs swift, and is not used by anything the RPM installs"; do
+  d=$(boot real "$why")
+  out="$(python3 "$SB" "$d" 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && pass "bootstrap accepted: ${why:0:50}..." || { fail "bootstrap refused: $why"; printf '%s\n' "$out" | grep MALFORMED | sed 's/^/    /'; }
+done
+for why in \
+  "upstream's gradle wrapper for Android; this Linux build never actually invokes it" \
+  "upstream's gradle wrapper for Android releases; the openSUSE build has no use for it" \
+  "upstream's Android gradle wrapper, which is not required by this Linux build at all" \
+  "upstream's Android gradle wrapper; the Linux build does not depend on it in any way" \
+  "upstream's Android gradle wrapper, never being invoked by the build on Linux" \
+  "upstream's Android gradle wrapper; only the Android build invokes it, not this one"; do
+  d=$(boot denial "$why")
+  out="$(python3 "$SB" "$d" 2>&1)"; rc=$?
+  [ "$rc" = 3 ] && grep -qF "$UNUSED" <<<"$out" && pass "bootstrap refused: ${why:0:50}..." \
+    || { fail "bootstrap accepted: $why (rc=$rc)"; }
+done
 
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
