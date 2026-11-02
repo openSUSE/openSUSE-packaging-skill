@@ -75,7 +75,7 @@ const asked = (out: string) => {
   try {
     const d = JSON.parse(out)?.hookSpecificOutput
     if (d?.permissionDecision !== "ask") return undefined
-    return `${d.permissionDecisionReason} (opencode cannot ask here: show the user the command; they run it once they approve)`
+    return `${d.permissionDecisionReason} (opencode cannot ask here: take a step it names yourself, such as running gate.sh, then retry; only what needs the user's go goes to them as the command, never a commit or request of a tree gate.sh has not stamped GREEN)`
   } catch {
     return `pr-guard printed what it should not: ${out.trim().slice(0, 200)}`
   }

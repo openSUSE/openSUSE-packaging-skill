@@ -90,7 +90,7 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
           throw new Error(`pr-guard printed what it should not: ${r.stdout.trim().slice(0, 200)}`)
         }
         if (d?.permissionDecision === "ask")
-          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: show the user the command; they run it once they approve)`)
+          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: take a step it names yourself, such as running gate.sh, then retry; only what needs the user's go goes to them as the command, never a commit or request of a tree gate.sh has not stamped GREEN)`)
       }
     },
   }

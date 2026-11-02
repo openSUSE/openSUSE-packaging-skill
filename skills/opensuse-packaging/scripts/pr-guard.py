@@ -60,13 +60,14 @@ from a devel project, unless autoforward-gate.sh would call the package
 ELIGIBLE (no reviewer, the user's package or an unowned one in a project
 they maintain, Factory's devel project; whoever filed the request), and every
 decline and approvenew; an osc commit of a checkout whose files match no GREEN
-gate.sh run (or of a whole project checkout), or one after the call writes
-into its checkout; a submit request whose source files match no GREEN gate.sh
-run with the change review's PASS and a GREEN build recorded, or in a call that
-writes anywhere; a review recorded with gate.sh from a call the event names no
+gate.sh run (or of a whole project checkout); a submit request whose source
+files match no GREEN gate.sh run with the change review's PASS and a GREEN
+build recorded; a review recorded with gate.sh from a call the event names no
 changes-review agent for (agent_type: the harness sets it, the model cannot), or
-gate.sh arguments it cannot read where that review option could stand.
-A failed lookup there asks too, and so does an eval or trap string it cannot
+gate.sh arguments it cannot read where that review option could stand. A
+commit after the call writes into its checkout, and a submit in a call that
+writes anywhere, are refused: the agent splits the call. A failed lookup there
+asks too, and so does an eval or trap string it cannot
 read (a substitution, a variable the call does not set); a trap's command is
 judged as running last, and with any & or coproc in the call every write counts
 as running before a commit. A command word only the shell knows asks when its

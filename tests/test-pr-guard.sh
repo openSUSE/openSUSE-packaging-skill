@@ -536,11 +536,11 @@ ask_ trap-var-command           comment "tea comment"
 ask_ bash-var-command           comment "tea comment"
 case_ eval-literal              0 - ""
 # Any & or coproc in the call: every write in it may run while the commit does.
-ask_ ci-if-background           gate-stamp "sed"
-ask_ ci-for-background          gate-stamp "sed"
-ask_ ci-and-background          gate-stamp "sed"
-ask_ ci-subst-background        gate-stamp "sed"
-ask_ ci-coproc-named            gate-stamp "sed"
+case_ ci-if-background         2 gate-sequence "sed"
+case_ ci-for-background        2 gate-sequence "sed"
+case_ ci-and-background        2 gate-sequence "sed"
+case_ ci-subst-background      2 gate-sequence "sed"
+case_ ci-coproc-named          2 gate-sequence "sed"
 # A command word only the shell knows, given a judged tool or a runner to start.
 ask_ dyn-subst-command          eval-dynamic "the command word is unknown"
 ask_ dyn-var-command            eval-dynamic "the command word is unknown"
@@ -911,7 +911,7 @@ case_ osc-creq-nodevelproject 2 nodevelproject "an osc request with --nodevelpro
 case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
 # Read as bash reads it, home:<you>:... redirects into the file ":branches:devel:tools".
-ask_ osc-sr-devel-control    gate-stamp "a redirection to :branches:devel:tools"
+case_ osc-sr-devel-control  2 gate-sequence "a redirection to :branches:devel:tools"
 case_ osc-sr-nodevel-message  0 - ""
 # Maintenance and update projects take no direct write, by commit or by API;
 # a home: branch of one is the user's own, whatever its name ends in.
@@ -1572,44 +1572,49 @@ ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:s
 # A "." the guard cannot place names no project it can judge.
 case_ sr-dot-cwd-unknown        2 request-target-unknown "the working directory is unknown"
 # Judged before the call runs: anything else in it that can write may change the tree first.
-ask_ ci-after-append            gate-stamp "this call also runs"
-ask_ ci-sr-after-append         gate-stamp "this call also runs"
-ask_ ci-after-sed               gate-stamp "sed"
-ask_ ci-after-osc-add           gate-stamp "osc add"
-ask_ ci-after-script            gate-stamp "bash"
-ask_ ci-loop-edit-after         gate-stamp "touch"
-ask_ ci-then-sr                 gate-stamp "osc commit"
+case_ ci-after-append          2 gate-sequence "this call also runs"
+case_ ci-sr-after-append       2 gate-sequence "this call also runs"
+case_ ci-after-sed             2 gate-sequence "sed"
+case_ ci-after-osc-add         2 gate-sequence "osc add"
+case_ ci-after-script          2 gate-sequence "bash"
+case_ ci-loop-edit-after       2 gate-sequence "touch"
+case_ ci-then-sr               2 gate-sequence "osc commit"
+# Recording the review and committing in one call, eleven times in one session: a fault
+# the agent fixes by splitting the call, so it is refused with the order to follow.
+case_ ci-after-review            2 gate-sequence "osc commit of devel:tools/x: this call also runs bash"
+case_ ci-after-review            2 gate-sequence "osc commit alone in the next"
+case_ ci-unstamped-after-gate    2 gate-sequence "osc commit of devel:tools/y: this call also runs bash"
 case_ ci-redirect-devnull       0 - ""
 ask_ accept-api-approve         accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
 ask_ accept-api-slash           accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
 ask_ comment-git-obs-reopen     comment "git-obs pr reopen with a comment"
 case_ comment-git-obs-reopen-plain 0 - ""
-# A commit asks only for a write that runs before it and lands in its checkout; a request
+# A commit is refused only for a write that runs before it and lands in its checkout; a request
 # for any write anywhere in the call.
-ask_ ci-after-sort-o            gate-stamp "sort"
-ask_ ci-after-uniq-out          gate-stamp "uniq"
+case_ ci-after-sort-o          2 gate-sequence "sort"
+case_ ci-after-uniq-out        2 gate-sequence "uniq"
 case_ ci-git-C-status           0 - ""
 case_ ci-log-redirect           0 - ""
 case_ ci-log-tee                0 - ""
 case_ ci-note-outside           0 - ""
-ask_ ci-while-edit-after        gate-stamp "touch"
+case_ ci-while-edit-after      2 gate-sequence "touch"
 # A path through a link and .. lands where the link points, not where normpath says.
 mkdir -p "$work/osc/devel/x/sub" && ln -sfn "$work/osc/devel/x/sub" "$work/links/co"
-ask_ ci-symlink-dotdot          gate-stamp "a redirection to"
+case_ ci-symlink-dotdot        2 gate-sequence "a redirection to"
 # What runs beside the commit, backgrounded or in its pipeline, writes during it.
-ask_ ci-background-then-edit    gate-stamp "sed"
-ask_ ci-pipe-tee-into           gate-stamp "tee"
+case_ ci-background-then-edit  2 gate-sequence "sed"
+case_ ci-pipe-tee-into         2 gate-sequence "tee"
 # Registering a trap and waiting write nothing: a request beside them stays unasked.
 case_ sr-trap-wait              0 - ""
 # A trap's command runs when the call ends, after every write in it.
-ask_ trap-ci-then-append        gate-stamp "a redirection to"
-ask_ trap-ci-then-sed           gate-stamp "sed"
+case_ trap-ci-then-append      2 gate-sequence "a redirection to"
+case_ trap-ci-then-sed         2 gate-sequence "sed"
 case_ trap-cleanup-then-ci      0 - ""
 # A backgrounded group, every command of it; coproc runs in the background too.
-ask_ ci-brace-background        gate-stamp "sed"
-ask_ ci-subshell-background     gate-stamp "sed"
-ask_ ci-coproc                  gate-stamp "sed"
-ask_ sr-after-write-anywhere    gate-stamp "a redirection to /tmp/x-note.txt"
+case_ ci-brace-background      2 gate-sequence "sed"
+case_ ci-subshell-background   2 gate-sequence "sed"
+case_ ci-coproc                2 gate-sequence "sed"
+case_ sr-after-write-anywhere  2 gate-sequence "a redirection to /tmp/x-note.txt"
 # The account: osc whois, once per call and in memory only. A file a call can write is
 # no source for it: an earlier call could name someone else there.
 mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"

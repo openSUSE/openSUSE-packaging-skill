@@ -9215,5 +9215,19 @@
     "tool_input": {
       "command": "rm -rf @WORK@/sweep"
     }
+  },
+  "ci-after-review": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/iter.sh --review /var/tmp/x-review.txt && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "ci-unstamped-after-gate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/iter.sh && osc ci -m 'Update y to 1.1'"
+    },
+    "cwd": "@OSC@/fresh/y"
   }
 }
