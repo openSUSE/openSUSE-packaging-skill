@@ -192,6 +192,8 @@ if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
   case_ shipped 3 "SHIPPED s-1-0.noarch.rpm:./usr/bin/go is the prebuilt vendor.tar.gz:./bin/go" "$d" --rpms "$work/rpms"
   grep -qF "SHIPPED s-1-0.noarch.rpm:./usr/bin/app embeds the prebuilt vendor.tar.gz:./bin/helper" <<<"$LAST" \
     && pass "shipped: a binary carried inside another file is found" || fail "embedded: $LAST"
+  # a build root's RPMS keeps them in one directory per arch
+  case_ shipped-subdir 3 "SHIPPED noarch/s-1-0.noarch.rpm:./usr/bin/go is the prebuilt vendor.tar.gz:./bin/go" "$d" --rpms "$work/rpm/RPMS"
   sed -i 's/-- bootstrap: .*/-- firmware: a blob no source exists for/' "$d/p.spec"
   case_ shipped-firmware 0 "read for shipped ones" "$d" --rpms "$work/rpms"
 else
@@ -199,6 +201,10 @@ else
 fi
 mkdir -p "$work/norpms"
 case_ no-rpms 2 "UNKNOWN $work/norpms: no binary RPM to read" "$d" --rpms "$work/norpms"
+mkdir -p "$work/py"; ln -s "$(command -v python3)" "$work/py/python3"
+out="$(PATH="$work/py" "$work/py/python3" "$SB" "$d" --rpms "$work/norpms" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF "UNKNOWN $work/norpms: no rpm2cpio to read the RPMs" <<<"$out" \
+  && pass "no-rpm2cpio (rc=2)" || { fail "no-rpm2cpio: expected rc=2, got rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 echo "---"; [ "$fails" = 0 ] && echo "all source-binaries checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
