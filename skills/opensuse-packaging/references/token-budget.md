@@ -56,7 +56,8 @@ are always-on, not a phase.
   children on one checkout. Resume an aborted child instead of starting over, and keep parallel
   children below the provider's concurrency limit.
 - **The review runs in a context of its own** — a changes-review sub-agent, never the author's own
-  context. A PASS the author wrote for its own change is no review.
+  context. A PASS the author wrote for its own change is no review. The reviewer records its own
+  verdict (`gate.sh --review`): pr-guard asks before any other context does.
 - **Quote the user's request verbatim** in the brief, with every instruction it carries ("use the
   cargo macros"): a paraphrase is where instructions get lost.
 - **Run children in the background and take each as it returns** — review the ones that handed back

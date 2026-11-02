@@ -140,7 +140,9 @@ repository-root `agents/` directory: that path existed before v1.0.0 and is gone
 made against it now resolve to nothing.
 
 Without sub-agent support, run a playbook inline or paste it as a standalone session
-prompt — they are plain prompts and need no harness support to be useful.
+prompt — they are plain prompts and need no harness support to be useful. The change review
+is the exception: it never runs in the session that wrote the change, and records its own
+verdict (`gate.sh --review`), which the pool PR guard asks you about from any other agent.
 
 ## Safety model
 
