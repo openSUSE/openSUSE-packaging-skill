@@ -158,6 +158,22 @@ case_ testdata-autotest 0 "EXCEPTION zpaqfranz-65.17.tar.gz:*/AUTOTEST/* (test-d
 d=$(pkg shortboot); cp "$work/tarball/vendor.tar.gz" "$d/"
 printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: upstream-built helper embedded by the build\n' >> "$d/p.spec"
 case_ bootstrap-short 3 "a bootstrap needs a why of 8+ words" "$d"
+# A bootstrap is a toolchain the build runs: a why saying the build never uses
+# the file is no bootstrap (ringrtc's gradle wrapper, opencode's tree-sitter.wasm);
+# saying it never runs once installed is fine.
+boot() { d=$(pkg "boot-$1"); tar -C "$work/t/tb" -czf "$d/vendor.tar.gz" ./bin
+  printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: %s\n' "$2" >> "$d/p.spec"; echo "$d"; }
+UNUSED="a file the build does not use is removed from the sources"
+d=$(boot ringrtc 'upstream Android gradle bootstrap fetching their pinned gradle for mobile builds; this Linux build never invokes it and ships no part of it')
+case_ bootstrap-never-invoked 3 "$UNUSED" "$d"
+d=$(boot opencode 'runtime grammar asset the highlighter loads, embedded at build time, never executed at build time')
+case_ bootstrap-never-executed 3 "$UNUSED" "$d"
+d=$(boot unused 'a prebuilt go toolchain for the windows cross build, unused on Linux')
+case_ bootstrap-unused 3 "$UNUSED" "$d"
+d=$(boot doesnt 'the upstream build script fetches it for macOS, and the Linux build does not need it')
+case_ bootstrap-not-needed 3 "$UNUSED" "$d"
+d=$(boot runtime 'the go compiler is written in go and needs a previous go build to compile itself; not needed at run time and never shipped')
+case_ bootstrap-runtime-denial 0 "EXCEPTION vendor.tar.gz:./bin/* (bootstrap:" "$d"
 
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
