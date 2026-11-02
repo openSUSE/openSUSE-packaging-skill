@@ -727,7 +727,9 @@ P='home:<you>:branches:devel:example'
 case "$1" in
   api) [ "$2" = "/source/$P/foo?expand=1" ] && [ -f "$OB/listing.xml" ] && { cat "$OB/listing.xml"; exit 0; } ;;
   results) [ "$*" = "results --xml $P foo" ] && [ -f "$OB/results.xml" ] && { cat "$OB/results.xml"; exit 0; } ;;
-  rbl) [ "$2" = "$P" ] && [ -f "$OB/log-$4-$5-$3" ] && { cat "$OB/log-$4-$5-$3"; exit 0; } ;;
+  rbl) [ -z "${MUTATE:-}" ] || python3 -I -c 'import json, sys
+st = json.load(open(sys.argv[1])); st["review"] = {"verdict": "PASS"}; json.dump(st, open(sys.argv[1], "w"))' "$MUTATE"
+       [ "$2" = "$P" ] && [ -f "$OB/log-$4-$5-$3" ] && { cat "$OB/log-$4-$5-$3"; exit 0; } ;;
 esac
 echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
 EOF
@@ -803,6 +805,49 @@ blog aarch64 "$SRC" finished; results failed; blog aarch64 "$SRC" failed; ob
 [ "$rc" = 1 ] && grep -qF "FAILED" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
   && pass "--obs-build: a failed build of the current sources is red" || { fail "--obs-build failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 results succeeded; blog aarch64 "$SRC" finished
+rx() { printf '<resultlist>%s</resultlist>\n' "$1" > "$work/ob/results.xml"; }
+st_() { printf '<result repository="openSUSE_Tumbleweed" arch="%s"%s><status package="%s" code="%s"/></result>' "$@"; }
+ob
+[ "$rc" = 0 ] && [ "$(sv "$SO" build.kind)" = obs ] || { fail "--obs-build: no build recorded to keep"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# What the gate cannot judge keeps the recorded build: UNKNOWN, rc=1.
+for c in "empty:" "disabled:$(st_ x86_64 '' foo disabled)$(st_ aarch64 '' foo excluded)" \
+         "locked:$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo locked)"; do
+  rx "${c#*:}"; ob
+  [ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "the recorded build stays" <<<"$out" \
+    && [ "$(sv "$SO" build.kind)" = obs ] \
+    && pass "--obs-build: ${c%%:*} results are UNKNOWN and keep the recorded build" \
+    || { fail "--obs-build ${c%%:*} results: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done
+rm -f "$work/ob/results.xml"; ob
+[ "$rc" = 1 ] && grep -qF "UNKNOWN" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
+  && pass "--obs-build: a failed results lookup is UNKNOWN, the recorded build kept" \
+  || { fail "--obs-build results lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results succeeded; mv "$work/ob/log-openSUSE_Tumbleweed-aarch64-foo" "$work/ob/away.log"; ob
+[ "$rc" = 1 ] && grep -qF "cannot read the build log of openSUSE_Tumbleweed/aarch64" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
+  && pass "--obs-build: a failed log lookup is UNKNOWN, the recorded build kept" \
+  || { fail "--obs-build log lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mv "$work/ob/away.log" "$work/ob/log-openSUSE_Tumbleweed-aarch64-foo"
+rx "$(st_ x86_64 ' dirty="true"' foo succeeded)$(st_ aarch64 '' foo succeeded)"; ob
+[ "$rc" = 4 ] && grep -qF "openSUSE_Tumbleweed/x86_64 dirty" <<<"$out" \
+  && pass "--obs-build: a dirty repository is pending (rc=4)" || { fail "--obs-build dirty: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(st_ aarch64 '' bar failed)$(st_ aarch64 '' foobar broken)"; ob
+[ "$rc" = 0 ] && pass "--obs-build: other packages' rows are not this package's" \
+  || { fail "--obs-build other packages' rows: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(st_ x86_64 '' foo:test succeeded)"; ob
+[ "$rc" = 1 ] && grep -qF "cannot read the build log of openSUSE_Tumbleweed/x86_64:test" <<<"$out" \
+  && pass "--obs-build: a flavor's log is read too (here missing: UNKNOWN)" || { fail "--obs-build flavor without a log: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+cp "$work/ob/log-openSUSE_Tumbleweed-x86_64-foo" "$work/ob/log-openSUSE_Tumbleweed-x86_64-foo:test"; ob
+[ "$rc" = 0 ] && grep -qF "openSUSE_Tumbleweed/x86_64:test" <<<"$out" \
+  && pass "--obs-build: every flavor's log GREEN: recorded" || { fail "--obs-build flavors: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results succeeded; MUTATE="$SO" ob
+[ "$rc" = 0 ] && [ "$(sv "$SO" review.verdict)" = PASS ] && [ "$(sv "$SO" build.kind)" = obs ] \
+  && pass "--obs-build: a review recorded during the run stays in the stamp" \
+  || { fail "--obs-build loses a review recorded meanwhile: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo unresolvable)"; ob
+[ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && [ -z "$(sv "$SO" build)" ] && [ "$(sv "$SO" review.verdict)" = PASS ] \
+  && pass "--obs-build: unresolvable is red and drops the recorded build, not the review" \
+  || { fail "--obs-build unresolvable: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results succeeded
 ob --entries 2
 [ "$rc" = 2 ] && grep -qF -- "--obs-build records OBS's build and runs no gate" <<<"$out" \
   && pass "--obs-build with gate options: usage" || { fail "--obs-build with gate options: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -823,6 +868,61 @@ else
   echo "SKIP: --obs-build --rpms green (no rpmbuild/rpm2cpio)"
 fi
 
+# --build-log is checked against the tree: gate.sh's Python, read out of it, runs
+# here without the OBS services the full gate needs.
+sed -n "/^read -r -d '' PY <<'PYEOF'\$/,/^PYEOF\$/p" "$GATE" | sed '1d;$d' > "$work/gate-py.py"
+pyg() { out="$(python3 -I "$work/gate-py.py" "$@" 2>&1)"; rc=$?; }
+co "$work/t-bl" "$P" devel:example "$O/devel:example/foo"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_() {   # <file> <started date> <srpm n-v-r or -> <spec>
+  { printf '[    1s] host started "build %s" at %s.\n' "$4" "$2"
+    [ "$3" = - ] || printf '[   90s] Wrote: /home/abuild/rpmbuild/SRPMS/%s.src.rpm\n' "$3"
+    printf '[  100s] host finished "build %s" at %s.\n' "$4" "$2"; } > "$1"
+}
+blog_ "$work/bl-ok.log" "$now" foo-1.0-0 foo.spec
+blog_ "$work/bl-ok2.log" "$now" foo-1.0-0 foo.spec; echo '[  101s] second flavor' >> "$work/bl-ok2.log"
+blog_ "$work/bl-old.log" "$now" foo-0.9.8-0 foo.spec
+blog_ "$work/bl-other.log" "$now" bar-1.0-0 bar.spec
+blog_ "$work/bl-nosrpm.log" "$now" - foo.spec
+blog_ "$work/bl-stale.log" "Mon Jan  6 10:00:00 UTC 2020" foo-1.0-0 foo.spec
+bl() {   # <name> <rc> <message> <logs...>
+  local name=$1 want=$2 msg=$3; shift 3
+  pyg buildlogs "$work/t-bl" "$@"
+  [ "$rc" = "$want" ] && grep -qF -- "$msg" <<<"$out" && pass "--build-log $name (rc=$want)" \
+    || { fail "--build-log $name: want rc=$want and '$msg', got rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+bl "a build of this tree" 0 "OK: 1 log(s), each a build of this tree" "$work/bl-ok.log"
+bl "of the previous version" 1 "built foo-0.9.8-0, the spec says foo 1.0" "$work/bl-old.log"
+bl "of another package" 1 "built bar.spec, not this checkout's foo.spec" "$work/bl-other.log"
+bl "with no source RPM" 1 "names no source RPM it wrote" "$work/bl-nosrpm.log"
+bl "started before the last edit" 1 "foo.spec changed after $work/bl-stale.log started: rebuild" "$work/bl-stale.log"
+touch "$work/t-bl/foo.changes"
+bl "older than a .changes edit" 0 "OK: 1 log(s)" "$work/bl-ok.log"
+printf '<multibuild>\n  <flavor>test</flavor>\n  <flavor>gui</flavor>\n</multibuild>\n' > "$work/t-bl/_multibuild"
+bl "of one flavor of two" 1 "2 flavor(s) (test, gui), 1 distinct build log(s): pass --build-log once per flavor" "$work/bl-ok.log"
+bl "the same log twice for two flavors" 1 "1 distinct build log(s)" "$work/bl-ok.log" "$work/bl-ok.log"
+bl "one per flavor" 0 "OK: 2 log(s)" "$work/bl-ok.log" "$work/bl-ok2.log"
+rm "$work/t-bl/_multibuild"
+# The stamp: a build of the logs; a rerun of the tree keeps it, a .changes-only edit
+# carries it, any other edit drops it.
+SL="$work/home/.local/state/opensuse-packaging/gate/obs/foo/t-bl.json"
+pyg stamp "$SL" "$work/t-bl" t-bl foo "" "" "$work/bl-ok.log"
+[ "$rc" = 0 ] && [ "$(sv "$SL" build.kind)" = log ] && [ "$(sv "$SL" build.log)" = "$work/bl-ok.log" ] \
+  && grep -qF "build: $work/bl-ok.log" <<<"$out" && pass "stamp: the logs are the tree's build" \
+  || { fail "stamp records the logs: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+t1=$(sv "$SL" tree)
+pyg stamp "$SL" "$work/t-bl" t-bl foo "" ""
+[ "$(sv "$SL" build.kind)" = log ] && [ -z "$(sv "$SL" build.carried)" ] && pass "stamp: a rerun of the same tree keeps its build" \
+  || { fail "stamp rerun keeps the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
+echo "  * one more bullet" >> "$work/t-bl/foo.changes"
+pyg stamp "$SL" "$work/t-bl" t-bl foo "" ""
+[ "$(sv "$SL" build.kind)" = log ] && [ "$(sv "$SL" build.carried)" = "${t1:0:12}" ] \
+  && pass "stamp: a .changes-only edit carries the build to the new tree" || { fail "stamp .changes-only carry"; printf '%s\n' "$out" | sed 's/^/    /'; }
+echo "Summary: t" >> "$work/t-bl/foo.spec"
+pyg stamp "$SL" "$work/t-bl" t-bl foo "" ""
+[ -z "$(sv "$SL" build)" ] && grep -qF "build: none recorded" <<<"$out" \
+  && pass "stamp: a spec edit leaves the new tree without a build" || { fail "stamp spec edit drops the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 mkstamp > /dev/null; og "$work/t-st"
 grep -q "^VERDICT: RED" <<<"$out" && [ ! -e "$SF" ] && pass "a red gate run deletes the stamp" \
   || { fail "red run and the stamp"; printf '%s\n' "$out" | tail -3 | sed 's/^/    /'; }
@@ -842,27 +942,27 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   grep -qF "note: no --rpms DIR" <<<"$out" && [ -z "$(sv "$SF" build)" ] \
     && pass "a GREEN run without --build-log or --rpms records no build and says the RPMs went unchecked" \
     || { fail "GREEN run without build evidence"; printf '%s\n' "$out" | sed 's/^/    /'; }
-  # --build-log: a green log of this checkout's spec is the tree's build; a rerun of
-  # the tree keeps it, a .changes-only edit carries it, any other edit drops it.
-  gg() { out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-green" "$@" 2>&1)"; }
-  printf '[  10s] ... finished "build bar.spec" at Mon Nov  2 2026.\n' > "$work/bar-build.log"
-  printf '[  10s] ... finished "build foo.spec" at Mon Nov  2 2026.\n' > "$work/foo-build.log"
+  # --build-log through the whole gate: another package's log is red; a log, or a
+  # build root as build-summary.sh takes it, is recorded; a missing one is red.
+  gg() { out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-green" "$@" 2>&1)"; rc=$?; }
+  now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+  blog_ "$work/bar-build.log" "$now" bar-1.0-0 bar.spec
+  blog_ "$work/foo-build.log" "$now" foo-1.0-0 foo.spec
   gg --build-log "$work/bar-build.log"
-  grep -q "^VERDICT: RED — .*build-summary" <<<"$out" && grep -qF "the log built bar.spec, not this checkout's foo.spec" <<<"$out" \
+  grep -q "^VERDICT: RED — .*build-summary" <<<"$out" && grep -qF "built bar.spec, not this checkout's foo.spec" <<<"$out" \
     && pass "--build-log of another package's spec: red" || { fail "--build-log of another spec"; printf '%s\n' "$out" | sed 's/^/    /'; }
   gg --build-log "$work/foo-build.log"
-  [ "$(sv "$SF" build.kind)" = log ] && [ "$(sv "$SF" build.verdict)" = GREEN ] && [ "$(sv "$SF" build.log)" = "$work/foo-build.log" ] \
+  [ "$(sv "$SF" build.kind)" = log ] && [ "$(sv "$SF" build.log)" = "$work/foo-build.log" ] \
     && pass "a GREEN --build-log run records the tree's build" || { fail "--build-log recorded"; printf '%s\n' "$out" | sed 's/^/    /'; }
-  gg
-  [ "$(sv "$SF" build.kind)" = log ] && pass "a rerun of the same tree keeps its build" || { fail "rerun keeps the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
-  sed -i '4s/^- Build with the system zlib$/- Build with the system zlib and zstd/' "$work/t-green/foo.changes"
-  gg
-  grep -q "^VERDICT: GREEN" <<<"$out" && [ "$(sv "$SF" build.kind)" = log ] && [ "$(sv "$SF" build.carried)" = "$t12" ] \
-    && pass "a .changes-only edit carries the build to the new tree" || { fail ".changes-only carry"; printf '%s\n' "$out" | sed 's/^/    /'; }
-  sed -i 's/^Summary:        t$/Summary:        tt/' "$work/t-green/foo.spec"
-  gg
-  grep -q "^VERDICT: GREEN" <<<"$out" && [ -z "$(sv "$SF" build)" ] \
-    && pass "a spec edit leaves the new tree without a build" || { fail "spec edit drops the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  mkdir -p "$work/root-foo/.build.packages/SRPMS" && cp "$work/foo-build.log" "$work/root-foo/.build.log"
+  : > "$work/root-foo/.build.packages/SRPMS/foo-1.0-0.src.rpm"
+  gg --build-log "$work/root-foo"
+  grep -q "^VERDICT: GREEN" <<<"$out" && [ "$(sv "$SF" build.log)" = "$work/root-foo/.build.log" ] \
+    && pass "--build-log of a build root: its .build.log is checked and recorded" \
+    || { fail "--build-log of a build root"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  gg --build-log "$work/no-such.log"
+  [ "$rc" = 1 ] && grep -qF "no build log behind --build-log $work/no-such.log" <<<"$out" && ! grep -q Traceback <<<"$out" \
+    && pass "--build-log of nothing: red, no traceback" || { fail "--build-log of nothing: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 else
   echo "SKIP: GREEN stamp (no OBS source_validator/download_files)"
 fi
