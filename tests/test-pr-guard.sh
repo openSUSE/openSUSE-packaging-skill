@@ -114,6 +114,8 @@ printf '#!/bin/bash\nbash %s/open-pr.sh\n' "$W" > "$W/outer.sh"
 # A gate.sh by its name, and a script that records a review with it.
 printf 'echo gate "$@"\n' > "$W/gate.sh"; chmod +x "$W/gate.sh"
 printf '%s/gate.sh . --review /var/tmp/x-review/verdict.txt\n' "$W" > "$W/record-review.sh"
+# shellcheck disable=SC2016  # the script's own array, expanded when it runs
+printf 'args=(. --review /var/tmp/x-review/verdict.txt)\n%s/gate.sh "${args[@]}"\n' "$W" > "$W/record-review-array.sh"
 # Harmless now; the calls that run them rewrite them first.
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
 # A script with its own backoff: its sleep is the script's, not the call's.
@@ -1498,6 +1500,18 @@ ask_ review-in-script           review-self "gate.sh --review from the main sess
 case_ review-reviewer-agent     0 - ""
 case_ review-reviewer-session   0 - ""
 case_ review-gate-run           0 - ""
+# Every spelling that reaches gate.sh: shell options before the script, --review held
+# in a variable, an argument the guard cannot read (an array, a substitution, a
+# function's "$@", what xargs adds).
+for n in review-bash-options review-bash-o review-bash-O review-bash-rcfile review-variable; do
+  ask_ "$n" review-self "gate.sh --review from the main session"
+done
+for n in review-array review-substitution review-function review-script-array; do
+  ask_ "$n" review-self "gate.sh from the main session with an argument only the shell knows"
+done
+ask_ review-xargs               review-self "gate.sh from the main session with the arguments xargs adds"
+case_ review-gate-run-main      0 - ""
+case_ review-reviewer-array     0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
 ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
 ask_ ci-edited-after-gate       gate-stamp "osc commit of devel:tools/z: no GREEN gate.sh run of this tree"

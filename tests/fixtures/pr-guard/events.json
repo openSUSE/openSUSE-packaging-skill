@@ -8893,5 +8893,91 @@
     "tool_input": {
       "command": "osc sr --cleanup home:tester:spark unbuilt devel:tools -m 'Update unbuilt to 1.1: fixes.'"
     }
+  },
+  "review-bash-options": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -euo pipefail @WORK@/gate.sh . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-bash-o": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -o errexit @WORK@/gate.sh . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-bash-O": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -O extglob @WORK@/gate.sh . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-bash-rcfile": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash --rcfile /dev/null @WORK@/gate.sh . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-variable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "R=--review; @WORK@/gate.sh . $R /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-array": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "a=(--review /var/tmp/x-review/verdict.txt); @WORK@/gate.sh . \"${a[@]}\""
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-substitution": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . $(printf -- --review) /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-function": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "f() { @WORK@/gate.sh \"$@\"; }; f . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-script-array": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/record-review-array.sh"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-xargs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo --review /var/tmp/x-review/verdict.txt | xargs @WORK@/gate.sh ."
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-gate-run-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --entries 1"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-reviewer-array": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "a=(--review /var/tmp/x-review/verdict.txt); @WORK@/gate.sh . \"${a[@]}\""
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a52f",
+    "agent_type": "changes-review"
   }
 }

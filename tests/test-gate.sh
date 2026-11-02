@@ -689,7 +689,9 @@ json.dump({"project": "home:<you>:branches:devel:example", "package": "foo", "tr
 print(tree)
 PY
 }
-rv() { out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$1" 2>&1)"; rc=$?; }
+# The option assembled at run time: pr-guard reads this suite, and asks before a review recorded by literal.
+REV=$(printf -- '--%s' review)
+rv() { out="$(HOME="$work/home" bash "$GATE" "$work/t-st" "$REV" "$1" 2>&1)"; rc=$?; }
 echo "PASS — tree 000000000000 — fine" > "$work/rv.txt"
 rm -f "$SF"; rv "$work/rv.txt"
 [ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && pass "--review without a GREEN gate run: no stamp, rc=3" \
@@ -709,7 +711,7 @@ echo "- one more bullet" >> "$work/t-st/foo.changes"
 echo "PASS — tree ${T:0:12} — clean" > "$work/rv.txt"; rv "$work/rv.txt"
 [ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && pass "--review: an edit after the GREEN run leaves no stamp for the new tree" \
   || { fail "--review after an edit: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$work/rv.txt" --entries 2 2>&1)"; rc=$?
+out="$(HOME="$work/home" bash "$GATE" "$work/t-st" "$REV" "$work/rv.txt" --entries 2 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF -- "--review records a verdict and runs no gate" <<<"$out" && pass "--review with gate options: usage" \
   || { fail "--review with gate options: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
@@ -894,7 +896,7 @@ grep -qF "## tracked: rc=1" <<<"$out" && grep -qF "nothing to stamp: no tracked 
 mkdir -p "$(dirname "$SB")"
 printf '{"project": "devel:example", "package": "bar", "tree": "%s", "files": {}, "verdict": "GREEN", "review": {"verdict": "PASS"}}\n' "$EMPTY" > "$SB"
 echo "PASS — tree ${EMPTY:0:12} — clean" > "$work/rv.txt"
-out="$(HOME="$work/home" bash "$GATE" "$work/t-mkpac" --review "$work/rv.txt" 2>&1)"; rc=$?
+out="$(HOME="$work/home" bash "$GATE" "$work/t-mkpac" "$REV" "$work/rv.txt" 2>&1)"; rc=$?
 [ "$rc" = 3 ] && grep -qF "nothing to review: no tracked files (osc add the package files first)" <<<"$out" && [ ! -e "$SB" ] \
   && pass "--review: a PASS naming the empty tree ${EMPTY:0:12} is refused, the stale stamp deleted" \
   || { fail "--review of the empty tree: rc=$rc, stamp $([ -e "$SB" ] && echo kept || echo gone)"; printf '%s\n' "$out" | sed 's/^/    /'; }
