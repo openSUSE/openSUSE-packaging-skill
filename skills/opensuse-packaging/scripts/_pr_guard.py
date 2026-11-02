@@ -2617,22 +2617,32 @@ def reviewed(path, files, built=False):
 REVIEWER = "changes-review"
 
 
-def review_record(name, run, ctx, cwd):
-    """A gate.sh --review run outside a changes-review agent. The harness names
-    the agent (Claude Code's agent_type, the opencode 2.x plugin's agent), which
-    the model cannot set; with none named, the call is the main session's."""
-    k = 0
-    if name in SHELLS:  # bash [options] gate.sh ...
-        k = next((j for j, w in enumerate(run) if j and w[:1] != "-"), None)
-        if k is None:
-            return
-    words = [run[k], *(substitute(run[k], ctx, cwd) or ())]
-    if ctx.agent == REVIEWER or "--review" not in run[k + 1 :]:
+def review_record(word, args, ctx, cwd, via=""):
+    """gate.sh run outside a changes-review agent with --review in any spelling
+    of an argument, or with one the guard cannot read ("$@", an array, a
+    substitution; via: what a wrapper such as xargs adds). word: the script as
+    the command or the shell names it; one only the shell knows counts when an
+    argument says --review. The harness names the agent (Claude Code's
+    agent_type, the opencode 2.x plugin's agent), which the model cannot set."""
+    if ctx.agent == REVIEWER:
         return
-    if "gate.sh" not in {os.path.basename(w) for w in words}:
+    names = substitute(word, ctx, cwd) if VARIABLE.search(word) else [word]
+    gate = names is not None and "gate.sh" in {os.path.basename(w) for w in names}
+    if names is not None and not gate:
         return
+    review, unread = False, via
+    for a in args:
+        vals = substitute(a, ctx, cwd) if VARIABLE.search(a) else [a]
+        if vals is None:
+            unread = unread or "an argument only the shell knows"
+        elif any(t.split("=", 1)[0] == "--review" for v in vals for t in v.split()):
+            review = True
     who = f"agent {ctx.agent}" if ctx.agent else "the main session"
-    ask(ctx, "review-self", f"gate.sh --review from {who}")
+    if review:
+        cmd = "gate.sh" if gate else shown(word)
+        ask(ctx, "review-self", f"{cmd} --review from {who}")
+    elif gate and unread:
+        ask(ctx, "review-self", f"gate.sh from {who} with {unread}")
 
 
 def factory_devel(pkg, ctx):
@@ -3925,9 +3935,9 @@ def note_env(run, ctx):
     ctx.exported += [x for x in names if x not in CLEAN_ENV]
 
 
-def interpreter(run, lang, stdin, env, ctx, cwd, depth):
+def interpreter(run, lang, stdin, env, ctx, cwd, depth, via=""):
     """Read what a shell or interpreter runs: inline code, its script file, or
-    the program it takes on stdin."""
+    the program it takes on stdin. via: what a wrapper adds to its arguments."""
     spec, kind = LANGS[lang], "shell" if lang == "shell" else "code"
     codes, flag_c, from_stdin, inplace, i = [], False, False, False, 1
     while i < len(run):
@@ -3998,8 +4008,10 @@ def interpreter(run, lang, stdin, env, ctx, cwd, depth):
                 ("python", ".sh"),
                 ("shell", ".py"),
             ):
-                via = "" if path == word else f" ({path})"
-                block("interpreter", f"{os.path.basename(run[0])} {word}{via}")
+                held_as = "" if path == word else f" ({path})"
+                block("interpreter", f"{os.path.basename(run[0])} {word}{held_as}")
+        if lang == "shell":
+            review_record(word, operands[1:], ctx, cwd, via)
         scan_file(word, kind, ctx, cwd, depth, env, run=True)
     else:
         feed(stdin, kind, os.path.basename(run[0]), ctx, cwd, depth)
@@ -4755,7 +4767,14 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
     note_writes(name, run[1:], ctx, here)
-    review_record(name, run, ctx, here)
+    wrapped = argv[: len(argv) - len(run)]
+    via = (
+        "the arguments xargs adds" if "xargs" in map(os.path.basename, wrapped) else ""
+    )
+    if name in ("source", ".") and len(run) > 1:
+        review_record(run[1], run[2:], ctx, here, via)
+    elif name not in SHELLS:
+        review_record(run[0], run[1:], ctx, here, via)
     gparts = None
     if name in DECLARE or name == "set":
         note_env(run, ctx)
@@ -4834,7 +4853,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     elif name == "find":
         find_exec(run, ctx, here, depth)
     elif name in SHELLS:
-        interpreter(run, "shell", stdin, env, ctx, here, depth)
+        interpreter(run, "shell", stdin, env, ctx, here, depth, via)
     elif PYTHON.fullmatch(name):
         interpreter(run, "python", stdin, env, ctx, here, depth)
     elif name in ("node", "nodejs", "perl"):
