@@ -482,6 +482,8 @@ MESSAGES = {
     "projects literally, or set them in this call.",
     "command-unknown": "cannot tell which command {0} runs, so it is refused. Name "
     "the command literally.",
+    "rm-checkouts": "{0}, which other work may be using. Remove only the checkout "
+    "this task made, by its own path (rm -r PRJ/PKG), one per call.",
     "request-no-message": "{0}: with no message osc opens an editor, and the call "
     "hangs until it times out. Pass -m MSG (osc sr also takes -F FILE).",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
@@ -4619,6 +4621,68 @@ def note_writes(name, args, ctx, cwd):
         note_written(d, ctx, cwd)
 
 
+def checkouts_below(top):
+    """The osc checkouts (directories holding .osc) inside top, top itself not
+    counted, two levels down: a project's packages, and a tree of projects'."""
+    found, level = [], [top]
+    for _ in range(2):
+        below = []
+        for d in level[:4096]:
+            try:
+                with os.scandir(d) as it:
+                    subs = [e.path for e in it if e.is_dir(follow_symlinks=False)]
+            except OSError:
+                continue
+            for s in sorted(subs):
+                if os.path.basename(s) == ".osc":
+                    continue
+                (found if os.path.isdir(os.path.join(s, ".osc")) else below).append(s)
+        level = below
+    return found
+
+
+# find's tests that narrow a -delete to the files they name.
+FIND_NAMED = {"-name", "-iname", "-path", "-ipath", "-wholename", "-regex", "-iregex"}
+
+
+def rm_checkouts(name, run, ctx, cwd):
+    """A recursive rm, or a find -delete with no name test, of a directory
+    holding osc checkouts, or of several checkouts at once: siblings' work may
+    live there. An operand only the shell knows is not judged."""
+    args = run[1:]
+    if name == "find":
+        if "-delete" not in args or FIND_NAMED & set(args):
+            return
+        while args and (args[0] in ("-H", "-L", "-P") or args[0].startswith("-O")):
+            args = args[1:]
+        k = next((i for i, a in enumerate(args) if a[:1] in "-(!),"), len(args))
+        operands = args[:k] or ["."]
+    else:
+        opts, operands = parse_opts(args, "")
+        if not {k for k, _ in opts} & {"-r", "-R", "--recursive"}:
+            return
+
+    def few(paths, top):
+        names = [os.path.relpath(c, top) for c in paths]
+        return ", ".join(names[:3]) + (", …" if len(names) > 3 else "")
+
+    gone = []
+    for raw in operands:
+        for p in locate(raw, ctx, cwd)[0] or ():
+            if os.path.islink(p) or not os.path.isdir(p):
+                continue
+            inside = checkouts_below(p)
+            if inside:
+                block("rm-checkouts", f"{p} holds the osc checkouts {few(inside, p)}")
+            if os.path.isdir(os.path.join(p, ".osc")):
+                gone.append(p)
+    if len(gone) > 1:
+        top = os.path.commonpath(gone)
+        block(
+            "rm-checkouts", f"{name} deletes the osc checkouts {few(gone, top)} at once"
+        )
+
+
 def git_dir(raw, ctx, cwd):
     """Whether raw names a git directory: one named *.git, one holding HEAD and
     objects/, or one only the shell can place."""
@@ -4947,6 +5011,11 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             run_text(text, "shell", ctx, here, depth)
     elif name == "find":
         find_exec(run, ctx, here, depth)
+        if depth == 0:
+            rm_checkouts(name, run, ctx, here)
+    elif name == "rm":
+        if depth == 0:  # the agent's own delete; a script's runs in its own state
+            rm_checkouts(name, run, ctx, here)
     elif name in SHELLS:
         interpreter(run, "shell", stdin, env, ctx, here, depth, via)
     elif PYTHON.fullmatch(name):

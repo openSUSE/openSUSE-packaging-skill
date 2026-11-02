@@ -488,7 +488,9 @@ repository whose title or description breaks the same rules (`tea pulls create`,
 `git-obs pr create`; the title is the headline), or writing into a
 `*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
 another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
-or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
+or one it cannot place, a recursive `rm` or a `find … -delete` (with no name test) of a
+directory holding osc checkouts, or of several checkouts at once, running a `.sh` file
+with Python or a `.py` file with a shell, or
 fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
 Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
 `build-wait.sh`; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
@@ -663,7 +665,7 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 ## What reaches the guard
 
 The prefilter matches any path, `~`, `..`, a variable or substitution anywhere (`$X`,
-`$(…)`, backquotes, `$'…'`), `cd`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
+`$(…)`, backquotes, `$'…'`), `cd`, `rm`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
 `send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and for the credential
 rules `gh`, `credential`, `secret-tool`,
 `netrc`, `oscrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each

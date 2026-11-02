@@ -9136,5 +9136,84 @@
       "command": "osc rq show 1390001"
     },
     "cwd": "@PLAIN@"
+  },
+  "rm-project-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/spark"
+    }
+  },
+  "rm-fr-trailing-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -fr @OSC@/spark/"
+    }
+  },
+  "rm-r-f-separate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -r -f @OSC@/spark"
+    }
+  },
+  "rm-sudo-recursive-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sudo rm --recursive --force @OSC@/spark"
+    }
+  },
+  "rm-glob-siblings": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/spark/*"
+    }
+  },
+  "rm-parent-of-projects": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@"
+    }
+  },
+  "rm-var-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=@OSC@/spark; rm -rf \"$D\""
+    }
+  },
+  "rm-relative-in-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf spark"
+    },
+    "cwd": "@OSC@"
+  },
+  "find-delete-project": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find @OSC@/spark -delete"
+    }
+  },
+  "find-delete-name": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find @OSC@/spark -name '*.orig' -delete"
+    }
+  },
+  "rm-own-checkout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/spark/libpqxx"
+    }
+  },
+  "rm-not-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f @OSC@/spark/libpqxx/libpqxx.spec.orig"
+    }
+  },
+  "rm-no-checkouts": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @WORK@/sweep"
+    }
   }
 }
