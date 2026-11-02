@@ -12,7 +12,7 @@ fails=0
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-export TMPDIR="$work"
+export TMPDIR="$work" XDG_CACHE_HOME="$work/cache"
 
 # case_ <name> <expected rc> <expected message> <dir>
 case_() {
@@ -1084,6 +1084,100 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
     || { fail "mkpac checkout after osc add: not GREEN"; printf '%s\n' "$out" | sed 's/^/    /'; }
 else
   echo "SKIP: GREEN stamp after osc add (no OBS source_validator/download_files)"
+fi
+
+# rpmspec -P parses every spec: a parse error is red, and so is a comment rpm
+# expands into a section name or into commands. opencode sr#1394137 was declined
+# for "%prep" in a comment ("Unknown tag: %prep"); codenomad's "# %{cargo_test}"
+# comment ran cargo test. Without --build-log, %prep runs too (rpmbuild -bp):
+# photocraft's patch no longer applied while the gate was GREEN.
+if command -v rpmspec > /dev/null && command -v rpmbuild > /dev/null; then
+  HDR=$'Name:           p\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT'
+  # sp <name> <gate section> <rc> <expected line> [gate args] < spec body
+  sp() {
+    local n=$1 sec=$2 r=$3 m=$4; shift 4
+    mkdir -p "$work/sp-$n"; { echo "$HDR"; cat; } > "$work/sp-$n/p.spec"
+    out="$(bash "$GATE" "$work/sp-$n" "$@" 2>&1)"
+    grep -qF "## $sec: rc=$r" <<<"$out" && grep -qF -- "$m" "$work/gate-sp-$n/$sec.txt" && pass "$sec $n (rc=$r)" \
+      || { fail "$sec $n: expected rc=$r and '$m'"; sed 's/^/    /' "$work/gate-sp-$n/$sec.txt" 2>/dev/null; }
+  }
+  sp clean rpmspec 0 "OK: every spec parses" <<'EOF'
+# Unpacked in %%prep; %{name} expands to one line here.
+%description
+t
+%prep
+%build
+# %{name} stays one line in a script too.
+%files
+%changelog
+EOF
+  sp bad-tag rpmspec 1 "p.spec: rpmspec -P fails: error: line 6: Unknown tag: Bogus: tag" <<'EOF'
+Bogus: tag
+%description
+t
+%files
+EOF
+  sp section-comment rpmspec 1 "p.spec:6: %prep in a comment" <<'EOF'
+# Unpacks into the crate dir in %prep.
+%description
+t
+%prep
+%files
+EOF
+  sp multiline-comment rpmspec 1 "p.spec:13: the comment's macro expands to 3 lines" <<'EOF'
+%define two_lines \
+echo one\
+echo two
+%description
+t
+%prep
+%build
+# Note %{two_lines} in a comment.
+true
+%check
+# Note %{name}: one line.
+%files
+%changelog
+EOF
+  grep -qF "p.spec:16:" "$work/gate-sp-multiline-comment/rpmspec.txt" \
+    && fail "rpmspec multiline-comment: a one-line expansion was flagged" || pass "rpmspec multiline-comment: a one-line expansion is not"
+  # A _multibuild spec is parsed per flavor, @BUILD_FLAVOR@ set as OBS sets it.
+  mkdir -p "$work/sp-flavor"; printf '<multibuild>\n  <package>doc</package>\n</multibuild>\n' > "$work/sp-flavor/_multibuild"
+  sp flavor rpmspec 1 "p.spec (flavor doc): rpmspec -P fails: error: line 11: Unknown tag: Bogus: tag" <<'EOF'
+%define flavor @BUILD_FLAVOR@%{nil}
+%if "%{flavor}" != ""
+%define name_suffix -%{flavor}
+%endif
+%if "%{flavor}" == "doc"
+Bogus: tag
+%endif
+%description
+t
+%files
+EOF
+  grep -qF "p.spec: rpmspec -P fails" "$work/gate-sp-flavor/rpmspec.txt" \
+    && fail "rpmspec flavor: the default build was red" || pass "rpmspec flavor: the default build parses"
+  # %prep: a tarball and a patch that applies, then one that does not.
+  mkdir -p "$work/ppsrc/p-1"; echo hello > "$work/ppsrc/p-1/hello.txt"
+  tar -C "$work/ppsrc" -czf "$work/p-1.tar.gz" p-1
+  pspec() { printf '%s\n' 'Source0:        p-1.tar.gz' '# PATCH-FIX-OPENSUSE p-fix.patch -- t' 'Patch0:         p-fix.patch' \
+    '%description' t '%prep' '%autosetup -p1' "$@" '%build' '%files' '%changelog'; }
+  pfix() { mkdir -p "$work/sp-$1"; cp "$work/p-1.tar.gz" "$work/sp-$1/"
+    printf -- '--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-%s\n+hello world\n' "$2" > "$work/sp-$1/p-fix.patch"; }
+  pfix prep-ok hello; sp prep-ok prep 0 "OK: %prep of p.spec ran in" < <(pspec)
+  sp prep-ok prep 0 "OK: %prep of p.spec passed on these sources before (cached)" < <(pspec)
+  pfix prep-bad goodbye; sp prep-bad prep 1 "p.spec: %prep fails" < <(pspec)
+  grep -qE '^VERDICT: RED — [^(]*\bprep\b' <<<"$out" && pass "prep-bad: on the verdict line" || fail "prep-bad: not on the verdict line"
+  echo build > "$work/build.log"
+  pfix prep-log goodbye; sp prep-log prep 0 "not run: the --build-log build ran %prep" --build-log "$work/build.log" < <(pspec)
+  pfix prep-host hello
+  sp prep-host prep 0 "UNKNOWN: %prep of p.spec stopped on what this host lacks: /usr/share/gate-test-no-such-pkg/*" \
+    < <(pspec 'cp /usr/share/gate-test-no-such-pkg/* .')
+  # only the command that failed counts: an earlier miss the spec tolerates is no excuse
+  pfix prep-mixed hello; sp prep-mixed prep 1 "p.spec: %prep fails" < <(pspec 'gate-test-no-such-cmd || :' 'false')
+  pfix prep-noparse hello; sp prep-noparse prep 1 "p.spec: not run: the spec does not parse" < <(echo "Bogus: tag"; pspec)
+else
+  echo "SKIP: rpmspec and %prep checks (no rpmspec or rpmbuild)"
 fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"

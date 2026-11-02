@@ -282,7 +282,8 @@ the mechanics byte-compatible so fixes port both ways.
 
 The commit/SR gate chain as ONE tool call: the SR target, the tracked files
 (osc checkouts), source_validator, factory-auto's URL check (download_files),
-spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
+the spec as rpm parses it (rpmspec -P), %prep (rpmbuild -bp, without
+--build-log), spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
 one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
 the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
 code read directly, then one VERDICT line. Five separate calls cost five provider
@@ -323,6 +324,9 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                checkout's); a _multibuild package passes it once per build,
                the base package and each flavor. GREEN records them as the
                tree's build
+               Without it %prep runs here (rpmbuild -bp --nodeps under /var/tmp,
+               a pass cached per spec and sources): red when it fails, UNKNOWN
+               but not red when it stops on what only the build root has
   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
                also refuses a prebuilt binary the package ships, whatever its
                exception line says (firmware alone may ship); without it the
@@ -342,6 +346,10 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                build-summary.sh reads each log GREEN; --rpms DIR also records
                the shipped-binary check of OBS's RPMs. A red build drops the
                tree's recorded build
+Parsing a spec runs its %(...), and %prep runs its shell, on this host as you:
+run the gate only on a checkout you are changing yourself, never on someone
+else's submission (references/untrusted-content.md "The two sharp
+local-execution vectors").
 Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 the md5 and name of every file osc would commit (no _link, no _service:*), in
 ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -368,6 +376,12 @@ A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the m
 The stamp also carries the evidence `osc sr` needs beyond the review, so pr-guard can ask before a request whose tree has none: 56 of 90 requests in one fan-out went out within ten minutes of their commit with no green build, and opencode (`Unknown tag: %prep`), codenomad (no cmake) and rioterm were declined or failed to build. A GREEN run with `--build-log` records the log as the tree's build once `build-summary.sh` reads it GREEN and it is a build of this tree: its `finished "build <spec>"` line names one of the checkout's specs, its `Wrote: …/SRPMS/<n>-<v>-<r>.src.rpm` that spec's name (any spelling its `%define`s give it, `%{?x}` also empty as in a base build where only a flavor defines x, up to the first macro or `@BUILD_FLAVOR@` left in it) and version (unless a macro is left in it), and it started (`started "build …" at`, else the log's mtime) after the newest tracked file but a `.changes` changed: a green log of the previous version, of another package or of an edited tree is red. It takes every form `build-summary.sh` does (a log, a build root, its name, repo-arch) and checks the log file that script read. A `_multibuild` package passes it once per build OBS makes of it: the base package, unless the spec excludes it (`ExclusiveArch: do_not_build` or `do-not-build` under `%if "%{flavor}" == ""`, or under a macro holding `@BUILD_FLAVOR@`), and each flavor `_multibuild` lists — a distinct log each, and a distinct source RPM each where Name carries the flavor; which flavor a local log built is not written in it, so the count is all the gate can hold it to. A checkout with no spec (kiwi, Dockerfile) writes no source RPM: its log's recipe must be a file of the checkout. `--rpms DIR` records the shipped-binary check. A rerun of the same tree keeps the review, the build and that check; a tree that differs from the stamped one only in `*.changes` keeps the build and the check (`carried`), never the review, as `target-gate.sh` does. In OBS-ONLY mode the gate runs before the commit, so `--obs-build` records gate 1 after it: OBS's expanded listing must equal the stamped files, every repo/arch/flavor `osc results` lists must have succeeded (disabled and excluded aside; one still scheduled, building or dirty, or a log whose `Building … srcmd5` line names older sources, is exit 4), and `build-summary.sh` must read each `osc rbl` log GREEN, its post-build check findings included. Only a failed log, `unresolvable` and `broken` are red. The logs are downloaded under `/var/tmp`, one `osc rbl` each (minutes for a big package on many arches: give the call a long timeout), and removed; the summaries stay in `$TMPDIR/gate-<pkg>/obs-build/`. A red build drops the recorded build of the tree; anything it cannot judge — a failed lookup, no results or every repo disabled, a state it does not know (`locked`, `deleting`, …) — is UNKNOWN, exit 1, and changes nothing. It reads the stamp again before writing it, so a review recorded during the run stays. A run without `--rpms` notes that the built RPMs went unchecked; whether a package ships a binary is not knowable from its spec (a noarch package carries prebuilt `.node` and `.wasm` files too), so pr-guard does not require the check.
 
 It also runs spec-cleaner itself, the canonical four-flag invocation with a fresh `-o` per spec, so the check happens in every build mode (OBS-ONLY included): an empty diff is green, any diff red unless `--cleaner-deviation REASON` names a documented deviation (the gate then passes, prints the reason and keeps the diff for the change review), and a missing or failing spec-cleaner is red, never "no diff".
+
+`rpmspec` parses every spec with `rpmspec -P` (each `_multibuild` flavor, `@BUILD_FLAVOR@` set as OBS sets it): a parse error is red, and so is a comment rpm would expand into a section name or into more than one line. OBS declined opencode sr#1394137 for `# … in %prep.` (`Unknown tag: %prep`), which the local rpm 4.20.1 does not reproduce, so a section name in a comment is read off the text; a multi-line macro is found by parsing each comment that names a macro between two marker comments, and codenomad's `# %{cargo_test} forces …` ran `cargo test` in `%check` that way. Escape the `%` as `%%`.
+
+`prep` runs `%prep` when no `--build-log` says a local build ran it: `rpmbuild -bp --nodeps` with the checkout as `_sourcedir`, unpacking under `/var/tmp` and removing it afterwards. It is red when `%prep` fails (photocraft's patch no longer applied while the gate was GREEN; electron's `%prep` died on `unexpected EOF`) and when it runs past 900 s. A pass is cached by a hash of the spec, every other file but the `.changes`, and rpm's version, so a `.changes`-only re-gate costs the hash. Measured cold (64 cores): bugwarden 3 s, craft-anything 5 s, openidea 9 s, nodejs-signal-ringrtc 12 s, nodejs-electron 275 s plus 66 s to delete 13 GB. A `%prep` that stops on what only the build root has — a command, a `/usr` file a BuildRequires installs (opencode copies photon-node's), a python module, a source a service makes on OBS (zed's tarball) — is `UNKNOWN`, not red, and named on the GREEN verdict line: the build log decides.
+
+Parsing a spec runs its `%(...)`, and `%prep` runs its shell, on this host as you: the gate is for a checkout you are changing yourself, never for someone else's submission (`references/untrusted-content.md` "The two sharp local-execution vectors").
 
 source_validator's exit code is not factory-auto's verdict: it prints an unreferenced file as a `(W) Attention, "<file>" is not mentioned …` warning and exits 0, and `check_source.py` declines on the first such line. The gate marks source_validator red on it (sr#1386155 went out green with an unlisted `swift-lang-rpmlintrc`).
 

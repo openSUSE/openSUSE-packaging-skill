@@ -1,7 +1,8 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: the SR target, the tracked files
 # (osc checkouts), source_validator, factory-auto's URL check (download_files),
-# spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
+# the spec as rpm parses it (rpmspec -P), %prep (rpmbuild -bp, without
+# --build-log), spec-cleaner, changes-lint.sh, changes-guard.sh, changes-patches.sh, a
 # one-Legal-Review-Notice-per-License check, the spec header, the patch tags and
 # the sources' prebuilt binaries (source-binaries.py), each run unpiped with its exit
 # code read directly, then one VERDICT line. Five separate calls cost five provider
@@ -42,6 +43,9 @@
 #                checkout's); a _multibuild package passes it once per build,
 #                the base package and each flavor. GREEN records them as the
 #                tree's build
+#                Without it %prep runs here (rpmbuild -bp --nodeps under /var/tmp,
+#                a pass cached per spec and sources): red when it fails, UNKNOWN
+#                but not red when it stops on what only the build root has
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
@@ -61,6 +65,10 @@
 #                build-summary.sh reads each log GREEN; --rpms DIR also records
 #                the shipped-binary check of OBS's RPMs. A red build drops the
 #                tree's recorded build
+# Parsing a spec runs its %(...), and %prep runs its shell, on this host as you:
+# run the gate only on a checkout you are changing yourself, never on someone
+# else's submission (references/untrusted-content.md "The two sharp
+# local-execution vectors").
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -755,9 +763,185 @@ def tags(spec, against="strict", basespec=""):
     return bad
 
 
+
+
+# a section name rpm would read as one: %prep, %build, %files, %post, %pretrans ...
+SECTION = re.compile(
+    r"(?<!%)%(prep|build|install|check|files|changelog|package|description|conf|generate_buildrequires|"
+    r"(?:pre|post)(?:un|trans|untrans)?|verifyscript|(?:trans)?filetrigger(?:in|un|postun)|"
+    r"trigger(?:in|un|postun|prein)|sourcelist|patchlist)(?![\w-])"
+)
+MACROREF = re.compile(r"(?<!%)%[{(A-Za-z_]")
+
+
+def rpmspec(path):
+    try:
+        return subprocess.run(["rpmspec", "-P", "--define", "_sourcedir " + os.getcwd(), path],
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def first_error(p):
+    errs = [ln.strip() for ln in p.stderr.splitlines() if re.match(r"\s*error:|\S+: invalid option", ln)]
+    return "; ".join(errs[:2]) or (p.stderr.strip().splitlines() or ["exit %d" % p.returncode])[-1]
+
+
+def write(path, lines):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def as_built(lines, flavor=""):
+    # OBS sets @BUILD_FLAVOR@ to the _multibuild flavor, empty for the default build
+    return [ln.replace("@BUILD_FLAVOR@", flavor) for ln in lines]
+
+
+def parse(spec, logdir):
+    # rpm expands macros in comments: a section name there broke opencode's
+    # build, and a multi-line macro there runs its lines as commands
+    try:
+        lines = read_lines(spec)
+    except OSError as e:
+        print("%s: cannot read it: %s" % (spec, e.strerror))
+        return 1
+    bad = 0
+    for flavor in [""] + ((flavors(".") or []) if any("@BUILD_FLAVOR@" in ln for ln in lines) else []):
+        # the spec as rpm reads it: %prep and the comment check use the default build's
+        path = os.path.join(logdir, ("rpm." if not flavor else "rpm-%s." % flavor) + spec)
+        write(path, as_built(lines, flavor))
+        q = rpmspec(path)
+        what = spec + (" (flavor %s)" % flavor if flavor else "")
+        if q is None:
+            print("UNKNOWN: rpmspec -P %s did not finish" % what)
+            bad = 1
+        elif q.returncode != 0:
+            print("%s: rpmspec -P fails: %s" % (what, first_error(q).replace(path, spec)))
+            for n in (int(x) for x in re.findall(r"line (\d+):", q.stderr)):
+                if 0 < n <= len(lines) and lines[n - 1].lstrip().startswith("#"):
+                    print("%s:%d is a comment, and rpm expands macros in comments: write %%%% for each %% there" % (spec, n))
+                    break
+            bad = 1
+        elif not flavor:
+            with open(os.path.join(logdir, "parsed." + spec), "w", encoding="utf-8") as fh:
+                fh.write(q.stdout)
+        if not flavor:
+            p = q
+    if p is None:
+        return 1
+    lines = as_built(lines)
+    end = next((i for i, ln in enumerate(lines) if re.match(r"%changelog\b", ln)), len(lines))
+    cand = []
+    for i, line in enumerate(lines[:end]):
+        if not line.lstrip().startswith("#"):
+            continue
+        m = SECTION.search(line)
+        if m:
+            print("%s:%d: %%%s in a comment: rpm expands macros in comments, and OBS declined opencode "
+                  "for one (sr#1394137, Unknown tag: %%prep): write %%%%%s" % (spec, i + 1, m.group(1), m.group(1)))
+            bad = 1
+        joined = line.rstrip().endswith("\\") or (i and lines[i - 1].rstrip().endswith("\\"))
+        if MACROREF.search(line) and not joined:
+            cand.append(i)
+    if cand and p.returncode == 0:
+        # each candidate between marker comments: in a script rpm keeps both, so
+        # what lies between them is that one line's expansion
+        marked, at = [], set(cand)
+        for i, line in enumerate(lines):
+            marked += ["#GATE-OPEN-%d" % i, line, "#GATE-SHUT-%d" % i] if i in at else [line]
+        path = os.path.join(logdir, "marked." + spec)
+        write(path, marked)
+        q = rpmspec(path)
+        if q is None or q.returncode != 0:
+            print("note: %s: comment expansions not checked (the marked copy does not parse)" % spec)
+            return bad
+        pos = {ln: k for k, ln in enumerate(q.stdout.splitlines()) if ln.startswith("#GATE-")}
+        for i in cand:
+            a, b = pos.get("#GATE-OPEN-%d" % i), pos.get("#GATE-SHUT-%d" % i)
+            if a is not None and b is not None and b - a > 2:
+                print("%s:%d: the comment's macro expands to %d lines, which rpm runs as commands "
+                      "(codenomad's comment ran cargo test): write %%%% for its %%" % (spec, i + 1, b - a - 1))
+                bad = 1
+    return bad
+
+
+def prepkey(spec):
+    # what %prep reads: the spec, every other file but the .changes, and rpm itself
+    try:
+        v = subprocess.run(["rpm", "--version"], capture_output=True, text=True).stdout
+    except OSError:
+        return 1
+    h = hashlib.sha256(v.encode() + b"\0" + spec.encode())
+    for n in sorted(os.listdir(".")):
+        if n.startswith(".") or n.endswith(".changes") or not os.path.isfile(n):
+            continue
+        m = hashlib.md5()
+        with open(n, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                m.update(chunk)
+        h.update(("%s  %s\n" % (m.hexdigest(), n)).encode())
+    print(h.hexdigest())
+    return 0
+
+
+def hostonly(logpath):
+    # a %prep that stopped on what the build root would have: a tool, a file a
+    # BuildRequires installs, a source a server-side or buildtime service makes
+    try:
+        text = read_lines(logpath)
+    except OSError:
+        return 1
+    here = os.getcwd()
+    # bash -e stops at the command that failed: only its output counts
+    last = max((k for k, ln in enumerate(text) if ln.startswith("+ ")), default=-1)
+    for line in reversed(text[last + 1:]):
+        m = re.search(r"(\S+): command not found$", line)
+        if m:
+            print("%s is not on this host" % m.group(1))
+            return 0
+        m = re.search(r"No module named '([^']+)'", line)
+        if m:
+            print("python module %s is not on this host" % m.group(1))
+            return 0
+        m = re.search(r"['‘]?(/(?:usr|etc|opt|lib|lib64|bin|sbin)/[^'’:]*)['’]?: No such file or directory", line)
+        if m:
+            print(m.group(1))
+            return 0
+        m = re.match(r"error: File (\S+): No such file or directory", line)
+        if m and os.path.dirname(m.group(1)) == here and services():
+            print("%s, which a source service makes" % os.path.basename(m.group(1)))
+            return 0
+    return 1
+
+
+def services():
+    # a _service run on OBS rather than by hand (no mode, buildtime, trylocal)
+    try:
+        root = ET.parse("_service").getroot()
+    except (OSError, ET.ParseError):
+        return False
+    return any(s.get("mode") not in ("manual", "disabled", "localonly") for s in root.findall("service"))
+
+
+def excerpt(logpath):
+    # the lines before rpm's own summary: the command that failed and its error
+    try:
+        text = [ln for ln in read_lines(logpath) if ln.strip()]
+    except OSError:
+        return 1
+    for k, ln in enumerate(text):
+        if ln.startswith(("RPM build errors:", "RPM build warnings:")):
+            text = text[:k]
+            break
+    for ln in text[-6:]:
+        print("  " + ln[:300])
+    return 0
+
+
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
-      "buildlogs": buildlogs, "copyright": copyright, "tags": tags}[cmd]
+      "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
+      "parse": parse, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -916,6 +1100,67 @@ if [ -x /usr/lib/obs/service/download_files ]; then
   show download_files $rc "$log/download_files.txt"
 else
   echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
+fi
+
+# The spec as rpm reads it. rpmspec -P expands every macro, comments included:
+# opencode sr#1394137 was declined for "%prep" in a comment ("Unknown tag:
+# %prep"), and codenomad's "# %{cargo_test} ..." comment ran cargo test. Parsing
+# runs the spec's %(...) on this host: a checkout you are changing yourself only.
+if command -v rpmspec >/dev/null 2>&1; then
+  : > "$log/rpmspec.txt"; rc=0
+  for s in "${specs[@]}"; do
+    [ -e "$s" ] || continue
+    py parse "$s" "$log" >> "$log/rpmspec.txt" || rc=1
+  done
+  [ $rc -eq 0 ] && echo "OK: every spec parses, and no comment expands into a section name or commands" >> "$log/rpmspec.txt"
+  show rpmspec $rc "$log/rpmspec.txt"
+else
+  echo "## rpmspec: SKIPPED (not installed)"; red+=(rpmspec)
+fi
+
+# %prep, unless a local build already ran it (--build-log): photocraft's patch
+# no longer applied while the gate was GREEN, electron's %prep died on
+# "unexpected EOF". rpmbuild -bp reads the sources in place and unpacks under /var/tmp;
+# a pass is cached by the hash of the spec, the sources and rpm's version. What
+# only the build root has (a BuildRequires' file or tool, a source a service
+# makes) leaves %prep UNKNOWN here, not red: the build log decides.
+prepnote=""
+if [ ${#buildlogs[@]} -gt 0 ]; then
+  echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"
+elif command -v rpmbuild >/dev/null 2>&1; then
+  : > "$log/prep.txt"; rc=0
+  for s in "${specs[@]}"; do
+    [ -e "$s" ] || continue
+    if command -v rpmspec >/dev/null 2>&1 && [ ! -e "$log/parsed.$s" ]; then
+      echo "$s: not run: the spec does not parse" >> "$log/prep.txt"; rc=1; continue
+    fi
+    key=$(py prepkey "$s") || key=""
+    cache="${XDG_CACHE_HOME:-$HOME/.cache}/opensuse-packaging/prep/$key"
+    if [ -n "$key" ] && [ -e "$cache" ]; then
+      echo "OK: %prep of $s passed on these sources before (cached)" >> "$log/prep.txt"; continue
+    fi
+    if ! bp=$(mktemp -d -p /var/tmp "gate-prep-$pkg.XXXXXX"); then
+      echo "UNKNOWN: no scratch directory under /var/tmp for %prep" >> "$log/prep.txt"; rc=1; continue
+    fi
+    t0=$SECONDS; rs="$PWD/$s"; [ ! -e "$log/rpm.$s" ] || rs="$log/rpm.$s"   # @BUILD_FLAVOR@ set as OBS sets it
+    timeout 900 rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+      "$rs" > "$log/prep.$s.log" 2>&1; prc=$?
+    rm -rf "$bp"
+    if [ $prc -eq 0 ]; then
+      echo "OK: %prep of $s ran in $((SECONDS - t0)) s" >> "$log/prep.txt"
+      [ -z "$key" ] || { mkdir -p "${cache%/*}" && : > "$cache"; }
+    elif [ $prc -eq 124 ]; then
+      echo "UNKNOWN: %prep of $s did not finish in 900 s: build it and pass --build-log" >> "$log/prep.txt"; rc=1
+    elif why=$(py hostonly "$log/prep.$s.log"); then
+      echo "UNKNOWN: %prep of $s stopped on what this host lacks: $why — the build log decides (--build-log)" >> "$log/prep.txt"
+      prepnote+="${prepnote:+; }$s: $why"
+    else
+      { echo "$s: %prep fails ($log/prep.$s.log):"; py excerpt "$log/prep.$s.log"; } >> "$log/prep.txt"; rc=1
+    fi
+  done
+  show prep $rc "$log/prep.txt"
+else
+  echo "## prep: SKIPPED (no rpmbuild)"; red+=(prep)
 fi
 
 # spec-cleaner as the skill runs it (core directive 3), in every build mode: the
@@ -1115,6 +1360,7 @@ if [ ${#red[@]} -eq 0 ]; then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
+  [ -z "$prepnote" ] || t+=", %prep not proven on this host ($prepnote)"
   if [ -n "$deviation" ] && grep -q '^DEVIATION' "$log/spec-cleaner.txt" 2>/dev/null; then
     echo "VERDICT: GREEN — all gates passed$t, spec-cleaner deviation: $deviation (diff: $log/spec-cleaner.diff; full output: $log/)"; exit 0
   fi
