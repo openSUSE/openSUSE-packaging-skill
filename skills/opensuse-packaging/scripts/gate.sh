@@ -1,16 +1,16 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-# (osc checkouts), no copy of a skill script, source_validator, factory-auto's URL
-# check (download_files), the spec as rpm parses it (rpmspec -P), %prep
+# (osc checkouts), no copy of a skill script, source_validator, factory-auto's
+# URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
 # (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
-# changes-guard.sh, changes-patches.sh, a
-# one-Legal-Review-Notice-per-License check, the spec header, the patch tags, a
-# new .changes entry for a changed tree and the sources' prebuilt binaries
+# changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
+# check, the spec header, terse spec comments, the patch tags, a new .changes
+# entry for a changed tree and the sources' prebuilt binaries
 # (source-binaries.py), each run unpiped with its exit code read directly, then
-# one VERDICT line. Five separate calls cost five provider
-# steps and five result blocks that ride along in context for the rest of the
-# session; this costs one. The adversarial change review (agents/changes-review.md)
-# still follows — it is a judgement, not a check, and stays outside this script.
+# one VERDICT line. Five separate calls cost five provider steps and five result
+# blocks that ride along in context for the rest of the session; this costs one.
+# The adversarial change review (agents/changes-review.md) still follows — it is
+# a judgement, not a check, and stays outside this script.
 # changes-range.py runs as a note that is never red: the upstream releases the
 # bump crosses that the new .changes entries never name, or describe again.
 #
@@ -1229,11 +1229,88 @@ def entry(label, against, elabel, basedir, *changes):
     return 1
 
 
+CMT = re.compile(r"\s*#")
+# Commented-out spec code and the scan's exception lines, which are no prose.
+CMT_CODE = re.compile(r"\s*#\s*(?:%[\w{(!?]|Source-Binary-Exception:|(?:Build)?Requires(?:\(\w+\))?:"
+                      r"|Recommends:|Suggests:|Provides:|Obsoletes:|Conflicts:|(?:Source|Patch)\d*:)")
+BULLET = re.compile(r"\s*#\s*[-*]\s")
+CONT = re.compile(r"\s*#\s{2,}\S")
+NOTICE = "Legal-Review-Notice:"
+LONG, BULLETS = 3, 10
+
+
+def comments(spec, basespec=""):
+    """The comment blocks spec adds over basespec (every one without it), the
+    header excepted, that run past LONG lines; a Legal-Review-Notice block may
+    be its notice line and up to BULLETS bullets of at most two lines each."""
+    try:
+        lines = read_lines(spec)
+    except OSError as e:
+        print("%s: cannot read it: %s" % (spec, e.strerror))
+        return 1
+    try:
+        base = read_lines(basespec) if basespec else None
+    except OSError:
+        base = None
+    if base is None:
+        added = set(range(len(lines)))
+    else:
+        added = set()
+        for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, base, lines, autojunk=False).get_opcodes():
+            if tag in ("replace", "insert"):
+                added.update(range(j1, j2))
+        moved = {ln.strip() for ln in base if CMT.match(ln)}  # a block moved or kept is not added
+        added = {i for i in added if lines[i].strip() not in moved}
+    head = 0
+    while head < len(lines) and CMT.match(lines[head]):
+        head += 1
+    if not any(re.search(r"spec file for package|Copyright", ln) for ln in lines[:head]):
+        head = 0  # no header: the first comment is the change's too
+    bad, i = 0, head
+    while i < len(lines):
+        if not CMT.match(lines[i]):
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and CMT.match(lines[j]):
+            j += 1
+        block = range(i, j)
+        new = {k for k in block if k in added and not CMT_CODE.match(lines[k])}
+        why, fix = None, "one line, two at most, saying why"
+        if new and any(NOTICE in lines[k] for k in block):
+            fix = "the findings as short bullets"
+            bullets, cont = 0, 0
+            for k in block:
+                if NOTICE in lines[k]:
+                    continue
+                if BULLET.match(lines[k]):
+                    bullets, cont = bullets + 1, 0
+                elif CONT.match(lines[k]) and bullets and not cont:
+                    cont = 1
+                elif k in added:
+                    why = "a %s line that is no short bullet: %s" % (NOTICE, lines[k].strip()[:60])
+                    break
+            if not why and bullets > BULLETS:
+                why = "a %s with %d bullets (at most %d)" % (NOTICE, bullets, BULLETS)
+        elif new:
+            run = longest = 0
+            for k in block:
+                run = run + 1 if k in new else 0
+                longest = max(longest, run)
+            if longest > LONG:
+                why = "a %d-line comment" % longest
+        if why:
+            print("%s:%d: %s: %s (references/specfile-guidelines.md \"Spec file — general"
+                  " rules\")" % (spec, i + 1, why, fix))
+            bad = 1
+        i = j
+    return bad
+
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
       "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
       "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt,
-      "need": need, "entry": entry}[cmd]
+      "need": need, "entry": entry, "comments": comments}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -1665,6 +1742,19 @@ for s in "${specs[@]}"; do
 done
 [ $rc -eq 0 ] && echo "OK: one spec header, and every copyright holder of the target kept" >> "$log/spec-header.txt"
 show spec-header $rc "$log/spec-header.txt"
+
+# A spec comment says why in a line or two (references/specfile-guidelines.md
+# "Spec file — general rules"): 9-line %check comments and 10-line prose
+# Legal-Review-Notices were hard to review. Only the comment lines the change
+# adds count, against the target's spec spec-header saved (all without one).
+: > "$log/spec-comments.txt"; rc=0
+for s in "${specs[@]}"; do
+  [ -e "$s" ] || continue
+  b=""; [ ! -e "$log/base.$s" ] || b="$log/base.$s"
+  py comments "$s" "$b" >> "$log/spec-comments.txt" || rc=1
+done
+[ $rc -eq 0 ] && echo "OK: no comment block the change adds runs past 3 lines" >> "$log/spec-comments.txt"
+show spec-comments $rc "$log/spec-comments.txt"
 
 # A patch the change adds or edits carries a PATCH-* tag naming its file, and
 # an UPSTREAM tag says where upstream has it (references/patches.md): a devel

@@ -281,17 +281,17 @@ the mechanics byte-compatible so fixes port both ways.
 ## gate.sh
 
 The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-(osc checkouts), no copy of a skill script, source_validator, factory-auto's URL
-check (download_files), the spec as rpm parses it (rpmspec -P), %prep
+(osc checkouts), no copy of a skill script, source_validator, factory-auto's
+URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
 (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
-changes-guard.sh, changes-patches.sh, a
-one-Legal-Review-Notice-per-License check, the spec header, the patch tags, a
-new .changes entry for a changed tree and the sources' prebuilt binaries
+changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
+check, the spec header, terse spec comments, the patch tags, a new .changes
+entry for a changed tree and the sources' prebuilt binaries
 (source-binaries.py), each run unpiped with its exit code read directly, then
-one VERDICT line. Five separate calls cost five provider
-steps and five result blocks that ride along in context for the rest of the
-session; this costs one. The adversarial change review (agents/changes-review.md)
-still follows — it is a judgement, not a check, and stays outside this script.
+one VERDICT line. Five separate calls cost five provider steps and five result
+blocks that ride along in context for the rest of the session; this costs one.
+The adversarial change review (agents/changes-review.md) still follows — it is
+a judgement, not a check, and stays outside this script.
 changes-range.py runs as a note that is never red: the upstream releases the
 bump crosses that the new .changes entries never name, or describe again.
 
@@ -382,6 +382,8 @@ The target comes first. Without `--target` it is Factory's devel project (`devel
 `spec-header` is red on a second `# spec file for package` header (rpmcrab shipped one past three reviews) and on a `# Copyright` holder of the target's spec, other than SUSE or Novell, that the change drops (bluetui lost its maintainer's line to a format_spec_file run).
 
 `patch-tags` is red on a patch the change adds or edits against the target — absent there, or a different md5 (the target's expanded listing; for a direct commit the committed copy; in git the upstream ref) — whose comment block directly above, past any `%if`, has no `PATCH-{FIX,FEATURE}-{UPSTREAM,OPENSUSE,SLE}` or `PATCH-NEEDS-REBASE` line naming its file (literally or with `%{name}`/`%{version}` and plain `%define`s expanded), and on an UPSTREAM tag that cites no reference: an http(s) URL, `gh#owner/repo#N`, a commit hash or a bug id (`bsc#N`, `boo#N`, `fdo#N`, …). Each spec of a `_multibuild` package counts; a commented-out `#PatchN:` is skipped. A patch the target ships unchanged only gets a `note:` line (31 of 33 sampled Factory specs had untagged ones) — unless the target's spec tags it correctly: that tag cannot be dropped. Without the target's files — a new package, a failed listing, or in git an upstream other than its remote's default branch that already holds HEAD (a pushed fork or topic branch: a fork PR passes `--git-base <target ref>`, which is always taken as the base) — every patch counts as changed. Uncommitted edits on the default branch compare against it as they should. A devel reviewer asked for the tags on sr#1385879; tag one only after finding where it came from (`references/patches.md`).
+
+`spec-comments` is red on a comment block a spec gains past three lines — against the target's spec (the copy `spec-header` compares with; without one, every comment counts), the header, commented-out spec lines and `# Source-Binary-Exception:` lines aside — and on a `# Legal-Review-Notice:` line the change adds that is no bullet of at most two lines, or a notice past ten bullets: agents wrote 9-line `%check` comments and 10-line prose notices a human reviewer could not take in. A comment the target already has, kept or moved, is not the change's. Calibrated on 616 local checkouts against their committed copies: the 7 it flags are uncommitted paragraphs an agent added.
 
 `skill-scripts` is red on a file in the checkout named like one of the skill's scripts, at the top or under `scripts/`: a package never ships one, and agents told by pr-guard to "run scripts/gate.sh in the checkout" wrote a gate of their own there, one that printed GREEN for a tree the real gate called red (pr-guard now names the skill's absolute path).
 
