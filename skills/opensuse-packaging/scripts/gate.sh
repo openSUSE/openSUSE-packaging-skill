@@ -798,39 +798,75 @@ def as_built(lines, flavor=""):
     return [ln.replace("@BUILD_FLAVOR@", flavor) for ln in lines]
 
 
+def defined(name):
+    try:
+        out = subprocess.run(["rpm", "--eval", "%%{?%s:1}" % name], capture_output=True, text=True).stdout
+    except OSError:
+        return True
+    return out.strip() == "1"
+
+
+def host_parse(lines, err):
+    # a parse that stops on what only the build root has: a macro a BuildRequires
+    # defines (Requires: %{apache_mmn}), or a query of a package this host lacks
+    if re.search(r"is obsolete|not specified|invalid option|Unknown option", err):
+        return None
+    if "does not resolve" in err or "(~~~" in err:
+        return "a package %requires_eq or %pkg_vcmp asks about"
+    text = err + "".join("\n" + lines[n - 1] for n in (int(x) for x in re.findall(r"line (\d+):", err))
+                         if 0 < n <= len(lines))
+    own = set(re.findall(r"^\s*%(?:define|global)\s+(\w+)", "\n".join(lines), re.M))
+    for name in dict.fromkeys(re.findall(r"%\{?[?!]*([A-Za-z_]\w*)", text)):
+        if name not in own and not defined(name):
+            return "macro %%%s, which no package here defines" % name
+    return None
+
+
 def parse(spec, logdir):
     # rpm expands macros in comments: a section name there broke opencode's
     # build, and a multi-line macro there runs its lines as commands
     try:
-        lines = read_lines(spec)
+        raw = read_lines(spec)
     except OSError as e:
         print("%s: cannot read it: %s" % (spec, e.strerror))
         return 1
-    bad = 0
-    for flavor in [""] + ((flavors(".") or []) if any("@BUILD_FLAVOR@" in ln for ln in lines) else []):
-        # the spec as rpm reads it: %prep and the comment check use the default build's
-        path = os.path.join(logdir, ("rpm." if not flavor else "rpm-%s." % flavor) + spec)
-        write(path, as_built(lines, flavor))
+    variants = [""] + ((flavors(".") or []) if any("@BUILD_FLAVOR@" in ln for ln in raw) else [])
+    # a _multibuild spec may build only its flavors (qmqtt: ExclusiveArch: do_not_build)
+    off = len(variants) > 1 and any(re.match(r"\s*ExclusiveArch:\s*do_not_build\b", ln) for ln in raw)
+    bad, primary, host = 0, None, False
+    for flavor in variants:
+        path = os.path.join(logdir, "flavor-%s.%s" % (flavor or "default", spec))
+        write(path, as_built(raw, flavor))
         q = rpmspec(path)
         what = spec + (" (flavor %s)" % flavor if flavor else "")
-        if q is None:
+        if q is not None and q.returncode == 0:
+            # %prep and the comment check read the first build OBS runs
+            if primary is None and not (off and not flavor and re.search(r"^ExclusiveArch:\s*do_not_build", q.stdout, re.M)):
+                primary = (flavor, q)
+        elif off and not flavor:
+            print("note: %s: the default build does not parse, and the spec builds only its flavors (do_not_build)" % spec)
+        elif q is None:
             print("UNKNOWN: rpmspec -P %s did not finish" % what)
             bad = 1
-        elif q.returncode != 0:
+        elif host_parse(raw, q.stderr):
+            print("UNKNOWN: %s: rpmspec -P stopped on what this host lacks: %s — the build log decides"
+                  % (what, host_parse(raw, q.stderr)))
+            host = True
+        else:
             print("%s: rpmspec -P fails: %s" % (what, first_error(q).replace(path, spec)))
             for n in (int(x) for x in re.findall(r"line (\d+):", q.stderr)):
-                if 0 < n <= len(lines) and lines[n - 1].lstrip().startswith("#"):
+                if 0 < n <= len(raw) and raw[n - 1].lstrip().startswith("#"):
                     print("%s:%d is a comment, and rpm expands macros in comments: write %%%% for each %% there" % (spec, n))
                     break
             bad = 1
-        elif not flavor:
-            with open(os.path.join(logdir, "parsed." + spec), "w", encoding="utf-8") as fh:
-                fh.write(q.stdout)
-        if not flavor:
-            p = q
-    if p is None:
-        return 1
-    lines = as_built(lines)
+    p = primary[1] if primary else None
+    lines = as_built(raw, primary[0] if primary else "")
+    if primary:
+        write(os.path.join(logdir, "rpm." + spec), lines)
+        with open(os.path.join(logdir, "parsed." + spec), "w", encoding="utf-8") as fh:
+            fh.write(p.stdout)
+    elif host and not bad:
+        write(os.path.join(logdir, "hostonly." + spec), [])
     end = next((i for i, ln in enumerate(lines) if re.match(r"%changelog\b", ln)), len(lines))
     cand = []
     for i, line in enumerate(lines[:end]):
@@ -844,7 +880,7 @@ def parse(spec, logdir):
         joined = line.rstrip().endswith("\\") or (i and lines[i - 1].rstrip().endswith("\\"))
         if MACROREF.search(line) and not joined:
             cand.append(i)
-    if cand and p.returncode == 0:
+    if cand and p is not None:
         # each candidate between marker comments: in a script rpm keeps both, so
         # what lies between them is that one line's expansion
         marked, at = [], set(cand)
@@ -952,6 +988,10 @@ def hostonly(logpath):
     # bash -e stops at the command that failed: only its output counts
     last = max((k for k, ln in enumerate(text) if ln.startswith("+ ")), default=-1)
     for line in reversed(text[last + 1:]):
+        m = re.search(r"Architecture is (?:not included|excluded): \S+", line)
+        if m:
+            print("a build arch (rpm: %s)" % m.group(0))
+            return 0
         m = re.search(r"(\S+): command not found$", line)
         if m:
             print("%s is not on this host" % m.group(1))
@@ -1163,13 +1203,20 @@ fi
 # opencode sr#1394137 was declined for "%prep" in a comment ("Unknown tag:
 # %prep"), and codenomad's "# %{cargo_test} ..." comment ran cargo test. Parsing
 # runs the spec's %(...) on this host: a checkout you are changing yourself only.
+# A parse that stops for want of the build root (a macro a BuildRequires
+# defines) is UNKNOWN, not red, and named on the verdict line.
+hostnote=""
 if command -v rpmspec >/dev/null 2>&1; then
   : > "$log/rpmspec.txt"; rc=0
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
     py parse "$s" "$log" >> "$log/rpmspec.txt" || rc=1
   done
-  [ $rc -eq 0 ] && echo "OK: every spec parses, and no comment expands into a section name or commands" >> "$log/rpmspec.txt"
+  [ $rc -eq 0 ] && ! grep -q '^UNKNOWN' "$log/rpmspec.txt" \
+    && echo "OK: every spec parses in each build OBS runs, and no comment expands into a section name or commands" >> "$log/rpmspec.txt"
+  # what this host could not judge goes on the verdict line
+  while IFS= read -r l; do hostnote+="${hostnote:+; }$l"; done \
+    < <(sed -n 's/^UNKNOWN: \(.*\): rpmspec -P stopped on what this host lacks: \(.*\) — the build log decides$/\1: \2/p' "$log/rpmspec.txt")
   show rpmspec $rc "$log/rpmspec.txt"
 else
   echo "## rpmspec: SKIPPED (not installed)"; red+=(rpmspec)
@@ -1180,15 +1227,17 @@ fi
 # "unexpected EOF". rpmbuild -bp reads the sources in place and unpacks under /var/tmp;
 # a pass is cached by the hash of the spec, the sources and rpm's version. What
 # only the build root has (a BuildRequires' file or tool, a source a service
-# makes) leaves %prep UNKNOWN here, not red: the build log decides.
-prepnote=""
+# makes, an arch the spec builds) leaves %prep UNKNOWN here, not red: the build
+# log decides.
 if [ ${#buildlogs[@]} -gt 0 ]; then
   echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"
 elif command -v rpmbuild >/dev/null 2>&1; then
   : > "$log/prep.txt"; rc=0
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
-    if command -v rpmspec >/dev/null 2>&1 && [ ! -e "$log/parsed.$s" ]; then
+    if [ -e "$log/hostonly.$s" ]; then
+      echo "UNKNOWN: %prep of $s not run: rpmspec -P stopped on this host" >> "$log/prep.txt"; continue
+    elif command -v rpmspec >/dev/null 2>&1 && [ ! -e "$log/parsed.$s" ]; then
       echo "$s: not run: the spec does not parse" >> "$log/prep.txt"; rc=1; continue
     fi
     key=$(py prepkey "$s") || key=""
@@ -1210,7 +1259,7 @@ elif command -v rpmbuild >/dev/null 2>&1; then
       echo "UNKNOWN: %prep of $s did not finish in 900 s: build it and pass --build-log" >> "$log/prep.txt"; rc=1
     elif why=$(py hostonly "$log/prep.$s.log"); then
       echo "UNKNOWN: %prep of $s stopped on what this host lacks: $why — the build log decides (--build-log)" >> "$log/prep.txt"
-      prepnote+="${prepnote:+; }$s: $why"
+      hostnote+="${hostnote:+; }$s: $why"
     else
       { echo "$s: %prep fails ($log/prep.$s.log):"; py excerpt "$log/prep.$s.log"; } >> "$log/prep.txt"; rc=1
     fi
@@ -1424,11 +1473,11 @@ if [ ${#red[@]} -eq 0 ]; then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
-  [ -z "$prepnote" ] || t+=", %prep not proven on this host ($prepnote)"
+  [ -z "$hostnote" ] || t+=", not proven on this host: $hostnote"
   if [ -n "$deviation" ] && grep -q '^DEVIATION' "$log/spec-cleaner.txt" 2>/dev/null; then
     echo "VERDICT: GREEN — all gates passed$t, spec-cleaner deviation: $deviation (diff: $log/spec-cleaner.diff; full output: $log/)"; exit 0
   fi
   echo "VERDICT: GREEN — all gates passed$t (full output: $log/)"; exit 0
 fi
 [ -z "$stampf" ] || rm -f "$stampf"
-echo "VERDICT: RED — ${red[*]} (full output: $log/)"; exit 1
+echo "VERDICT: RED — ${red[*]}${hostnote:+, not proven on this host: $hostnote} (full output: $log/)"; exit 1
