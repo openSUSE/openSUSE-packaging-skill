@@ -1241,6 +1241,18 @@ case_ osc-yes-echo               0 - ""
 case_ osc-yes-heredoc-commit     0 - ""
 # A line continuation joins the words, for the prefilter too.
 case_ prefilter-continuation-osc 2 osc-yes "an osc request with --yes"
+# Without a message osc opens an editor, and the call hangs until its timeout.
+case_ nomsg-sr                   2 request-no-message "osc sr without -m"
+case_ nomsg-submitreq-supersede  2 request-no-message "osc submitreq without -m"
+case_ nomsg-creq                 2 request-no-message "osc creq without -m"
+case_ nomsg-rq-accept            2 request-no-message "osc rq accept without -m"
+case_ nomsg-request-decline      2 request-no-message "osc request decline without -m"
+case_ nomsg-rq-revoke            2 request-no-message "osc rq revoke without -m"
+case_ nomsg-rq-supersede         2 request-no-message "osc rq supersede without -m"
+case_ nomsg-review-accept        2 request-no-message "osc review accept without -m"
+case_ nomsg-rq-revoke-message    0 - ""
+case_ nomsg-sr-file              0 - ""
+case_ nomsg-rq-show              0 - ""
 
 echo "--- a script runs under its own interpreter"
 case_ interpreter-python-sh      2 interpreter "python3 $W/iter.sh"
