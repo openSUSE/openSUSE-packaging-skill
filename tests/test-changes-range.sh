@@ -34,6 +34,14 @@ def _run(cmd, *a, **k):
     if cmd and cmd[0] == "gh":
         return subprocess.CompletedProcess(cmd, 1, "", "not logged in")
     if cmd and cmd[0] == "osc":
+        # CR_OSC: `osc cat PRJ PKG FILE` served from CR_OSC/PRJ/PKG/FILE
+        root = os.environ.get("CR_OSC")
+        if root and cmd[1:2] == ["cat"] and len(cmd) == 5:
+            path = os.path.join(root, *cmd[2:])
+            if os.path.isfile(path):
+                return subprocess.CompletedProcess(cmd, 0, open(path).read(), "")
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Server returned an error: HTTP Error 404: Not Found")
         return subprocess.CompletedProcess(cmd, 1, "", "osc must not run in this suite")
     return _real_run(cmd, *a, **k)
 subprocess.run = _run
@@ -83,6 +91,16 @@ run() {
   printf '%s' "$map" > "$work/map.json"; : > "$work/urls.log"
   LAST="$(PYTHONPATH="$work/stub" CR_MAP="$work/map.json" CR_FIX="$FIX" CR_LOG="$work/urls.log" \
     python3 "$CR" "$d/co" --base "$d/base" "$@" 2>&1)"; rc=$?
+  [ "$rc" = "$want" ] && grep -qF -- "$text" <<<"$LAST" && pass "$name (rc=$want)" || {
+    fail "$name: expected rc=$want and '$text', got rc=$rc"; printf '%s\n' "$LAST" | sed 's/^/    /'; }
+}
+# runc: the same for a checkout that names its own target (osc, git): no --base
+runc() {
+  local name=$1 want=$2 text=$3 map=$4 d=$5; shift 5
+  local rc
+  printf '%s' "$map" > "$work/map.json"; : > "$work/urls.log"
+  LAST="$(PYTHONPATH="$work/stub" CR_MAP="$work/map.json" CR_FIX="$FIX" CR_LOG="$work/urls.log" CR_OSC="$work/osc" \
+    python3 "$CR" "$d" "$@" 2>&1)"; rc=$?
   [ "$rc" = "$want" ] && grep -qF -- "$text" <<<"$LAST" && pass "$name (rc=$want)" || {
     fail "$name: expected rc=$want and '$text', got rc=$rc"; printf '%s\n' "$LAST" | sed 's/^/    /'; }
 }
@@ -260,10 +278,13 @@ N='[["registry.npmjs.org/thing", "npm.json"]]'
 d=$(pkg npm 1.0.0 1.2.0 "$(entry '- Update to 1.0.0:')" "$(entry '- Update to 1.2.0:')" \
   'https://registry.npmjs.org/thing/-/thing-%{version}.tgz')
 run "npm" 1 "MISSING: 1.1.0" "$N" "$d"; hasnt "npm: no beta" "beta"
+# semver pre-releases is_prerelease() does not know: next's -canary.N and friends
+for p in canary next nightly insiders zones; do hasnt "npm: no -$p" "-$p"; done
+has "npm: one finding" "VERDICT: 1 finding(s)"
 K='[["crates.io/api/v1/crates/thing", "crates.json"]]'
 d=$(pkg crates 0.3.0 0.4.0 "$(entry '- Update to 0.3.0:')" "$(entry '- Update to 0.4.0:')" \
   'https://static.crates.io/crates/thing/thing-%{version}.crate')
-run "crates.io" 1 "MISSING: 0.3.1" "$K" "$d"; hasnt "crates: a yanked version is none" "0.3.2"
+run "crates.io" 1 "MISSING: 0.3.1" "$K" "$d"; hasnt "crates: a yanked version is none" "0.3.2"; hasnt "crates: no -canary" "canary"
 L='[["gitlab.com/api/v4/projects/someone%2Fthing/repository/tags", "gitlab-tags.json"]]'
 d=$(pkg gl 2.1.0 2.2.0 "$(entry '- Update to 2.1.0:')" "$(entry '- Update to 2.2.0:')" \
   'https://gitlab.com/someone/thing/-/archive/v%{version}/thing-v%{version}.tar.gz' 'https://gitlab.com/someone/thing')
@@ -290,6 +311,72 @@ run "no forge to ask" 2 "no upstream" "[]" "$d"
 d=$(pkg older 0.9.99 0.9.97 "$(entry '- Update to version 0.9.99:')" "$(entry '- Fix the build')")
 run "older than the target" 1 "OLDER: 0.9.97 here is older than 0.9.99" "$A" "$d"
 hasnt "older: no verdict of clean" "CLEAN"
+
+# A packaged pre-release sorts before its release: 1.3.0~rc1 -> 1.3.0 is no downgrade.
+d=$(pkg rcbase 1.3.0~rc1 1.3.0 "$(entry '- Update to 1.3.0~rc1:')" "$(entry '- Update to 1.3.0:')")
+run "a pre-release before its release" 0 "VERDICT: CLEAN" "$E" "$d"
+
+# A top entry amended in place (gate.sh --amend-top) keeps its header and is
+# still the new entry; its own older headings repeat nothing.
+d="$work/amend"; rm -rf "$d"; spec "$d/base" 0.9.97; spec "$d/co" 0.9.99
+H='-------------------------------------------------------------------
+Mon Nov  2 09:00:00 UTC 2026 - Packager <packager@example.org>
+'
+printf '%s\n- Update to version 0.9.97:\n  * Faster graph build\n' "$H" > "$d/base/thing.changes"
+printf '%s\n- Update to version 0.9.99:\n  * serve\n- Update to version 0.9.98:\n  * Paths\n- Update to version 0.9.97:\n  * Faster graph build\n' \
+  "$H" > "$d/co/thing.changes"
+run "an amended top entry is the new entry" 0 "VERDICT: CLEAN" "$A" "$d"
+printf '%s\n- Update to version 0.9.99:\n  * serve\n- Update to version 0.9.97:\n  * Faster graph build\n' "$H" > "$d/co/thing.changes"
+run "an amended top entry that skips 0.9.98" 1 "MISSING: 0.9.98" "$A" "$d"
+hasnt "amended: its own old heading is no repeat" "REPEATED"
+
+# A date is no version: (2026-02-01) names neither 2 nor 1.
+H8='[["/repos/someone/thing/releases", "github-releases-h.json"], ["/repos/someone/thing/tags", "[]"]]'
+d=$(pkg dates 1.0 3.0 "$(entry '- Update to 1.0:')" "$(entry '- Update to 3.0 (2026-02-01):
+  * Fixes')")
+run "a date names no version" 1 "MISSING: 2.0" "$H8" "$d"
+# "Changes since V" is about what came after V: no heading of V.
+d=$(pkg since 65.15 65.16 "$(entry '- Update to 65.15:')" "$(entry '- Update to 65.16:
+- Changes since 65.15:
+  * New repack command')" "$ZS")
+run "\"Changes since V\" describes no V" 0 "VERDICT: CLEAN" "$B" "$d"
+
+# GitHub's release list is paged; past the cap there is no verdict, never a range
+# read from part of it.
+python3 - "$work/page.json" <<'PY'
+import json, sys
+json.dump([{"tag_name": f"v9.{i}.0", "prerelease": False, "draft": False,
+            "published_at": "2026-01-01T00:00:00Z"} for i in range(100)], open(sys.argv[1], "w"))
+PY
+d=$(pkg cap 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
+run "more releases than the page cap: no verdict" 2 "more than 1000" "[[\"/repos/someone/thing/releases\", \"$work/page.json\"]]" "$d"
+[ "$(grep -c '/releases' "$work/urls.log")" = 10 ] && pass "the cap: ten pages asked" \
+  || fail "the cap: $(grep -c '/releases' "$work/urls.log") pages asked"
+
+# osc checkouts: a branch against its link origin (or --target) through osc cat,
+# a direct commit against its committed copy.
+mkdir -p "$work/osc/devel:example/thing"
+d=$(pkg oscl 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
+cp "$d/base/thing.spec" "$d/base/thing.changes" "$work/osc/devel:example/thing/"
+mkdir -p "$d/co/.osc"; printf 'thing\n' > "$d/co/.osc/_package"; printf 'home:<you>:branches:devel:example\n' > "$d/co/.osc/_project"
+printf '<directory name="thing"><linkinfo project="devel:example" package="thing" srcmd5="x"/><entry name="thing.spec"/></directory>\n' \
+  > "$d/co/.osc/_files"
+runc "osc: a branch against its link origin" 1 "MISSING: 0.9.98" "$A" "$d/co"
+has "osc: the origin named" "against devel:example/thing"
+runc "osc: --target" 1 "against devel:example/thing" "$A" "$d/co" --target devel:example/thing
+runc "osc: a --target without the package is a new package" 0 "new package" "$A" "$d/co" --target devel:other/thing
+printf '<directory name="thing"><entry name="thing.spec"/></directory>\n' > "$d/co/.osc/_files"
+mkdir -p "$d/co/.osc/sources"; cp "$d/base/thing.spec" "$d/base/thing.changes" "$d/co/.osc/sources/"
+runc "osc: a direct commit against its committed copy" 1 "against the committed copy" "$A" "$d/co"
+
+# git checkouts: the upstream tracking branch, or --git-base.
+gt() { git -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main "$@"; }
+d=$(pkg git 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
+{ gt -C "$d/base" init -q && gt -C "$d/base" add . && gt -C "$d/base" commit -qm base && gt clone -q "$d/base" "$d/clone" \
+  && cp "$d/co/thing.spec" "$d/co/thing.changes" "$d/clone/"; } || fail "git fixture"
+runc "git: the upstream branch" 1 "against origin/main" "$A" "$d/clone"
+has "git: the skip found" "MISSING: 0.9.98"
+runc "git: --git-base" 1 "against main" "$A" "$d/clone" --git-base main
 
 # Nothing to compare: no version change, or a new package.
 d=$(pkg same 0.9.97 0.9.97 "$OLD97" "$(entry '- Add a patch')")

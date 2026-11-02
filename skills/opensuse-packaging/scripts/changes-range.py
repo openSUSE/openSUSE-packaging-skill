@@ -15,10 +15,13 @@ releases strictly between them come from the source the spec names: Source0's
 registry (PyPI, npm, crates.io) or forge, else URL:'s forge, else the
 _service obs_scm url. GitHub counts its releases and the version tags that
 have no release object, GitLab its tags. Not counted: drafts, yanked versions,
-versions that read as pre-releases (rc, alpha, beta, dev), tags outside the
-Source0 or obs_scm revision tag scheme, a release published after the new one
-(another branch), and one GitHub flags as a pre-release unless the old or new
-version is flagged too (the package is on that track).
+pre-releases (rc, alpha, beta, dev; on npm and crates.io any semver "-" part,
+15.0.0-canary.1; on GitHub and GitLab a version that is not a plain number,
+v2.0.0rc1), tags outside the Source0 or obs_scm revision tag scheme, a release
+published after the new one (another branch; a bare GitHub tag has no date),
+and one GitHub flags as a pre-release unless the old or new version is flagged
+too (the package is on that track). A packaged pre-release sorts before its
+release: 1.3.0~rc1 -> 1.3.0 crosses nothing.
 
   MISSING: V   a release between them that no version heading of the new
                entries names (a line starting with V or "Update to", wrapped
@@ -29,8 +32,10 @@ version is flagged too (the package is on that track).
                branch, or a downgrade)
 
 The new entries are the checkout's entries above the first one whose header
-line (date and author) the target's .changes has. A lookup that fails is UNKNOWN, never clean; findings that need
-no lookup are printed all the same.
+line (date and author) the target's .changes has; when the version moved and
+none is new, the top entry was amended in place and is the new one. A lookup
+that fails is UNKNOWN, never clean; findings that need no lookup are printed
+all the same.
 
 Exit: 0 clean, or nothing to compare (no version change, a new package) ·
 1 findings · 2 usage, or no verdict (a lookup failed, no upstream to ask, the
@@ -63,7 +68,7 @@ SEPARATOR = re.compile(r"(?m)^-{20,}[ \t]*$")
 # "Changes from version", "New upstream release", "includes".
 _WORDS = (
     r"(?:(?:update[ds]?|upgraded?|bump(?:ed)?|to|the|new|upstream|versions?|"
-    r"releases?|changes?|in|for|since|from|of|with|includes?|including|also|and)"
+    r"releases?|changes?|in|for|from|of|with|includes?|including|also|and)"
     r"[ \t]+){0,6}"
 )
 _BODY = r"(?:#+[ \t]*)?\[?" + _WORDS + r"v?(\d+(?:\.\d+)+)"
@@ -76,8 +81,13 @@ HEADING = re.compile(
     + r"\]?(?=[ \t]*(?::|\(|,|$|[ \t]-[ \t]|[ \t]\u2014[ \t]))",
     re.I | re.M,
 )
-# a version: 0.9.98 or v0.9.98, not inside 10.9.98, 0.9.981, x0.9.98 or 0.9.98rc1
-MENTION = re.compile(r"(?<![\w.])v?(\d+(?:\.\d+)*)(?!\w|\.\d)")
+# a version: 0.9.98 or v0.9.98, not inside 10.9.98, 0.9.981, x0.9.98, 0.9.98rc1
+# or a date (2026-02-01 names neither 2 nor 1)
+MENTION = re.compile(r"(?<![\w.-])v?(\d+(?:\.\d+)*)(?!\w|\.\d|-\d)")
+# what follows the numbers of a pre-release: 1.3.0~rc1, 15.0.0-canary.1, 2.0rc1
+PRE = re.compile(
+    r"[-~]|[._]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)\d*(?:$|[.+])", re.I
+)
 # a line that starts with a version, at any indentation (pasted NEWS headings
 # such as "  4.0.7 (released ...)"): the versions it names, wrapped lines
 # included, are the ones the entry covers ("stop a running 0.8.6 daemon"
@@ -91,11 +101,20 @@ class NoVerdict(Exception):
 
 
 def vkey(v):
-    """Numeric fields, trailing zeros dropped: 1.0 == 1.0.0 < 1.0.1 < 1.1."""
-    parts = [int(x) for x in re.findall(r"\d+", v or "")]
-    while parts and parts[-1] == 0:
-        parts.pop()
-    return tuple(parts)
+    """(release numbers, 0 for a pre-release of it or 1, the rest's numbers),
+    trailing zeros dropped: 1.0 == 1.0.0 < 1.0.1-rc.1 < 1.0.1 < 1.1."""
+    m = re.match(r"\D*(\d+(?:\.\d+)*)(.*)", v or "")
+    if not m:
+        return ((), 1, ())
+    rel = [int(x) for x in m.group(1).split(".")]
+    while rel and rel[-1] == 0:
+        rel.pop()
+    rest = m.group(2)
+    return (
+        tuple(rel),
+        0 if PRE.match(rest) else 1,
+        tuple(int(x) for x in re.findall(r"\d+", rest)),
+    )
 
 
 def entries(text):
@@ -253,7 +272,7 @@ def between(rels, old, new):
     by_key = {}
     for r in rels:
         k = vkey(r["version"])
-        if k and (k not in by_key or (r["object"] and not by_key[k]["object"])):
+        if k[0] and (k not in by_key or (r["object"] and not by_key[k]["object"])):
             by_key[k] = r
     lo, hi = vkey(old), vkey(new)
     top = by_key.get(hi)
@@ -326,13 +345,21 @@ def check(d, a):
         return 0
     # the entries above the first one whose header (date and author) the target
     # has: a fix to an older entry's text does not make it new
-    seen, top = {e.split("\n", 1)[0] for e in entries(old_files[changes])}, []
-    for e in entries(new_changes):
+    old_entries, mine = entries(old_files[changes]), entries(new_changes)
+    seen, top = {e.split("\n", 1)[0] for e in old_entries}, []
+    for e in mine:
         if e.split("\n", 1)[0] in seen:
             break
         top.append(e)
+    amended = None
+    if not top and mine:
+        # the version moved but no header is new: the top entry was amended in
+        # place (gate.sh --amend-top), and the target's copy of it repeats nothing
+        top, amended = mine[:1], mine[0].split("\n", 1)[0]
     fresh = "\n".join(top)
-    known = headings(old_files[changes] or "")
+    known = headings(
+        "\n".join(e for e in old_entries if e.split("\n", 1)[0] != amended)
+    )
     repeated = [v for k, v in sorted(headings(fresh).items()) if k in known]
     found = [
         f"REPEATED: {v}: the new entries describe it, and {where}'s {changes} already does"
