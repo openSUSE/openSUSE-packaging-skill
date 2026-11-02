@@ -558,6 +558,8 @@ ASKS = {
     "build-evidence": "{0}. Record its build first: gate.sh with --build-log LOG "
     "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
     "commit; then file.",
+    "gate-args": "{0}, so the guard cannot see whether --review is among them. "
+    "Write gate.sh's arguments out literally (no --review is involved).",
     "review-self": "{0}: only the changes-review agent that ran the review records "
     "it (agents/changes-review.md runs gate.sh --review itself), and a PASS the "
     "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
@@ -654,6 +656,7 @@ class Ctx:
         self.wrappers = set()  # functions that run their arguments ("$@")
         self.in_function = 0  # inside a function body, where "$@" is its arguments
         self.subs = []  # what each command substitution writes, as literal-aware text
+        self.sub_bodies = []  # each command substitution's text, as ctx.subs counts them
         self.asks = []  # what the user must approve: ASKS findings, in order
         self.users = {}  # the OBS account per instance, looked up once
         self.apiurl = ""  # the instance the osc command judged names with -A
@@ -2615,34 +2618,95 @@ def reviewed(path, files, built=False):
 
 
 REVIEWER = "changes-review"
+GATE_NAME = Rx(r"(?<![\w.-])gate\.sh\b")
+# gate.sh's options that take the next word: what follows one is no option
+GATE_VALUED = {
+    "--entries",
+    "--amend-top",
+    "--squash-mine",
+    "--target",
+    "--git-base",
+    "--build-log",
+    "--rpms",
+    "--cleaner-deviation",
+}
+# expansions that make several words, quoted or not
+SPLITS = Rx(r"\$[@*]|\$\{[@*!#]|\[[@*]\]")
 
 
-def review_record(word, args, ctx, cwd, via=""):
+def runs_gate(word, ctx, cwd):
+    """Whether word runs gate.sh: by name in any spelling, by the text this call
+    assigned it, through a link, or as a byte copy of the skill's own; None
+    when only the shell knows (a stdin program, a value it cannot read)."""
+    if word is None:
+        return None
+    names = substitute(word, ctx, cwd) if VARIABLE.search(word) else [word]
+    if names and "gate.sh" in {os.path.basename(w) for w in names}:
+        return True
+    texts = [word, *held(word, ctx)]
+    for t in list(texts):  # what a substitution in them runs, as written
+        texts += [
+            ctx.sub_bodies[int(n)]
+            for n in SUB_WORD.findall(t)
+            if int(n) < len(ctx.sub_bodies)
+        ]
+    if any(GATE_NAME.search(t) for t in texts):
+        return True
+    skill = skill_dir()
+    mine = os.path.join(skill, "scripts", "gate.sh") if skill else ""
+    for p in (locate(word, ctx, cwd)[0] or ()) if names else ():
+        real = os.path.realpath(p)
+        if os.path.basename(real) == "gate.sh":
+            return True
+        try:
+            if mine and os.path.getsize(real) == os.path.getsize(mine) < MAX_BYTES:
+                with open(real, "rb") as a, open(mine, "rb") as b:
+                    if a.read() == b.read():
+                        return True
+        except OSError:
+            pass
+    return False if names is not None else None
+
+
+def review_record(word, args, ctx, cwd, via="", label=""):
     """gate.sh run outside a changes-review agent with --review in any spelling
-    of an argument, or with one the guard cannot read ("$@", an array, a
-    substitution; via: what a wrapper such as xargs adds). word: the script as
-    the command or the shell names it; one only the shell knows counts when an
-    argument says --review. The harness names the agent (Claude Code's
+    of an argument (brace expansion and the values this call set included), or
+    with one the guard cannot read where an option can stand: one that makes
+    several words ("$@", an array, any expansion once the call sets IFS), one
+    with a word after it (--review takes a file), what xargs adds (via). A
+    lone last word, or a valued option's value, cannot be --review. word: the
+    script as the command or the shell names it, None for a program on stdin
+    (label names the shell). The harness names the agent (Claude Code's
     agent_type, the opencode 2.x plugin's agent), which the model cannot set."""
     if ctx.agent == REVIEWER:
         return
-    names = substitute(word, ctx, cwd) if VARIABLE.search(word) else [word]
-    gate = names is not None and "gate.sh" in {os.path.basename(w) for w in names}
-    if names is not None and not gate:
+    ifs = "IFS" in ctx.values or "IFS" in ctx.exported
+    review, unread, value = False, via, False
+    for k, a in enumerate(args):
+        for w in braces(a) or [None]:
+            vals = (
+                None
+                if w is None
+                else substitute(w, ctx, cwd)
+                if VARIABLE.search(w)
+                else [w]
+            )
+            if vals is None or ifs and VARIABLE.search(w):
+                several = w is None or ifs or SPLITS.search(w)
+                if not value and (several or k + 1 < len(args)):
+                    unread = unread or "an argument only the shell knows"
+            elif any(t.split("=", 1)[0] == "--review" for v in vals for t in v.split()):
+                review = True
+        value = a in GATE_VALUED
+    if not review and not unread:
         return
-    review, unread = False, via
-    for a in args:
-        vals = substitute(a, ctx, cwd) if VARIABLE.search(a) else [a]
-        if vals is None:
-            unread = unread or "an argument only the shell knows"
-        elif any(t.split("=", 1)[0] == "--review" for v in vals for t in v.split()):
-            review = True
+    gate = runs_gate(word, ctx, cwd)
     who = f"agent {ctx.agent}" if ctx.agent else "the main session"
-    if review:
-        cmd = "gate.sh" if gate else shown(word)
-        ask(ctx, "review-self", f"{cmd} --review from {who}")
-    elif gate and unread:
-        ask(ctx, "review-self", f"gate.sh from {who} with {unread}")
+    if review and gate is not False:
+        what = "gate.sh" if gate else label or shown(word)
+        ask(ctx, "review-self", f"{what} --review from {who}")
+    elif unread and gate:
+        ask(ctx, "gate-args", f"gate.sh from {who} with {unread}")
 
 
 def factory_devel(pkg, ctx):
@@ -4014,6 +4078,16 @@ def interpreter(run, lang, stdin, env, ctx, cwd, depth, via=""):
             review_record(word, operands[1:], ctx, cwd, via)
         scan_file(word, kind, ctx, cwd, depth, env, run=True)
     else:
+        if lang == "shell":  # the program on stdin may be gate.sh
+            label = f"{os.path.basename(run[0])} reading stdin"
+            review_record(
+                None,
+                operands[from_stdin and operands[:1] == ["-"] :],
+                ctx,
+                cwd,
+                via,
+                label,
+            )
         feed(stdin, kind, os.path.basename(run[0]), ctx, cwd, depth)
 
 
@@ -4978,6 +5052,7 @@ def shell_pass(text, ctx, cwd, depth):
     lit = substitutions(body, base=base, lit=True)[0]
     body, inners = substitutions(body, base=base)
     ctx.subs += [None] * len(inners)
+    ctx.sub_bodies += inners
     for k, inner in enumerate(inners):
         ctx.subs[base + k] = shell_pass(inner, ctx, cwd, depth)
     items = list(commands(arrays(tokenize(body))))

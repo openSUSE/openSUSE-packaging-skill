@@ -540,10 +540,12 @@ yourself. It asks before:
   the change review's PASS (`gate.sh DIR --review FILE`) and a GREEN build of that tree
   (`gate.sh --build-log`, or `gate.sh DIR --obs-build` once OBS built the commit). A forward
   matches the stamp of the branch the devel project accepted;
-- **a change review recorded outside a changes-review agent**: a `gate.sh` run, by path,
-  through a shell or in a script the call runs, whose arguments hold `--review` in any
-  spelling the call sets or one the guard cannot read (an array, a substitution, a
-  function's `"$@"`, what `xargs` adds), unless the event names the agent `changes-review`. Claude Code sets `agent_type` for a sub-agent's calls and for a session
+- **a change review recorded outside a changes-review agent**: a `gate.sh` run (by path or
+  link, through a shell, from stdin, in a script the call runs) whose arguments hold
+  `--review` in any spelling the call sets, unless the event names the agent `changes-review`;
+  and, as `[gate-args]`, one with an argument the guard cannot read where `--review` could
+  stand (an array, `"$@"`, any expansion once `IFS` is set, one with a word after it, what
+  `xargs` adds). Claude Code sets `agent_type` for a sub-agent's calls and for a session
   started with `--agent`; the 2.x plugin passes opencode's `agent` as `agent_type`. The harness
   fills the field, not the model. opencode 1.x hands its hook no agent, so there every review is
   recorded by you.

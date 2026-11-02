@@ -116,6 +116,9 @@ printf 'echo gate "$@"\n' > "$W/gate.sh"; chmod +x "$W/gate.sh"
 printf '%s/gate.sh . --review /var/tmp/x-review/verdict.txt\n' "$W" > "$W/record-review.sh"
 # shellcheck disable=SC2016  # the script's own array, expanded when it runs
 printf 'args=(. --review /var/tmp/x-review/verdict.txt)\n%s/gate.sh "${args[@]}"\n' "$W" > "$W/record-review-array.sh"
+# gate.sh under another name: a link to it, and a copy of the skill's own.
+ln -s "$W/gate.sh" "$W/g-link"; cp "$W/gate.sh" "$W/g-copy"
+mkdir -p "$work/skill-gate/scripts" && cp "$W/gate.sh" "$work/skill-gate/scripts/gate.sh"
 # Harmless now; the calls that run them rewrite them first.
 printf 'echo hello\n' > "$W/iter.sh"; printf 'print("hello")\n' > "$W/iter.py"
 # A script with its own backoff: its sleep is the script's, not the call's.
@@ -1506,10 +1509,21 @@ case_ review-gate-run           0 - ""
 for n in review-bash-options review-bash-o review-bash-O review-bash-rcfile review-variable; do
   ask_ "$n" review-self "gate.sh --review from the main session"
 done
-for n in review-array review-substitution review-function review-script-array; do
-  ask_ "$n" review-self "gate.sh from the main session with an argument only the shell knows"
+for n in review-array review-substitution review-function review-script-array review-ifs review-unknown-word; do
+  ask_ "$n" gate-args "gate.sh from the main session with an argument only the shell knows"
 done
-ask_ review-xargs               review-self "gate.sh from the main session with the arguments xargs adds"
+ask_ review-xargs               gate-args "gate.sh from the main session with the arguments xargs adds"
+for n in review-brace review-brace-empty review-symlink; do
+  ask_ "$n" review-self "gate.sh --review from the main session"
+done
+ask_ review-copy                review-self "gate.sh --review from the main session" PR_GUARD_SKILL_DIR="$work/skill-gate"
+ask_ review-stdin               review-self "bash reading stdin --review from the main session"
+ask_ review-stdin-pipe          review-self "bash reading stdin --review from the main session"
+# An argument the guard cannot read where it cannot be --review: a lone last one
+# (--review takes a file after it), or a valued option's value.
+case_ gate-run-pwd              0 - ""
+case_ gate-run-build-log        0 - ""
+case_ gate-run-loop             0 - ""
 case_ review-gate-run-main      0 - ""
 case_ review-reviewer-array     0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
