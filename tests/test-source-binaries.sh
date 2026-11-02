@@ -149,6 +149,12 @@ printf '# Source-Binary-Exception: vendor.tar.gz:./tests/* -- test-data: an ELF 
 case_ testdata-tests 3 "EXCEPTION vendor.tar.gz:./tests/* (test-data: an ELF parser sample): 1 hit(s)" "$d"
 grep -qF "HIT vendor.tar.gz:./lib/libwinapi_x.a: ar archive" <<<"$LAST" && pass "test-data: lib/ stays a hit" \
   || fail "test-data scope: $LAST"
+# zpaqfranz keeps the archives its autotest command checks in AUTOTEST/.
+d=$(pkg autotest); mkdir -p "$work/t/zf/zpaqfranz-65.17/AUTOTEST"
+printf '7z\274\257\047\034rest' > "$work/t/zf/zpaqfranz-65.17/AUTOTEST/sha256.7z"
+tar -C "$work/t/zf" -czf "$d/zpaqfranz-65.17.tar.gz" .
+printf '# Source-Binary-Exception: zpaqfranz-65.17.tar.gz:*/AUTOTEST/* -- test-data: archives the autotest command reads\n' >> "$d/p.spec"
+case_ testdata-autotest 0 "EXCEPTION zpaqfranz-65.17.tar.gz:*/AUTOTEST/* (test-data" "$d"
 d=$(pkg shortboot); cp "$work/tarball/vendor.tar.gz" "$d/"
 printf '# Source-Binary-Exception: vendor.tar.gz:./bin/* -- bootstrap: upstream-built helper embedded by the build\n' >> "$d/p.spec"
 case_ bootstrap-short 3 "a bootstrap needs a why of 8+ words" "$d"
