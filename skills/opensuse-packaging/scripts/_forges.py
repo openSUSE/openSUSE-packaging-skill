@@ -763,8 +763,9 @@ TAG_PAGES = 20
 # PEP 440 spells pre-releases without a separator (1.2rc1, 2.0a1), which
 # PRERELEASE does not see
 PEP440_PRE = re.compile(r"\d(?:a|b|c|rc|alpha|beta|pre|preview|dev)\d*$", re.I)
-# a tag with no release behind it is a release only when its version is a number:
-# not a fork's 7.1.1.noahp, nor a registry patch's 1.1.0.bcr.1
+# a forge version is a release only when it is a number: not a fork's
+# 7.1.1.noahp, a registry patch's 1.1.0.bcr.1, or a release GitHub does not flag
+# but whose name says otherwise (v2.0.0rc1, v1.2.7-nightly.1)
 NUMERIC = re.compile(r"\d+(?:\.\d+)*")
 
 
@@ -819,7 +820,9 @@ def releases_github(owner, repo, prefix=None):
     for rel in rels:
         tag = rel.get("tag_name") or ""
         objects.add(tag)
-        if rel.get("draft") or is_prerelease(tag) or not _in_scheme(tag, prefix):
+        if rel.get("draft") or not _in_scheme(tag, prefix):
+            continue
+        if not NUMERIC.fullmatch(_tag_version(tag, prefix)):
             continue
         out.append(
             _release(
@@ -875,10 +878,11 @@ def releases_npm(name):
     if not d:
         raise RuntimeError(f"npm {name}: no such package")
     times = d.get("time") or {}
+    # semver: anything after "-" is a pre-release (15.0.0-canary.1, -next.0)
     return [
         _release(v, v, parse_date(times.get(v)))
         for v in d.get("versions") or {}
-        if not is_prerelease(v)
+        if "-" not in v and not is_prerelease(v)
     ]
 
 
@@ -893,7 +897,10 @@ def releases_crates(name):
     return [
         _release(v["num"], v["num"], parse_date(v.get("created_at")))
         for v in d.get("versions") or []
-        if v.get("num") and not v.get("yanked") and not is_prerelease(v["num"])
+        if v.get("num")
+        and "-" not in v["num"]
+        and not v.get("yanked")
+        and not is_prerelease(v["num"])
     ]
 
 
