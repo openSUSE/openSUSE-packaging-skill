@@ -3,13 +3,15 @@
 # session/agent gets the literal numbers without ad-hoc grep pipelines, and an
 # UNAMBIGUOUS verdict it can gate on instead of eyeballing a tail.
 # Surfaces: VERDICT + when, %check/ctest pass count, the rpmlint badness summary
-# + every E:/W: line, and the produced RPMs.
+# + every E:/W: line, the post-build check findings, and the produced RPMs.
 #
 # Exit code IS the verdict — chain on it, never claim "built green" without it:
 #   0  GREEN     log has `finished "build <spec>"`
 #   1  FAILED    log has `failed "build <spec>"` / RPM build errors / badness abort,
-#                or a built RPM requires a user()/group() its own scriptlets
-#                create and no built RPM provides (it would not install)
+#                a post-build check finding (unowned directories, a forbidden
+#                Requires: staging declines on them), or a built RPM requires a
+#                user()/group() its own scriptlets create and no built RPM
+#                provides (it would not install)
 #   2  NO LOG    nothing readable at that path (recent build roots are listed)
 #   3  NO VERDICT  log exists but the build never reached a conclusion
 #                  (still running, or killed — e.g. by a `timeout` wrapper),
@@ -206,6 +208,20 @@ case "$verdict_line" in
   *)                   rc=3; verdict="NO VERDICT — build never concluded (still running, or killed)";;
 esac
 [ -n "$badness_abort" ] && { rc=1; verdict="FAILED (rpmlint badness over threshold)"; }
+# What the post-build checks (/usr/lib/build/checks) print: staging and the
+# Factory reviewers decline on it (zed sr#1394171: unowned directories), one
+# finding per line, an unowned-directory list joined onto its RPM's line.
+postbuild=$(sed -E "$strip" "$log" | tr -d '\r' | awk '
+  / is not allowed as Requires\.$|^ERROR: chkstat --level secure modified package|install script of .* failed$|modifies filelist!$|^failed to install rpms, aborting build$/ { if (cur) print cur; cur = ""; print; next }
+  /has an unversioned self-provide/ { if (cur) print cur; cur = ""; print prev " has an unversioned self-provide"; next }
+  /directories not owned by a package:$/ { if (cur) print cur; cur = $0; sep = " "; next }
+  cur != "" && /^ +- / { sub(/^ +- /, ""); cur = cur sep $0; sep = ", "; next }
+  cur != "" { print cur; cur = "" }
+  { prev = $0 }
+  END { if (cur) print cur }')
+if [ -n "$postbuild" ] && [ "$rc" = 0 ]; then
+  rc=1; verdict="FAILED (post-build check)"
+fi
 
 # rpm derives user(X)/group(X) requires from %attr ownership; a user the package's
 # own scriptlets create must also be provided (sysusers.d does it, a useradd in
@@ -292,6 +308,9 @@ echo "### rpmlint"
 sanitize "$(grep -ahE 'packages and [0-9].* checked;|[0-9]+ errors?, [0-9]+ warnings?.*badness' "$log" | sed -E "$strip" | tail -1)"; echo
 issues=$(grep -ahE ': (E|W): ' "$log" | sed -E "$strip" | sort -u)
 [ -n "$issues" ] && { echo; sanitize "$(printf '%s\n' "$issues" | head -40)"; echo; } || echo "(no E:/W: lines)"
+echo
+echo "### post-build checks"
+[ -n "$postbuild" ] && { sanitize "$postbuild"; echo; } || echo "(no post-build check findings)"
 echo
 echo "### RPMs produced"
 if [ -n "$pkgdir" ]; then

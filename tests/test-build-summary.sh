@@ -156,5 +156,18 @@ expect "chroot build beside an old VM image: the log's BUILD_ROOT names the RPMs
 rm "$work/root/home/abuild/rpmbuild/SRPMS/owntone-29.3-0.src.rpm"
 PROVIDE_USERS=1 expect "chroot root without a source RPM: no verdict" 3 'no source RPM under' "$work/root"
 
+# --- post-build checks: staging declines on what they print ------------------------
+# zed sr#1394171 was declined quoting its log's unowned directories.
+{ printf '[ 1482s] ... running 50-check-filelist\n[ 1482s] zed-1.26.2-1.1.x86_64.rpm: directories not owned by a package:\n'
+  printf '[ 1482s]  - /usr/share/zsh\n[ 1482s]  - /usr/share/zsh/site-functions\n'
+  printf '[ 1490s] ... failed "build zed.spec" at Sat Oct 31 2026.\n'; } > "$work/unowned.log"
+expect "unowned directories: named as a post-build check finding" 1 \
+  'zed-1.26.2-1.1.x86_64.rpm: directories not owned by a package: /usr/share/zsh, /usr/share/zsh/site-functions' "$work/unowned.log"
+sed 's/failed "build/finished "build/' "$work/unowned.log" > "$work/unowned-green.log"
+expect "unowned directories in a log that finished: red" 1 'VERDICT: FAILED (post-build check' "$work/unowned-green.log"
+printf '[    9s] "/usr/local/bin/foo" is not allowed as Requires.\n%s\n' "$green" > "$work/invreq.log"
+expect "a forbidden Requires: red" 1 '"/usr/local/bin/foo" is not allowed as Requires.' "$work/invreq.log"
+expect "a log without findings: none listed" 0 '(no post-build check findings)' "$work/green.log"
+
 echo "---"; [ "$fails" = 0 ] && echo "all build-summary checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
