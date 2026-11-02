@@ -14,6 +14,7 @@
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
 #                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
 #        gate.sh [DIR] --review FILE
+#        gate.sh [DIR] --obs-build [--rpms DIR]
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
@@ -33,10 +34,13 @@
 #                changes-patches against the target
 #   --git-base   git checkout: the target's ref for changes-patches and patch-tags
 #                (a fork PR's upstream is the pushed fork branch, which compares clean)
-#   --build-log  also run build-summary.sh on this osc build log (verdict only)
+#   --build-log  also run build-summary.sh on this osc build log (verdict only);
+#                red when the log built another spec. GREEN records it as the
+#                tree's build
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
-#                exception line says (firmware alone may ship)
+#                exception line says (firmware alone may ship); without it the
+#                gate notes that the RPMs went unchecked
 #   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
 #                (references/spec-cleaner.md "Checking a spec file"): name it.
 #                The gate passes, prints the reason and keeps the diff for the
@@ -46,15 +50,26 @@
 #   --review FILE  record the change review instead of running the gates: FILE's
 #                first non-empty line starts with PASS and names "tree <key12>",
 #                the tree the last GREEN run printed; needs that GREEN run
+#   --obs-build  record OBS's build of the committed tree instead (gate 1 in
+#                OBS-ONLY mode): OBS's expanded files are the stamped tree, every
+#                repo/arch/flavor succeeded from them (each log's srcmd5), and
+#                build-summary.sh reads each log GREEN; --rpms DIR also records
+#                the shipped-binary check of OBS's RPMs. A red build drops the
+#                tree's recorded build
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
-# it. A rerun of the same tree keeps its review. Nothing tracked (osc mkpac
-# before osc add) is red and stamps nothing, and --review refuses it.
-# Exit: 0 = every gate green (--review: recorded), 1 = at least one red (VERDICT
-#       names them; --review: the verdict file is not a PASS of this tree),
+# it. A rerun of the same tree keeps its review, build and --rpms check; a tree
+# that differs only in *.changes keeps the build and the --rpms check, never
+# the review. Nothing tracked (osc mkpac before osc add) is red and stamps
+# nothing, and --review refuses it.
+# Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
+#       red (VERDICT names them; --review: the verdict file is not a PASS of this
+#       tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
 #       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
-#       3 = --review: no GREEN gate run of the current tree.
+#       3 = --review, --obs-build: no GREEN gate run of the current tree,
+#       4 = --obs-build: still building, or built from older sources: wait
+#       (obs-wait.py), then rerun.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 read -r -d '' PY <<'PYEOF'
@@ -166,18 +181,57 @@ def tracked(d):
     return 0
 
 
-def stamp(path, d, prj, pkg, target):
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def changelog_only(old, new):
+    # only *.changes differ: nothing that builds changed
+    return (isinstance(old, dict) and set(old) == set(new)
+            and all(old[n] == new[n] for n in old if not n.endswith(".changes")))
+
+
+def build_note(st):
+    b = st.get("build") if isinstance(st.get("build"), dict) else {}
+    if b.get("carried"):
+        return "build: carried from tree %s, only .changes changed since" % b["carried"]
+    if b.get("kind") == "obs":
+        return "build: OBS, sources %s" % (b.get("srcmd5") or "?")[:12]
+    if b.get("kind") == "log":
+        return "build: %s" % b.get("log")
+    return ("build: none recorded for this tree; osc sr asks for one (--build-log LOG,"
+            " or --obs-build once OBS built the commit)")
+
+
+def stamp(path, d, prj, pkg, target, buildlog="", rpms=""):
     fm = files(d)
     if fm is None or not present(fm):
         return 1
     st = {"project": prj, "package": pkg, "target": target, "tree": key(fm),
           "files": fm, "verdict": "GREEN", "time": now()}
     old = load(path)
-    # A rerun of the same tree keeps the review of that tree.
-    if old and old.get("tree") == st["tree"] and old.get("review"):
-        st["review"] = old["review"]
+    if old and old.get("tree") == st["tree"]:
+        # A rerun of the same tree keeps its review, build and RPM check.
+        for k in ("review", "build", "rpms"):
+            if old.get(k):
+                st[k] = old[k]
+    elif old and changelog_only(old.get("files"), fm):
+        # A changelog builds nothing: its build and RPM check stand, never its review.
+        for k in ("build", "rpms"):
+            if isinstance(old.get(k), dict):
+                st[k] = dict(old[k], carried=old.get("tree", "")[:12])
+    if buildlog:
+        st["build"] = {"verdict": "GREEN", "kind": "log", "log": buildlog,
+                       "sha256": sha256(buildlog), "time": now()}
+    if rpms:
+        st["rpms"] = {"dir": rpms, "time": now()}
     save(path, st)
     print(st["tree"])
+    print(build_note(st))
     return 0
 
 
@@ -222,6 +276,133 @@ def review(path, d, fpath):
     st["review"] = {"verdict": "PASS", "sha256": hashlib.sha256(raw).hexdigest(), "time": now()}
     save(path, st)
     print("VERDICT: GREEN — review PASS recorded for tree %s of %s/%s" % (t[:12], st.get("project"), st.get("package")))
+    return 0
+
+
+# osc results codes: what is not built here, and what is still on its way
+SKIPPED = {"disabled", "excluded"}
+WAITING = {"scheduled", "building", "blocked", "finished", "signing", "dispatching"}
+SRCMD5 = re.compile(r"Building \S+ for project '[^']*' repository '[^']*' arch '[^']*' srcmd5 '([0-9a-f]+)'")
+
+
+def osc_run(args, out=None):
+    # (stdout, None), or (None, what failed): a failed lookup is never a verdict
+    try:
+        p = subprocess.run(["osc", *args], stdout=out or subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, type(e).__name__
+    if p.returncode:
+        return None, (p.stderr.strip().splitlines() or ["osc exited %d" % p.returncode])[-1][:160]
+    return ("" if out else p.stdout), None
+
+
+def xml(text):
+    try:
+        return ET.fromstring(text) if text is not None else None
+    except ET.ParseError:
+        return None
+
+
+def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
+    fm = files(d)
+    t = key(fm) if fm is not None and present(fm) else ""
+    st = load(path)
+    if not t or not st or st.get("verdict") != "GREEN" or st.get("tree") != t:
+        print("VERDICT: NO GATE — no GREEN gate run of tree %s: run gate.sh before the commit, then --obs-build" % (t[:12] or "?"))
+        return 3
+    who = "%s/%s" % (prj, pkg)
+    text, err = osc_run(["api", "/source/%s/%s?expand=1" % (prj, pkg)])
+    src = xml(text)
+    srcmd5 = src.get("srcmd5") if src is not None else None
+    if not srcmd5:
+        print("VERDICT: UNKNOWN — cannot read the sources of %s: %s" % (who, err or "no srcmd5 in the listing"))
+        return 1
+    remote = {e.get("name"): e.get("md5") for e in src.findall("entry")
+              if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    mine = st.get("files") if isinstance(st.get("files"), dict) else {}
+    if remote != mine:
+        odd = sorted(n for n in set(remote) | set(mine) if remote.get(n) != mine.get(n))
+        print("VERDICT: RED — OBS holds other files than tree %s (%s): commit this tree, or gate the one OBS holds"
+              % (t[:12], ", ".join(odd[:4])))
+        return 1
+
+    def red(why):
+        if st.pop("build", None) is not None:
+            save(path, st)
+        print("VERDICT: RED — %s: %s" % (who, why))
+        return 1
+
+    def pending(why):
+        print("VERDICT: PENDING — %s sources %s: %s; wait with obs-wait.py build %s %s, then rerun"
+              % (who, srcmd5[:12], why, prj, pkg))
+        return 4
+
+    text, err = osc_run(["results", "--xml", prj, pkg])
+    res = xml(text)
+    if res is None:
+        print("VERDICT: UNKNOWN — cannot read the build results of %s: %s" % (who, err or "unparseable"))
+        return 1
+    rows, bad, waiting = [], [], []
+    for r in res.findall("result"):
+        for s in r.findall("status"):
+            name = s.get("package") or ""
+            if name != pkg and not name.startswith(pkg + ":"):
+                continue
+            label = "%s/%s%s" % (r.get("repository"), r.get("arch"), name[len(pkg):])
+            code = s.get("code") or ""
+            if r.get("dirty") == "true" or code in WAITING:
+                waiting.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code))
+            elif code in ("succeeded", "failed"):
+                rows.append((r.get("repository"), r.get("arch"), name, label))
+            elif code not in SKIPPED:
+                bad.append("%s %s" % (label, code or "no code"))
+    if bad:
+        return red(", ".join(bad))
+    if waiting:
+        return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
+    if not rows:
+        return red("nothing built: every repo/arch disabled or excluded")
+    os.makedirs(outdir, exist_ok=True)
+    reds, older, done = [], [], []
+    for repo, arch, name, label in rows:
+        logf = os.path.join(tmp, "%s-%s-%s.log" % (repo, arch, name.replace(":", "_")))
+        with open(logf, "w", encoding="utf-8") as fh:
+            _, err = osc_run(["rbl", prj, name, repo, arch], out=fh)
+        if err:
+            print("VERDICT: UNKNOWN — cannot read the build log of %s %s: %s" % (who, label, err))
+            return 1
+        with open(logf, encoding="utf-8", errors="replace") as fh:
+            m = next((m for m in (SRCMD5.search(ln) for _, ln in zip(range(400), fh)) if m), None)
+        if not m or m.group(1) != srcmd5:
+            older.append("%s on %s" % (label, m.group(1)[:12] if m else "unknown sources"))
+            continue
+        p = subprocess.run([summary, logf], capture_output=True, text=True, cwd=d)
+        with open(os.path.join(outdir, label.replace("/", "-").replace(":", "_") + ".txt"), "w", encoding="utf-8") as fh:
+            fh.write(p.stdout + p.stderr)
+        if p.returncode:
+            v = next((ln[len("### VERDICT: "):] for ln in p.stdout.splitlines() if ln.startswith("### VERDICT: ")), "no verdict")
+            reds.append("%s %s" % (label, v))
+        else:
+            done.append(label)
+    if reds:
+        return red("build-summary.sh: %s (summaries: %s)" % ("; ".join(reds), outdir))
+    if older:
+        return pending("built from older sources: " + ", ".join(older[:6]))
+    if rpms:
+        p = subprocess.run([scan, d, "--rpms", rpms], capture_output=True, text=True, cwd=d)
+        with open(os.path.join(outdir, "source-binaries.txt"), "w", encoding="utf-8") as fh:
+            fh.write(p.stdout + p.stderr)
+        if p.returncode:
+            last = (p.stdout.strip().splitlines() or ["exit %d" % p.returncode])[-1]
+            print("VERDICT: RED — source-binaries --rpms %s: %s (full output: %s)" % (rpms, last, outdir))
+            return 1
+        st["rpms"] = {"dir": rpms, "time": now()}
+    st["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done, "time": now()}
+    save(path, st)
+    shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
+    rp = ", and the RPMs of %s checked" % rpms if rpms else ""
+    print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s (summaries: %s)" % (t[:12], srcmd5[:12], shown, rp, outdir))
     return 0
 
 
@@ -385,11 +566,13 @@ def tags(spec, against="strict", basespec=""):
 
 
 cmd, args = sys.argv[1], sys.argv[2:]
-fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "copyright": copyright, "tags": tags}[cmd]
+fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
+      "copyright": copyright, "tags": tags}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
 dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlog=""; rpms=""; deviation=""; full=0; review=""; nopts=0
+obsbuild=0
 while [ $# -gt 0 ]; do
   case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--full) nopts=$((nopts+1)) ;; esac
@@ -401,17 +584,20 @@ while [ $# -gt 0 ]; do
     --squash-mine) squash=$2; shift 2 ;;
     --target) target=$2; shift 2 ;;
     --git-base) gitbase=$2; shift 2 ;;
-    --build-log) buildlog=$2; shift 2 ;;
+    --build-log) buildlog=$(realpath -m -- "$2"); shift 2 ;;
     --rpms) rpms=$(realpath -m -- "$2"); shift 2 ;;
     --cleaner-deviation) [ -n "$2" ] || { echo "gate.sh: --cleaner-deviation needs the reason" >&2; exit 2; }
                          deviation=$2; shift 2 ;;
     --full) full=1; shift ;;
     --review) review=$(realpath -m -- "$2"); shift 2 ;;
+    --obs-build) obsbuild=1; shift ;;
     -*) echo "gate.sh: unknown option $1" >&2; exit 2 ;;
     *) dir=$1; shift ;;
   esac
 done
 [ -z "$review" ] || [ "$nopts" = 0 ] || { echo "gate.sh: --review records a verdict and runs no gate: it takes DIR only" >&2; exit 2; }
+[ "$obsbuild" = 0 ] || { [ -z "$review" ] && [ "$nopts" = "$([ -n "$rpms" ] && echo 1 || echo 0)" ]; } \
+  || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR and --rpms only" >&2; exit 2; }
 cd "$dir" || exit 2
 # Anywhere else source_validator reports rc=0 over nothing: a green piece of a
 # verdict about no package.
@@ -429,6 +615,14 @@ stampf=""; [ -n "$own" ] && [[ $own != */* && $pkg != */* && $pkg != .* ]] \
 if [ -n "$review" ]; then
   [ -n "$stampf" ] || { echo "gate.sh: --review needs an osc package checkout (.osc/_project and .osc/_package)" >&2; exit 2; }
   py review "$stampf" . "$review"; exit $?
+fi
+if [ "$obsbuild" = 1 ]; then
+  [ -n "$stampf" ] || { echo "gate.sh: --obs-build needs an osc package checkout (.osc/_project and .osc/_package)" >&2; exit 2; }
+  # the logs go under /var/tmp, not the /tmp tmpfs; the summaries stay with the gate's output
+  dl=$(mktemp -d -p /var/tmp "gate-obs-$pkg.XXXXXX") || { echo "VERDICT: UNKNOWN — no scratch directory under /var/tmp"; exit 1; }
+  sums="${TMPDIR:-/tmp}/gate-$pkg/obs-build"; rm -rf "$sums"
+  py obsbuild "$stampf" . "$own" "$pkg" "$dl" "$sums" "$HERE/build-summary.sh" "$HERE/source-binaries.py" "$rpms"; rc=$?
+  rm -rf "$dl"; exit $rc
 fi
 log="${TMPDIR:-/tmp}/gate-$pkg"; rm -rf "$log"; mkdir -p "$log"
 red=()
@@ -619,6 +813,11 @@ if [ $full -eq 1 ]; then cat "$log/changes-range.txt"; else tail -n 12 "$log/cha
 if [ -n "$buildlog" ]; then
   "$HERE/build-summary.sh" "$buildlog" > "$log/build-summary.txt" 2>&1; rc=$?
   { grep -m1 'VERDICT' "$log/build-summary.txt"; grep -A1 '^### rpmlint' "$log/build-summary.txt" | tail -1; } > "$log/build-summary.short.txt"
+  # A green log of another package is no build of this tree.
+  built=$(grep -ahoE '(finished|failed) "build [^"]+"' "$buildlog" 2>/dev/null | tail -n 1 | sed -E 's/^[a-z]+ "build (.*)"$/\1/')
+  if [ -n "$built" ] && [ -e "${specs[0]}" ] && ! printf '%s\n' "${specs[@]}" | grep -qxF -- "$built"; then
+    echo "RED: the log built $built, not this checkout's ${specs[*]}" >> "$log/build-summary.short.txt"; [ $rc -ne 0 ] || rc=1
+  fi
   show build-summary $rc "$log/build-summary.short.txt"
 fi
 
@@ -710,12 +909,14 @@ show patch-tags $rc "$log/patch-tags.txt"
 # its shipped pty helper a bootstrap).
 sb_args=(.); [ -z "$rpms" ] || sb_args+=(--rpms "$rpms")
 "$HERE/source-binaries.py" "${sb_args[@]}" > "$log/source-binaries.txt" 2>&1; rc=$?
+[ -n "$rpms" ] || echo "note: no --rpms DIR: the built RPMs were not checked for a prebuilt binary they ship (the build root's RPMS, or osc getbinaries -d DIR, then --obs-build --rpms DIR)" >> "$log/source-binaries.txt"
 show source-binaries $rc "$log/source-binaries.txt"
 
 if [ ${#red[@]} -eq 0 ]; then
   t=""
   if [ -n "$stampf" ]; then
-    if t=$(py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}"); then t=" for tree ${t:0:12}"
+    if t=$(py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$buildlog" "$rpms"); then
+      echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
   if [ -n "$deviation" ] && grep -q '^DEVIATION' "$log/spec-cleaner.txt" 2>/dev/null; then

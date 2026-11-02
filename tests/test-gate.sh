@@ -712,6 +712,115 @@ echo "PASS — tree ${T:0:12} — clean" > "$work/rv.txt"; rv "$work/rv.txt"
 out="$(HOME="$work/home" bash "$GATE" "$work/t-st" --review "$work/rv.txt" --entries 2 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF -- "--review records a verdict and runs no gate" <<<"$out" && pass "--review with gate options: usage" \
   || { fail "--review with gate options: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+# --obs-build records OBS's build of the stamped tree, gate 1 in OBS-ONLY mode:
+# every repo/arch succeeded from the sources OBS holds, those are the stamped
+# files, and each log reads GREEN in build-summary.sh. A fake osc serves the
+# listing, the results and the logs from $OB.
+P='home:<you>:branches:devel:example'
+mkdir -p "$work/obbin" "$work/ob"
+cat > "$work/obbin/osc" <<'EOF'
+#!/bin/bash
+P='home:<you>:branches:devel:example'
+case "$1" in
+  api) [ "$2" = "/source/$P/foo?expand=1" ] && [ -f "$OB/listing.xml" ] && { cat "$OB/listing.xml"; exit 0; } ;;
+  results) [ "$*" = "results --xml $P foo" ] && [ -f "$OB/results.xml" ] && { cat "$OB/results.xml"; exit 0; } ;;
+  rbl) [ "$2" = "$P" ] && [ -f "$OB/log-$4-$5-$3" ] && { cat "$OB/log-$4-$5-$3"; exit 0; } ;;
+esac
+echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
+EOF
+chmod +x "$work/obbin/osc"
+co "$work/t-ob" "$P" devel:example "$O/devel:example/foo"
+md5_() { md5sum < "$1" | cut -d' ' -f1; }
+SRC=0123456789abcdef0123456789abcdef
+listing() {   # <md5 of foo.spec>
+  printf '<directory name="foo" srcmd5="%s"><entry name="_link" md5="1"/><entry name="foo.changes" md5="%s"/><entry name="foo.spec" md5="%s"/></directory>\n' \
+    "$SRC" "$(md5_ "$work/t-ob/foo.changes")" "$1" > "$work/ob/listing.xml"
+}
+results() {   # <code for openSUSE_Tumbleweed/aarch64>
+  { printf '<resultlist><result repository="openSUSE_Tumbleweed" arch="x86_64"><status package="foo" code="succeeded"/></result>'
+    printf '<result repository="openSUSE_Tumbleweed" arch="aarch64"><status package="foo" code="%s"/></result>' "$1"
+    printf '<result repository="16.0" arch="x86_64"><status package="foo" code="disabled"/></result></resultlist>\n'
+  } > "$work/ob/results.xml"
+}
+blog() {   # <arch> <srcmd5> <finished|failed> [extra line]
+  { printf "[    0s] Building foo for project '%s' repository 'openSUSE_Tumbleweed' arch '%s' srcmd5 '%s'\n" "$P" "$1" "$2"
+    [ -z "${4:-}" ] || printf '%s\n' "$4"
+    printf '[  100s] ... %s "build foo.spec" at Mon Nov  2 2026.\n' "$3"; } > "$work/ob/log-openSUSE_Tumbleweed-$1-foo"
+}
+SO="$work/home/.local/state/opensuse-packaging/gate/obs/foo/$P.json"
+obstamp() {   # gate.sh's GREEN stamp of t-ob as it stands
+  python3 -I - "$work/t-ob" "$SO" "$P" <<'PY'
+import hashlib, json, os, sys
+d, path, prj = sys.argv[1:]
+fm = {n: hashlib.md5(open(os.path.join(d, n), "rb").read()).hexdigest() for n in ("foo.changes", "foo.spec")}
+tree = hashlib.sha256("".join("%s  %s\n" % (m, n) for n, m in sorted(fm.items())).encode()).hexdigest()
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump({"project": prj, "package": "foo", "tree": tree, "files": fm, "verdict": "GREEN"}, open(path, "w"))
+print(tree)
+PY
+}
+sv() { python3 -I -c 'import json, sys
+v = json.load(open(sys.argv[1]))
+for k in sys.argv[2].split("."):
+    v = v.get(k) if isinstance(v, dict) else None
+print("" if v is None else v)' "$1" "$2" 2>/dev/null; }
+ob() { out="$(OB="$work/ob" HOME="$work/home" PATH="$work/obbin:$PATH" bash "$GATE" "$work/t-ob" --obs-build "$@" 2>&1)"; rc=$?; }
+listing "$(md5_ "$work/t-ob/foo.spec")"; results succeeded
+blog x86_64 "$SRC" finished; blog aarch64 "$SRC" finished
+rm -f "$SO"; ob
+[ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && pass "--obs-build without a GREEN gate run: rc=3" \
+  || { fail "--obs-build without a stamp: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+TO=$(obstamp); ob
+[ "$rc" = 0 ] && grep -qF "OBS build of tree ${TO:0:12} recorded" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
+  && [ "$(sv "$SO" build.srcmd5)" = "$SRC" ] && [ "$(sv "$SO" build.verdict)" = GREEN ] \
+  && pass "--obs-build: every repo green from the stamped files, each log GREEN: recorded" \
+  || { fail "--obs-build green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results building; ob
+[ "$rc" = 4 ] && grep -qF "PENDING" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
+  && pass "--obs-build: an arch still building is pending (rc=4)" || { fail "--obs-build building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results succeeded; blog aarch64 fedcba9876543210fedcba9876543210 finished; ob
+[ "$rc" = 4 ] && grep -qF "built from older sources" <<<"$out" \
+  && pass "--obs-build: a log of older sources is pending (rc=4)" || { fail "--obs-build older log: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+listing 00000000000000000000000000000000; blog aarch64 "$SRC" finished; ob
+[ "$rc" = 1 ] && grep -qF "OBS holds other files than tree ${TO:0:12}" <<<"$out" && grep -qF "foo.spec" <<<"$out" \
+  && pass "--obs-build: OBS holding other files than the stamped tree is red" \
+  || { fail "--obs-build other files: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -f "$work/ob/listing.xml"; ob
+[ "$rc" = 1 ] && grep -qF "UNKNOWN" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
+  && pass "--obs-build: a failed listing lookup is UNKNOWN, rc=1, the recorded build kept" \
+  || { fail "--obs-build listing lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+listing "$(md5_ "$work/t-ob/foo.spec")"
+blog aarch64 "$SRC" finished '[   90s] foo-1.0-1.1.aarch64.rpm: directories not owned by a package:
+[   90s]  - /usr/share/zsh'; ob
+[ "$rc" = 1 ] && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" && grep -qF "post-build check" <<<"$out" \
+  && [ -z "$(sv "$SO" build)" ] \
+  && pass "--obs-build: a succeeded build whose log build-summary.sh calls red is red, the recorded build dropped" \
+  || { fail "--obs-build red log: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+blog aarch64 "$SRC" finished; results failed; blog aarch64 "$SRC" failed; ob
+[ "$rc" = 1 ] && grep -qF "FAILED" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
+  && pass "--obs-build: a failed build of the current sources is red" || { fail "--obs-build failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+results succeeded; blog aarch64 "$SRC" finished
+ob --entries 2
+[ "$rc" = 2 ] && grep -qF -- "--obs-build records OBS's build and runs no gate" <<<"$out" \
+  && pass "--obs-build with gate options: usage" || { fail "--obs-build with gate options: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/obrpms"; ob --rpms "$work/obrpms"
+[ "$rc" = 1 ] && grep -qF "source-binaries" <<<"$out" && [ -z "$(sv "$SO" rpms)" ] \
+  && pass "--obs-build --rpms: the shipped-binary check runs, and its red records nothing" \
+  || { fail "--obs-build --rpms red: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
+  mkdir -p "$work/obrpm/SPECS"
+  printf 'Name: t\nVersion: 1\nRelease: 0\nSummary: t\nLicense: MIT\nBuildArch: noarch\n%%description\nt\n%%install\nmkdir -p %%{buildroot}/usr/share/t\necho t > %%{buildroot}/usr/share/t/t.txt\n%%files\n/usr/share/t\n' \
+    > "$work/obrpm/SPECS/t.spec"
+  rpmbuild -bb --quiet --define "_topdir $work/obrpm" "$work/obrpm/SPECS/t.spec" > /dev/null 2>&1
+  ob --rpms "$work/obrpm/RPMS"
+  [ "$rc" = 0 ] && [ "$(sv "$SO" rpms.dir)" = "$work/obrpm/RPMS" ] && [ "$(sv "$SO" build.kind)" = obs ] \
+    && pass "--obs-build --rpms: the shipped-binary check of the built RPMs is recorded" \
+    || { fail "--obs-build --rpms green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: --obs-build --rpms green (no rpmbuild/rpm2cpio)"
+fi
+
 mkstamp > /dev/null; og "$work/t-st"
 grep -q "^VERDICT: RED" <<<"$out" && [ ! -e "$SF" ] && pass "a red gate run deletes the stamp" \
   || { fail "red run and the stamp"; printf '%s\n' "$out" | tail -3 | sed 's/^/    /'; }
@@ -728,6 +837,30 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
   [ -n "$t12" ] && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d["verdict"]=="GREEN" and d["tree"].startswith(sys.argv[2]) and set(d["files"])=={"foo.changes","foo.spec"}))' "$SF" "$t12" \
     && pass "a GREEN run stamps the tree its verdict names" || { fail "GREEN stamp"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  grep -qF "note: no --rpms DIR" <<<"$out" && [ -z "$(sv "$SF" build)" ] \
+    && pass "a GREEN run without --build-log or --rpms records no build and says the RPMs went unchecked" \
+    || { fail "GREEN run without build evidence"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  # --build-log: a green log of this checkout's spec is the tree's build; a rerun of
+  # the tree keeps it, a .changes-only edit carries it, any other edit drops it.
+  gg() { out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-green" "$@" 2>&1)"; }
+  printf '[  10s] ... finished "build bar.spec" at Mon Nov  2 2026.\n' > "$work/bar-build.log"
+  printf '[  10s] ... finished "build foo.spec" at Mon Nov  2 2026.\n' > "$work/foo-build.log"
+  gg --build-log "$work/bar-build.log"
+  grep -q "^VERDICT: RED — .*build-summary" <<<"$out" && grep -qF "the log built bar.spec, not this checkout's foo.spec" <<<"$out" \
+    && pass "--build-log of another package's spec: red" || { fail "--build-log of another spec"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  gg --build-log "$work/foo-build.log"
+  [ "$(sv "$SF" build.kind)" = log ] && [ "$(sv "$SF" build.verdict)" = GREEN ] && [ "$(sv "$SF" build.log)" = "$work/foo-build.log" ] \
+    && pass "a GREEN --build-log run records the tree's build" || { fail "--build-log recorded"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  gg
+  [ "$(sv "$SF" build.kind)" = log ] && pass "a rerun of the same tree keeps its build" || { fail "rerun keeps the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  sed -i '4s/^- Build with the system zlib$/- Build with the system zlib and zstd/' "$work/t-green/foo.changes"
+  gg
+  grep -q "^VERDICT: GREEN" <<<"$out" && [ "$(sv "$SF" build.kind)" = log ] && [ "$(sv "$SF" build.carried)" = "$t12" ] \
+    && pass "a .changes-only edit carries the build to the new tree" || { fail ".changes-only carry"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  sed -i 's/^Summary:        t$/Summary:        tt/' "$work/t-green/foo.spec"
+  gg
+  grep -q "^VERDICT: GREEN" <<<"$out" && [ -z "$(sv "$SF" build)" ] \
+    && pass "a spec edit leaves the new tree without a build" || { fail "spec edit drops the build"; printf '%s\n' "$out" | sed 's/^/    /'; }
 else
   echo "SKIP: GREEN stamp (no OBS source_validator/download_files)"
 fi

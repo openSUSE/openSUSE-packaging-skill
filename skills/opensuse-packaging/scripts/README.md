@@ -295,6 +295,7 @@ bump crosses that the new .changes entries never name, or describe again.
 Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
        gate.sh [DIR] --review FILE
+       gate.sh [DIR] --obs-build [--rpms DIR]
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
                changes-patches, default 1)
@@ -314,10 +315,13 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                changes-patches against the target
   --git-base   git checkout: the target's ref for changes-patches and patch-tags
                (a fork PR's upstream is the pushed fork branch, which compares clean)
-  --build-log  also run build-summary.sh on this osc build log (verdict only)
+  --build-log  also run build-summary.sh on this osc build log (verdict only);
+               red when the log built another spec. GREEN records it as the
+               tree's build
   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
                also refuses a prebuilt binary the package ships, whatever its
-               exception line says (firmware alone may ship)
+               exception line says (firmware alone may ship); without it the
+               gate notes that the RPMs went unchecked
   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
                (references/spec-cleaner.md "Checking a spec file"): name it.
                The gate passes, prints the reason and keeps the diff for the
@@ -327,15 +331,26 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
   --review FILE  record the change review instead of running the gates: FILE's
                first non-empty line starts with PASS and names "tree <key12>",
                the tree the last GREEN run printed; needs that GREEN run
+  --obs-build  record OBS's build of the committed tree instead (gate 1 in
+               OBS-ONLY mode): OBS's expanded files are the stamped tree, every
+               repo/arch/flavor succeeded from them (each log's srcmd5), and
+               build-summary.sh reads each log GREEN; --rpms DIR also records
+               the shipped-binary check of OBS's RPMs. A red build drops the
+               tree's recorded build
 Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 the md5 and name of every file osc would commit (no _link, no _service:*), in
 ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
-it. A rerun of the same tree keeps its review. Nothing tracked (osc mkpac
-before osc add) is red and stamps nothing, and --review refuses it.
-Exit: 0 = every gate green (--review: recorded), 1 = at least one red (VERDICT
-      names them; --review: the verdict file is not a PASS of this tree),
+it. A rerun of the same tree keeps its review, build and --rpms check; a tree
+that differs only in *.changes keeps the build and the --rpms check, never
+the review. Nothing tracked (osc mkpac before osc add) is red and stamps
+nothing, and --review refuses it.
+Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
+      red (VERDICT names them; --review: the verdict file is not a PASS of this
+      tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
-      3 = --review: no GREEN gate run of the current tree.
+      3 = --review, --obs-build: no GREEN gate run of the current tree,
+      4 = --obs-build: still building, or built from older sources: wait
+      (obs-wait.py), then rerun.
 
 The target comes first. Without `--target` it is Factory's devel project (`devel-of.sh`), or for a link into another `openSUSE:`/`SUSE:` project, that maintenance project. An osc checkout whose link origin (its own project when it is no link) is not the target is red: python-streamdeck sr#1392134 was a branch of hardware's 0.9.5 copy filed to devel:languages:python at 0.9.8, and the gate passed it because changes-guard compared against the branch's own committed copy. changes-guard now compares against the target's `.changes` and changes-patches against the target; a direct commit to the checkout's own project keeps the committed copy. `--target <own project>` is the deliberate override.
 
@@ -344,6 +359,8 @@ The target comes first. Without `--target` it is Factory's devel project (`devel
 `patch-tags` is red on a patch the change adds or edits against the target — absent there, or a different md5 (the target's expanded listing; for a direct commit the committed copy; in git the upstream ref) — whose comment block directly above, past any `%if`, has no `PATCH-{FIX,FEATURE}-{UPSTREAM,OPENSUSE,SLE}` or `PATCH-NEEDS-REBASE` line naming its file (literally or with `%{name}`/`%{version}` and plain `%define`s expanded), and on an UPSTREAM tag that cites no reference: an http(s) URL, `gh#owner/repo#N`, a commit hash or a bug id (`bsc#N`, `boo#N`, `fdo#N`, …). Each spec of a `_multibuild` package counts; a commented-out `#PatchN:` is skipped. A patch the target ships unchanged only gets a `note:` line (31 of 33 sampled Factory specs had untagged ones) — unless the target's spec tags it correctly: that tag cannot be dropped. Without the target's files — a new package, a failed listing, or in git an upstream other than its remote's default branch that already holds HEAD (a pushed fork or topic branch: a fork PR passes `--git-base <target ref>`, which is always taken as the base) — every patch counts as changed. Uncommitted edits on the default branch compare against it as they should. A devel reviewer asked for the tags on sr#1385879; tag one only after finding where it came from (`references/patches.md`).
 
 A GREEN run in an osc checkout stamps the tree it judged — a sha256 over the md5 and name of every file `osc ci` would commit, without `_link` and `_service:*` — in `~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json`, and prints its first 12 characters; a red run deletes the stamp. A checkout that tracks no file it still has — a fresh `osc mkpac` before `osc add`, or an added file deleted since — is red (`tracked`) and stamps nothing: its key (`e3b0c44298fc`, the sha256 of nothing, when nothing is tracked) binds no content, so `--review` refuses it too and deletes a stale stamp of no content. `--review FILE` records the change review against it: the first non-empty line starts with `PASS` and names that `tree <key12>`, as target-gate.sh's `--review` does for pool PRs. It records the GREEN tree and its review; it is a record, not proof, and a forged PASS line passes it.
+
+The stamp also carries the evidence `osc sr` needs beyond the review, so pr-guard can ask before a request whose tree has none: 56 of 90 requests in one fan-out went out within ten minutes of their commit with no green build, and opencode (`Unknown tag: %prep`), codenomad (no cmake) and rioterm were declined or failed to build. A GREEN run with `--build-log` records the log as the tree's build, once `build-summary.sh` reads it GREEN and its `finished "build <spec>"` line names one of the checkout's specs (a green log of another package is red); `--rpms DIR` records the shipped-binary check. A rerun of the same tree keeps the review, the build and that check; a tree that differs from the stamped one only in `*.changes` keeps the build and the check (`carried`), never the review, as `target-gate.sh` does. In OBS-ONLY mode the gate runs before the commit, so `--obs-build` records gate 1 after it: OBS's expanded listing must equal the stamped files, every repo/arch/flavor `osc results` lists must have succeeded (disabled and excluded aside; one still scheduled or building, or a log whose `Building … srcmd5` line names older sources, is exit 4), and `build-summary.sh` must read each `osc rbl` log GREEN, its post-build check findings included. The logs are downloaded under `/var/tmp`, one `osc rbl` each (minutes for a big package on many arches: give the call a long timeout), and removed; the summaries stay in `$TMPDIR/gate-<pkg>/obs-build/`. A red build drops the recorded build of the tree; a failed lookup is UNKNOWN, exit 1, and changes nothing. A run without `--rpms` notes that the built RPMs went unchecked; whether a package ships a binary is not knowable from its spec (a noarch package carries prebuilt `.node` and `.wasm` files too), so pr-guard does not require the check.
 
 It also runs spec-cleaner itself, the canonical four-flag invocation with a fresh `-o` per spec, so the check happens in every build mode (OBS-ONLY included): an empty diff is green, any diff red unless `--cleaner-deviation REASON` names a documented deviation (the gate then passes, prints the reason and keeps the diff for the change review), and a missing or failing spec-cleaner is red, never "no diff".
 
