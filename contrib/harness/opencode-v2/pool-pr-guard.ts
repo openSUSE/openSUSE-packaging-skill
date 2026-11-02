@@ -115,6 +115,9 @@ const plugin: Plugin.Plugin = {
           : { tool_name: "Edit", tool_input: { file_path, new_string: body }, cwd: workdir }
       }
 
+      // As Claude Code's agent_type: only a changes-review agent records a review.
+      if (typeof event.agent === "string" && event.agent) guardEvent.agent_type = event.agent
+
       if (!PREFILTER.test(text) && !PREFILTER.test(unquoted(text)) && !watched(workdir)) return
       const why = await judge(guardEvent)
       if (why !== undefined) throw new Error(why)

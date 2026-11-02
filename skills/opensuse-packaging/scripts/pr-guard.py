@@ -58,7 +58,9 @@ they maintain, Factory's devel project; whoever filed the request), and every
 decline and approvenew; an osc commit of a checkout whose files match no GREEN
 gate.sh run (or of a whole project checkout), or one after the call writes
 into its checkout; a submit request whose source files match no GREEN gate.sh
-run with the change review's PASS recorded, or in a call that writes anywhere.
+run with the change review's PASS and a GREEN build recorded, or in a call that
+writes anywhere; a review recorded with gate.sh from a call the event names no
+changes-review agent for (agent_type: the harness sets it, the model cannot).
 A failed lookup there asks too, and so does an eval or trap string it cannot
 read (a substitution, a variable the call does not set); a trap's command is
 judged as running last, and with any & or coproc in the call every write counts
@@ -80,8 +82,9 @@ NO_COLOR and CHANGES_AUTHOR.
 
 Usage: pr-guard.py < EVENT
   EVENT  the Claude Code PreToolUse JSON: {"tool_name", "cwd", "tool_input":
-         {"command"} or {"file_path", "content" | "new_string"}}; the opencode
-         plugin maps its tool arguments into the same shape.
+         {"command"} or {"file_path", "content" | "new_string"}, "agent_type"};
+         the opencode plugin maps its tool arguments (2.x: and its agent) into
+         the same shape.
 
 Environment:
   PR_GUARD_SKILL_DIR  the skill checkout (default ~/.claude/skills/opensuse-packaging,

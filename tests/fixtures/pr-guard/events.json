@@ -8829,5 +8829,69 @@
       "command": "git remote set-url fork gitea@src.opensuse.org:someone/nodejs-electron.git && git push fork electron-44"
     },
     "cwd": "@HTTPS@"
+  },
+  "review-main-session": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-author-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a51f",
+    "agent_type": "osc-update-build"
+  },
+  "review-reviewer-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a52f",
+    "agent_type": "changes-review"
+  },
+  "review-reviewer-session": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_type": "changes-review"
+  },
+  "review-bash-wrapped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/gate.sh . --review /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a51f",
+    "agent_type": "general-purpose"
+  },
+  "review-in-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/record-review.sh"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "review-gate-run": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh @OSC@/devel/x --entries 1"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a51f",
+    "agent_type": "osc-update-build"
+  },
+  "sr-unbuilt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark unbuilt devel:tools -m 'Update unbuilt to 1.1: fixes.'"
+    }
   }
 }

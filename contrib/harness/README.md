@@ -535,10 +535,17 @@ yourself. It asks before:
   commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a
   whole project checkout. Run `gate.sh`, then commit in the next call: a call that runs
   both is judged before the gate writes its stamp;
-- **a request without a reviewed tree**: an `osc sr`, `submitpac` or `osc creq -a submit`
+- **a request without a reviewed and built tree**: an `osc sr`, `submitpac` or `osc creq -a submit`
   whose source files (one expanded-listing lookup) match no stamp that is GREEN and holds
-  the change review's PASS (`gate.sh DIR --review FILE`). A forward matches the stamp of
-  the branch the devel project accepted.
+  the change review's PASS (`gate.sh DIR --review FILE`) and a GREEN build of that tree
+  (`gate.sh --build-log`, or `gate.sh DIR --obs-build` once OBS built the commit). A forward
+  matches the stamp of the branch the devel project accepted;
+- **a change review recorded outside a changes-review agent**: `gate.sh … --review`, by path,
+  through a shell or in a script the call runs, unless the event names the agent
+  `changes-review`. Claude Code sets `agent_type` for a sub-agent's calls and for a session
+  started with `--agent`; the 2.x plugin passes opencode's `agent` as `agent_type`. The harness
+  fills the field, not the model. opencode 1.x hands its hook no agent, so there every review is
+  recorded by you.
 
 A commit the stamps let through still asks when the call writes into its checkout before
 it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`, `osc add`, an
@@ -576,7 +583,7 @@ options. The Read tool stays with the snippets.
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
 | `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook and harness config |
 | `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero or asks |
-| `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools) |
+| `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools), with the call's agent |
 | `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
 | `opencode-v2/opencode.jsonc` | appended to the `permissions` array of the same file, instead of the 1.x block | the same backstop in 2.x's array form, plus `edit` denies for the guard, the harness configs and the stamps, and an `execute` deny |
 
