@@ -1500,5 +1500,92 @@ out="$(bash "$GATE" "$work/clone" --entries 2 2>&1)"
 grep -qF "## changes-entry: rc=0" <<<"$out" && pass "changes-entry git-entry (rc=0)" \
   || { fail "changes-entry git-entry"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# A spec comment is one line, two at most: a comment block the change adds
+# that runs past three lines is red (a 9-line %check comment, 10-line
+# Legal-Review-Notices), the header excepted, as are commented-out spec lines
+# and Source-Binary-Exception lines. A Legal-Review-Notice is its notice line
+# and short bullets. Without the target's spec every comment counts as added.
+sc_hdr='#
+# spec file for package p
+#
+# Copyright (c) 2026 SUSE LLC and contributors
+#
+# All modifications and additions to the file contributed by third parties
+# remain the property of their copyright owners, unless otherwise agreed
+# upon. The license for modifications is in the file named COPYING.
+#
+# Please submit bugfixes or comments via https://bugs.opensuse.org/
+#
+'
+cm() { # <name> <rc> <expected line> < spec body after the header
+  mkdir -p "$work/cm-$1"; { printf '%s\n' "$sc_hdr"; cat; } > "$work/cm-$1/p.spec"
+  out="$(bash "$GATE" "$work/cm-$1" 2>&1)"
+  grep -qF "## spec-comments: rc=$2" <<<"$out" && grep -qF -- "$3" <<<"$out" && pass "spec-comments $1 (rc=$2)" \
+    || { fail "spec-comments $1: expected rc=$2 and '$3'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+cm short 0 "OK: no comment block the change adds runs past 3 lines" <<'EOF'
+Name:           p
+# Two lines say why:
+# the test needs a network.
+%check
+EOF
+cm long 1 "p.spec:15: a 5-line comment" <<'EOF'
+Name:           p
+%check
+# The default addopts in pyproject.toml deselect the integration tests,
+# which need a running server; the remaining tests are all unit tests
+# and run offline. Two of them time out on the slow workers, so they are
+# skipped below; upstream knows (issue 12) and plans a fix in the next
+# release, after which this can go.
+pytest -k 'not slow'
+EOF
+cm code-lines 0 "OK: no comment block" <<'EOF'
+Name:           p
+#BuildRequires:  foo
+#BuildRequires:  bar
+#BuildRequires:  baz
+#Requires:       qux
+# Source-Binary-Exception: a.bin -- firmware: no source exists for it
+# Source-Binary-Exception: b.bin -- firmware: no source exists for it
+# Source-Binary-Exception: c.bin -- firmware: no source exists for it
+# Source-Binary-Exception: d.bin -- firmware: no source exists for it
+EOF
+cm notice-bullets 0 "OK: no comment block" <<'EOF'
+Name:           p
+# Legal-Review-Notice: statically linked besides MIT:
+# - MPL-2.0: option-ext; vendor.tar.zst carries its source.
+# - ISC: ring, untrusted.
+# - Unicode-3.0: the icu_* crates, with their
+#   tables in regex-syntax.
+License:        MIT AND MPL-2.0 AND ISC AND Unicode-3.0
+EOF
+cm notice-prose 1 "a Legal-Review-Notice: line that is no short bullet" <<'EOF'
+Name:           p
+# Legal-Review-Notice: 155 crates are statically linked into libfoo (cargo
+# tree -e normal). Beyond MIT and the dual MIT/Apache-2.0 majority: BSL-1.0
+# from xxhash-rust.
+License:        MIT AND BSL-1.0
+EOF
+{ echo 'Name:           p'; echo '# Legal-Review-Notice: linked besides MIT:'
+  for i in 1 2 3 4 5 6 7 8 9 10 11; do echo "# - L$i: crate$i"; done; echo 'License:        MIT'; } \
+  | cm notice-many 1 "a Legal-Review-Notice: with 11 bullets (at most 10)"
+# Against the target: its own long comments are not the change's, kept or
+# moved; a long one the change adds is red.
+printf 'Name: foo\nVersion: 0.9.8\n%%check\n# one\n# two\n# three\n# four\n# five\nmake check\n' | put devel:example/foo foo.spec
+co "$work/t-cm" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+og "$work/t-cm"
+grep -qF "## spec-comments: rc=0" <<<"$out" && pass "spec-comments: the target's own 5-line comment is not the change's" \
+  || { fail "spec-comments: target's comment"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: foo\nVersion: 1.0\n# one\n# two\n# three\n# four\n# five\n%%check\nmake check\n' > "$work/t-cm/foo.spec"
+og "$work/t-cm"
+grep -qF "## spec-comments: rc=0" <<<"$out" && pass "spec-comments: the target's comment moved is not the change's" \
+  || { fail "spec-comments: moved comment"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: foo\nVersion: 1.0\n%%check\n# one\n# two\n# three\n# four\n# five\n# The suite needs a network\n# since 1.0, which the\n# build has not, so only\n# the unit tests run.\nmake check\n' > "$work/t-cm/foo.spec"
+og "$work/t-cm"
+grep -qF "## spec-comments: rc=1" <<<"$out" && grep -qF "foo.spec:4: a 4-line comment" <<<"$out" \
+  && pass "spec-comments: a 4-line comment added to the target's is red" \
+  || { fail "spec-comments: added comment"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
+
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
