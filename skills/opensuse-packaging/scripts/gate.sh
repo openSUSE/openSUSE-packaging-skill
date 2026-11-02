@@ -87,6 +87,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 read -r -d '' PY <<'PYEOF'
 import calendar
+import difflib
 import hashlib
 import json
 import os
@@ -865,6 +866,62 @@ def parse(spec, logdir):
     return bad
 
 
+def flat(text):
+    return [" ".join(ln.split()) for ln in text.splitlines()]
+
+
+def unbraced(line):
+    return " ".join(re.sub(r"%\{([!?]*\w+)\}", r"%\1", line).split())
+
+
+def cleaned(spec, out, logdir):
+    # spec-cleaner hunks that only add or drop macro braces must expand as before
+    try:
+        with open(os.path.join(logdir, "parsed." + spec), encoding="utf-8") as fh:
+            want = flat(fh.read())
+        a, b = read_lines(spec), read_lines(out)
+    except OSError:
+        return 0  # the spec does not parse: the rpmspec gate says so
+    pairs = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "replace" and i2 - i1 == j2 - j1:
+            pairs += [(i1 + k, j1 + k) for k in range(i2 - i1)
+                      if a[i1 + k] != b[j1 + k] and unbraced(a[i1 + k]) == unbraced(b[j1 + k])]
+
+    def broken(sel):
+        lines = list(a)
+        for i, j in sel:
+            lines[i] = b[j]
+        path = os.path.join(logdir, "trial." + spec)
+        write(path, as_built(lines))
+        p = rpmspec(path)
+        if p is None:
+            return ""
+        if p.returncode != 0:
+            return "does not parse (%s)" % first_error(p).replace(path, spec)
+        return "expands differently" if flat(p.stdout) != want else ""
+
+    found = 0
+    if pairs and broken(pairs):
+        for i, j in pairs:
+            why = broken([(i, j)])
+            if why:
+                fix = ("write the options after `--` (`%cargo_build -- <args>`), which spec-cleaner leaves alone"
+                       if "option" in why else "keep the line and name it with --cleaner-deviation")
+                print("KNOWN DEFECT: %s:%d: spec-cleaner's `%s` %s, the spec's `%s` does not: a spec-cleaner "
+                      "bug, not a missed rule. Do not apply it; %s" % (spec, i + 1, b[j].strip(), why, a[i].strip(), fix))
+                found += 1
+    if not found:
+        path = os.path.join(logdir, "trial." + spec)
+        write(path, as_built(b))
+        p = rpmspec(path)
+        if p is not None and p.returncode != 0:
+            print("KNOWN DEFECT: %s: spec-cleaner's output does not parse (%s) where the spec does: "
+                  "do not apply it whole" % (spec, first_error(p).replace(path, spec)))
+            found += 1
+    return 1 if found else 0
+
+
 def prepkey(spec):
     # what %prep reads: the spec, every other file but the .changes, and rpm itself
     try:
@@ -941,7 +998,7 @@ def excerpt(logpath):
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
       "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
-      "parse": parse, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt}[cmd]
+      "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -1168,7 +1225,7 @@ fi
 # a documented deviation; a run that fails is red, never "no diff". The version is
 # printed because the references describe 1.3.0 and older ones rewrite differently.
 if command -v spec-cleaner >/dev/null 2>&1; then
-  : > "$log/spec-cleaner.diff"; rc=0; changed=0
+  : > "$log/spec-cleaner.diff"; : > "$log/spec-cleaner.defects"; rc=0; changed=0
   scv=$(spec-cleaner --version 2>/dev/null | head -n 1); scv=${scv:-unknown}
   echo "spec-cleaner $scv" > "$log/spec-cleaner.txt"
   [ "$scv" = 1.3.0 ] || echo "NOTE: spec-cleaner $scv is not the documented 1.3.0: a hunk only it makes may be a version difference (references/spec-cleaner.md \"Checking a spec file\")" >> "$log/spec-cleaner.txt"
@@ -1178,7 +1235,11 @@ if command -v spec-cleaner >/dev/null 2>&1; then
       echo "UNKNOWN: spec-cleaner failed on $s: $(tail -n 1 "$log/spec-cleaner.err")" >> "$log/spec-cleaner.txt"; rc=1; continue
     fi
     diff -u "$s" "$log/cleaned.$s" >> "$log/spec-cleaner.diff"; d=$?
-    if [ $d -eq 1 ]; then changed=$((changed+1)); elif [ $d -gt 1 ]; then
+    # a hunk that breaks a spec rpm parses is spec-cleaner's bug (1.3.2 unbraces
+    # %{cargo_build} -p foo into an option error: goose failed in staging)
+    if [ $d -eq 1 ]; then changed=$((changed+1))
+      [ ! -e "$log/parsed.$s" ] || py cleaned "$s" "$log/cleaned.$s" "$log" >> "$log/spec-cleaner.defects"
+    elif [ $d -gt 1 ]; then
       echo "UNKNOWN: could not diff $s against its cleaned copy" >> "$log/spec-cleaner.txt"; rc=1; fi
   done
   lines=$(grep -c '^[-+][^-+]' "$log/spec-cleaner.diff")
@@ -1187,9 +1248,12 @@ if command -v spec-cleaner >/dev/null 2>&1; then
   elif [ $rc -eq 0 ] && [ -n "$deviation" ]; then
     echo "DEVIATION: $lines changed line(s) kept on purpose — $deviation — the change review judges $log/spec-cleaner.diff" >> "$log/spec-cleaner.txt"
   elif [ $rc -eq 0 ]; then
-    { echo "spec-cleaner would change $lines line(s) in $changed spec(s): apply it (spec-cleaner --remove-groups --pkgconfig --perl --tex -i <spec>), or name the documented deviation with --cleaner-deviation REASON"
+    apply="apply it (spec-cleaner --remove-groups --pkgconfig --perl --tex -i <spec>)"
+    [ ! -s "$log/spec-cleaner.defects" ] || apply="apply the hunks it gets right by hand, not with -i: a KNOWN DEFECT below breaks the spec"
+    { echo "spec-cleaner would change $lines line(s) in $changed spec(s): $apply, or name the documented deviation with --cleaner-deviation REASON"
       grep '^[-+][^-+]' "$log/spec-cleaner.diff" | head -n 8; } >> "$log/spec-cleaner.txt"; rc=1
   fi
+  cat "$log/spec-cleaner.defects" >> "$log/spec-cleaner.txt"
   show spec-cleaner $rc "$log/spec-cleaner.txt"
 else
   echo "## spec-cleaner: SKIPPED (not installed)"; red+=(spec-cleaner)

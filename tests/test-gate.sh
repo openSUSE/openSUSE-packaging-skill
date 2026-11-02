@@ -313,7 +313,8 @@ else pass "patch-tags multibuild: only the bad spec is named"; fi
 
 # spec-cleaner runs in the gate, every time: a fake on PATH stands in for it.
 # SC_MODE: same (writes the spec back unchanged), group (adds a Group: line),
-# fail (exits 1). An absent tool is red, never a pass.
+# unbrace (%{opt_macro} -> %opt_macro, as 1.3.2 does to %{cargo_build}), fail
+# (exits 1). An absent tool is red, never a pass.
 mkdir -p "$work/scbin" "$work/sc"
 cat > "$work/scbin/spec-cleaner" <<'EOF'
 #!/bin/bash
@@ -324,6 +325,7 @@ while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) spec=$1
 case "${SC_MODE:-same}" in
   fail) echo "Traceback: boom" >&2; exit 1;;
   group) { cat "$spec"; echo 'Group:          Development/Tools'; } > "$out";;
+  unbrace) sed 's/%{opt_macro}/%opt_macro/' "$spec" > "$out";;
   *) cat "$spec" > "$out";;
 esac
 EOF
@@ -1176,8 +1178,26 @@ EOF
   # only the command that failed counts: an earlier miss the spec tolerates is no excuse
   pfix prep-mixed hello; sp prep-mixed prep 1 "p.spec: %prep fails" < <(pspec 'gate-test-no-such-cmd || :' 'false')
   pfix prep-noparse hello; sp prep-noparse prep 1 "p.spec: not run: the spec does not parse" < <(echo "Bogus: tag"; pspec)
+  # spec-cleaner 1.3.2 unbraces %{cargo_build} -p foo, which rpm then parses as
+  # the macro's options (goose failed in staging): a spec-cleaner defect, not a
+  # missed rule; the -- form is what spec-cleaner leaves alone.
+  scd() { out="$(PATH="$work/scbin:$PATH" SC_MODE=$1 bash "$GATE" "$work/sp-defect" 2>&1)"; }
+  mkdir -p "$work/sp-defect"
+  printf '%s\n' "$HDR" '%define opt_macro() echo %*' '%description' t '%prep' '%build' '%{opt_macro} -p foo' '%files' '%changelog' > "$work/sp-defect/p.spec"
+  scd unbrace
+  grep -qF "## spec-cleaner: rc=1" <<<"$out" \
+    && grep -qF "KNOWN DEFECT: p.spec:11: spec-cleaner's \`%opt_macro -p foo\` does not parse" "$work/gate-sp-defect/spec-cleaner.txt" \
+    && grep -qF -- "%cargo_build -- <args>" "$work/gate-sp-defect/spec-cleaner.txt" \
+    && pass "spec-cleaner: an unbraced macro that no longer parses is a known defect, with the -- form" \
+    || { fail "spec-cleaner known defect"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
+  sed -i 's/^%{opt_macro} -p foo$/%opt_macro -- -p foo/' "$work/sp-defect/p.spec"; scd unbrace
+  grep -qF "## spec-cleaner: rc=0" <<<"$out" && pass "spec-cleaner: the -- form is left alone" \
+    || { fail "spec-cleaner -- form"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
+  scd group
+  grep -qF "## spec-cleaner: rc=1" <<<"$out" && ! grep -qF "KNOWN DEFECT" "$work/gate-sp-defect/spec-cleaner.txt" \
+    && pass "spec-cleaner: a hunk that parses is no known defect" || { fail "spec-cleaner group hunk"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
 else
-  echo "SKIP: rpmspec and %prep checks (no rpmspec or rpmbuild)"
+  echo "SKIP: rpmspec, %prep and spec-cleaner parse checks (no rpmspec or rpmbuild)"
 fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
