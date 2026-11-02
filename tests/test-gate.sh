@@ -898,11 +898,64 @@ bl "with no source RPM" 1 "names no source RPM it wrote" "$work/bl-nosrpm.log"
 bl "started before the last edit" 1 "foo.spec changed after $work/bl-stale.log started: rebuild" "$work/bl-stale.log"
 touch "$work/t-bl/foo.changes"
 bl "older than a .changes edit" 0 "OK: 1 log(s)" "$work/bl-ok.log"
+# A _multibuild package builds the base package and each flavor: one log each,
+# the base only when the spec does not exclude it.
+blog_ "$work/bl-ok3.log" "$now" foo-1.0-0 foo.spec; echo '[  102s] third build' >> "$work/bl-ok3.log"
 printf '<multibuild>\n  <flavor>test</flavor>\n  <flavor>gui</flavor>\n</multibuild>\n' > "$work/t-bl/_multibuild"
-bl "of one flavor of two" 1 "2 flavor(s) (test, gui), 1 distinct build log(s): pass --build-log once per flavor" "$work/bl-ok.log"
-bl "the same log twice for two flavors" 1 "1 distinct build log(s)" "$work/bl-ok.log" "$work/bl-ok.log"
-bl "one per flavor" 0 "OK: 2 log(s)" "$work/bl-ok.log" "$work/bl-ok2.log"
+bl "of one build of three" 1 "3 build(s) (the base package, test, gui), 1 distinct build log(s): pass --build-log once per build" "$work/bl-ok.log"
+bl "the same log twice" 1 "1 distinct build log(s)" "$work/bl-ok.log" "$work/bl-ok.log"
+bl "one per flavor, not the base" 1 "2 distinct build log(s)" "$work/bl-ok.log" "$work/bl-ok2.log"
+bl "one per build" 0 "OK: 3 log(s)" "$work/bl-ok.log" "$work/bl-ok2.log" "$work/bl-ok3.log"
+co "$work/t-nobase" "$P" devel:example "$O/devel:example/foo"
+printf '%%if "%%{flavor}" == ""\nExclusiveArch:  do_not_build\n%%endif\n' >> "$work/t-nobase/foo.spec"
+cp "$work/t-bl/_multibuild" "$work/t-nobase/"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')   # after the edit
+blog_ "$work/nb1.log" "$now" foo-1.0-0 foo.spec; blog_ "$work/nb2.log" "$now" foo-1.0-0 foo.spec; echo '[  101s] gui' >> "$work/nb2.log"
+pyg buildlogs "$work/t-nobase" "$work/nb1.log" "$work/nb2.log"
+[ "$rc" = 0 ] && pass "--build-log: a spec that excludes the base package needs one log per flavor" \
+  || { fail "--build-log base excluded: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# The same through a macro that holds the flavor, as postgresql extensions write it.
+sed -i 's/^%if "%{flavor}" == ""$/%if "%{pg_name}" == ""/' "$work/t-nobase/foo.spec"
+printf '%%define pg_name @BUILD_FLAVOR@%%{nil}\n' >> "$work/t-nobase/foo.spec"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_ "$work/nb1.log" "$now" foo-1.0-0 foo.spec; blog_ "$work/nb2.log" "$now" foo-1.0-0 foo.spec; echo '[  101s] gui' >> "$work/nb2.log"
+pyg buildlogs "$work/t-nobase" "$work/nb1.log" "$work/nb2.log"
+[ "$rc" = 0 ] && pass "--build-log: the base package excluded through a macro holding the flavor" \
+  || { fail "--build-log base excluded through pg_name: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm "$work/t-bl/_multibuild"
+# A python _multibuild spec (python-ruff's header): its Name carries the flavor, and
+# the flavor's psuffix is defined before the base's. Each build is a source RPM of its own.
+pyco() {   # <dir>: a checkout of python-ruff with the fixture's spec and a test flavor
+  mkdir -p "$1/.osc" && printf 'python-ruff\n' > "$1/.osc/_package" && printf 'devel:languages:python\n' > "$1/.osc/_project"
+  printf '<directory name="python-ruff"><entry name="python-ruff.changes"/><entry name="python-ruff.spec"/></directory>\n' > "$1/.osc/_files"
+  cp "$HERE/fixtures/gate/python-ruff.spec" "$1/"; e "Mon Nov  2" "Update to 0.17.3" > "$1/python-ruff.changes"
+  printf '<multibuild>\n  <flavor>test</flavor>\n</multibuild>\n' > "$1/_multibuild"
+}
+pyco "$work/t-py"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_ "$work/py-main.log" "$now" python-ruff-0.17.3-0 python-ruff.spec
+blog_ "$work/py-main2.log" "$now" python-ruff-0.17.3-0 python-ruff.spec; echo '[  101s] again' >> "$work/py-main2.log"
+blog_ "$work/py-test.log" "$now" python-ruff-test-0.17.3-0 python-ruff.spec
+pybl() {   # <name> <rc> <message> <logs...>
+  local name=$1 want=$2 msg=$3; shift 3
+  pyg buildlogs "$work/t-py" "$@"
+  [ "$rc" = "$want" ] && grep -qF -- "$msg" <<<"$out" && pass "--build-log python multibuild: $name (rc=$want)" \
+    || { fail "--build-log python multibuild $name: want rc=$want and '$msg', got rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+pybl "the main and the test flavor" 0 "OK: 2 log(s)" "$work/py-main.log" "$work/py-test.log"
+pybl "the main flavor alone" 1 "2 build(s) (the base package, test)" "$work/py-main.log"
+pybl "the main flavor twice" 1 "1 distinct source RPM(s)" "$work/py-main.log" "$work/py-main2.log"
+# A checkout with no spec (kiwi, Dockerfile) writes no source RPM: its recipe is checked.
+mkdir -p "$work/t-kiwi/.osc" && printf 'img\n' > "$work/t-kiwi/.osc/_package" && printf 'devel:example\n' > "$work/t-kiwi/.osc/_project"
+printf '<directory name="img"><entry name="img.kiwi"/></directory>\n' > "$work/t-kiwi/.osc/_files"; printf '<image/>\n' > "$work/t-kiwi/img.kiwi"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_ "$work/kiwi.log" "$now" - img.kiwi; blog_ "$work/kiwi-other.log" "$now" - other.kiwi
+pyg buildlogs "$work/t-kiwi" "$work/kiwi.log"
+[ "$rc" = 0 ] && pass "--build-log: a build of a checkout with no spec needs no source RPM" \
+  || { fail "--build-log kiwi: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+pyg buildlogs "$work/t-kiwi" "$work/kiwi-other.log"
+[ "$rc" = 1 ] && grep -qF "built other.kiwi, which this checkout does not have" <<<"$out" \
+  && pass "--build-log: a log of another recipe is red there too" || { fail "--build-log kiwi other recipe: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # The stamp: a build of the logs; a rerun of the tree keeps it, a .changes-only edit
 # carries it, any other edit drops it.
 SL="$work/home/.local/state/opensuse-packaging/gate/obs/foo/t-bl.json"
