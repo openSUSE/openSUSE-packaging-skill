@@ -38,8 +38,10 @@
 #                build-summary.sh takes (verdict only). Red unless it is a build
 #                of this tree: a spec of the checkout, its source RPM of the
 #                spec's name and version, started after the last change to any
-#                file but a .changes; a _multibuild package passes it once per
-#                flavor. GREEN records them as the tree's build
+#                file but a .changes (with no spec: its recipe is the
+#                checkout's); a _multibuild package passes it once per build,
+#                the base package and each flavor. GREEN records them as the
+#                tree's build
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
@@ -250,51 +252,66 @@ def flavors(d):
     return [e.text.strip() for e in root.iter() if e.tag in ("package", "flavor") and (e.text or "").strip()]
 
 
+def name_fits(n, names):
+    # n starts with a spelling of Name up to what only a build knows (a macro
+    # left unexpanded, the flavor); one that starts with that, any n fits
+    return any(not p or n.startswith(p) for p in (re.split(r"%|@BUILD_FLAVOR@", x)[0] for x in names))
+
+
 def buildlogs(d, *logs):
     # Whether GREEN logs are builds of this tree: a spec of it, the source RPM
-    # of its name and version, started after the newest file but a .changes,
-    # one per flavor of a _multibuild. A log of an older version, of another
-    # package or of an edited tree is no build of it.
-    want = {}
+    # of its name (any flavor's) and version, started after the newest file
+    # but a .changes; one per build of a _multibuild, the base package unless
+    # the spec excludes it. With no spec (kiwi, Dockerfile) there is no source
+    # RPM: the recipe must be a file of the checkout.
+    want, excluded = {}, False
     for spec in sorted(os.listdir(d)):
         if spec.endswith(".spec"):
-            mac = spec_macros(read_lines(os.path.join(d, spec)))
-            want[spec] = (expand_macros(mac.get("name", ""), mac), expand_macros(mac.get("version", ""), mac))
+            lines = read_lines(os.path.join(d, spec))
+            vals = spec_values(lines)
+            names = set().union(*(expansions(x, vals) for x in vals.get("name") or [""]))
+            versions = set().union(*(expansions(x, vals) for x in vals.get("version") or [""]))
+            want[spec] = (names, versions)
+            excluded = excluded or base_excluded(lines, vals)
     fm = files(d)
     names = [n for n in fm if fm[n] != "-"] if fm is not None else list(want)
     stamps = [(os.path.getmtime(os.path.join(d, n)), n) for n in names
               if not n.endswith(".changes") and os.path.isfile(os.path.join(d, n))]
     newest = max(stamps, default=(0, ""))
-    bad, seen = [], set()
+    bad, seen, srpms = [], set(), set()
     for log in logs:
         recipe, start, srpm = log_facts(log)
         seen.add(sha256(log))
-        if recipe and recipe not in want:
-            bad.append("%s built %s, not this checkout's %s" % (log, recipe, ", ".join(want) or "spec"))
+        if not want:
+            if recipe and not os.path.isfile(os.path.join(d, recipe)):
+                bad.append("%s built %s, which this checkout does not have" % (log, recipe))
+                continue
+        elif recipe and recipe not in want:
+            bad.append("%s built %s, not this checkout's %s" % (log, recipe, ", ".join(want)))
             continue
-        if not srpm:
+        elif not srpm:
             bad.append("%s names no source RPM it wrote (Wrote: …/SRPMS/…src.rpm): not known to be a build of this tree" % log)
             continue
-        parts = srpm.rsplit("-", 2)
-        n, v = (parts[0], parts[1]) if len(parts) == 3 else (srpm, "")
-        ok = False
-        for spec, (name, version) in want.items():
-            if recipe and spec != recipe:
-                continue
-            prefix = name.split("%")[0]
-            if prefix and n.startswith(prefix) and ("%" in version or v == version):
-                ok = True
-        if not ok:
-            said = ", ".join("%s %s" % nv for spec, nv in want.items() if not recipe or spec == recipe)
-            bad.append("%s built %s, the spec says %s" % (log, srpm, said or "nothing"))
+        else:
+            parts = srpm.rsplit("-", 2)
+            n, v = (parts[0], parts[1]) if len(parts) == 3 else (srpm, "")
+            srpms.add(n)
+            mine = [nv for spec, nv in want.items() if not recipe or spec == recipe]
+            if not any(name_fits(n, ns) and any("%" in x or x == v for x in vs) for ns, vs in mine):
+                said = "; ".join("%s %s" % ("|".join(sorted(ns)), "|".join(sorted(vs))) for ns, vs in mine)
+                bad.append("%s built %s, the spec says %s" % (log, srpm, said))
         if newest[0] > start + 1:
             bad.append("%s changed after %s started: rebuild" % (newest[1], log))
     fl = flavors(d)
     if fl is None:
         bad.append("_multibuild: cannot read it")
-    elif fl and len(seen) < len(fl):
-        bad.append("a _multibuild package: %d flavor(s) (%s), %d distinct build log(s): pass --build-log once per flavor"
-                   % (len(fl), ", ".join(fl), len(seen)))
+    elif fl:
+        need = ([] if excluded else ["the base package"]) + fl
+        varies = any(len(ns) > 1 for ns, _ in want.values())
+        got, what = (len(srpms), "distinct source RPM(s)") if varies else (len(seen), "distinct build log(s)")
+        if got < len(need):
+            bad.append("a _multibuild package: %d build(s) (%s), %d %s: pass --build-log once per build"
+                       % (len(need), ", ".join(need), got, what))
     for b in bad:
         print("RED: " + b)
     if not bad:
@@ -606,6 +623,57 @@ def spec_macros(lines):
         if m:
             macros.setdefault(m.group(1), m.group(2))
     return macros
+
+
+def spec_values(lines):
+    # every Name, Version and plain %define/%global value: a _multibuild spec
+    # defines a macro once per flavor, the flavor's often first
+    vals = {"nil": [""]}
+    for line in lines:
+        m = re.match(r"(name|version)\s*:\s*(\S+)", line, re.I)
+        if m:
+            vals.setdefault(m.group(1).lower(), []).append(m.group(2))
+        m = re.match(r"%(?:define|global)\s+(\w+)\s+(\S+)\s*$", line)
+        if m:
+            vals.setdefault(m.group(1), []).append(m.group(2))
+    return vals
+
+
+def expansions(s, vals, depth=8):
+    # every spelling of s those values give it, at most 32
+    m = next((m for m in MACRO.finditer(s) if (m.group(1) or m.group(2)) in vals), None)
+    if m is None or depth == 0:
+        return {s}
+    out = set()
+    for v in vals[m.group(1) or m.group(2)][:8]:
+        out |= expansions(s[: m.start()] + v + s[m.end():], vals, depth - 1)
+        if len(out) >= 32:
+            break
+    return out
+
+
+EMPTY_IF = re.compile(r'%if\s+"%\{?\??(\w+)\}?"\s*==\s*""\s*$')
+
+
+def base_excluded(lines, vals):
+    # ExclusiveArch: do_not_build under %if "%{flavor}" == "" (or another macro
+    # holding @BUILD_FLAVOR@, as pg_name does): no base package build
+    def flavorish(m):
+        return m == "flavor" or any("@BUILD_FLAVOR@" in x for x in expansions("%{" + m + "}", vals))
+
+    stack = []
+    for line in lines:
+        t = line.strip()
+        if re.match(r"%if(?:arch|narch|os|nos)?\b", t):
+            m = EMPTY_IF.match(t)
+            stack.append(bool(m) and flavorish(m.group(1)))
+        elif re.match(r"%el(?:se|if)", t) and stack:
+            stack[-1] = False
+        elif re.match(r"%endif\b", t) and stack:
+            stack.pop()
+        elif stack and stack[-1] and re.match(r"ExclusiveArch:\s*do_not_build\b", t):
+            return True
+    return False
 
 
 def expand_macros(s, macros):
