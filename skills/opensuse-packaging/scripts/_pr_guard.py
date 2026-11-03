@@ -485,8 +485,6 @@ MESSAGES = {
     "gate-sequence": "{0}. The guard judges the tree before the call runs, so "
     "this one can commit or file a tree the gate never saw: run {s}/gate.sh (and "
     "--review) in one call, osc commit alone in the next, and osc sr in the one after.",
-    "rm-checkouts": "{0}, which other work may be using. Remove only the checkout "
-    "this task made, by its own path (rm -r PRJ/PKG), one per call.",
     "request-no-message": "{0}: with no message osc opens an editor, and the call "
     "hangs until it times out. Pass -m MSG (osc sr also takes -F FILE).",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
@@ -560,6 +558,8 @@ ASKS = {
     "accept-forward": "{0}: only {s}/autoforward-gate.sh's ELIGIBLE moves a package "
     "unattended (no reviewer; your package, or an unowned one in a project you "
     "maintain; Factory's devel project). Otherwise it needs the user's go.",
+    "rm-checkouts": "{0}, and other work may be using them. Remove one checkout "
+    "per rm (separate rm commands in one call pass), or it needs the user's go.",
     "eval-dynamic": "{0}: the guard cannot read the commands this runs, so it "
     "cannot judge them. Write them out literally, or it needs the user's go.",
     "gate-stamp": "{0}. Run {s}/gate.sh in the checkout, commit in the next "
@@ -4627,22 +4627,42 @@ def note_writes(name, args, ctx, cwd):
         note_written(d, ctx, cwd)
 
 
-def checkouts_below(top):
-    """The osc checkouts (directories holding .osc) inside top, top itself not
-    counted, two levels down: a project's packages, and a tree of projects'."""
+def checkout_units(top):
+    """The osc checkouts an rm of top deletes, top included: a package checkout
+    (.osc/_package) is one; a project checkout counts its packages, or itself
+    when it holds none (osc co PRJ PKG is one); plain directories are searched
+    two levels down."""
+
+    def osc(d):
+        return os.path.isdir(os.path.join(d, ".osc"))
+
+    def subdirs(d):
+        try:
+            with os.scandir(d) as it:
+                return sorted(
+                    e.path
+                    for e in it
+                    if e.is_dir(follow_symlinks=False) and e.name != ".osc"
+                )
+        except OSError:
+            return []
+
+    def unit(d):
+        if os.path.isfile(os.path.join(d, ".osc", "_package")):
+            return [d]
+        return [s for s in subdirs(d) if osc(s)] or [d]
+
+    if osc(top):
+        return unit(top)
     found, level = [], [top]
     for _ in range(2):
         below = []
         for d in level[:4096]:
-            try:
-                with os.scandir(d) as it:
-                    subs = [e.path for e in it if e.is_dir(follow_symlinks=False)]
-            except OSError:
-                continue
-            for s in sorted(subs):
-                if os.path.basename(s) == ".osc":
-                    continue
-                (found if os.path.isdir(os.path.join(s, ".osc")) else below).append(s)
+            for s in subdirs(d):
+                if osc(s):
+                    found += unit(s)
+                else:
+                    below.append(s)
         level = below
     return found
 
@@ -4652,12 +4672,16 @@ FIND_NAMED = {"-name", "-iname", "-path", "-ipath", "-wholename", "-regex", "-ir
 
 
 def rm_checkouts(name, run, ctx, cwd):
-    """A recursive rm, or a find -delete with no name test, of a directory
-    holding osc checkouts, or of several checkouts at once: siblings' work may
-    live there. An operand only the shell knows is not judged."""
+    """A recursive rm, or a find -delete with no name test, that deletes two or
+    more osc checkouts at once: siblings' work may live there. An operand only
+    the shell knows is not judged."""
     args = run[1:]
     if name == "find":
-        if "-delete" not in args or FIND_NAMED & set(args):
+        named = any(
+            a in FIND_NAMED and args[i + 1 : i + 2] not in (["*"], [])
+            for i, a in enumerate(args)
+        )
+        if "-delete" not in args or named:
             return
         while args and (args[0] in ("-H", "-L", "-P") or args[0].startswith("-O")):
             args = args[1:]
@@ -4667,25 +4691,23 @@ def rm_checkouts(name, run, ctx, cwd):
         opts, operands = parse_opts(args, "")
         if not {k for k, _ in opts} & {"-r", "-R", "--recursive"}:
             return
-
-    def few(paths, top):
-        names = [os.path.relpath(c, top) for c in paths]
-        return ", ".join(names[:3]) + (", …" if len(names) > 3 else "")
-
-    gone = []
+    units = []
     for raw in operands:
         for p in locate(raw, ctx, cwd)[0] or ():
-            if os.path.islink(p) or not os.path.isdir(p):
+            if raw.endswith("/"):  # rm and find follow a symlink named so
+                p = os.path.realpath(p)
+            elif os.path.islink(p):
                 continue
-            inside = checkouts_below(p)
-            if inside:
-                block("rm-checkouts", f"{p} holds the osc checkouts {few(inside, p)}")
-            if os.path.isdir(os.path.join(p, ".osc")):
-                gone.append(p)
-    if len(gone) > 1:
-        top = os.path.commonpath(gone)
-        block(
-            "rm-checkouts", f"{name} deletes the osc checkouts {few(gone, top)} at once"
+            if os.path.isdir(p):
+                units += [u for u in checkout_units(p) if u not in units]
+    if len(units) > 1:
+        top = os.path.commonpath(units)
+        names = [os.path.relpath(u, top) for u in units]
+        few = ", ".join(names[:3]) + (", …" if len(names) > 3 else "")
+        ask(
+            ctx,
+            "rm-checkouts",
+            f"{name} deletes {len(units)} osc checkouts at once: {few}",
         )
 
 

@@ -149,6 +149,11 @@ osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
   && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
 osc_co_ "$work/osc/fresh/y" devel:tools; osc_co_ "$work/osc/edited/z" devel:tools
 osc_co_ "$work/osc/prjco" devel:tools
+# osc co PRJ PKG: a project checkout around its one package, and one around three.
+osc_co_ "$work/osc/single" devel:tools; osc_co_ "$work/osc/single/x" devel:tools && printf 'x\n' > "$work/osc/single/x/.osc/_package"
+osc_co_ "$work/osc/multi" devel:tools
+for p in termit kmscon rioterm; do osc_co_ "$work/osc/multi/$p" devel:tools && printf '%s\n' "$p" > "$work/osc/multi/$p/.osc/_package"; done
+ln -s "$work/osc/spark" "$work/links/spark"
 # What a commit, a submit or a forward the guard lets through unasked needs, from
 # fixtures/pr-guard/stamped.json: gate.sh's stamp of a reviewed tree (under this
 # suite's HOME) with the source listing it matches, and the _meta of a package
@@ -1254,16 +1259,27 @@ case_ nomsg-rq-revoke-message    0 - ""
 case_ nomsg-sr-file              0 - ""
 case_ nomsg-rq-show              0 - ""
 
-echo "--- a recursive delete takes one checkout, never a directory of them"
-case_ rm-project-dir             2 rm-checkouts "$work/osc/spark holds the osc checkouts libpqxx, python-streamdeck"
-case_ rm-fr-trailing-slash       2 rm-checkouts "holds the osc checkouts libpqxx, python-streamdeck"
-case_ rm-r-f-separate            2 rm-checkouts "holds the osc checkouts libpqxx, python-streamdeck"
-case_ rm-sudo-recursive-long     2 rm-checkouts "holds the osc checkouts libpqxx, python-streamdeck"
-case_ rm-glob-siblings           2 rm-checkouts "deletes the osc checkouts libpqxx, python-streamdeck"
-case_ rm-parent-of-projects      2 rm-checkouts "$work/osc holds the osc checkouts"
-case_ rm-var-dir                 2 rm-checkouts "holds the osc checkouts libpqxx, python-streamdeck"
-case_ rm-relative-in-cwd         2 rm-checkouts "spark holds the osc checkouts libpqxx, python-streamdeck"
-case_ find-delete-project        2 rm-checkouts "holds the osc checkouts libpqxx, python-streamdeck"
+echo "--- a recursive delete takes one checkout at a time, or asks"
+ask_ rm-project-dir             rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-fr-trailing-slash       rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-r-f-separate            rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-sudo-recursive-long     rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-glob-siblings           rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-parent-of-projects      rm-checkouts "osc checkouts at once"
+ask_ rm-var-dir                 rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-relative-in-cwd         rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ find-delete-project        rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+# The incident's shape: one project checkout around three packages others work in.
+ask_ rm-project-many-packages   rm-checkouts "deletes 3 osc checkouts at once: kmscon, rioterm, termit"
+# No path in the command: find reaches the guard by name.
+ask_ find-delete-no-slash       rm-checkouts "deletes 2 osc checkouts at once"
+ask_ find-mindepth-no-slash     rm-checkouts "deletes 2 osc checkouts at once"
+# A trailing slash makes rm empty a symlink's target; without it only the link goes.
+ask_ rm-link-trailing-slash     rm-checkouts "deletes 2 osc checkouts at once"
+case_ rm-link-itself             0 - ""
+# Cleanup after osc co PRJ PKG, one checkout per rm, and separate rm commands pass.
+case_ rm-project-one-package     0 - ""
+case_ rm-checkouts-separately    0 - ""
 case_ find-delete-name           0 - ""
 case_ rm-own-checkout            0 - ""
 case_ rm-not-recursive           0 - ""

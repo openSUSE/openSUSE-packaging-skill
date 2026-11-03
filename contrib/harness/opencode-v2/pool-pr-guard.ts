@@ -14,7 +14,7 @@ import { join, normalize, resolve } from "node:path"
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
 
 // Verbatim copy of PREFILTER in pr-guard.py; tests/test-pr-guard.sh compares them.
-const PREFILTER = new RegExp(String.raw`\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm)\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b`)
+const PREFILTER = new RegExp(String.raw`\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm|find)\b|-delete\b|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b`)
 // As unquoted() in pr-guard.py: $'...' decoded, then quotes and backslashes dropped.
 const unquoted = (t: string) =>
   t.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\.)*)'/g, (_m: string, body: string) =>
