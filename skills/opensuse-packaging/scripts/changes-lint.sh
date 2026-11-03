@@ -45,6 +45,14 @@
 #       states that this update fixes that id: reviewers read any CVE id in
 #       .changes as fixed here (references/changelog-rules.md "CVEs and
 #       security bullets")
+#     - no bullet that says an issue is not affected ('not affected', 'is not
+#       affected by', 'unaffected', 'no longer affected', 'above the fixed
+#       version', 'above the X.Y fix') carries a CVE or boo#/bsc#/bnc# id, and
+#       a ':' bullet saying so takes the ids of the sub-bullets under it, unless
+#       the bullet states this update fixes that id: the Leap, PackageHub and
+#       SLFO trackers read any id in .changes as fixed here, so a not-affected
+#       assessment goes in the bug comment (references/changelog-rules.md "CVEs
+#       and security bullets"; real decline: pool/gh PR #11)
 #     - no bullet carries an incomplete CVE id ('CVE-2026-XXXX', 'CVE-2026',
 #       'CVE-2026-12'), and no top-level bullet (its sub-bullets included)
 #       says 'CVEs'/'CVE' or claims a security fix ('security fix/issue/update
@@ -93,7 +101,7 @@ rc=0; unreadable=0
 for f in "$@"; do
   [ -r "$f" ] || { echo "$f: unreadable" >&2; unreadable=1; continue; }
   python3 - "$f" "$entries" "$author" <<'PY' || rc=1
-import re, sys
+import itertools, re, sys
 f, nent, me = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 WHO = re.compile(r"^(.*\S) <([^<>]+)>$")
 me_name, me_mail = WHO.match(me).groups() if me else ("", "")
@@ -197,6 +205,9 @@ STAGING = re.compile(r"\b(?:lands?|landing|goes\s+in)\s+(?:after|before|together
 def names_request(t):
     return bool(STAGING.search(t)) or any(not UPSTREAM_PR.search(t[:m.start()])
                                           for m in REQUEST_ID.finditer(t))
+NOTAFF = re.compile(r"\b(?:not|never|no\s+longer)\s+(?:be\s+)?affected\b|\bn['’]t\s+affected\b|\bunaffected\b"
+                    r"|\b(?:above|over)\s+the\s+(?:\S+\s+)?(?:fix(?:ed)?\b|patched\b)", re.I)
+ANYID = re.compile(r"\bCVE-\d{4}-\d{4,}\b|\b(?:boo|bsc|bnc)#\d+", re.I)
 def stated_fixed(t):
     ids = {m.group("id").upper() for m in FIXED.finditer(t)}
     ids.update(i.upper() for i in PATCHED.findall(t))
@@ -229,18 +240,29 @@ for k in range(ncheck):
         # anything before it could have broken onto a line of its own
         if len(t) > 67 and not (len(text) == 1 and len(text[0]) + lead > 67):
             bad.append((n, f"line is {len(t)} characters: wrap it at 67, the .changes convention"))
-    bullets = []                        # (first line no, text joined over continuations)
+    bullets = []                        # (first line no, text joined over continuations, indent)
     for n, t in body:
         if t.strip().startswith(("-", "*", "+")) or not bullets:
-            bullets.append((n, t.strip()))
+            bullets.append((n, t.strip(), len(t) - len(t.lstrip())))
         else:
-            bullets[-1] = (bullets[-1][0], bullets[-1][1] + " " + t.strip())
-    for n, t in bullets:
+            bullets[-1] = (bullets[-1][0], bullets[-1][1] + " " + t.strip(), bullets[-1][2])
+    for b, (n, t, ind) in enumerate(bullets):
         ids = {i.upper() for i in CVE.findall(t)}
         if ids and UNFIXED.search(t) and ids - stated_fixed(t):
             bad.append((n, "bullet names a CVE id as not fixed — if this update fixes it, "
                            "say so without the not-fixed phrase; if it does not, leave the "
                            "id out (any CVE id in .changes reads as fixed here)"))
+        if NOTAFF.search(t):
+            sub = [x for _, x, i in itertools.takewhile(lambda y: y[2] > ind, bullets[b + 1:])]
+            scope = t + " " + " ".join(sub) if t.endswith(":") else t
+            fixed = stated_fixed(scope)
+            ids = {i.upper() for i in ANYID.findall(scope)}
+            cves = {i for i in ids if i.startswith("CVE")}
+            if cves - fixed or (ids - cves and not fixed):
+                bad.append((n, "bullet cites an id for an issue it says is not affected — the "
+                               "trackers read any CVE/boo#/bsc#/bnc# in .changes as fixed here; put "
+                               "the assessment in the bug comment (references/changelog-rules.md "
+                               '"CVEs and security bullets")'))
         if REVIEW.search(t):
             bad.append((n, "bullet reports submission or review status — that goes in the "
                            "SR message, not in .changes, which ships in the RPM"))

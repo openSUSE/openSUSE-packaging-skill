@@ -98,7 +98,7 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   entry you keep, never by rewriting the file: swift-lang's first attempt overwrote the whole
   `.changes` and deleted the other packagers' entries, and the second stacked a twentieth entry.
 - **A bug/CVE reference added to an older entry** passes the guard only when that is the entry's
-  only change and a new entry on top carries it (e.g. `- Reference boo#N for CVE-…`).
+  only change and a new entry on top carries it (e.g. `- Reference boo#N for CVE-…`), and only for a bug this update fixes.
 - Full flag/exit-code detail and the one sanctioned override (a `check_dates_in_changes` header
   repair): `scripts/README.md` "`changes-guard.sh`" and `references/changelog-rules.md`
   "Sanctioned exception 2".

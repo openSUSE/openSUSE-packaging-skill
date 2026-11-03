@@ -118,11 +118,33 @@ entry cve-patch-named.changes "- Add foo-CVE-2026-1234-idna.patch: reject bad la
 case_ cve-patch-named-clean 0 "OK: clean" --entries 1 "$work/cve-patch-named.changes"
 entry cve-fix-other-id.changes "- Fix CVE-2026-1111; CVE-2026-2222 remains unfixed"
 case_ cve-fix-other-id 1 "cve-fix-other-id.changes:4: bullet names a CVE id as not fixed" --entries 1 "$work/cve-fix-other-id.changes"
+# A not-affected line must not carry an id either: the trackers read it as a
+# fix. The assessment goes in the bug comment. Real decline: pool/gh PR #11.
+NA_MSG="bullet cites an id for an issue it says is not affected"
 entry cve-not-affected.changes "- Refresh the vendored dependencies:" \
-  "  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11" \
-  "    fix" \
   "  * CVE-2025-1111 (boo#2): is not affected by this, ships foo 1.2"
-case_ cve-not-affected-clean 0 "OK: clean" --entries 1 "$work/cve-not-affected.changes"
+case_ cve-not-affected 1 "cve-not-affected.changes:5: $NA_MSG" --entries 1 "$work/cve-not-affected.changes"
+grep -qF -- "put the assessment in the bug comment" <<<"$LAST" && pass "not-affected message says where it goes" || fail "not-affected message: $LAST"
+entry cve-not-affected-above.changes "- Refresh the vendored dependencies:" \
+  "  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11" \
+  "    fix"
+case_ cve-above-the-fix 1 "cve-not-affected-above.changes:5: $NA_MSG" --entries 1 "$work/cve-not-affected-above.changes"
+# the gh.changes shape: the header says it, the sub-bullets carry the ids
+entry cve-na-header.changes "- Update to 2.103.3" \
+  "- Not affected, vendored dependencies are above the fixed version:" \
+  "  * CVE-2026-1111 (bsc#1): package is 1.2.3, fixed in 1.2.0" \
+  "  * CVE-2026-2222 (bsc#2): package is 2.0.1, fixed in 2.0.0"
+case_ cve-na-header 1 "cve-na-header.changes:5: $NA_MSG" --entries 1 "$work/cve-na-header.changes"
+entry cve-na-bug-only.changes "- Update to 1.2:" "  * Not affected by boo#1234567 (the code postdates 1.1)"
+case_ cve-na-bug-id 1 "cve-na-bug-only.changes:5: $NA_MSG" --entries 1 "$work/cve-na-bug-only.changes"
+entry cve-na-other-bullet.changes "- Fix CVE-2026-1111 (boo#1)" "- The 32-bit build is not affected"
+case_ cve-na-other-bullet-clean 0 "OK: clean" --entries 1 "$work/cve-na-other-bullet.changes"
+entry cve-na-mixed.changes "- Fix CVE-2026-1111, which the old build is not affected by" \
+  "  on arm, and CVE-2026-2222 (boo#2): not affected"
+case_ cve-na-mixed 1 "cve-na-mixed.changes:4: $NA_MSG" --entries 1 "$work/cve-na-mixed.changes"
+entry cve-na-no-id.changes "- Refresh the vendored dependencies" "- Fix CVE-2026-1111 (boo#1): crash on empty input" \
+  "- The bundled foo is above the fixed version for the other issue"
+case_ cve-na-no-id-clean 0 "OK: clean" --entries 1 "$work/cve-na-no-id.changes"
 
 # Request ids and staging order belong in the SR message, not in .changes.
 # Real case: sr#1385697, wrapped over a continuation line.
@@ -259,7 +281,7 @@ full-id|0|- Update to 2.0 (security release):^  * CVE-2026-1234: heap overflow i
 cves-with-ids|0|- Security fixes for two CVEs: CVE-2026-1234,^  CVE-2026-5678
 bug-ref|0|- Fix a vulnerability in the HTTP parser (boo#1284176)
 ghsa|0|- Fix a vulnerability in the parser (GHSA-abcd-efgh-ijkl)
-not-affected|0|- Refresh the vendored crates:^  * CVE-2025-55159 (boo#1248048): slab is 0.4.12, above the 0.4.11^    fix
+not-affected|0|- Refresh the vendored crates:^  * slab is 0.4.12, above the 0.4.11 fix
 no-cve|0|- Fix a heap overflow in the parser (no CVE assigned)
 hardening|0|- Build with -D_FORTIFY_SOURCE=3 for stronger hardening
 security-policy|0|- Ship the upstream security policy file
