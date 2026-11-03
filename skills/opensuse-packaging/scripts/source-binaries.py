@@ -11,10 +11,10 @@ tarball), and nothing is extracted.
               (osc getbinaries -d, or a build root's RPMS): a payload file
               that is, or carries verbatim, a prebuilt binary from the sources
               is SHIPPED, red whatever its exception says, firmware alone
-              excepted; one that carries the code of a static library or
-              object (not a copy of it) is an EMBEDS? line for the review:
-              the package may have rebuilt the same sources with the same
-              compiler
+              excepted; one that carries the code of a bootstrap's static
+              library or object (not a copy of it) is an EMBEDS? line for the
+              review: the package may have rebuilt the same sources with the
+              same compiler
   --all       list every hit (default: the first 20, then a count per kind and
               per directory)
   --no-cache  rescan archives scanned before (results are cached by sha256
@@ -854,10 +854,15 @@ def main():
                 if fp:
                     prints.setdefault(bytes.fromhex(fp), p)
         shipped, bad_rpms, rpms = rpm_payloads(a.rpms, prebuilt, prints)
-        # A static library's or object's code in a shipped file may be the
-        # package's own build of the same sources by the same compiler (swift-lang's
-        # compiler-rt and its seed's): the review decides. A copy stays SHIPPED.
-        static = {p for p, k, _, _ in hits if k.startswith(LINKABLE)}
+        # A bootstrap's static library or object whose code a shipped file
+        # carries may be the package's own build of the same sources by the same
+        # compiler (swift-lang's compiler-rt and its seed's): the review decides.
+        # A copy stays SHIPPED, and so does any other library's code.
+        static = {
+            p
+            for p, k, _, _ in hits
+            if k.startswith(LINKABLE) and (exception(p) or ("", ""))[1] == "bootstrap"
+        }
         review = [x for x in shipped if x[1] == "embeds" and x[2] in static]
         shipped = [x for x in shipped if x not in review]
         unknown += bad_rpms

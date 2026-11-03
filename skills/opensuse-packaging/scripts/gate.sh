@@ -1620,6 +1620,9 @@ sb_args=(.); [ -z "$rpms" ] || sb_args+=(--rpms "$rpms")
 "$HERE/source-binaries.py" "${sb_args[@]}" > "$log/source-binaries.txt" 2>&1; rc=$?
 [ -n "$rpms" ] || echo "note: no --rpms DIR: the built RPMs were not checked for a prebuilt binary they ship (the build root's RPMS, or osc getbinaries -d DIR, then --obs-build --rpms DIR)" >> "$log/source-binaries.txt"
 show source-binaries $rc "$log/source-binaries.txt"
+# a bootstrap's static library whose code ships: the review's to settle, so on the verdict line
+emb=$(grep -c '^EMBEDS?' "$log/source-binaries.txt"); review=""
+[ "$emb" = 0 ] || review=", $emb EMBEDS? line(s) for the review ($log/source-binaries.txt)"
 
 [ -z "$hostnote" ] || hostnote=$(printf '%s' "$hostnote" | python3 -I "$HERE/_sanitize.py")
 if [ ${#red[@]} -eq 0 ]; then
@@ -1630,10 +1633,11 @@ if [ ${#red[@]} -eq 0 ]; then
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
   [ -z "$hostnote" ] || t+=", not proven on this host: $hostnote"
+  t+=$review
   if [ -n "$deviation" ] && grep -q '^DEVIATION' "$log/spec-cleaner.txt" 2>/dev/null; then
     echo "VERDICT: GREEN — all gates passed$t, spec-cleaner deviation: $deviation (diff: $log/spec-cleaner.diff; full output: $log/)"; exit 0
   fi
   echo "VERDICT: GREEN — all gates passed$t (full output: $log/)"; exit 0
 fi
 [ -z "$stampf" ] || rm -f "$stampf"
-echo "VERDICT: RED — ${red[*]}${hostnote:+, not proven on this host: $hostnote} (full output: $log/)"; exit 1
+echo "VERDICT: RED — ${red[*]}${hostnote:+, not proven on this host: $hostnote}$review (full output: $log/)"; exit 1

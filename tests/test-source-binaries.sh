@@ -299,6 +299,11 @@ PY
     || fail "embeds: archive code is SHIPPED: $(grep '^SHIPPED' <<<"$LAST" | head -2)"
   shiprpm rpm-copy "$work/t/fp/lib/libx.a"
   case_ shipped-archive-copy 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt fp.tar.gz:./lib/libx.a" "$d" --rpms "$work/rpm-copy-out"
+  # only a bootstrap's static library may be a review line: a test-data one is red
+  d=$(pkg tdlib); mkdir -p "$work/t/tdl/tests"; cp "$work/t/fp/lib/libx.a" "$work/t/tdl/tests/"
+  tar -C "$work/t/tdl" -czf "$d/tdl.tar.gz" .
+  printf '# Source-Binary-Exception: tdl.tar.gz:./tests/* -- test-data: an archive the ar tests read\n' >> "$d/p.spec"
+  case_ embeds-testdata 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib embeds the prebuilt tdl.tar.gz:./tests/libx.a" "$d" --rpms "$work/rpm-emb-out"
   # a small helper (gcc -O2: under 1 KiB of .text in a 64 KiB file) embedded in a bundle
   if command -v gcc > /dev/null; then
     d=$(pkg tiny); mkdir -p "$work/t/tiny/bin"
