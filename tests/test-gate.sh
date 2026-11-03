@@ -1269,11 +1269,28 @@ EOF
   sdef() { mkdir -p "$work/$1"
     printf '%s\n' "$HDR" '%define opt_macro() echo %*' '%description' t '%prep' '%build' "$2" '%files' '%changelog' > "$work/$1/p.spec"; }
   sdef sp-defect '%{opt_macro} -p foo'; sdef sp-dash '%opt_macro -- -p foo'; sdef sp-group '%{opt_macro} -p foo'
+  # a bootstrap's static library whose code a shipped file carries: named on the verdict line
+  mkdir -p "$work/emb/lib" "$work/pp-emb" "$work/emb-rpm/SOURCES" "$work/emb-rpms"; head -c 6144 /dev/urandom > "$work/emb-code"
+  python3 - "$work/emb/lib/libseed.a" "$work/emb-code" <<'PY'
+import sys
+code = open(sys.argv[2], "rb").read()
+hdr = b"%-16s%-12s%-6s%-6s%-8s%-10d`\n" % (b"x.o/", b"0", b"0", b"0", b"644", len(code))
+open(sys.argv[1], "wb").write(b"!<arch>\n" + hdr + code)
+PY
+  tar -C "$work/emb" -czf "$work/pp-emb/seed.tar.gz" .
+  printf '%s\n' 'Source0:        seed.tar.gz' \
+    '# Source-Binary-Exception: seed.tar.gz:./lib/* -- bootstrap: the seed compiler builds the first stage of this compiler, which Factory lacks' \
+    '%description' t '%prep' '%files' | ms pp-emb emb
+  { head -c 2000 /dev/urandom; cat "$work/emb-code"; head -c 2000 /dev/urandom; } > "$work/emb-rpm/SOURCES/lib"
+  printf 'Name: e\nVersion: 1\nRelease: 0\nSummary: e\nLicense: MIT\nBuildArch: noarch\nSource0: lib\n%%description\ne\n%%install\ninstall -D -m 0644 %%{SOURCE0} %%{buildroot}/usr/lib/e/lib\n%%files\n/usr/lib/e\n' > "$work/emb-rpm/e.spec"
+  rpmbuild -bb --quiet --define "_topdir $work/emb-rpm" --define 'debug_package %{nil}' --define '__os_install_post %{nil}' \
+    "$work/emb-rpm/e.spec" > /dev/null 2>&1 && find "$work/emb-rpm/RPMS" -name '*.rpm' -exec cp {} "$work/emb-rpms/" \;
 
   bg rs-ok; bg rs-sc SC_MODE=group; bg rs-red
   bg pp-ok HOME="$work/home"; bg pp-cache; bg pp-red; bg pp-log -- --build-log "$work/build.log"
   bg pp-nobw HOME="$work/home" PATH="$work/nobw:$PATH"; bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2
   bg sp-defect SC_MODE=unbrace; bg sp-dash SC_MODE=unbrace; bg sp-group SC_MODE=group
+  bg pp-emb -- --rpms "$work/emb-rpms"
   wait
   bash "$GATE" "$work/pp-cache" > "$work/pp-cache.out" 2>&1   # the second run of the same tree
 
@@ -1356,6 +1373,9 @@ EOF
   [ "$rc" = 130 ] && pass "prep: a TERM exits 130" || fail "prep: TERM: rc=$rc"
   gone pp-sig "$s1" "a TERM leaves nothing behind"
 
+  got pp-emb
+  grep -qE '^VERDICT: .*1 EMBEDS\? line\(s\) for the review' <<<"$out" && pass "source-binaries: an EMBEDS? line is counted on the verdict line" \
+    || { fail "source-binaries: EMBEDS? not on the verdict line"; grep -E 'EMBEDS|VERDICT' <<<"$out" | sed 's/^/    /'; }
   got sp-defect
   grep -qF "## spec-cleaner: rc=1" <<<"$out" \
     && grep -qF "KNOWN DEFECT: p.spec:11: spec-cleaner's \`%opt_macro -p foo\` does not parse" "$work/gate-sp-defect/spec-cleaner.txt" \
