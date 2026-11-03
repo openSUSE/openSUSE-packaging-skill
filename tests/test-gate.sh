@@ -914,6 +914,13 @@ blog_ "$work/nb1.log" "$now" foo-1.0-0 foo.spec; blog_ "$work/nb2.log" "$now" fo
 pyg buildlogs "$work/t-nobase" "$work/nb1.log" "$work/nb2.log"
 [ "$rc" = 0 ] && pass "--build-log: a spec that excludes the base package needs one log per flavor" \
   || { fail "--build-log base excluded: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# do-not-build is spelled with dashes too.
+sed -i 's/^ExclusiveArch:  do_not_build$/ExclusiveArch:  do-not-build/' "$work/t-nobase/foo.spec"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_ "$work/nb1.log" "$now" foo-1.0-0 foo.spec; blog_ "$work/nb2.log" "$now" foo-1.0-0 foo.spec; echo '[  101s] gui' >> "$work/nb2.log"
+pyg buildlogs "$work/t-nobase" "$work/nb1.log" "$work/nb2.log"
+[ "$rc" = 0 ] && pass "--build-log: ExclusiveArch: do-not-build excludes the base package too" \
+  || { fail "--build-log do-not-build: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # The same through a macro that holds the flavor, as postgresql extensions write it.
 sed -i 's/^%if "%{flavor}" == ""$/%if "%{pg_name}" == ""/' "$work/t-nobase/foo.spec"
 printf '%%define pg_name @BUILD_FLAVOR@%%{nil}\n' >> "$work/t-nobase/foo.spec"
@@ -945,6 +952,17 @@ pybl() {   # <name> <rc> <message> <logs...>
 pybl "the main and the test flavor" 0 "OK: 2 log(s)" "$work/py-main.log" "$work/py-test.log"
 pybl "the main flavor alone" 1 "2 build(s) (the base package, test)" "$work/py-main.log"
 pybl "the main flavor twice" 1 "1 distinct source RPM(s)" "$work/py-main.log" "$work/py-main2.log"
+# %{?psuffix} with psuffix defined for one flavor only is empty in the base build.
+mkdir -p "$work/t-hw/.osc" && printf 'halloween-openSUSE\n' > "$work/t-hw/.osc/_package" && printf 'X11:Utilities\n' > "$work/t-hw/.osc/_project"
+printf '<directory name="halloween-openSUSE"><entry name="halloween-openSUSE.spec"/></directory>\n' > "$work/t-hw/.osc/_files"
+cp "$HERE/fixtures/gate/halloween-openSUSE.spec" "$work/t-hw/"
+printf '<multibuild>\n  <flavor>firefox</flavor>\n</multibuild>\n' > "$work/t-hw/_multibuild"
+now=$(LC_ALL=C date -u '+%a %b %e %H:%M:%S UTC %Y')
+blog_ "$work/hw-base.log" "$now" halloween-openSUSE-2026.10.6-1.1 halloween-openSUSE.spec
+blog_ "$work/hw-ff.log" "$now" halloween-openSUSE-firefox-theme-2026.10.6-1.1 halloween-openSUSE.spec
+pyg buildlogs "$work/t-hw" "$work/hw-base.log" "$work/hw-ff.log"
+[ "$rc" = 0 ] && pass "--build-log: %{?macro} in Name is empty in the base build" \
+  || { fail "--build-log %{?psuffix} base: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A checkout with no spec (kiwi, Dockerfile) writes no source RPM: its recipe is checked.
 mkdir -p "$work/t-kiwi/.osc" && printf 'img\n' > "$work/t-kiwi/.osc/_package" && printf 'devel:example\n' > "$work/t-kiwi/.osc/_project"
 printf '<directory name="img"><entry name="img.kiwi"/></directory>\n' > "$work/t-kiwi/.osc/_files"; printf '<image/>\n' > "$work/t-kiwi/img.kiwi"

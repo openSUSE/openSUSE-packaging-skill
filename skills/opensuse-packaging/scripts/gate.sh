@@ -640,12 +640,16 @@ def spec_values(lines):
 
 
 def expansions(s, vals, depth=8):
-    # every spelling of s those values give it, at most 32
-    m = next((m for m in MACRO.finditer(s) if (m.group(1) or m.group(2)) in vals), None)
+    # every spelling of s those values give it, at most 32; %{?x} is also
+    # empty, as rpm makes it where x is not defined (the base build of a
+    # flavor that alone defines x)
+    m = next((m for m in MACRO.finditer(s)
+              if (m.group(1) or m.group(2)) in vals or m.group(0).startswith("%{?")), None)
     if m is None or depth == 0:
         return {s}
     out = set()
-    for v in vals[m.group(1) or m.group(2)][:8]:
+    cands = vals.get(m.group(1) or m.group(2), [])[:8]
+    for v in cands + [""] * (m.group(0).startswith("%{?") and "" not in cands):
         out |= expansions(s[: m.start()] + v + s[m.end():], vals, depth - 1)
         if len(out) >= 32:
             break
@@ -656,7 +660,7 @@ EMPTY_IF = re.compile(r'%if\s+"%\{?\??(\w+)\}?"\s*==\s*""\s*$')
 
 
 def base_excluded(lines, vals):
-    # ExclusiveArch: do_not_build under %if "%{flavor}" == "" (or another macro
+    # ExclusiveArch: do_not_build (or do-not-build) under %if "%{flavor}" == "" (or another macro
     # holding @BUILD_FLAVOR@, as pg_name does): no base package build
     def flavorish(m):
         return m == "flavor" or any("@BUILD_FLAVOR@" in x for x in expansions("%{" + m + "}", vals))
@@ -671,7 +675,7 @@ def base_excluded(lines, vals):
             stack[-1] = False
         elif re.match(r"%endif\b", t) and stack:
             stack.pop()
-        elif stack and stack[-1] and re.match(r"ExclusiveArch:\s*do_not_build\b", t):
+        elif stack and stack[-1] and re.match(r"ExclusiveArch:\s*do[_-]not[_-]build\b", t):
             return True
     return False
 
