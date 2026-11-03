@@ -9229,5 +9229,49 @@
       "command": "bash @WORK@/iter.sh && osc ci -m 'Update y to 1.1'"
     },
     "cwd": "@OSC@/fresh/y"
+  },
+  "rm-project-one-package": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/single"
+    }
+  },
+  "rm-checkouts-separately": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/spark/libpqxx; rm -rf @OSC@/spark/python-streamdeck"
+    }
+  },
+  "rm-project-many-packages": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @OSC@/multi"
+    }
+  },
+  "find-delete-no-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find spark -delete"
+    },
+    "cwd": "@OSC@"
+  },
+  "find-mindepth-no-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find -mindepth 1 -delete"
+    },
+    "cwd": "@OSC@/spark"
+  },
+  "rm-link-trailing-slash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @LINKS@/spark/"
+    }
+  },
+  "rm-link-itself": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf @LINKS@/spark"
+    }
   }
 }

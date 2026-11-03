@@ -488,9 +488,7 @@ repository whose title or description breaks the same rules (`tea pulls create`,
 `git-obs pr create`; the title is the headline), or writing into a
 `*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
 another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
-or one it cannot place, a recursive `rm` or a `find … -delete` (with no name test) of a
-directory holding osc checkouts, or of several checkouts at once, running a `.sh` file
-with Python or a `.py` file with a shell, or
+or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
 fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
 Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
 `build-wait.sh`, `--no-summary` for a job other than a build; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
@@ -534,6 +532,10 @@ yourself. It asks before:
   wants the user's go for someone else's request (core directive 10); the guard no longer
   asks for it on your own packages, so that go is the agent's to hold.
   The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+- **a delete of several osc checkouts at once**: your own recursive `rm` or `find …
+  -delete` (with no name test) that removes two or more package checkouts, as a project
+  checkout of several packages or a scratch directory of them; one checkout per `rm`
+  passes (`osc co PRJ PKG` is one), and so do separate `rm` commands in one call;
 - **a commit of a tree `gate.sh` did not judge**: an `osc commit` whose files (as osc
   commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a
   whole project checkout. Run `gate.sh`, then commit in the next call: a call that runs
@@ -666,7 +668,7 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 ## What reaches the guard
 
 The prefilter matches any path, `~`, `..`, a variable or substitution anywhere (`$X`,
-`$(…)`, backquotes, `$'…'`), `cd`, `rm`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
+`$(…)`, backquotes, `$'…'`), `cd`, `rm`, `find`, `-delete`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
 `send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and for the credential
 rules `gh`, `credential`, `secret-tool`,
 `netrc`, `oscrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each

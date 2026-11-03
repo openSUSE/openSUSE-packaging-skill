@@ -18,9 +18,7 @@ passes), feed an osc request or commit an answer on stdin
 (a pipe, here-string or heredoc; < /dev/null and a message read with -F -
 are fine) or answer them unread with osc's own yes option, file, accept,
 decline, reopen, revoke or supersede a request without -m (or osc sr -F),
-where osc opens an editor and hangs, delete with rm -r (or find -delete
-without a name test) a directory holding osc checkouts, or several checkouts
-at once, run a .sh file
+where osc opens an editor and hangs, run a .sh file
 with Python or a .py file with a shell, wait in fixed sleeps of a minute or
 more in all (not in the Monitor tool, a background call or a script the call
 runs), file a request
@@ -64,10 +62,11 @@ gate.sh run (or of a whole project checkout); a submit request whose source
 files match no GREEN gate.sh run with the change review's PASS and a GREEN
 build recorded; a review recorded with gate.sh from a call the event names no
 changes-review agent for (agent_type: the harness sets it, the model cannot), or
-gate.sh arguments it cannot read where that review option could stand. A
-commit after the call writes into its checkout, and a submit in a call that
-writes anywhere, are refused: the agent splits the call. A failed lookup there
-asks too, and so does an eval or trap string it cannot
+gate.sh arguments it cannot read where that review option could stand; a
+recursive rm, or a find -delete with no name test, of two or more osc
+checkouts at once (one per rm passes). A commit after the call writes into its
+checkout, and a submit in a call that writes anywhere, are refused: the agent
+splits the call. A failed lookup there asks too, and so does an eval or trap string it cannot
 read (a substitution, a variable the call does not set); a trap's command is
 judged as running last, and with any & or coproc in the call every write counts
 as running before a commit. A command word only the shell knows asks when its
@@ -133,7 +132,7 @@ import sys
 # names the credential rules need where no path shows (gh, a netrc, curl -u).
 PREFILTER = re.compile(
     r"\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b"
-    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm)\b"
+    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm|find)\b|-delete\b"
     r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b"
     r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
     r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
