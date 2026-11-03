@@ -41,7 +41,8 @@ Output without the count line was cut off before the end: never read it as
   NOT-LANDED <id> <state>      your devel request is not accepted yet
   DEVEL-DECLINED <id> by <who>: <reason>   your devel request was declined
   GONE                         the package is no longer in the devel project
-  WRONG-DEVEL                  openSUSE:Factory develops it in another project
+  WRONG-DEVEL                  openSUSE:Factory develops it in another project,
+                               or has it under another spelling
   NEW-IN-FACTORY               yours, but not in openSUSE:Factory yet: ask
                                before submitting a new package
   DUE                          yours to forward (autoforward-gate.sh ELIGIBLE)
@@ -225,8 +226,9 @@ class Package:
         return bool(self.revs[rev]) and self.revs[rev][1] == self.devel[1]
 
     def factory_devel(self):
-        """openSUSE:Factory's devel project for the package when it is another
-        one than prj (and its package is no _link to prj/pkg), else None."""
+        """Why openSUSE:Factory takes the package from elsewhere -- another
+        devel project than prj (whose package is no _link to prj/pkg), or the
+        package under another spelling -- else None."""
         try:
             r = subprocess.run(
                 ["bash", os.path.join(HERE, "devel-of.sh"), self.pkg],
@@ -240,6 +242,8 @@ class Package:
             raise Lookup("devel-of.sh timed out", False)
         if r.returncode in (3, 4):  # not in Factory, or no devel project named
             return None
+        if r.returncode == 6:  # in Factory under another spelling: no forward
+            return clean(r.stdout.strip(), 160)
         if r.returncode != 0:
             raise Lookup(f"devel-of.sh {self.pkg}: exit {r.returncode}", False)
         dprj, _, dpkg = r.stdout.strip().partition("/")
@@ -249,7 +253,7 @@ class Package:
             link = ET.fromstring(osc("api", f"/source/{dprj}/{dpkg}/_link"))
         except Lookup as e:
             if e.args[1]:
-                return dprj
+                return f"openSUSE:Factory develops it in {dprj}"
             raise
         except ET.ParseError as e:
             raise Lookup(f"unreadable /source/{dprj}/{dpkg}/_link: {e}", False)
@@ -258,7 +262,7 @@ class Package:
             and (link.get("package") or dpkg) == self.pkg
         ):
             return None
-        return dprj
+        return f"openSUSE:Factory develops it in {dprj}"
 
     def forwards(self, states):
         """Factory submit requests for the package from the devel project."""
@@ -286,7 +290,7 @@ class Package:
             )
         wrong = self.factory_devel()
         if wrong:
-            return "WRONG-DEVEL", f"openSUSE:Factory develops it in {wrong}"
+            return "WRONG-DEVEL", wrong
         self.devel = tree(self.prj, self.pkg)
         if self.devel is None:
             return "GONE", f"no longer in {self.prj}"
@@ -561,4 +565,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # devel-of.sh reads Factory's package list once a run, not once a package
+    with tempfile.TemporaryDirectory(prefix="forward-check.") as lists:
+        os.environ["DEVEL_OF_CACHE"] = lists
+        sys.exit(main())

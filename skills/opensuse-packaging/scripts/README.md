@@ -55,7 +55,7 @@ Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/st
 
 ## `devel-of.sh`
 
-The devel project registered for a package (exit 3 = not in target/new package, exit 4 = present but no devel project, exit 5 = lookup failed — never read as "new package"). A miss by the exact name reads the target's package list (`osc ls`) for the same package under another spelling — case, `-`/`_`/`.` folded, a `python3-`/`python3XX-` flavour prefix read as `python-`, the name `python3dist()` provides — and exits 6 naming it: python-authlib went to Factory as a new package (sr#1394298, revoked) while Factory shipped python-Authlib. OBS's binary search has no provides index, so the normalised name stands in for the provides; a failed list exits 5. `preflight.sh` STOPs on it, and `gate.sh`'s target gate is red.
+The devel project registered for a package (exit 3 = not in target/new package, exit 4 = present but no devel project, exit 5 = lookup failed — never read as "new package"). A miss by the exact name reads the target's package list (`osc ls`) for the same package under another spelling — case, `-`/`_`/`.` folded, a `python3-`/`python3XX-` flavour prefix read as `python-`, the name `python3dist()` provides — and exits 6 naming it: python-authlib went to Factory as a new package (sr#1394298, revoked) while Factory shipped python-Authlib. OBS's binary search has no provides index, so the normalised name stands in for the provides; a failed list exits 5. `preflight.sh` STOPs on it, `gate.sh`'s target gate is red, and `autoforward-gate.sh` and `forward-check.py` say WRONG-DEVEL; those two read the list once a run (`DEVEL_OF_CACHE`, a directory they set).
 
 ## `autoforward-gate.sh`
 

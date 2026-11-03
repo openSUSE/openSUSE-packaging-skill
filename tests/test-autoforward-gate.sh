@@ -96,6 +96,12 @@ case_ devel-lookup-fails 5 "or its Factory devel project" \
   "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta @ERR" devel:a foo
 
 echo "--- --batch exits with the worst row"
+# Packages Factory lacks by name: one package list for the whole --batch run.
+case_ batch-one-listing 0 $'devel:a/bar\tELIGIBLE' \
+  "obs /source/devel:a/bar/_meta '<package><person userid=\"tester\" role=\"maintainer\"/></package>'; rm devel/foo; printf 'devel:a\tfoo\ndevel:a\tbar\n' > rows" --batch rows
+[ "$(grep -c '^osc ls ' "$work/batch-one-listing/calls")" = 1 ] && pass "--batch lists the target once" \
+  || fail "--batch listed the target $(grep -c '^osc ls ' "$work/batch-one-listing/calls") times"
+
 ROWS=$'devel:a\tfoo\ndevel:a\tbar'
 BAR="obs /source/devel:a/bar/_meta '<package><person userid=\"tester\" role=\"maintainer\"/></package>'"
 case_ batch-eligible    0 $'devel:a/bar\tELIGIBLE' \

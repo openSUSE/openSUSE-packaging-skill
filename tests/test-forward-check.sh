@@ -48,6 +48,8 @@ elif args[:2] == ["develproject", "openSUSE:Factory"]:
     if not os.path.exists(f):
         sys.exit(1)
     print(open(f).read().strip())
+elif args[:2] == ["ls", "openSUSE:Factory"]:
+    answer(os.path.join(fix, "ls"), "")
 elif args[0] == "api" and args[1].startswith("/search/request?match="):
     m = urllib.parse.unquote(args[1].split("=", 1)[1])
     pkg = re.search(r"@package='([^']+)'", m)
@@ -122,6 +124,9 @@ put due tester
 put newpkg tester -
 put maintdue maint
 put wrong tester;     printf 'devel:b/wrong\n' > "$B/devel/wrong"
+# Not in Factory by this name, but under another spelling (devel-of.sh exit 6).
+put near tester -;    rm "$B/devel/near"
+put near2 tester -;   rm "$B/devel/near2"
 put broken tester;    echo @ERR > "$B/search/factory-broken"
 put pend tester
 coll "$(req 2000 tester accepted 2026-10-15T09:00:00 $h:tester:spark x '' maint devel:a pend)" \
@@ -193,6 +198,10 @@ case_ due            4 "devel:a/due  DUE" : devel:a due
 case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" : devel:a newpkg
 case_ maintainers    0 "devel:a/maintdue  MAINTAINERS" : devel:a maintdue
 case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL openSUSE:Factory develops it in devel:b" : devel:a wrong
+case_ near-spelling  4 "devel:a/near  WRONG-DEVEL NOT IN openSUSE:Factory as near, but it has Near" "echo Near > ls" devel:a near
+case_ near-two       4 "devel:a/near2  WRONG-DEVEL" "printf 'Near\nNear2\n' > ls" devel:a/near devel:a/near2
+[ "$(grep -c '^osc ls ' "$LASTDIR/calls")" = 1 ] && pass "near-two: Factory's package list read once a run" \
+  || fail "near-two: Factory listed $(grep -c '^osc ls ' "$LASTDIR/calls") times"
 grep -qF "target/@project='openSUSE:Factory'" "$LASTDIR/calls" && fail "wrong-devel searched Factory first" \
   || pass "wrong-devel is decided before any Factory search"
 # A current forward does not make the wrong project right.
