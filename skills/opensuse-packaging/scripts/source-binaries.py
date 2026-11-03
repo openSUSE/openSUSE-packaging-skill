@@ -37,8 +37,10 @@ saying the build does not use the file (never invoked, unused) is refused:
 that file is removed from the sources. Every bootstrap exception is named
 on the verdict line (references/specfile-guidelines.md "Spec file — general
 rules"). The shipped check finds a binary copied into an RPM and one a bundler embeds
-verbatim in its single executable (a 4 KiB fingerprint of each hit of 1 KiB or
-more); one stored compressed or encoded stays the review's to find.
+verbatim in its single executable (a fingerprint of 1-4 KiB from each hit's own
+code: its ELF executable sections or archive members, bytes with real entropy
+found once in the hit, never zero padding or a symbol table that unrelated
+binaries share); one stored compressed or encoded stays the review's to find.
 
 A file that cannot be read completely (a 7z or rar archive, a missing
 decompressor, a broken archive, a git-lfs pointer whose object was not fetched)
@@ -56,6 +58,7 @@ import hashlib
 import io
 import json
 import lzma
+import math
 import os
 import re
 import shutil
@@ -66,9 +69,10 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 4  # bump when detection changes, so cached results are rescanned
+VERSION = 5  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
+FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
 CHUNK = 8 << 20
 NESTED_ZIP_CAP = 256 << 20
 SHOW = 20
@@ -264,22 +268,120 @@ class Limited(io.RawIOBase):
         return len(data)
 
 
-def digest(head, stream):
+def digest(head, stream, k):
     """(sha256, fingerprint) of head and the rest of stream, read to its end.
-    The fingerprint is 4 KiB from past the headers every binary of a kind
-    shares (the whole file when it is short): what a bundler that embeds the
-    file in its single executable still carries verbatim."""
+    The fingerprint is up to 4 KiB of the hit's own code: what a bundler that
+    embeds the file in its single executable still carries verbatim, and what
+    no unrelated binary shares (fingerprint())."""
     h, buf = hashlib.sha256(head), bytearray(head)
     while True:
         data = stream.read(1 << 20)
         if not data:
             break
         h.update(data)
-        if len(buf) < 2 * HEAD:
-            buf += data[: 2 * HEAD - len(buf)]
-    whole = len(buf) < 2 * HEAD
-    fp = bytes(buf) if whole else bytes(buf[HEAD : 2 * HEAD])
-    return h.hexdigest(), (fp.hex() if len(fp) >= PRINT else "")
+        if len(buf) < FP_CAP:
+            buf += data[: FP_CAP - len(buf)]
+    return h.hexdigest(), fingerprint(bytes(buf), k).hex()
+
+
+def lively(w):
+    """Whether window w carries information: 5+ bits per byte and no byte over a
+    quarter of it. Zero padding (lld's mips-gp-disp.so test input) and the
+    symbol names of string tables fall short; machine code does not."""
+    counts = [c for c in (w.count(i) for i in range(256)) if c]
+    n = len(w)
+    if max(counts) * 4 > n:
+        return False
+    return -sum(c / n * math.log2(c / n) for c in counts) >= 5.0
+
+
+def elf_code(b, base=0):
+    """[(start, end)] of the executable sections of the ELF image b (its PF_X
+    segments when the section table lies past b), offset by base."""
+    if len(b) < 64 or b[:4] != b"\x7fELF" or b[4] not in (1, 2) or b[5] not in (1, 2):
+        return []
+    e = "<" if b[5] == 1 else ">"
+    wide = b[4] == 2
+    try:
+        if wide:
+            phoff, shoff = struct.unpack_from(e + "QQ", b, 0x20)
+            phsz, phn, shsz, shn = struct.unpack_from(e + "HHHH", b, 0x36)
+        else:
+            phoff, shoff = struct.unpack_from(e + "II", b, 0x1C)
+            phsz, phn, shsz, shn = struct.unpack_from(e + "HHHH", b, 0x2A)
+        out = []
+        if shn and shsz in (40, 64) and shn <= 4096 and shoff + shn * shsz <= len(b):
+            for i in range(shn):
+                o = shoff + i * shsz
+                if wide:
+                    typ, flags, off, size = struct.unpack_from(e + "IQ8xQQ", b, o + 4)
+                else:
+                    typ, flags, off, size = struct.unpack_from(e + "II4xII", b, o + 4)
+                if flags & 0x4 and typ != 8 and size:  # SHF_EXECINSTR, not SHT_NOBITS
+                    out.append((base + off, base + off + size))
+            return out
+        if phn and phsz in (32, 56) and phn <= 4096 and phoff + phn * phsz <= len(b):
+            for i in range(phn):
+                o = phoff + i * phsz
+                if wide:
+                    typ, flags, off, _, _, size = struct.unpack_from(e + "IIQQQQ", b, o)
+                else:
+                    typ, off, _, _, size, _, flags = struct.unpack_from(
+                        e + "IIIIIII", b, o
+                    )
+                if typ == 1 and flags & 1 and size:  # PT_LOAD, PF_X
+                    out.append((base + off, base + off + size))
+        return out
+    except struct.error:
+        return []
+
+
+AR_TABLES = ("/", "//", "/SYM64/", "__.SYMDEF", "__.SYMDEF SORTED", "ARFILENAMES/")
+
+
+def ar_members(b):
+    """(start, size) of each member of the ar archive b but its symbol and name
+    tables, which archives of the same objects for another arch share."""
+    off = 8
+    while off + 60 <= len(b):
+        name = b[off : off + 16].decode("latin-1").rstrip()
+        try:
+            size = int(b[off + 48 : off + 58])
+        except ValueError:
+            return
+        if name not in AR_TABLES:
+            yield off + 60, size
+        off += 60 + size + (size & 1)
+
+
+def fingerprint(buf, k):
+    """Up to 4 KiB of buf that is lively() and found once in it, from the hit's
+    own code: an ELF's executable sections, an ar archive's members (their code
+    when they are ELF objects), else past the first 4 KiB of headers. b"" when
+    no window qualifies: the sha256 still finds a verbatim copy."""
+    if k.startswith("ELF"):
+        ranges = elf_code(buf)
+    elif k.startswith("ar archive"):
+        ranges = []
+        for start, size in ar_members(buf):
+            ranges += elf_code(buf[start : start + size], start) or [
+                (start, start + size)
+            ]
+    else:
+        ranges = []
+    if not ranges:
+        ranges = [(HEAD if len(buf) >= 2 * HEAD else 0, len(buf))]
+    for lo, hi in ranges:
+        hi = min(hi, len(buf))
+        n = min(HEAD, hi - lo)
+        if n < PRINT:
+            continue
+        offs = list(range(lo, hi - n + 1, n))[:64]
+        for off in offs + [hi - n]:
+            w = buf[off : off + n]
+            if lively(w) and buf.find(w) == off and buf.find(w, off + 1) == -1:
+                return w
+    return b""
 
 
 def drain(stream):
@@ -309,7 +411,7 @@ class Scan:
         self.members += 1
         k = kind(head, path)
         if k:
-            self.hits.append((path, k, *digest(head, stream)))
+            self.hits.append((path, k, *digest(head, stream, k)))
             return
         for magic, what in UNSUPPORTED.items():
             if head.startswith(magic):
@@ -372,7 +474,9 @@ class Scan:
             else:
                 k = kind(ihead, path)
                 if k:
-                    self.hits.append((path, k + " (compressed)", *digest(ihead, inner)))
+                    self.hits.append(
+                        (path, k + " (compressed)", *digest(ihead, inner, k))
+                    )
             # to its end: a tar stops at its end-of-archive blocks, and a
             # decompressor left writing would die of SIGPIPE and read as broken
             drain(inner)
@@ -496,7 +600,7 @@ def scan_file(path, name):
             fmt = archive(head)
             k = kind(head, name)
             if k:
-                s.hits.append((name, k, *digest(head, fh)))
+                s.hits.append((name, k, *digest(head, fh, k)))
             elif fmt == "zip":
                 try:
                     with zipfile.ZipFile(

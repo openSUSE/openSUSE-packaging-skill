@@ -248,6 +248,33 @@ if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
   case_ shipped-subdir 3 "SHIPPED noarch/s-1-0.noarch.rpm:./usr/bin/go is the prebuilt vendor.tar.gz:./bin/go" "$d" --rpms "$work/rpm/RPMS"
   sed -i 's/-- bootstrap: .*/-- firmware: a blob no source exists for/' "$d/p.spec"
   case_ shipped-firmware 0 "read for shipped ones" "$d" --rpms "$work/rpms"
+  # A fingerprint is the hit's own code, never what unrelated binaries share:
+  # swift-lang's RPM "embedded" lld's all-zero mips-gp-disp.so test input and,
+  # through an archive symbol table both arches have, the aarch64 seed's .a.
+  d=$(pkg fp); mkdir -p "$work/t/fp/tests" "$work/t/fp/lib"
+  { printf '\177ELF\002\001\001\000'; head -c 12288 /dev/zero; head -c 6144 /dev/urandom; } > "$work/t/fp/tests/padded.so"
+  head -c 8192 /dev/urandom > "$work/fp-symtab"
+  python3 - "$work/t/fp/lib/libx.a" "$work/fp-symtab" <<'PY'
+import os, sys
+def member(name, data):
+    hdr = b"%-16s%-12s%-6s%-6s%-8s%-10d`\n" % (name.encode(), b"0", b"0", b"0", b"644", len(data))
+    return hdr + data + (b"\n" if len(data) % 2 else b"")
+symtab = open(sys.argv[2], "rb").read()
+open(sys.argv[1], "wb").write(b"!<arch>\n" + member("/", symtab) + member("x.o/", os.urandom(6144)))
+PY
+  tar -C "$work/t/fp" -czf "$d/fp.tar.gz" .
+  printf '# Source-Binary-Exception: fp.tar.gz:./* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
+  mkdir -p "$work/rpm-fp/SOURCES" "$work/rpms-fp"
+  # unrelated shipped files: zero padding of their own, the same symbol table
+  { printf 'other'; head -c 16384 /dev/zero; head -c 4096 /dev/urandom; } > "$work/rpm-fp/SOURCES/zeros"
+  { head -c 3000 /dev/urandom; cat "$work/fp-symtab"; head -c 3000 /dev/urandom; } > "$work/rpm-fp/SOURCES/symtab"
+  printf 'Name: f\nVersion: 1\nRelease: 0\nSummary: f\nLicense: MIT\nBuildArch: noarch\nSource0: zeros\nSource1: symtab\n%%description\nf\n%%install\ninstall -D -m 0644 %%{SOURCE0} %%{buildroot}/usr/share/f/zeros\ninstall -D -m 0644 %%{SOURCE1} %%{buildroot}/usr/share/f/symtab\n%%files\n/usr/share/f\n' > "$work/rpm-fp/f.spec"
+  rpmbuild -bb --quiet --define "_topdir $work/rpm-fp" --define 'debug_package %{nil}' --define '__os_install_post %{nil}' \
+    "$work/rpm-fp/f.spec" > /dev/null 2>&1
+  find "$work/rpm-fp/RPMS" -name '*.rpm' -exec cp {} "$work/rpms-fp/" \;
+  case_ shipped-padding 0 "read for shipped ones" "$d" --rpms "$work/rpms-fp"
+  ! grep -q '^SHIPPED' <<<"$LAST" && pass "shipped: zero padding and a shared symbol table are no embed" \
+    || fail "shipped: false SHIPPED: $(grep '^SHIPPED' <<<"$LAST" | head -3)"
 else
   echo "note: no rpmbuild/rpm2cpio here, the --rpms cases are not run"
 fi
