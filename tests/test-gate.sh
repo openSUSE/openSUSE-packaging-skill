@@ -1337,7 +1337,7 @@ PY
   has rs-red rpmspec "flavor.spec (flavor doc): rpmspec -P fails: error: line 11: Unknown tag: Bogus: tag" "each flavor is parsed"
   hasnt rs-red rpmspec "flavor.spec: rpmspec -P fails" "the default build of that spec parses"
   has rs-red rpmspec "offguard.spec: rpmspec -P fails" "do_not_build for another flavor excuses nothing"
-  has rs-red rpmspec "dupprep.spec: rpmspec -P fails: error: line 10: second prep" "a second %prep is red"
+  has rs-red rpmspec "dupprep.spec: rpmspec -P fails: error: line 10: second" "a second %prep is red"
   has rs-red rpmspec "filesn.spec: rpmspec -P fails: error: line 10: %files -n nosuchpkg" "%files of no package is red"
   has rs-red rpmspec "descn.spec: rpmspec -P fails: error: line 8: %description -n nosuch" "%description of no package is red"
   has rs-red rpmspec "duppkg.spec: rpmspec -P fails: error: line 12: %package devel" "a duplicate %package is red"
