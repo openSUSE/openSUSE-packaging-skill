@@ -884,9 +884,11 @@ def request_message(run, lit, ctx, cwd):
         args = largv[len(largv) - len(args) :]
     else:  # no literal-aware text: any $ or backtick is unknown
         args = [literal(a) if not VARIABLE.search(a) else a for a in args]
-    args = [long_prefix(a, ("--message", "--file")) for a in args]
+    args = [long_prefix(a, ("--message", "--file", "--diff")) for a in args]
     opts = parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
-    if not {k for k, _ in opts} & {"-m", "--message", "-F", "--file"}:
+    keys = {k for k, _ in opts}
+    diff = sub in SUBMITS and keys & {"-d", "--diff"}  # shows the diff, files nothing
+    if not diff and not keys & {"-m", "--message", "-F", "--file"}:
         block("request-no-message", f"osc {sub} without -m")
     for flag, word in opts:
         if flag not in ("-m", "--message", "-F", "--file"):
@@ -2382,6 +2384,11 @@ def note_writer(name, run, ctx, cwd):
         valued = ("--skip-fields", "--skip-chars", "--check-chars")
         if len(parse_opts(run[1:], "fsw", valued)[1]) < 2:
             return
+    elif name == "mkdir":  # makes the directories it names
+        dirs = parse_opts(run[1:], "m", ("--mode",))[1]
+        targets = [target_path(a, cwd) for a in dirs]
+        note_write(ctx, what, None if None in targets else tuple(targets))
+        return
     elif name == "tee":  # writes the files it names
         files = [a for a in run[1:] if a[:1] != "-"]
         if not files:
@@ -2579,28 +2586,45 @@ def gate_submit(run, ctx, cwd):
                 )
 
 
+def in_checkout(path):
+    """Whether path lies in an osc checkout (a directory above it holds .osc)."""
+    d = path if os.path.isdir(path) else os.path.dirname(path)
+    while d:
+        if os.path.isdir(os.path.join(d, ".osc")):
+            return True
+        if os.path.dirname(d) == d:
+            return False
+        d = os.path.dirname(d)
+    return False
+
+
 def gate_writers(ctx):
-    """judge()'s last step: a stamped submit in a call that can write
-    anywhere, and a stamped commit after a write into its checkout (before it,
-    or in a loop around both), are refused: a fault the agent fixes by
-    splitting the call, not one for the user to approve."""
+    """judge()'s last step: a stamped commit after a write into its checkout
+    (before it, in a loop around both, beside it in its pipeline or the
+    background), and a submit after a write that can change what OBS holds (a
+    commit, a script, a write into any checkout; not its own log), are refused:
+    a fault the agent fixes by splitting the call, not one for the user to
+    approve."""
     for kind, what, co, seq, loops, pipe in ctx.gate_pending:
-        w = sorted(
-            {
-                wh
-                for ws, wh, targets, wl, wp in ctx.writers
-                if kind == "submit"
-                or wh != "osc commit"
-                and (
-                    ws < seq
-                    or set(wl) & set(loops)
-                    or wp == pipe  # its pipeline runs beside it
-                    or seq in ctx.bg  # it runs in the background
-                    or ctx.any_bg  # something does: it may be the commit
+
+        def counts(ws, wh, targets, wl, wp):
+            if kind == "commit":
+                return (
+                    wh != "osc commit"
+                    and (
+                        ws < seq
+                        or set(wl) & set(loops)
+                        or wp == pipe  # its pipeline runs beside it
+                        or seq in ctx.bg  # it runs in the background
+                        or ctx.any_bg  # something does: it may be the commit
+                    )
+                    and (targets is None or any(within(t, co) for t in targets))
                 )
-                and (targets is None or any(within(t, co) for t in targets))
-            }
-        )
+            return (
+                ws < seq or set(wl) & set(loops) or seq in ctx.bg or ctx.any_bg
+            ) and (targets is None or any(map(in_checkout, targets)))
+
+        w = sorted({w[1] for w in ctx.writers if counts(*w)})
         if w:
             more = ", ".join(w[:3]) + (", …" if len(w) > 3 else "")
             block(

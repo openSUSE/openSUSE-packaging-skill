@@ -475,7 +475,7 @@ src.opensuse.org over HTTPS (a token would carry it; SSH carries the login), wri
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
 `--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked or
-superseded without `-m` (osc would open an editor and hang), a request through the API (`/request?cmd=create`) , a submit request to a project other
+superseded without `-m` (osc would open an editor and hang; `osc sr --diff` passes), a request through the API (`/request?cmd=create`) , a submit request to a project other
 than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
 of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branch whose
 package links to a project other than the target (a link within the branch's own project
@@ -558,9 +558,10 @@ yourself. It asks before:
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
 `osc add`, an editor, a script, an interpreter, or any of them in a loop around the
-commit, in its pipeline or while it runs in the background); a request is refused when
-the call writes anything anywhere, a commit included: the agent commits, and files, each
-in a call of its own.
+commit, in its pipeline or while it runs in the background, but not a directory or file
+made outside it); a request is refused after a write that can change what OBS holds — a
+commit, a script, a write into a checkout — though not for its own log: the agent
+commits, and files, each in a call of its own.
 An `eval` or `trap` string the guard cannot read (`eval "$(…)"`, a variable the call
 does not set) asks as `[eval-dynamic]`; one held in a variable the call sets is judged,
 as are `eval`, `trap` and `bash -c` named through a variable, and a trap's command

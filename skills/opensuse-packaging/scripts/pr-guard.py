@@ -17,8 +17,8 @@ project other than the target (a link within the branch's own project
 passes), feed an osc request or commit an answer on stdin
 (a pipe, here-string or heredoc; < /dev/null and a message read with -F -
 are fine) or answer them unread with osc's own yes option, file, accept,
-decline, reopen, revoke or supersede a request without -m (or osc sr -F),
-where osc opens an editor and hangs, run a .sh file
+decline, reopen, revoke or supersede a request without -m (or osc sr -F;
+osc sr -d files nothing), where osc opens an editor and hangs, run a .sh file
 with Python or a .py file with a shell, wait in fixed sleeps of a minute or
 more in all (not in the Monitor tool, a background call or a script the call
 runs), file a request
@@ -65,8 +65,9 @@ changes-review agent for (agent_type: the harness sets it, the model cannot), or
 gate.sh arguments it cannot read where that review option could stand; a
 recursive rm, or a find -delete with no name test, of two or more osc
 checkouts at once (one per rm passes). A commit after the call writes into its
-checkout, and a submit in a call that writes anywhere, are refused: the agent
-splits the call. A failed lookup there asks too, and so does an eval or trap string it cannot
+checkout, and a submit after a write that can change what OBS holds (a
+commit, a script, a write into a checkout), are refused: the agent splits the
+call. A failed lookup there asks too, and so does an eval or trap string it cannot
 read (a substitution, a variable the call does not set); a trap's command is
 judged as running last, and with any & or coproc in the call every write counts
 as running before a commit. A command word only the shell knows asks when its

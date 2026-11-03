@@ -915,8 +915,9 @@ case_ osc-sr-nodevelproject   2 nodevelproject "an osc request with --nodevelpro
 case_ osc-creq-nodevelproject 2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelproject"
 case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
-# Read as bash reads it, home:<you>:... redirects into the file ":branches:devel:tools".
-case_ osc-sr-devel-control  2 gate-sequence "a redirection to :branches:devel:tools"
+# Read as bash reads it, home:<you>:... redirects into the file ":branches:devel:tools",
+# outside every checkout and at the submit itself: nothing it sends changes first.
+case_ osc-sr-devel-control  0 - ""
 case_ osc-sr-nodevel-message  0 - ""
 # Maintenance and update projects take no direct write, by commit or by API;
 # a home: branch of one is the user's own, whatever its name ends in.
@@ -1258,6 +1259,9 @@ case_ nomsg-review-accept        2 request-no-message "osc review accept without
 case_ nomsg-rq-revoke-message    0 - ""
 case_ nomsg-sr-file              0 - ""
 case_ nomsg-rq-show              0 - ""
+# osc sr --diff only shows what a request would carry: no request, no editor.
+case_ nomsg-sr-diff              0 - ""
+case_ nomsg-sr-d                 0 - ""
 
 echo "--- a recursive delete takes one checkout at a time, or asks"
 ask_ rm-project-dir             rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
@@ -1633,7 +1637,14 @@ case_ trap-cleanup-then-ci      0 - ""
 case_ ci-brace-background      2 gate-sequence "sed"
 case_ ci-subshell-background   2 gate-sequence "sed"
 case_ ci-coproc                2 gate-sequence "sed"
-case_ sr-after-write-anywhere  2 gate-sequence "a redirection to /tmp/x-note.txt"
+# A submit sends what OBS holds: only a write before it that can change that counts --
+# a commit, a script, a write into a checkout -- not its own log or one outside checkouts.
+case_ sr-after-write-anywhere   0 - ""
+case_ seq-sr-tee-log             0 - ""
+case_ seq-sr-redirect-out        0 - ""
+case_ seq-sr-after-checkout-write 2 gate-sequence "a redirection to"
+# A directory made outside the checkout changes none of its files.
+case_ seq-mkdir-then-ci          0 - ""
 # The account: osc whois, once per call and in memory only. A file a call can write is
 # no source for it: an earlier call could name someone else there.
 mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"

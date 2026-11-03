@@ -9273,5 +9273,42 @@
     "tool_input": {
       "command": "rm -rf @LINKS@/spark"
     }
+  },
+  "nomsg-sr-diff": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --diff devel:tools tesseract-ocr openSUSE:Factory"
+    }
+  },
+  "nomsg-sr-d": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr -d devel:tools tesseract-ocr openSUSE:Factory"
+    }
+  },
+  "seq-sr-tee-log": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3' 2>&1 | tee /var/tmp/sr.log"
+    }
+  },
+  "seq-sr-redirect-out": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3' > /var/tmp/sr.out"
+    }
+  },
+  "seq-mkdir-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p /var/tmp/x-logs && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-sr-after-checkout-write": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo x >> @OSC@/devel/x/x.spec; osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    }
   }
 }
