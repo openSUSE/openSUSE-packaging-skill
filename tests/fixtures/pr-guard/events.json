@@ -9324,5 +9324,81 @@
       "command": "osc rq wipe 1390001"
     },
     "cwd": "@PLAIN@"
+  },
+  "seq-cp-out-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp x.spec /var/tmp/x.spec.bak && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-rm-out-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -f /var/tmp/x-old.log && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-tar-out-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar -cf /var/tmp/x-backup.tar . && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-cp-in-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/x.spec.new x.spec && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-cp-project-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r /var/tmp/work/a @OSC@/devel/ && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-cp-dotdot-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r /var/tmp/work/a .. && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-tar-x-dotdot-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar -xf /var/tmp/x.tar -C .. && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-cp-project-then-sr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r /var/tmp/work/a @OSC@/devel/ && osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    }
+  },
+  "seq-cp-home-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp x.spec ~/x.spec.bak && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-cp-other-co-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp x.spec @OSC@/fresh/y/x.spec.new && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "seq-tar-x-then-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar -xf /var/tmp/src.tar && osc ci -m 'Update x to 1.1'"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }
