@@ -98,16 +98,17 @@ BOOTSTRAP_WORDS = 8
 # "only the Android build invokes it", "unused"). What a real bootstrap says of a
 # packaged predecessor or the installed package ("Factory's go does not run it",
 # "not needed afterwards", "not used by anything the RPM installs") is no denial.
-_BUILD = r"(?:this|the|our|its)\s+(?:[\w'-]+\s+){0,2}?build"
+_BUILD = r"(?:(?:this|the|our|its)\s+)?(?:[\w'-]+\s+){0,4}?build(?:s|ing)?"
 _VERB = r"(?:invok|use|using|run|ran|execut|call|load|need|requir|depend)\w*"
-_NEG = r"(?:never|not|doesn't|didn't|won't|can't|cannot|has\s+no)"
+# not "cannot": "the build cannot use Factory's ghc" is a bootstrap's reason
+_NEG = r"(?:never|not|doesn't|didn't|won't|has\s+no)"
 UNUSED = re.compile(
     "|".join(
         (
-            rf"\b{_BUILD}\s+(?:[\w'-]+\s+){{0,2}}?{_NEG}\s+(?:\w+\s+)?{_VERB}",
-            rf"\b(?:not|never)\s+(?:\w+\s+){{0,2}}?{_VERB}\s+(?:by|in|during|at|for)\s+"
-            rf"(?:(?:this|the|our|its)\s+)?(?:[\w'-]+\s+){{0,2}}?build\b",
-            rf"\bonly\s+the\s+(?:[\w'-]+\s+){{1,2}}build\s+{_VERB}",
+            rf"\b{_BUILD}\s+(?:\w+\s+)?{_NEG}\s+(?:\w+\s+)?{_VERB}",
+            rf"\b(?:not|never)\s+(?:\w+\s+){{0,2}}?{_VERB}\s+(?:by|in|during|at|for|when|while)\s+"
+            rf"{_BUILD}\b",
+            rf"\bonly\s+(?:(?:the|its)\s+)?(?:[\w'-]+\s+){{1,4}}?build(?:s|ing)?\s+{_VERB}",
             r"\bunused\b",
         )
     ),

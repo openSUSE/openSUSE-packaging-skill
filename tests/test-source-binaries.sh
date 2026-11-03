@@ -187,7 +187,8 @@ for why in \
   "the stage0 rustc builds stage1 of the compiler from source and is not needed afterwards" \
   "the bootstrap jdk compiles the new jdk, which needs a previous build of itself, and is never used outside the build" \
   "the bootstrap sbcl compiles sbcl itself since lisp needs a lisp to build; nothing loads it at run time" \
-  "the seed swift toolchain compiles swift itself, since swift needs swift, and is not used by anything the RPM installs"; do
+  "the seed swift toolchain compiles swift itself, since swift needs swift, and is not used by anything the RPM installs" \
+  "ghc compiles itself, and the build cannot use Factory's ghc 9.4, which is two versions behind"; do
   d=$(boot real "$why")
   out="$(python3 "$SB" "$d" 2>&1)"; rc=$?
   [ "$rc" = 0 ] && pass "bootstrap accepted: ${why:0:50}..." || { fail "bootstrap refused: $why"; printf '%s\n' "$out" | grep MALFORMED | sed 's/^/    /'; }
@@ -198,7 +199,11 @@ for why in \
   "upstream's Android gradle wrapper, which is not required by this Linux build at all" \
   "upstream's Android gradle wrapper; the Linux build does not depend on it in any way" \
   "upstream's Android gradle wrapper, never being invoked by the build on Linux" \
-  "upstream's Android gradle wrapper; only the Android build invokes it, not this one"; do
+  "upstream's Android gradle wrapper; only the Android build invokes it, not this one" \
+  "upstream's gradle wrapper for Android releases; Linux builds never invoke it" \
+  "upstream's gradle wrapper for Android releases; only Android builds invoke it" \
+  "upstream's gradle wrapper for Android; the openSUSE Linux x86_64 build never invokes it" \
+  "upstream's gradle wrapper for Android releases; it is not invoked when building for Linux"; do
   d=$(boot denial "$why")
   out="$(python3 "$SB" "$d" 2>&1)"; rc=$?
   [ "$rc" = 3 ] && grep -qF "$UNUSED" <<<"$out" && pass "bootstrap refused: ${why:0:50}..." \
