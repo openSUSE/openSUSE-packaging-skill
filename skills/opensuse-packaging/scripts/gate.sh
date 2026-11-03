@@ -43,9 +43,12 @@
 #                checkout's); a _multibuild package passes it once per build,
 #                the base package and each flavor. GREEN records them as the
 #                tree's build
-#                Without it %prep runs here (rpmbuild -bp --nodeps under /var/tmp,
-#                a pass cached per spec and sources): red when it fails, UNKNOWN
-#                but not red when it stops on what only the build root has
+#                Without it %prep runs here: rpmbuild -bp --nodeps in a bwrap
+#                sandbox (no network, $HOME empty, the checkout read-only, only
+#                a scratch dir under /var/tmp writable), a pass cached per spec
+#                and sources; red when it fails or passes 900 s, UNKNOWN but not
+#                red when no sandbox starts, /var/tmp lacks the room, or %prep
+#                stops on what a BuildRequires missing here would bring
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
@@ -65,10 +68,11 @@
 #                build-summary.sh reads each log GREEN; --rpms DIR also records
 #                the shipped-binary check of OBS's RPMs. A red build drops the
 #                tree's recorded build
-# Parsing a spec runs its %(...), and %prep runs its shell, on this host as you:
-# run the gate only on a checkout you are changing yourself, never on someone
-# else's submission (references/untrusted-content.md "The two sharp
-# local-execution vectors").
+# Parsing a spec runs its %(...) on this host as you, and %prep runs the
+# package's code (sandboxed, which keeps it off the network and out of $HOME but
+# is no reason to trust it): run the gate only on a checkout you are changing
+# yourself, never on someone else's submission (references/untrusted-content.md
+# "The two sharp local-execution vectors").
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -806,20 +810,103 @@ def defined(name):
     return out.strip() == "1"
 
 
-def host_parse(lines, err):
-    # a parse that stops on what only the build root has: a macro a BuildRequires
-    # defines (Requires: %{apache_mmn}), or a query of a package this host lacks
+# rpm's own macros and spec directives: never a package's macro the host lacks
+BUILTINS = set("""define global undefine expand lua if ifarch ifnarch ifos ifnos else elif elifarch elifos endif
+include patch setup autosetup autopatch dnl echo warn error verbose trace dump getenv basename dirname exists
+suffix url2path uncompress quote shescape shrink len upper lower sub gsub rep reverse expr S P nil load
+getncpus rpmversion""".split())
+
+
+def errors(err):
+    return [ln for ln in err.splitlines() if "error:" in ln]
+
+
+def provided(names):
+    # every name is something an installed package provides (rpm -q --whatprovides)
+    if not names:
+        return True
+    try:
+        return subprocess.run(["rpm", "-q", "--whatprovides"] + names, capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+def buildrequires(path, lines):
+    # the names a spec BuildRequires: rpmspec's own answer when it parses, else the
+    # lines outside any %if (a dependency that names a macro is skipped)
+    p = subprocess.run(["rpmspec", "-q", "--buildrequires", "--define", "_sourcedir " + os.getcwd(), path],
+                       capture_output=True, text=True) if path else None
+    if p is not None and p.returncode == 0:
+        return [ln.split()[0] for ln in p.stdout.splitlines() if ln.strip() and not ln.startswith("(")]
+    names, depth = [], 0
+    for ln in lines:
+        t = ln.strip()
+        if re.match(r"%if", t):
+            depth += 1
+        elif re.match(r"%endif\b", t):
+            depth = max(depth - 1, 0)
+        elif not depth and re.match(r"BuildRequires:", t, re.I):
+            value = t.split(":", 1)[1].strip()
+            if "%" in value:  # what this host's macros make of it; a spec's own macro stays unknown
+                try:
+                    value = subprocess.run(["rpm", "--eval", value], capture_output=True, text=True).stdout.strip()
+                except OSError:
+                    continue
+                if "%" in value:
+                    continue
+            words = re.split(r"[\s,]+", value)
+            skip = False
+            for w in words:
+                if skip or not w:
+                    skip = False
+                elif w in ("<", ">", "=", "<=", ">=", "=="):
+                    skip = True  # the version after it
+                elif not w.startswith("("):
+                    names.append(w)
+    return names
+
+
+def host_parse(lines, err, path):
+    # a parse that stops on what only the build root has: a macro a missing
+    # BuildRequires defines (Requires: %{apache_mmn} without apache2-devel), or
+    # %requires_eq/%pkg_vcmp asking about a package this host lacks
     if re.search(r"is obsolete|not specified|invalid option|Unknown option", err):
         return None
-    if "does not resolve" in err or "(~~~" in err:
-        return "a package %requires_eq or %pkg_vcmp asks about"
-    text = err + "".join("\n" + lines[n - 1] for n in (int(x) for x in re.findall(r"line (\d+):", err))
-                         if 0 < n <= len(lines))
-    own = set(re.findall(r"^\s*%(?:define|global)\s+(\w+)", "\n".join(lines), re.M))
-    for name in dict.fromkeys(re.findall(r"%\{?[?!]*([A-Za-z_]\w*)", text)):
-        if name not in own and not defined(name):
-            return "macro %%%s, which no package here defines" % name
-    return None
+    msg = "\n".join(errors(err))
+    if "does not resolve" in msg or "(~~~" in msg:
+        why = "a package %requires_eq or %pkg_vcmp asks about"
+    else:
+        own = set(re.findall(r"^\s*%(?:define|global)\s+(\w+)", "\n".join(lines), re.M))
+        names = [n for n in dict.fromkeys(re.findall(r"%\{?[?!]*([A-Za-z_]\w*)", msg))
+                 if n not in BUILTINS and n not in own and not SECTION.fullmatch("%" + n) and not defined(n)]
+        if not names:
+            return None
+        why = "macro %%%s, which no package here defines" % names[0]
+    # every BuildRequires installed here: the build root has no more than this host
+    return None if provided(buildrequires(None, lines)) else why
+
+
+def flavors_only(raw):
+    # ExclusiveArch: do_not_build directly under %if "%{<flavor macro>}" == ""
+    names = set(re.findall(r"^\s*%(?:define|global)\s+(\w+)\s+@BUILD_FLAVOR@", "\n".join(raw), re.M))
+    for i, ln in enumerate(raw):
+        if not re.match(r"\s*ExclusiveArch:\s*do_not_build\b", ln):
+            continue
+        depth = 0
+        for t in (x.strip() for x in reversed(raw[:i])):
+            if re.match(r"%endif\b", t):
+                depth += 1
+            elif re.match(r"%(?:else|elif)", t) and not depth:
+                break
+            elif re.match(r"%if", t):
+                if depth:
+                    depth -= 1
+                    continue
+                m = re.match(r'%if\s+"%\{?(\w+)\}?"\s*==\s*""$', t)
+                if m and m.group(1) in names:
+                    return True
+                break
+    return False
 
 
 def parse(spec, logdir):
@@ -832,7 +919,7 @@ def parse(spec, logdir):
         return 1
     variants = [""] + ((flavors(".") or []) if any("@BUILD_FLAVOR@" in ln for ln in raw) else [])
     # a _multibuild spec may build only its flavors (qmqtt: ExclusiveArch: do_not_build)
-    off = len(variants) > 1 and any(re.match(r"\s*ExclusiveArch:\s*do_not_build\b", ln) for ln in raw)
+    off = len(variants) > 1 and flavors_only(raw)
     bad, primary, host = 0, None, False
     for flavor in variants:
         path = os.path.join(logdir, "flavor-%s.%s" % (flavor or "default", spec))
@@ -848,13 +935,13 @@ def parse(spec, logdir):
         elif q is None:
             print("UNKNOWN: rpmspec -P %s did not finish" % what)
             bad = 1
-        elif host_parse(raw, q.stderr):
+        elif host_parse(raw, q.stderr, path):
             print("UNKNOWN: %s: rpmspec -P stopped on what this host lacks: %s — the build log decides"
-                  % (what, host_parse(raw, q.stderr)))
+                  % (what, host_parse(raw, q.stderr, path)))
             host = True
         else:
             print("%s: rpmspec -P fails: %s" % (what, first_error(q).replace(path, spec)))
-            for n in (int(x) for x in re.findall(r"line (\d+):", q.stderr)):
+            for n in (int(x) for x in re.findall(r"line (\d+):", "\n".join(errors(q.stderr)))):
                 if 0 < n <= len(raw) and raw[n - 1].lstrip().startswith("#"):
                     print("%s:%d is a comment, and rpm expands macros in comments: write %%%% for each %% there" % (spec, n))
                     break
@@ -863,6 +950,7 @@ def parse(spec, logdir):
     lines = as_built(raw, primary[0] if primary else "")
     if primary:
         write(os.path.join(logdir, "rpm." + spec), lines)
+        write(os.path.join(logdir, "flavor." + spec), [primary[0]])
         with open(os.path.join(logdir, "parsed." + spec), "w", encoding="utf-8") as fh:
             fh.write(p.stdout)
     elif host and not bad:
@@ -918,6 +1006,8 @@ def cleaned(spec, out, logdir):
     try:
         with open(os.path.join(logdir, "parsed." + spec), encoding="utf-8") as fh:
             want = flat(fh.read())
+        with open(os.path.join(logdir, "flavor." + spec), encoding="utf-8") as fh:
+            flavor = fh.read().strip()
         a, b = read_lines(spec), read_lines(out)
     except OSError:
         return 0  # the spec does not parse: the rpmspec gate says so
@@ -932,7 +1022,7 @@ def cleaned(spec, out, logdir):
         for i, j in sel:
             lines[i] = b[j]
         path = os.path.join(logdir, "trial." + spec)
-        write(path, as_built(lines))
+        write(path, as_built(lines, flavor))
         p = rpmspec(path)
         if p is None:
             return ""
@@ -952,7 +1042,7 @@ def cleaned(spec, out, logdir):
                 found += 1
     if not found:
         path = os.path.join(logdir, "trial." + spec)
-        write(path, as_built(b))
+        write(path, as_built(b, flavor))
         p = rpmspec(path)
         if p is not None and p.returncode != 0:
             print("KNOWN DEFECT: %s: spec-cleaner's output does not parse (%s) where the spec does: "
@@ -980,7 +1070,7 @@ def prepkey(spec):
     return 0
 
 
-def hostonly(logpath):
+def hostonly(logpath, specpath):
     # a %prep that stopped on what the build root would have: a tool, a file a
     # BuildRequires installs, a source a server-side or buildtime service makes
     try:
@@ -990,6 +1080,7 @@ def hostonly(logpath):
     here = os.getcwd()
     # bash -e stops at the command that failed: only its output counts
     last = max((k for k, ln in enumerate(text) if ln.startswith("+ ")), default=-1)
+    lack = None  # what a missing BuildRequires would bring
     for line in reversed(text[last + 1:]):
         m = re.search(r"Architecture is (?:not included|excluded): \S+", line)
         if m:
@@ -997,30 +1088,56 @@ def hostonly(logpath):
             return 0
         m = re.search(r"(\S+): command not found$", line)
         if m:
-            print("%s is not on this host" % m.group(1))
-            return 0
+            lack = "%s is not on this host" % m.group(1)
+            break
         m = re.search(r"No module named '([^']+)'", line)
         if m:
-            print("python module %s is not on this host" % m.group(1))
-            return 0
+            lack = "python module %s is not on this host" % m.group(1)
+            break
         m = re.search(r"['‘]?(/(?:usr|etc|opt|lib|lib64|bin|sbin)/[^'’:]*)['’]?: No such file or directory", line)
         if m:
-            print(m.group(1))
-            return 0
+            lack = m.group(1)
+            break
         m = re.match(r"error: File (\S+): No such file or directory", line)
         if m and os.path.dirname(m.group(1)) == here and services():
             print("%s, which a source service makes" % os.path.basename(m.group(1)))
             return 0
-    return 1
+    if lack is None:
+        return 1
+    try:
+        lines = read_lines(specpath)
+    except OSError:
+        lines = []
+    # every BuildRequires is here: the build root would fail the same way
+    if provided(buildrequires(specpath, lines)):
+        return 1
+    print(lack)
+    return 0
+
+
+SOURCE_SERVICES = {"obs_scm", "tar_scm", "tar", "recompress", "download_files", "go_modules", "cargo_vendor",
+                   "node_modules"}
 
 
 def services():
-    # a _service run on OBS rather than by hand (no mode, buildtime, trylocal)
+    # a service that makes sources and runs on OBS (no mode, buildtime, serveronly)
     try:
         root = ET.parse("_service").getroot()
     except (OSError, ET.ParseError):
         return False
-    return any(s.get("mode") not in ("manual", "disabled", "localonly") for s in root.findall("service"))
+    return any(s.get("name") in SOURCE_SERVICES and s.get("mode") in (None, "", "buildtime", "serveronly")
+               for s in root.findall("service"))
+
+
+def need(dirname):
+    # KiB %prep may unpack: 8 times the sources (nodejs-electron: 2.1 GB of them, 13 GB unpacked)
+    total = 0
+    for n in os.listdir(dirname):
+        p = os.path.join(dirname, n)
+        if not n.startswith(".") and os.path.isfile(p):
+            total += os.path.getsize(p)
+    print(8 * total // 1024 + 1)
+    return 0
 
 
 def excerpt(logpath):
@@ -1041,7 +1158,8 @@ def excerpt(logpath):
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
       "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
-      "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt}[cmd]
+      "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt,
+      "need": need}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
@@ -1100,6 +1218,15 @@ if [ "$obsbuild" = 1 ]; then
 fi
 log="${TMPDIR:-/tmp}/gate-$pkg"; rm -rf "$log"; mkdir -p "$log"
 red=()
+# %prep's process group and scratch go on every way out; a signal exits 130
+prep_pid=""; bp=""
+# shellcheck disable=SC2317  # run by the EXIT trap
+cleanup() {
+  [ -z "$prep_pid" ] || { kill -TERM -- "-$prep_pid" 2>/dev/null; wait "$prep_pid" 2>/dev/null; }
+  [ -z "$bp" ] || { chmod -R u+w "$bp" 2>/dev/null; rm -rf "$bp"; }
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 show() {   # $1 name, $2 rc, $3 output file
   printf '## %s: rc=%s\n' "$1" "$2"
   if [ $full -eq 1 ]; then cat "$3"; else tail -n 12 "$3"; fi
@@ -1227,15 +1354,33 @@ fi
 
 # %prep, unless a local build already ran it (--build-log): photocraft's patch
 # no longer applied while the gate was GREEN, electron's %prep died on
-# "unexpected EOF". rpmbuild -bp reads the sources in place and unpacks under /var/tmp;
-# a pass is cached by the hash of the spec, the sources and rpm's version. What
-# only the build root has (a BuildRequires' file or tool, a source a service
-# makes, an arch the spec builds) leaves %prep UNKNOWN here, not red: the build
-# log decides.
+# "unexpected EOF". %prep is the package's code (nodejs-electron runs a python
+# script from its tarball, others ./autogen.sh or ./configure), so rpmbuild -bp
+# runs in a bwrap sandbox: no network, $HOME and the other user directories
+# empty, the checkout read-only, only the scratch directory under /var/tmp
+# writable. Without a sandbox that starts it does not run at all. A pass is
+# cached by the hash of the spec, the sources and rpm's version. What only the
+# build root has (a missing BuildRequires' file, tool or module, a source a
+# service makes, an arch the spec builds) leaves %prep UNKNOWN, not red.
+sandbox() {   # sandbox <writable dir>: the bwrap arguments, in sbx
+  sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session --clearenv
+       --setenv PATH "$PATH" --setenv HOME "$HOME" --ro-bind / / --dev /dev --proc /proc
+       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs /home --tmpfs /root --tmpfs "$HOME"
+       --ro-bind "$PWD" "$PWD" --bind "$1" "$1")
+}
+tmo=${GATE_PREP_TIMEOUT:-900}
 if [ ${#buildlogs[@]} -gt 0 ]; then
   echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"
-elif command -v rpmbuild >/dev/null 2>&1; then
+elif ! command -v rpmbuild >/dev/null 2>&1; then
+  echo "## prep: SKIPPED (no rpmbuild)"; red+=(prep)
+elif ! command -v bwrap >/dev/null 2>&1 || ! { sandbox "$log"; perr=$(bwrap "${sbx[@]}" true 2>&1); }; then
+  perr=${perr:-bwrap is not installed}; why="no sandbox (${perr%%$'\n'*})"
+  echo "UNKNOWN: %prep not run: $why" > "$log/prep.txt"; hostnote+="${hostnote:+; }%prep: $why"
+  show prep 0 "$log/prep.txt"
+else
   : > "$log/prep.txt"; rc=0
+  # what %prep may unpack, against what /var/tmp has (shared with build roots)
+  need=$(py need .); avail=$(df -Pk /var/tmp 2>/dev/null | awk 'NR == 2 { print $4 }')
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
     if [ -e "$log/hostonly.$s" ]; then
@@ -1248,28 +1393,34 @@ elif command -v rpmbuild >/dev/null 2>&1; then
     if [ -n "$key" ] && [ -e "$cache" ]; then
       echo "OK: %prep of $s passed on these sources before (cached)" >> "$log/prep.txt"; continue
     fi
-    if ! bp=$(mktemp -d -p /var/tmp "gate-prep-$pkg.XXXXXX"); then
-      echo "UNKNOWN: no scratch directory under /var/tmp for %prep" >> "$log/prep.txt"; rc=1; continue
+    if ! [[ $avail =~ ^[0-9]+$ ]] || [ "$avail" -lt "$need" ]; then
+      why="not enough free space under /var/tmp (${avail:-?} KiB free, %prep may unpack $need KiB)"
+      echo "UNKNOWN: %prep of $s not run: $why" >> "$log/prep.txt"; hostnote+="${hostnote:+; }$s: $why"; continue
     fi
-    t0=$SECONDS; rs="$PWD/$s"; [ ! -e "$log/rpm.$s" ] || rs="$log/rpm.$s"   # @BUILD_FLAVOR@ set as OBS sets it
-    timeout 900 rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
-      "$rs" > "$log/prep.$s.log" 2>&1; prc=$?
-    rm -rf "$bp"
+    if ! bp=$(mktemp -d -p /var/tmp "gate-prep-$pkg.XXXXXX"); then
+      bp=""; echo "UNKNOWN: no scratch directory under /var/tmp for %prep" >> "$log/prep.txt"; rc=1; continue
+    fi
+    rs="$PWD/$s"; [ ! -e "$log/rpm.$s" ] || rs="$log/rpm.$s"   # @BUILD_FLAVOR@ set as OBS sets it
+    cp "$rs" "$bp/rpm.spec"; t0=$SECONDS
+    # in the background, so a signal can kill its process group (the EXIT trap)
+    sandbox "$bp"
+    timeout -k 30 "$tmo" bwrap "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+      "$bp/rpm.spec" > "$log/prep.$s.log" 2>&1 &
+    prep_pid=$!; wait "$prep_pid"; prc=$?; prep_pid=""
+    chmod -R u+w "$bp"; rm -rf "$bp"; bp=""
     if [ $prc -eq 0 ]; then
       echo "OK: %prep of $s ran in $((SECONDS - t0)) s" >> "$log/prep.txt"
       [ -z "$key" ] || { mkdir -p "${cache%/*}" && : > "$cache"; }
-    elif [ $prc -eq 124 ]; then
-      echo "UNKNOWN: %prep of $s did not finish in 900 s: build it and pass --build-log" >> "$log/prep.txt"; rc=1
-    elif why=$(py hostonly "$log/prep.$s.log"); then
+    elif [ $prc -eq 124 ] || [ $prc -eq 137 ]; then
+      echo "UNKNOWN: %prep of $s did not finish in $tmo s: build it and pass --build-log" >> "$log/prep.txt"; rc=1
+    elif why=$(py hostonly "$log/prep.$s.log" "$rs" | python3 -I "$HERE/_sanitize.py"); then
       echo "UNKNOWN: %prep of $s stopped on what this host lacks: $why — the build log decides (--build-log)" >> "$log/prep.txt"
       hostnote+="${hostnote:+; }$s: $why"
     else
-      { echo "$s: %prep fails ($log/prep.$s.log):"; py excerpt "$log/prep.$s.log"; } >> "$log/prep.txt"; rc=1
+      { echo "$s: %prep fails ($log/prep.$s.log):"; py excerpt "$log/prep.$s.log" | python3 -I "$HERE/_sanitize.py"; } >> "$log/prep.txt"; rc=1
     fi
   done
   show prep $rc "$log/prep.txt"
-else
-  echo "## prep: SKIPPED (no rpmbuild)"; red+=(prep)
 fi
 
 # spec-cleaner as the skill runs it (core directive 3), in every build mode: the
@@ -1469,6 +1620,7 @@ sb_args=(.); [ -z "$rpms" ] || sb_args+=(--rpms "$rpms")
 [ -n "$rpms" ] || echo "note: no --rpms DIR: the built RPMs were not checked for a prebuilt binary they ship (the build root's RPMS, or osc getbinaries -d DIR, then --obs-build --rpms DIR)" >> "$log/source-binaries.txt"
 show source-binaries $rc "$log/source-binaries.txt"
 
+[ -z "$hostnote" ] || hostnote=$(printf '%s' "$hostnote" | python3 -I "$HERE/_sanitize.py")
 if [ ${#red[@]} -eq 0 ]; then
   t=""
   if [ -n "$stampf" ]; then
