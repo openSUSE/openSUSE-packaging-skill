@@ -782,6 +782,9 @@ TO=$(obstamp); ob
   && [ "$(sv "$SO" build.srcmd5)" = "$SRC" ] && [ "$(sv "$SO" build.verdict)" = GREEN ] \
   && pass "--obs-build: every repo green from the stamped files, each log GREEN: recorded" \
   || { fail "--obs-build green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# OBS's build is the evidence after the commit: nothing is parsed or unpacked here
+! grep -qE '^## (rpmspec|prep)|%prep' <<<"$out" && pass "--obs-build: no spec parse and no %prep run" \
+  || { fail "--obs-build ran the parse or %prep"; grep -E '^## (rpmspec|prep)|%prep' <<<"$out" | sed 's/^/    /'; }
 results building; ob
 [ "$rc" = 4 ] && grep -qF "PENDING" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
   && pass "--obs-build: an arch still building is pending (rc=4)" || { fail "--obs-build building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }

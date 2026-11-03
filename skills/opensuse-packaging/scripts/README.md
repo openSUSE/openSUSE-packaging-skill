@@ -323,14 +323,14 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                file but a .changes (with no spec: its recipe is the
                checkout's); a _multibuild package passes it once per build,
                the base package and each flavor. GREEN records them as the
-               tree's build
-               Without it %prep runs here: rpmbuild -bp --nodeps in a bwrap
-               sandbox (no network, only /usr and /etc of the host, $HOME
-               empty, the checkout read-only, only a scratch dir under
-               /var/tmp writable), a pass cached per spec
-               and sources; red when it fails or passes 900 s, UNKNOWN but not
-               red when no sandbox starts, /var/tmp lacks the room, or %prep
-               stops on what a BuildRequires missing here would bring
+               tree's build. Without it (and without --obs-build) %prep runs
+               here: rpmbuild -bp --nodeps in a bwrap sandbox (no network,
+               only /usr and /etc of the host, $HOME empty, the checkout
+               read-only, only a scratch dir under /var/tmp writable), a pass
+               cached per spec and sources; red when it fails or passes 900 s,
+               UNKNOWN but not red when no sandbox starts, /var/tmp lacks the
+               room, or %prep stops on what a BuildRequires missing here
+               would bring
   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
                also refuses a prebuilt binary the package ships, whatever its
                exception line says (firmware alone may ship); without it the
