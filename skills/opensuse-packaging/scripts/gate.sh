@@ -1830,12 +1830,12 @@ if [ -e "${changes[0]}" ]; then
       for ch in "${changes[@]}"; do   # changes-guard fetched them
         if [ -s "$log/target-base/$ch" ]; then cp "$log/target-base/$ch" "$tbase/"
         elif ! grep -q 'HTTP Error 404' "$log/target-base/$ch.err" 2>/dev/null; then
-          echo "UNKNOWN: no copy of $ch from $tlabel" >> "$log/changes-entry.txt"; rc=1; fi
+          echo "UNKNOWN: no copy of $ch from $tlabel" >> "$log/changes-entry.txt"; rc=2; fi
       done
     elif grep -q 'HTTP Error 404' "$log/target-files.err" 2>/dev/null; then
       echo "note: $tlabel does not exist: a new package there, no entry to compare" >> "$log/changes-entry.txt"
     else
-      echo "UNKNOWN: cannot list $tlabel" >> "$log/changes-entry.txt"; rc=1
+      echo "UNKNOWN: cannot list $tlabel" >> "$log/changes-entry.txt"; rc=2
     fi
   elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
     tlabel="the committed copy"; tlist=.osc/_files
@@ -1858,12 +1858,12 @@ if [ -e "${changes[0]}" ]; then
         for ch in "${changes[@]}"; do
           if timeout 60 osc cat openSUSE:Factory "$pkg" "$ch" > "$fbase/$ch" 2> "$log/factory-cat.err"; then :
           elif grep -q 'HTTP Error 404' "$log/factory-cat.err"; then rm -f "$fbase/$ch"
-          else echo "UNKNOWN: osc cat openSUSE:Factory $pkg $ch failed: $(head -n 1 "$log/factory-cat.err")" >> "$log/changes-entry.txt"; rc=1; fi
+          else echo "UNKNOWN: osc cat openSUSE:Factory $pkg $ch failed: $(head -n 1 "$log/factory-cat.err")" >> "$log/changes-entry.txt"; rc=2; fi
         done
       elif grep -q 'HTTP Error 404' "$log/factory-files.err"; then
         fseen=2; fbound=0   # not in Factory: every entry is new there
       else
-        echo "UNKNOWN: cannot list $fac: $(head -n 1 "$log/factory-files.err")" >> "$log/changes-entry.txt"; rc=1
+        echo "UNKNOWN: cannot list $fac: $(head -n 1 "$log/factory-files.err")" >> "$log/changes-entry.txt"; rc=2
       fi
     fi
   fi
@@ -1877,7 +1877,8 @@ if [ -e "${changes[0]}" ]; then
     py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
     [ $erc -eq 0 ] || rc=$erc
   fi
-  if [ $rc -eq 1 ] && [ -n "$noentry" ]; then   # a missing entry; an unreadable lookup stays red
+  # rc 1: an entry is missing, which --no-entry may waive; 2: a lookup failed, which it never does
+  if [ $rc -eq 1 ] && [ -n "$noentry" ]; then
     echo "NO ENTRY: $noentry — the change review judges it" >> "$log/changes-entry.txt"; rc=0
   fi
   show changes-entry $rc "$log/changes-entry.txt"

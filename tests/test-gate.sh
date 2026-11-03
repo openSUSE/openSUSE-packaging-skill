@@ -1492,6 +1492,10 @@ grep -qF -- "--amend-top" <<<"$out" && grep -qF -- "--no-entry REASON" <<<"$out"
 # The user's exemption, or a cosmetic change: --no-entry REASON passes it,
 # prints the reason and records it in the stamp for the change review.
 ce no-entry 0 "NO ENTRY: comment-only cleanup" "$work/t-ce-branch" --no-entry "comment-only cleanup"
+# A lookup it cannot make stays red under --no-entry: the reason waives an entry, not a check.
+: > "$O/fail-list"
+ce no-entry-unreadable 2 "UNKNOWN: cannot list devel:example/foo" "$work/t-ce-branch" --no-entry "comment-only cleanup"
+rm "$O/fail-list"
 out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --no-entry "" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && pass "--no-entry needs a reason" || fail "--no-entry empty: rc=$rc"
 out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --review "$work/rv.txt" --no-entry x 2>&1)"; rc=$?
