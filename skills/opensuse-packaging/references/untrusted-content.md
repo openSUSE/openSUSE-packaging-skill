@@ -44,8 +44,8 @@ Most people guard the build and miss the *parse*:
 
 - **Parsing a foreign spec executes code.** `%(...)` in a tag is shell,
   expanded at **parse** time — `rpmspec`, `rpm -q --specfile`, `scripts/gate.sh`
-  (which also runs `%prep`), and anything else that parses the spec runs it,
-  on the host, as you. Inspect an untrusted spec **as text** (grep/read),
+  (whose `%prep` runs in a no-network sandbox, but whose parse does not), and
+  anything else that parses the spec runs it, on the host, as you. Inspect an untrusted spec **as text** (grep/read),
   never by parsing it. This is also why the
   incoming-request review checklist flags `%()` in tags.
 - **`osc service run` executes `_service` on the host.** Source services are
