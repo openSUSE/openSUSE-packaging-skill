@@ -1509,11 +1509,12 @@ case_ review-gate-run           0 - ""
 for n in review-bash-options review-bash-o review-bash-O review-bash-rcfile review-variable; do
   ask_ "$n" review-self "gate.sh --review from the main session"
 done
-for n in review-array review-substitution review-function review-script-array review-ifs review-unknown-word; do
+for n in review-array review-function review-script-array review-ifs; do
   ask_ "$n" gate-args "gate.sh from the main session with an argument only the shell knows"
 done
 ask_ review-xargs               gate-args "gate.sh from the main session with the arguments xargs adds"
-for n in review-brace review-brace-empty review-symlink; do
+# A substitution whose text spells --review is a review, wherever it stands.
+for n in review-brace review-brace-empty review-symlink review-substitution review-substitution-last review-unknown-word; do
   ask_ "$n" review-self "gate.sh --review from the main session"
 done
 ask_ review-copy                review-self "gate.sh --review from the main session" PR_GUARD_SKILL_DIR="$work/skill-gate"
