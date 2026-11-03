@@ -1256,6 +1256,8 @@ case_ nomsg-request-decline      2 request-no-message "osc request decline witho
 case_ nomsg-rq-revoke            2 request-no-message "osc rq revoke without -m"
 case_ nomsg-rq-supersede         2 request-no-message "osc rq supersede without -m"
 case_ nomsg-review-accept        2 request-no-message "osc review accept without -m"
+case_ nomsg-review-add           2 request-no-message "osc review add without -m"
+case_ nomsg-rq-wipe              2 request-no-message "osc rq wipe without -m"
 case_ nomsg-rq-revoke-message    0 - ""
 case_ nomsg-sr-file              0 - ""
 case_ nomsg-rq-show              0 - ""

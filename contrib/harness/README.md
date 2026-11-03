@@ -474,8 +474,8 @@ call provably only reads), pushing to a branch that heads an open pool PR or to
 src.opensuse.org over HTTPS (a token would carry it; SSH carries the login), writing a
 `target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
 scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked or
-superseded without `-m` (osc would open an editor and hang; `osc sr --diff` passes), a request through the API (`/request?cmd=create`) , a submit request to a project other
+`--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked,
+superseded or wiped (or a review added) without `-m` (osc would open an editor and hang; `osc sr --diff` passes), a request through the API (`/request?cmd=create`) , a submit request to a project other
 than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
 of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branch whose
 package links to a project other than the target (a link within the branch's own project

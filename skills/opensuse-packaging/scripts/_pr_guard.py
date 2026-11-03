@@ -331,7 +331,7 @@ REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequ
 REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
 REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
 # The osc request (rq, review) verbs that open an editor without -m.
-EDITED_VERBS = {"accept", "decline", "reopen", "revoke", "supersede"}
+EDITED_VERBS = {"accept", "decline", "reopen", "revoke", "supersede", "wipe", "add"}
 # Their long options that take a value (osc 1.27.3), and the -F files that
 # are stdin.
 REQUEST_VALUED = tuple(

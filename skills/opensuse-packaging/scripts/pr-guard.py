@@ -17,9 +17,9 @@ project other than the target (a link within the branch's own project
 passes), feed an osc request or commit an answer on stdin
 (a pipe, here-string or heredoc; < /dev/null and a message read with -F -
 are fine) or answer them unread with osc's own yes option, file, accept,
-decline, reopen, revoke or supersede a request without -m (or osc sr -F;
-osc sr -d files nothing), where osc opens an editor and hangs, run a .sh file
-with Python or a .py file with a shell, wait in fixed sleeps of a minute or
+decline, reopen, revoke, supersede or wipe a request (or add a review)
+without -m (or osc sr -F; osc sr -d files nothing), where osc opens an editor
+and hangs, run a .sh file with Python or a .py file with a shell, wait in fixed sleeps of a minute or
 more in all (not in the Monitor tool, a background call or a script the call
 runs), file a request
 whose message is too long (over 160 characters of prose, which
