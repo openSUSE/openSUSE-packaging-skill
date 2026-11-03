@@ -613,7 +613,8 @@ show changes-patches $rc "$log/changes-patches.txt"
 # Releases the bump crosses that the new entries never name, or describe again:
 # a note, never red, as it reads free-text headings. cp_args minus --entries N.
 timeout 120 "$HERE/changes-range.py" "${cp_args[0]}" "${cp_args[@]:3}" > "$log/changes-range.txt" 2>&1; rc=$?
-printf '## changes-range: rc=%s (a note, never red)\n' "$rc"; tail -n 12 "$log/changes-range.txt"
+printf '## changes-range: rc=%s (a note, never red)\n' "$rc"
+if [ $full -eq 1 ]; then cat "$log/changes-range.txt"; else tail -n 12 "$log/changes-range.txt"; fi
 
 if [ -n "$buildlog" ]; then
   "$HERE/build-summary.sh" "$buildlog" > "$log/build-summary.txt" 2>&1; rc=$?

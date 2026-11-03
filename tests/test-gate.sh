@@ -116,6 +116,20 @@ grep -qF "## changes-range: rc=0 (a note, never red)" <<<"$out" && grep -qF "no 
   && pass "changes-range: no version change against the committed copy" \
   || { fail "changes-range: no version change"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
+# --full prints changes-range's whole output, as it does every gate's: here 13
+# repeated headings, more than the 12 lines a plain run shows.
+devel "$work/devel-long" 1; sed -i 's/^Version: 1.3$/Version: 1.4/' "$work/devel-long/foo.spec"
+for i in $(seq 13 -1 1); do printf '%s\nMon Aug %2d 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Update to 1.0.%s:\n\n' "$SEP" "$i" "$i"; done \
+  > "$work/devel-long/.osc/sources/foo.changes"
+{ printf '%s\nSat Sep 19 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Update to 1.4:\n' "$SEP"
+  for i in $(seq 1 13); do printf '  * 1.0.%s: again\n' "$i"; done; echo; cat "$work/devel-long/.osc/sources/foo.changes"; } > "$work/devel-long/foo.changes"
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-long" --full 2>&1)"
+grep -qF "changes-range: 1.3 -> 1.4 against the committed copy" <<<"$out" && grep -qF "REPEATED: 1.0.1:" <<<"$out" \
+  && pass "changes-range: --full prints all of it" || { fail "changes-range --full"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-long" 2>&1)"
+! grep -qF "changes-range: 1.3 -> 1.4" <<<"$out" && grep -qF "REPEATED: 1.0.13:" <<<"$out" \
+  && pass "changes-range: without --full, its last 12 lines" || { fail "changes-range without --full"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
 # --amend-top reaches changes-guard, which asks Factory whether the committed
 # top entry is still a draft: devel's own unaccepted entry is, Factory's is not.
 devel "$work/amend-draft" 1; cp "$work/amend-draft/.osc/sources/foo.changes" "$work/amend-draft/foo.changes"
