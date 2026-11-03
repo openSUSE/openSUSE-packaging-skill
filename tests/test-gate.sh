@@ -1093,11 +1093,16 @@ fi
 # declined for "%prep" in a comment ("Unknown tag: %prep"); codenomad's
 # "# %{cargo_test}" comment ran cargo test. Without --build-log, %prep runs too
 # (rpmbuild -bp in a sandbox): photocraft's patch no longer applied while the
-# gate was GREEN. Several specs share one checkout, so one gate run checks many.
+# gate was GREEN. Several specs share one checkout, so one gate run checks many,
+# and the runs go in parallel: the fixtures first, then every run, then the checks.
 if command -v rpmspec > /dev/null && command -v rpmbuild > /dev/null && command -v bwrap > /dev/null; then
   HDR=$'Name:           p\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT'
+  PATH="$work/scbin:$PATH"   # the stand-in spec-cleaner (SC_MODE=same unless set) saves a second a spec
   ms() { mkdir -p "$work/$1"; { echo "$HDR"; cat; } > "$work/$1/$2.spec"; }   # ms <dir> <name> < spec body
-  gt() { local d=$1; shift; out="$(bash "$GATE" "$work/$d" "$@" 2>&1)"; }      # gt <dir> [gate args]
+  # bg <dir> [VAR=value ...] [-- gate args]: the gate on <dir> in the background, into <dir>.out
+  bg() { local d=$1 v=(); shift; while [ $# -gt 0 ] && [ "$1" != -- ]; do v+=("$1"); shift; done; [ $# -eq 0 ] || shift
+    env "${v[@]}" bash "$GATE" "$work/$d" "$@" > "$work/$d.out" 2>&1 & }
+  got() { out=$(cat "$work/$1.out"); }
   # has/hasnt <dir> <section> <text> <what>: the section's output (does not) hold text
   has() { grep -qF -- "$3" "$work/gate-$1/$2.txt" && pass "$2: $4" \
     || { fail "$2: $4: no '$3'"; sed 's/^/    /' "$work/gate-$1/$2.txt" 2>/dev/null; }; }
@@ -1151,18 +1156,8 @@ t
 %prep
 %files
 EOF
-  gt rs-ok
-  sec rs-ok rpmspec 0
-  hasnt rs-ok rpmspec "clean.spec" "a clean spec has no finding"
-  has rs-ok rpmspec "note: sectnote.spec:6: %build in a comment" "a section name other than %prep in a comment is a note"
-  has rs-ok rpmspec "note: noflavor.spec: the default build does not parse, and the spec builds only its flavors" "a flavor-only spec is judged by its flavors"
-  has rs-ok rpmspec "UNKNOWN: hostmacro.spec: rpmspec -P stopped on what this host lacks: macro %gate_test_no_such_macro" "a macro of a missing BuildRequires is UNKNOWN"
-  has rs-ok prep "UNKNOWN: %prep of hostmacro.spec not run: rpmspec -P stopped on this host" "not run after an UNKNOWN parse"
-  grep -qE '^VERDICT: .*not proven on this host.*gate_test_no_such_macro' <<<"$out" \
-    && pass "rpmspec: an UNKNOWN parse is named on the verdict line" || { fail "rpmspec: UNKNOWN not on the verdict line"; grep VERDICT <<<"$out"; }
-  # spec-cleaner's output of a flavor-only spec is parsed as its flavor, not the default
-  out="$(PATH="$work/scbin:$PATH" SC_MODE=group bash "$GATE" "$work/rs-ok" 2>&1)"
-  hasnt rs-ok spec-cleaner "KNOWN DEFECT: noflavor.spec" "a flavor-only spec's cleaned copy parses as its flavor"
+  # spec-cleaner's copy of a flavor-only spec is parsed as its flavor, not the default
+  mkdir -p "$work/rs-sc"; cp "$work/rs-ok/_multibuild" "$work/rs-ok/noflavor.spec" "$work/rs-sc/"
 
   # What is wrong in the spec: red, each spec on its own line.
   mkdir -p "$work/rs-red"; printf '<multibuild>\n  <package>doc</package>\n</multibuild>\n' > "$work/rs-red/_multibuild"
@@ -1224,26 +1219,6 @@ EOF
   else
     echo "SKIP: rpmspec obsolete %patch0 (rpm $rpmv < 4.20 only warns)"
   fi
-  gt rs-red
-  sec rs-red rpmspec 1
-  has rs-red rpmspec "badtag.spec: rpmspec -P fails: error: line 6: Unknown tag: Bogus: tag" "a parse error is red"
-  has rs-red rpmspec "sectcomment.spec:6: %prep in a comment" "%prep in a comment is red"
-  has rs-red rpmspec "multiline.spec:13: the comment's macro expands to 3 lines" "a multi-line macro in a comment is red"
-  hasnt rs-red rpmspec "multiline.spec:16:" "a one-line expansion in a comment is not"
-  has rs-red rpmspec "flavor.spec (flavor doc): rpmspec -P fails: error: line 11: Unknown tag: Bogus: tag" "each flavor is parsed"
-  hasnt rs-red rpmspec "flavor.spec: rpmspec -P fails" "the default build of that spec parses"
-  has rs-red rpmspec "offguard.spec: rpmspec -P fails" "do_not_build for another flavor excuses nothing"
-  has rs-red rpmspec "dupprep.spec: rpmspec -P fails: error: line 10: second prep" "a second %prep is red"
-  has rs-red rpmspec "filesn.spec: rpmspec -P fails: error: line 10: %files -n nosuchpkg" "%files of no package is red"
-  has rs-red rpmspec "descn.spec: rpmspec -P fails: error: line 8: %description -n nosuch" "%description of no package is red"
-  has rs-red rpmspec "duppkg.spec: rpmspec -P fails: error: line 12: %package devel" "a duplicate %package is red"
-  has rs-red rpmspec "nmae.spec: rpmspec -P fails" "a macro typo in Requires is red"
-  has rs-red rpmspec "pythn.spec: rpmspec -P fails" "a macro typo in BuildRequires is red"
-  has rs-red rpmspec "warnline.spec: rpmspec -P fails" "an error after a warned comment is red"
-  hasnt rs-red rpmspec "warnline.spec:6 is a comment" "a warning's line is no error line"
-  [ -z "${rpmv:-}" ] || [ ! -e "$work/rs-red/obsolete.spec" ] \
-    || has rs-red rpmspec "obsolete.spec: rpmspec -P fails: error: %patchN is obsolete" "%patchN is red on rpm 4.20"
-  hasnt rs-red rpmspec "UNKNOWN" "no wrong spec passes as a host gap"
 
   # %prep in the sandbox: a tarball, a patch that applies and one that does not.
   mkdir -p "$work/ppsrc/p-1"; echo hello > "$work/ppsrc/p-1/hello.txt"
@@ -1269,7 +1244,72 @@ EOF
     -- 'BuildRequires:  gate-test-no-such-devel'
   printf '%s\n' 'Source1:        gate-test-made-by-tar.tar.gz' '%description' t '%prep' '%setup -q -c -T -a 1' '%files' | ms pp-ok svc
   printf '<services>\n  <service name="tar" mode="buildtime"/>\n</services>\n' > "$work/pp-ok/_service"
-  out="$(HOME="$work/home" bash "$GATE" "$work/pp-ok" 2>&1)"
+  pspec pp-cache ok hello
+  pspec pp-red bad goodbye
+  pspec pp-red mixed hello 'gate-test-no-such-cmd || :' 'false'   # only the command that failed counts
+  pspec pp-red typo hello 'gate-test-no-such-cmd'                 # every BuildRequires is here: a typo
+  pspec pp-red rofs hello 'touch %{_sourcedir}/gate-written'      # the checkout is read-only
+  printf '%s\n' 'Source1:        gate-test-missing.tar.gz' '%description' t '%prep' '%setup -q -c -T -a 1' '%files' | ms pp-red svc
+  printf '<services>\n  <service name="format_spec_file"/>\n</services>\n' > "$work/pp-red/_service"
+  pspec pp-red noparse hello -- 'Bogus: tag'
+  pspec pp-log bad goodbye; echo build > "$work/build.log"
+  # never unsandboxed: no bwrap that starts is UNKNOWN, and nothing runs
+  mkdir -p "$work/nobw"; printf '#!/bin/sh\necho "bwrap: no permission" >&2; exit 1\n' > "$work/nobw/bwrap"; chmod +x "$work/nobw/bwrap"
+  # shellcheck disable=SC2016
+  pspec pp-nobw ran hello 'touch "$HOME/.gate-test-ran"'
+  # not enough room under /var/tmp to unpack: UNKNOWN, nothing unpacked
+  mkdir -p "$work/nodf"; printf '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 100 99 1 99%% /var/tmp\\n"\n' > "$work/nodf/df"
+  chmod +x "$work/nodf/df"; pspec pp-df room hello   # a tree no other run caches
+  # a signal or the time limit kills %prep and removes its scratch, read-only parts too
+  slow() { pspec "$1" slow hello 'mkdir ro && touch ro/f && chmod -R a-w ro' "sleep $2"; }
+  s1="41.$$"; slow pp-sig "$s1"; s2="42.$$"; slow pp-tmo "$s2"
+  # spec-cleaner 1.3.2 unbraces %{cargo_build} -p foo, which rpm then parses as
+  # the macro's options (goose failed in staging): a spec-cleaner defect, not a
+  # missed rule; the -- form is what spec-cleaner leaves alone.
+  sdef() { mkdir -p "$work/$1"
+    printf '%s\n' "$HDR" '%define opt_macro() echo %*' '%description' t '%prep' '%build' "$2" '%files' '%changelog' > "$work/$1/p.spec"; }
+  sdef sp-defect '%{opt_macro} -p foo'; sdef sp-dash '%opt_macro -- -p foo'; sdef sp-group '%{opt_macro} -p foo'
+
+  bg rs-ok; bg rs-sc SC_MODE=group; bg rs-red
+  bg pp-ok HOME="$work/home"; bg pp-cache; bg pp-red; bg pp-log -- --build-log "$work/build.log"
+  bg pp-nobw HOME="$work/home" PATH="$work/nobw:$PATH"; bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2
+  bg sp-defect SC_MODE=unbrace; bg sp-dash SC_MODE=unbrace; bg sp-group SC_MODE=group
+  wait
+  bash "$GATE" "$work/pp-cache" > "$work/pp-cache.out" 2>&1   # the second run of the same tree
+
+  got rs-ok
+  sec rs-ok rpmspec 0
+  hasnt rs-ok rpmspec "clean.spec" "a clean spec has no finding"
+  has rs-ok rpmspec "note: sectnote.spec:6: %build in a comment" "a section name other than %prep in a comment is a note"
+  has rs-ok rpmspec "note: noflavor.spec: the default build does not parse, and the spec builds only its flavors" "a flavor-only spec is judged by its flavors"
+  has rs-ok rpmspec "UNKNOWN: hostmacro.spec: rpmspec -P stopped on what this host lacks: macro %gate_test_no_such_macro" "a macro of a missing BuildRequires is UNKNOWN"
+  has rs-ok prep "UNKNOWN: %prep of hostmacro.spec not run: rpmspec -P stopped on this host" "not run after an UNKNOWN parse"
+  grep -qE '^VERDICT: .*not proven on this host.*gate_test_no_such_macro' <<<"$out" \
+    && pass "rpmspec: an UNKNOWN parse is named on the verdict line" || { fail "rpmspec: UNKNOWN not on the verdict line"; grep VERDICT <<<"$out"; }
+  got rs-sc; hasnt rs-sc spec-cleaner "KNOWN DEFECT" "a flavor-only spec's cleaned copy parses as its flavor"
+
+  got rs-red
+  sec rs-red rpmspec 1
+  has rs-red rpmspec "badtag.spec: rpmspec -P fails: error: line 6: Unknown tag: Bogus: tag" "a parse error is red"
+  has rs-red rpmspec "sectcomment.spec:6: %prep in a comment" "%prep in a comment is red"
+  has rs-red rpmspec "multiline.spec:13: the comment's macro expands to 3 lines" "a multi-line macro in a comment is red"
+  hasnt rs-red rpmspec "multiline.spec:16:" "a one-line expansion in a comment is not"
+  has rs-red rpmspec "flavor.spec (flavor doc): rpmspec -P fails: error: line 11: Unknown tag: Bogus: tag" "each flavor is parsed"
+  hasnt rs-red rpmspec "flavor.spec: rpmspec -P fails" "the default build of that spec parses"
+  has rs-red rpmspec "offguard.spec: rpmspec -P fails" "do_not_build for another flavor excuses nothing"
+  has rs-red rpmspec "dupprep.spec: rpmspec -P fails: error: line 10: second prep" "a second %prep is red"
+  has rs-red rpmspec "filesn.spec: rpmspec -P fails: error: line 10: %files -n nosuchpkg" "%files of no package is red"
+  has rs-red rpmspec "descn.spec: rpmspec -P fails: error: line 8: %description -n nosuch" "%description of no package is red"
+  has rs-red rpmspec "duppkg.spec: rpmspec -P fails: error: line 12: %package devel" "a duplicate %package is red"
+  has rs-red rpmspec "nmae.spec: rpmspec -P fails" "a macro typo in Requires is red"
+  has rs-red rpmspec "pythn.spec: rpmspec -P fails" "a macro typo in BuildRequires is red"
+  has rs-red rpmspec "warnline.spec: rpmspec -P fails" "an error after a warned comment is red"
+  hasnt rs-red rpmspec "warnline.spec:6 is a comment" "a warning's line is no error line"
+  [ ! -e "$work/rs-red/obsolete.spec" ] \
+    || has rs-red rpmspec "obsolete.spec: rpmspec -P fails: error: %patchN is obsolete" "%patchN is red on rpm 4.20"
+  hasnt rs-red rpmspec "UNKNOWN" "no wrong spec passes as a host gap"
+
+  got pp-ok
   sec pp-ok prep 0
   has pp-ok prep "OK: %prep of ok.spec ran in" "a patch that applies"
   has pp-ok prep "UNKNOWN: %prep of host.spec stopped on what this host lacks: /usr/share/gate-test-no-such-pkg/*" "a /usr file of a missing BuildRequires is UNKNOWN"
@@ -1280,17 +1320,9 @@ EOF
   has pp-ok prep "python module gatetest" "a module of a missing BuildRequires is UNKNOWN"
   grep '^VERDICT' <<<"$out" | grep -q $'\x1b' && fail "prep: an escape from upstream text reached the verdict line" \
     || pass "prep: upstream text is sanitized on the verdict line"
-  out="$(HOME="$work/home" bash "$GATE" "$work/pp-ok" 2>&1)"
-  has pp-ok prep "OK: %prep of ok.spec passed on these sources before (cached)" "a pass is cached"
+  has pp-cache prep "OK: %prep of ok.spec passed on these sources before (cached)" "a pass is cached"
 
-  pspec pp-red bad goodbye
-  pspec pp-red mixed hello 'gate-test-no-such-cmd || :' 'false'   # only the command that failed counts
-  pspec pp-red typo hello 'gate-test-no-such-cmd'                 # every BuildRequires is here: a typo
-  pspec pp-red rofs hello 'touch %{_sourcedir}/gate-written'      # the checkout is read-only
-  printf '%s\n' 'Source1:        gate-test-missing.tar.gz' '%description' t '%prep' '%setup -q -c -T -a 1' '%files' | ms pp-red svc
-  printf '<services>\n  <service name="format_spec_file"/>\n</services>\n' > "$work/pp-red/_service"
-  pspec pp-red noparse hello -- 'Bogus: tag'
-  gt pp-red
+  got pp-red
   sec pp-red prep 1
   has pp-red prep "bad.spec: %prep fails" "a patch that does not apply is red"
   has pp-red prep "mixed.spec: %prep fails" "an earlier miss the spec tolerates is no excuse"
@@ -1300,63 +1332,42 @@ EOF
   has pp-red prep "svc.spec: %prep fails" "a missing source no source service makes is red"
   has pp-red prep "noparse.spec: not run: the spec does not parse" "an unparsable spec is red"
   grep -qE '^VERDICT: RED — [^(]*\bprep\b' <<<"$out" && pass "prep: red on the verdict line" || fail "prep: not on the verdict line"
-  echo build > "$work/build.log"
-  gt pp-red --build-log "$work/build.log"
-  sec pp-red prep 0; has pp-red prep "note: not run: the --build-log build ran %prep" "skipped with --build-log"
+  got pp-log; sec pp-log prep 0; has pp-log prep "note: not run: the --build-log build ran %prep" "skipped with --build-log"
 
-  # Never unsandboxed: no bwrap that starts is UNKNOWN, and nothing runs.
-  mkdir -p "$work/nobw"; printf '#!/bin/sh\necho "bwrap: no permission" >&2; exit 1\n' > "$work/nobw/bwrap"; chmod +x "$work/nobw/bwrap"
-  # shellcheck disable=SC2016
-  pspec pp-nobw ran hello 'touch "$HOME/.gate-test-ran"'
-  out="$(HOME="$work/home" PATH="$work/nobw:$PATH" bash "$GATE" "$work/pp-nobw" 2>&1)"
+  got pp-nobw
   sec pp-nobw prep 0
   has pp-nobw prep "UNKNOWN: %prep not run: no sandbox (bwrap: no permission)" "no sandbox is UNKNOWN"
   [ ! -e "$work/home/.gate-test-ran" ] && pass "prep: nothing ran without the sandbox" || fail "prep: %prep ran unsandboxed"
   grep -qE '^VERDICT: .*not proven on this host.*no sandbox' <<<"$out" && pass "prep: no sandbox is on the verdict line" \
     || { fail "prep: no sandbox not on the verdict line"; grep VERDICT <<<"$out"; }
-  # Not enough room under /var/tmp to unpack: UNKNOWN, nothing unpacked.
-  mkdir -p "$work/nodf"; printf '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 100 99 1 99%% /var/tmp\\n"\n' > "$work/nodf/df"
-  chmod +x "$work/nodf/df"; pspec pp-df ok hello
-  out="$(PATH="$work/nodf:$PATH" bash "$GATE" "$work/pp-df" 2>&1)"
-  sec pp-df prep 0; has pp-df prep "UNKNOWN: %prep of ok.spec not run: not enough free space under /var/tmp" "too little space is UNKNOWN"
+  got pp-df; sec pp-df prep 0; has pp-df prep "UNKNOWN: %prep of room.spec not run: not enough free space under /var/tmp" "too little space is UNKNOWN"
 
-  # A signal or the time limit kills %prep and removes its scratch, read-only parts too.
-  slow() { pspec "$1" slow hello 'mkdir ro && touch ro/f && chmod -R a-w ro' "sleep $2"; }
   gone() { # gone <pkg> <sleep arg> <what>: no %prep process and no scratch directory left
     local _; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "sleep $2" > /dev/null || break; sleep 0.3; done
     if ! pgrep -f "sleep $2" > /dev/null && ! compgen -G "/var/tmp/gate-prep-$1.*" > /dev/null; then pass "prep: $3"
     else fail "prep: $3: left $(pgrep -f "sleep $2" | wc -l) process(es), $(compgen -G "/var/tmp/gate-prep-$1.*" | wc -l) dir(s)"
          pkill -f "sleep $2"; for d in /var/tmp/gate-prep-"$1".*; do [ ! -d "$d" ] || { chmod -R u+w "$d"; rm -rf "$d"; }; done; fi
   }
-  s1="41.$$"; slow pp-sig "$s1"
+  got pp-tmo; sec pp-tmo prep 1; has pp-tmo prep "UNKNOWN: %prep of slow.spec did not finish in 2 s" "the time limit is red"
+  gone pp-tmo "$s2" "the time limit leaves nothing behind"
   bash "$GATE" "$work/pp-sig" > "$work/sig.out" 2>&1 & gp=$!
   for _ in $(seq 1 100); do pgrep -f "sleep $s1" > /dev/null && break; sleep 0.2; done
   kill -TERM "$gp"; wait "$gp"; rc=$?
   [ "$rc" = 130 ] && pass "prep: a TERM exits 130" || fail "prep: TERM: rc=$rc"
   gone pp-sig "$s1" "a TERM leaves nothing behind"
-  s2="42.$$"; slow pp-tmo "$s2"
-  out="$(GATE_PREP_TIMEOUT=2 bash "$GATE" "$work/pp-tmo" 2>&1)"
-  sec pp-tmo prep 1; has pp-tmo prep "UNKNOWN: %prep of slow.spec did not finish in 2 s" "the time limit is red"
-  gone pp-tmo "$s2" "the time limit leaves nothing behind"
 
-  # spec-cleaner 1.3.2 unbraces %{cargo_build} -p foo, which rpm then parses as
-  # the macro's options (goose failed in staging): a spec-cleaner defect, not a
-  # missed rule; the -- form is what spec-cleaner leaves alone.
-  scd() { out="$(PATH="$work/scbin:$PATH" SC_MODE=$1 bash "$GATE" "$work/sp-defect" 2>&1)"; }
-  mkdir -p "$work/sp-defect"
-  printf '%s\n' "$HDR" '%define opt_macro() echo %*' '%description' t '%prep' '%build' '%{opt_macro} -p foo' '%files' '%changelog' > "$work/sp-defect/p.spec"
-  scd unbrace
+  got sp-defect
   grep -qF "## spec-cleaner: rc=1" <<<"$out" \
     && grep -qF "KNOWN DEFECT: p.spec:11: spec-cleaner's \`%opt_macro -p foo\` does not parse" "$work/gate-sp-defect/spec-cleaner.txt" \
     && grep -qF -- "%cargo_build -- <args>" "$work/gate-sp-defect/spec-cleaner.txt" \
     && pass "spec-cleaner: an unbraced macro that no longer parses is a known defect, with the -- form" \
     || { fail "spec-cleaner known defect"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
-  sed -i 's/^%{opt_macro} -p foo$/%opt_macro -- -p foo/' "$work/sp-defect/p.spec"; scd unbrace
+  got sp-dash
   grep -qF "## spec-cleaner: rc=0" <<<"$out" && pass "spec-cleaner: the -- form is left alone" \
-    || { fail "spec-cleaner -- form"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
-  scd group
-  grep -qF "## spec-cleaner: rc=1" <<<"$out" && ! grep -qF "KNOWN DEFECT" "$work/gate-sp-defect/spec-cleaner.txt" \
-    && pass "spec-cleaner: a hunk that parses is no known defect" || { fail "spec-cleaner group hunk"; sed 's/^/    /' "$work/gate-sp-defect/spec-cleaner.txt"; }
+    || { fail "spec-cleaner -- form"; sed 's/^/    /' "$work/gate-sp-dash/spec-cleaner.txt"; }
+  got sp-group
+  grep -qF "## spec-cleaner: rc=1" <<<"$out" && ! grep -qF "KNOWN DEFECT" "$work/gate-sp-group/spec-cleaner.txt" \
+    && pass "spec-cleaner: a hunk that parses is no known defect" || { fail "spec-cleaner group hunk"; sed 's/^/    /' "$work/gate-sp-group/spec-cleaner.txt"; }
 else
   echo "SKIP: rpmspec, %prep and spec-cleaner parse checks (no rpmspec, rpmbuild or bwrap)"
 fi
