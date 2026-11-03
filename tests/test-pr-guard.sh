@@ -1647,6 +1647,21 @@ case_ seq-sr-redirect-out        0 - ""
 case_ seq-sr-after-checkout-write 2 gate-sequence "a redirection to"
 # A directory made outside the checkout changes none of its files.
 case_ seq-mkdir-then-ci          0 - ""
+# cp, rm and tar with a known target outside the checkout change none of its files;
+# into it (a copy over the spec, an archive unpacked there) they do.
+case_ seq-cp-out-then-ci         0 - ""
+case_ seq-rm-out-then-ci         0 - ""
+case_ seq-tar-out-then-ci        0 - ""
+case_ seq-cp-in-then-ci          2 gate-sequence "this call also runs cp"
+case_ seq-tar-x-then-ci          2 gate-sequence "this call also runs tar"
+# A destination that holds the checkout writes into it too: a copy or unpack into its project
+# directory or "..". One in the home directory or in another checkout does not.
+case_ seq-cp-project-then-ci     2 gate-sequence "this call also runs cp"
+case_ seq-cp-dotdot-then-ci      2 gate-sequence "this call also runs cp"
+case_ seq-tar-x-dotdot-then-ci   2 gate-sequence "this call also runs tar"
+case_ seq-cp-project-then-sr     2 gate-sequence "this call also runs cp"
+case_ seq-cp-home-then-ci        0 - ""
+case_ seq-cp-other-co-then-ci    0 - ""
 # The account: osc whois, once per call and in memory only. A file a call can write is
 # no source for it: an earlier call could name someone else there.
 mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"

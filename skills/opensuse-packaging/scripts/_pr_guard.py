@@ -2384,10 +2384,12 @@ def note_writer(name, run, ctx, cwd):
         valued = ("--skip-fields", "--skip-chars", "--check-chars")
         if len(parse_opts(run[1:], "fsw", valued)[1]) < 2:
             return
-    elif name == "mkdir":  # makes the directories it names
-        dirs = parse_opts(run[1:], "m", ("--mode",))[1]
-        targets = [target_path(a, cwd) for a in dirs]
-        note_write(ctx, what, None if None in targets else tuple(targets))
+    elif name in ("mkdir", "cp", "mv", "install", "rm", "tar"):
+        raws = write_targets(name, run[1:])
+        targets = None if raws is None else [target_path(a, cwd) for a in raws]
+        note_write(
+            ctx, what, None if targets is None or None in targets else tuple(targets)
+        )
         return
     elif name == "tee":  # writes the files it names
         files = [a for a in run[1:] if a[:1] != "-"]
@@ -2399,6 +2401,58 @@ def note_writer(name, run, ctx, cwd):
     elif name in READERS:
         return
     note_write(ctx, what)
+
+
+def write_targets(name, args):
+    """The paths mkdir, cp, mv, install, rm or tar writes, as written; None when
+    only the shell can tell (no operand to read, a tar mode it does not know)."""
+    if name == "mkdir":
+        return parse_opts(args, "m", ("--mode",))[1]
+    if name == "rm":
+        return parse_opts(args, "")[1]
+    if name in COPY_VALUED:
+        opts, pos = parse_opts(args, COPY_VALUED[name], COPY_LONG)
+        flags = dict(opts)
+        into = flags.get("-t", flags.get("--target-directory"))
+        if name == "install" and ("-d" in flags or "--directory" in flags):
+            return pos
+        if into is not None:
+            return [into] + (pos if name == "mv" else [])
+        if len(pos) < 2:
+            return None
+        return pos if name == "mv" else pos[-1:]  # mv also takes its sources away
+    # tar: an archive it creates or appends to, or the directory it unpacks into
+    modes = {"--extract": "x", "--get": "x", "--create": "c", "--append": "r"}
+    modes.update({"--update": "u", "--list": "t"})
+    mode, archive, into, i = None, None, None, 0
+    while i < len(args):
+        a, i = args[i], i + 1
+        if a.startswith("--"):
+            k, eq, v = a.partition("=")
+            mode = modes.get(k, mode)
+            if k in ("--file", "--directory"):
+                if not eq:
+                    v, i = (args[i] if i < len(args) else None), i + 1
+                archive, into = (v, into) if k == "--file" else (archive, v)
+        elif a.startswith("-") or i == 1:  # -xzf FILE, or tar's old xzf FILE
+            letters = a.lstrip("-")
+            for j, c in enumerate(letters):
+                if c in "xcrut":
+                    mode = c
+                elif c in "fC":  # the rest of a dashed cluster, else the next word
+                    if a.startswith("-") and letters[j + 1 :]:
+                        v = letters[j + 1 :]
+                    else:
+                        v, i = (args[i] if i < len(args) else None), i + 1
+                    archive, into = (v, into) if c == "f" else (archive, v)
+                    break
+    if mode == "t":
+        return []
+    if mode == "x":
+        return [into or "."]
+    if mode in ("c", "r", "u"):
+        return [] if archive in ("-", None) else [archive]
+    return None
 
 
 def note_write(ctx, what, targets=None):
@@ -2598,11 +2652,23 @@ def in_checkout(path):
     return False
 
 
+def holds_checkout(path):
+    """Whether directory path holds an osc checkout one level down (a project
+    directory, or the parent of a package checkout)."""
+    try:
+        return any(
+            os.path.isdir(os.path.join(path, n, ".osc")) for n in os.listdir(path)
+        )
+    except OSError:
+        return False
+
+
 def gate_writers(ctx):
-    """judge()'s last step: a stamped commit after a write into its checkout
-    (before it, in a loop around both, beside it in its pipeline or the
-    background), and a submit after a write that can change what OBS holds (a
-    commit, a script, a write into any checkout; not its own log), are refused:
+    """judge()'s last step: a stamped commit after a write into its checkout or
+    to a directory holding it (before it, in a loop around both, beside it in
+    its pipeline or the background), and a submit after a write that can change
+    what OBS holds (a commit, a script, a write into or above any checkout; not
+    its own log), are refused:
     a fault the agent fixes by splitting the call, not one for the user to
     approve."""
     for kind, what, co, seq, loops, pipe in ctx.gate_pending:
@@ -2618,11 +2684,17 @@ def gate_writers(ctx):
                         or seq in ctx.bg  # it runs in the background
                         or ctx.any_bg  # something does: it may be the commit
                     )
-                    and (targets is None or any(within(t, co) for t in targets))
+                    and (
+                        targets is None
+                        or any(within(t, co) or within(co, t) for t in targets)
+                    )
                 )
             return (
                 ws < seq or set(wl) & set(loops) or seq in ctx.bg or ctx.any_bg
-            ) and (targets is None or any(map(in_checkout, targets)))
+            ) and (
+                targets is None
+                or any(in_checkout(t) or holds_checkout(t) for t in targets)
+            )
 
         w = sorted({w[1] for w in ctx.writers if counts(*w)})
         if w:
