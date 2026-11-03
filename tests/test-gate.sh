@@ -1064,6 +1064,27 @@ else
   echo "SKIP: GREEN stamp (no OBS source_validator/download_files)"
 fi
 
+if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
+  # qux: in devel:example only, its top entry a real one; the change edits the spec alone
+  printf 'Name: qux\nVersion: 1.0\n' | put devel:example/qux qux.spec
+  e "Mon Jan  5" "Build with the system zlib" | put devel:example/qux qux.changes; echo devel:example/qux > "$O/devel/qux"
+  rm -rf "$work/t-ne"; mkdir -p "$work/t-ne/.osc/sources"; printf 'qux\n' > "$work/t-ne/.osc/_package"
+  printf 'home:<you>:branches:devel:example\n' > "$work/t-ne/.osc/_project"; printf '2.0\n' > "$work/t-ne/.osc/_osclib_version"
+  printf '<directory name="qux" rev="1"><linkinfo project="devel:example" package="qux" srcmd5="x"/><entry name="qux.changes"/><entry name="qux.spec"/></directory>\n' \
+    > "$work/t-ne/.osc/_files"
+  cp "$O/devel:example/qux/"* "$work/t-ne/.osc/sources/"; cp "$O/devel:example/qux/qux.changes" "$work/t-ne/"
+  printf 'Name:           qux\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
+    > "$work/t-ne/qux.spec"
+  SQ="$work/home/.local/state/opensuse-packaging/gate/obs/qux/home:<you>:branches:devel:example.json"
+  out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-ne" --no-entry "a comment-only cleanup" 2>&1)"
+  grep -q "^VERDICT: GREEN — .*no new .changes entry: a comment-only cleanup" <<<"$out" \
+    && python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("no_entry") != "a comment-only cleanup")' "$SQ" \
+    && pass "--no-entry: GREEN names the reason, and the stamp records it" \
+    || { fail "--no-entry on a GREEN run"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: --no-entry on a GREEN run (no OBS source_validator/download_files)"
+fi
+
 # A fresh `osc mkpac` whose files were never `osc add`ed tracks nothing: its
 # tree is the sha256 of nothing, e3b0c44298fc for any content, so a review
 # bound to it binds nothing. Red, nothing stamped, and --review refuses it.
@@ -1465,6 +1486,16 @@ cp "$work/t-ce-branch/.osc/sources/foo.changes" "$work/t-ce-branch/foo.changes"
 ce branch-no-entry 1 "RED: foo.spec changed vs devel:example/foo, and no .changes has a top entry it lacks" "$work/t-ce-branch"
 grep -q "^VERDICT: RED — .*changes-entry" <<<"$out" && pass "changes-entry branch-no-entry: the verdict names it" \
   || fail "changes-entry branch-no-entry: not in the verdict"
+grep -qF -- "--amend-top" <<<"$out" && grep -qF -- "--no-entry REASON" <<<"$out" \
+  && pass "changes-entry branch-no-entry: names --amend-top and --no-entry" \
+  || fail "changes-entry branch-no-entry: no --amend-top or --no-entry in the red line"
+# The user's exemption, or a cosmetic change: --no-entry REASON passes it,
+# prints the reason and records it in the stamp for the change review.
+ce no-entry 0 "NO ENTRY: comment-only cleanup" "$work/t-ce-branch" --no-entry "comment-only cleanup"
+out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --no-entry "" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && pass "--no-entry needs a reason" || fail "--no-entry empty: rc=$rc"
+out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --review "$work/rv.txt" --no-entry x 2>&1)"; rc=$?
+[ "$rc" = 2 ] && pass "--review with --no-entry: usage" || fail "--review with --no-entry: rc=$rc"
 ce branch-entry 0 "OK: foo.changes: its top entry is new vs devel:example/foo" "$work/t-good"
 grep -qF "OK: foo.changes: its top entry is new vs openSUSE:Factory/foo" <<<"$out" \
   && pass "changes-entry branch-entry: Factory's devel project as the target, so Factory too" \
@@ -1559,16 +1590,42 @@ Name:           p
 #   tables in regex-syntax.
 License:        MIT AND MPL-2.0 AND ISC AND Unicode-3.0
 EOF
-cm notice-prose 1 "a Legal-Review-Notice: line that is no short bullet" <<'EOF'
+cm notice-prose 1 "a Legal-Review-Notice line that is no short bullet" <<'EOF'
 Name:           p
 # Legal-Review-Notice: 155 crates are statically linked into libfoo (cargo
 # tree -e normal). Beyond MIT and the dual MIT/Apache-2.0 majority: BSL-1.0
 # from xxhash-rust.
 License:        MIT AND BSL-1.0
 EOF
+# Real notices list 15-23 findings: no cap on bullets. The notice line may
+# wrap once, and it may carry a bug id: "Legal-Review-Notice (boo#N):".
 { echo 'Name:           p'; echo '# Legal-Review-Notice: linked besides MIT:'
-  for i in 1 2 3 4 5 6 7 8 9 10 11; do echo "# - L$i: crate$i"; done; echo 'License:        MIT'; } \
-  | cm notice-many 1 "a Legal-Review-Notice: with 11 bullets (at most 10)"
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23; do echo "# - L$i: crate$i"; done
+  echo 'License:        MIT'; } | cm notice-many 0 "OK: no comment block"
+cm notice-boo 0 "OK: no comment block" <<'EOF'
+Name:           p
+# Legal-Review-Notice (boo#1273104): linked besides MIT:
+# - MPL-2.0: cssparser and seven sibling crates.
+# - GPL-3.0-only named in a jbig2.rs doc comment only.
+# - ISC: ring.
+License:        MIT AND MPL-2.0 AND ISC
+EOF
+cm notice-header-wrap 0 "OK: no comment block" <<'EOF'
+Name:           p
+# Legal-Review-Notice: crates statically linked into the shipped binary,
+#   besides MIT:
+# - MPL-2.0: option-ext.
+# - ISC: ring.
+License:        MIT AND MPL-2.0 AND ISC
+EOF
+cm notice-header-wrap-twice 1 "a Legal-Review-Notice line that is no short bullet" <<'EOF'
+Name:           p
+# Legal-Review-Notice: crates statically linked into the shipped binary,
+#   taken from the unit graph, identical on both arches,
+#   besides MIT:
+# - ISC: ring.
+License:        MIT AND ISC
+EOF
 # Against the target: its own long comments are not the change's, kept or
 # moved; a long one the change adds is red.
 printf 'Name: foo\nVersion: 0.9.8\n%%check\n# one\n# two\n# three\n# four\n# five\nmake check\n' | put devel:example/foo foo.spec
@@ -1585,6 +1642,14 @@ og "$work/t-cm"
 grep -qF "## spec-comments: rc=1" <<<"$out" && grep -qF "foo.spec:4: a 4-line comment" <<<"$out" \
   && pass "spec-comments: a 4-line comment added to the target's is red" \
   || { fail "spec-comments: added comment"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Bare "#" lines neither hide in the target's header nor split a comment.
+hdr 2026 '' | put devel:example/foo foo.spec
+co "$work/t-cm-hash" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+{ cat "$O/devel:example/foo/foo.spec"; printf '# one\n# two\n#\n# three\n# four\n#\n# five\n'; } > "$work/t-cm-hash/foo.spec"
+og "$work/t-cm-hash"
+grep -qF "## spec-comments: rc=1" <<<"$out" && grep -qF "a 5-line comment" <<<"$out" \
+  && pass "spec-comments: a comment split by bare # lines is one comment" \
+  || { fail "spec-comments: bare # lines"; printf '%s\n' "$out" | sed 's/^/    /'; }
 printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
