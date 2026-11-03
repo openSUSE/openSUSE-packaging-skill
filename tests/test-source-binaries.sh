@@ -299,6 +299,18 @@ PY
     || fail "embeds: archive code is SHIPPED: $(grep '^SHIPPED' <<<"$LAST" | head -2)"
   shiprpm rpm-copy "$work/t/fp/lib/libx.a"
   case_ shipped-archive-copy 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt fp.tar.gz:./lib/libx.a" "$d" --rpms "$work/rpm-copy-out"
+  # a small helper (gcc -O2: under 1 KiB of .text in a 64 KiB file) embedded in a bundle
+  if command -v gcc > /dev/null; then
+    d=$(pkg tiny); mkdir -p "$work/t/tiny/bin"
+    printf '#include <stdio.h>\n#include <unistd.h>\nint main(int c, char **v) { if (c < 2) { fprintf(stderr, "usage: %%s cmd\\n", v[0]); return 2; }\n  setsid(); execvp(v[1], v + 1); perror("execvp"); return 127; }\n' > "$work/tiny.c"
+    gcc -O2 -o "$work/t/tiny/bin/pty-helper" "$work/tiny.c" && tar -C "$work/t/tiny" -czf "$d/tiny.tar.gz" .
+    printf '# Source-Binary-Exception: tiny.tar.gz:./* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
+    { head -c 3000 /dev/urandom; cat "$work/t/tiny/bin/pty-helper"; head -c 3000 /dev/urandom; } > "$work/tiny-bundle"
+    shiprpm rpm-tiny "$work/tiny-bundle"
+    case_ shipped-small-helper 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib embeds the prebuilt tiny.tar.gz:./bin/pty-helper" "$d" --rpms "$work/rpm-tiny-out"
+  else
+    echo "note: no gcc here, the small-helper case is not run"
+  fi
 else
   echo "note: no rpmbuild/rpm2cpio here, the --rpms cases are not run"
 fi

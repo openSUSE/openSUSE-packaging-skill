@@ -72,10 +72,13 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 6  # bump when detection changes, so cached results are rescanned
+VERSION = 7  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
+MIN_CODE = (
+    256  # a code range this short is a fingerprint whole (a small helper's .text)
+)
 CHUNK = 8 << 20
 NESTED_ZIP_CAP = 256 << 20
 SHOW = 20
@@ -361,27 +364,24 @@ def ar_members(b):
         off += 60 + size + (size & 1)
 
 
-def fingerprint(buf, k):
-    """Up to 4 KiB of buf that is lively() and found once in it, from the hit's
-    own code: an ELF's executable sections, an ar archive's members (their code
-    when they are ELF objects), else past the first 4 KiB of headers. b"" when
-    no window qualifies: the sha256 still finds a verbatim copy."""
-    if k.startswith("ELF"):
-        ranges = elf_code(buf)
-    elif k.startswith("ar archive"):
-        ranges = []
-        for start, size in ar_members(buf):
-            ranges += elf_code(buf[start : start + size], start) or [
-                (start, start + size)
-            ]
-    else:
-        ranges = []
-    if not ranges:
-        ranges = [(HEAD if len(buf) >= 2 * HEAD else 0, len(buf))]
+def merged(ranges):
+    """ranges sorted, the ones a section alignment apart joined (.plt and .text)."""
+    out = []
+    for lo, hi in sorted(ranges):
+        if out and lo - out[-1][1] <= 64:
+            out[-1] = (out[-1][0], max(out[-1][1], hi))
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def window(buf, ranges, least):
+    """The first lively() window of up to 4 KiB in ranges, at least least bytes
+    long, that is found once in buf; b"" if none."""
     for lo, hi in ranges:
         hi = min(hi, len(buf))
         n = min(HEAD, hi - lo)
-        if n < PRINT:
+        if n < least:
             continue
         offs = list(range(lo, hi - n + 1, n))[:64]
         for off in offs + [hi - n]:
@@ -389,6 +389,27 @@ def fingerprint(buf, k):
             if lively(w) and buf.find(w) == off and buf.find(w, off + 1) == -1:
                 return w
     return b""
+
+
+def fingerprint(buf, k):
+    """Up to 4 KiB of buf that is lively() and found once in it, from the hit's
+    own code: an ELF's executable sections (a small helper's whole .text, 256 B
+    or more), an ar archive's members (their code when they are ELF objects),
+    and else, or when none of those qualifies, past the first 4 KiB of headers.
+    b"" when no window qualifies: the sha256 still finds a verbatim copy."""
+    code, data = [], []
+    if k.startswith("ELF"):
+        code = elf_code(buf)
+    elif k.startswith("ar archive"):
+        for start, size in ar_members(buf):
+            r = elf_code(buf[start : start + size], start)
+            (code if r else data).extend(r or [(start, start + size)])
+    rest = [(HEAD if len(buf) >= 2 * HEAD else 0, len(buf))]
+    return (
+        window(buf, merged(code), MIN_CODE)
+        or window(buf, data, PRINT)
+        or window(buf, rest, PRINT)
+    )
 
 
 def drain(stream):
