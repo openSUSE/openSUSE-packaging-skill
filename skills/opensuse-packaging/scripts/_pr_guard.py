@@ -2630,6 +2630,7 @@ GATE_VALUED = {
     "--rpms",
     "--cleaner-deviation",
 }
+REVIEW_WORD = Rx(r"(?<![\w-])--review(?![\w-])")
 # expansions that make several words, quoted or not
 SPLITS = Rx(r"\$[@*]|\$\{[@*!#]|\[[@*]\]")
 
@@ -2691,7 +2692,14 @@ def review_record(word, args, ctx, cwd, via="", label=""):
                 if VARIABLE.search(w)
                 else [w]
             )
-            if vals is None or ifs and VARIABLE.search(w):
+            bodies = [
+                ctx.sub_bodies[int(n)]
+                for n in SUB_WORD.findall(w or "")
+                if int(n) < len(ctx.sub_bodies)
+            ]
+            if any(REVIEW_WORD.search(b) for b in bodies):  # $(echo --review F)
+                review = True
+            elif vals is None or ifs and VARIABLE.search(w):
                 several = w is None or ifs or SPLITS.search(w)
                 if not value and (several or k + 1 < len(args)):
                     unread = unread or "an argument only the shell knows"

@@ -9056,5 +9056,12 @@
       "command": "while read -r p; do @WORK@/gate.sh \"$p\"; done < /var/tmp/x-list.txt"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "review-substitution-last": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . $(echo --review /var/tmp/x-review/verdict.txt)"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }
