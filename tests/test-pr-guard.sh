@@ -1568,6 +1568,10 @@ done
 ask_ review-xargs               gate-args "gate.sh from the main session with the arguments xargs adds"
 # --no-entry takes the next word, as --cleaner-deviation does: its value is no --review.
 case_ gate-no-entry-value        0 - ""
+# Each names the skill's own gate.sh by its absolute path.
+ask_ sr-unbuilt                 build-evidence "Record its build first: $S/scripts/gate.sh with --build-log" PR_GUARD_SKILL_DIR="$S"
+ask_ review-array               gate-args "Write $S/scripts/gate.sh's arguments out literally" PR_GUARD_SKILL_DIR="$S"
+ask_ review-main-session        review-self "runs $S/scripts/gate.sh --review itself" PR_GUARD_SKILL_DIR="$S"
 # A substitution whose text spells --review is a review, wherever it stands.
 for n in review-brace review-brace-empty review-symlink review-substitution review-substitution-last review-unknown-word; do
   ask_ "$n" review-self "gate.sh --review from the main session"

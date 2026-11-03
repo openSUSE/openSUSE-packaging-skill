@@ -564,13 +564,13 @@ ASKS = {
     "cannot judge them. Write them out literally, or it needs the user's go.",
     "gate-stamp": "{0}. Run {s}/gate.sh in the checkout, commit in the next "
     "call, and file once gate.sh --review recorded the change review's PASS.",
-    "build-evidence": "{0}. Record its build first: gate.sh with --build-log LOG "
+    "build-evidence": "{0}. Record its build first: {s}/gate.sh with --build-log LOG "
     "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
     "commit; then file.",
     "gate-args": "{0}, so the guard cannot see whether --review is among them. "
-    "Write gate.sh's arguments out literally (no --review is involved).",
+    "Write {s}/gate.sh's arguments out literally (no --review is involved).",
     "review-self": "{0}: only the changes-review agent that ran the review records "
-    "it (agents/changes-review.md runs gate.sh --review itself), and a PASS the "
+    "it (agents/changes-review.md runs {s}/gate.sh --review itself), and a PASS the "
     "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
     "leave this command to the user.",
 }
