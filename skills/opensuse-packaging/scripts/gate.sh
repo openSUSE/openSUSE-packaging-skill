@@ -44,8 +44,9 @@
 #                the base package and each flavor. GREEN records them as the
 #                tree's build
 #                Without it %prep runs here: rpmbuild -bp --nodeps in a bwrap
-#                sandbox (no network, $HOME empty, the checkout read-only, only
-#                a scratch dir under /var/tmp writable), a pass cached per spec
+#                sandbox (no network, only /usr and /etc of the host, $HOME
+#                empty, the checkout read-only, only a scratch dir under
+#                /var/tmp writable), a pass cached per spec
 #                and sources; red when it fails or passes 900 s, UNKNOWN but not
 #                red when no sandbox starts, /var/tmp lacks the room, or %prep
 #                stops on what a BuildRequires missing here would bring
@@ -1058,7 +1059,8 @@ def prepkey(spec):
         v = subprocess.run(["rpm", "--version"], capture_output=True, text=True).stdout
     except OSError:
         return 1
-    h = hashlib.sha256(v.encode() + b"\0" + spec.encode())
+    # the salt: a pass from before %prep ran in the sandbox is no pass
+    h = hashlib.sha256(b"sandbox-1\0" + v.encode() + b"\0" + spec.encode())
     for n in sorted(os.listdir(".")):
         if n.startswith(".") or n.endswith(".changes") or not os.path.isfile(n):
             continue
@@ -1357,24 +1359,32 @@ fi
 # no longer applied while the gate was GREEN, electron's %prep died on
 # "unexpected EOF". %prep is the package's code (nodejs-electron runs a python
 # script from its tarball, others ./autogen.sh or ./configure), so rpmbuild -bp
-# runs in a bwrap sandbox: no network, $HOME and the other user directories
+# runs in a bwrap sandbox: no network, only /usr and /etc of the host, $HOME
 # empty, the checkout read-only, only the scratch directory under /var/tmp
-# writable. Without a sandbox that starts it does not run at all. A pass is
-# cached by the hash of the spec, the sources and rpm's version. What only the
+# writable, no environment but PATH and HOME. Without a sandbox that starts it
+# does not run at all. A pass is cached by the hash of the spec, the sources and
+# rpm's version. What only the
 # build root has (a missing BuildRequires' file, tool or module, a source a
 # service makes, an arch the spec builds) leaves %prep UNKNOWN, not red.
 sandbox() {   # sandbox <writable dir>: the bwrap arguments, in sbx
-  sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session --clearenv
-       --setenv PATH "$PATH" --setenv HOME "$HOME" --ro-bind / / --dev /dev --proc /proc
-       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs /home --tmpfs /root --tmpfs "$HOME"
-       --ro-bind "$PWD" "$PWD" --bind "$1" "$1")
+  # only /usr and /etc of the host, never / (core dumps, journals, other users'
+  # files); run under env -i, so not even bwrap's own PID 1 holds the gate's env
+  sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session
+       --ro-bind /usr /usr --ro-bind /etc /etc --dev /dev --proc /proc
+       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs "$HOME")
+  local x
+  for x in /bin /sbin /lib /lib64 /lib32 /libx32 /var/lib/rpm; do   # usrmerge links, the rpm db
+    if [ -L "$x" ]; then sbx+=(--symlink "$(readlink "$x")" "$x")
+    elif [ -d "$x" ]; then sbx+=(--ro-bind "$x" "$x"); fi
+  done
+  sbx+=(--ro-bind "$PWD" "$PWD" --bind "$1" "$1")
 }
 tmo=${GATE_PREP_TIMEOUT:-900}
 if [ ${#buildlogs[@]} -gt 0 ]; then
   echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"
 elif ! command -v rpmbuild >/dev/null 2>&1; then
   echo "## prep: SKIPPED (no rpmbuild)"; red+=(prep)
-elif ! command -v bwrap >/dev/null 2>&1 || ! { sandbox "$log"; perr=$(bwrap "${sbx[@]}" true 2>&1); }; then
+elif ! command -v bwrap >/dev/null 2>&1 || ! { sandbox "$log"; perr=$(env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" true 2>&1); }; then
   perr=${perr:-bwrap is not installed}; why="no sandbox (${perr%%$'\n'*})"
   echo "UNKNOWN: %prep not run: $why" > "$log/prep.txt"; hostnote+="${hostnote:+; }%prep: $why"
   show prep 0 "$log/prep.txt"
@@ -1405,7 +1415,7 @@ else
     cp "$rs" "$bp/rpm.spec"; t0=$SECONDS
     # in the background, so a signal can kill its process group (the EXIT trap)
     sandbox "$bp"
-    timeout -k 30 "$tmo" bwrap "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+    timeout -k 30 "$tmo" env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
       "$bp/rpm.spec" > "$log/prep.$s.log" 2>&1 &
     prep_pid=$!; wait "$prep_pid"; prc=$?; prep_pid=""
     chmod -R u+w "$bp"; rm -rf "$bp"; bp=""

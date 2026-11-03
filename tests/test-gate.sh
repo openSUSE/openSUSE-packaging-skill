@@ -1095,7 +1095,9 @@ fi
 # (rpmbuild -bp in a sandbox): photocraft's patch no longer applied while the
 # gate was GREEN. Several specs share one checkout, so one gate run checks many,
 # and the runs go in parallel: the fixtures first, then every run, then the checks.
-if command -v rpmspec > /dev/null && command -v rpmbuild > /dev/null && command -v bwrap > /dev/null; then
+if command -v rpmspec > /dev/null && command -v rpmbuild > /dev/null; then
+  # %prep runs only in a bwrap sandbox that starts; without one its cases are skipped
+  sbx=0; env -i PATH="$PATH" bwrap --ro-bind / / true > /dev/null 2>&1 && sbx=1
   HDR=$'Name:           p\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT'
   PATH="$work/scbin:$PATH"   # the stand-in spec-cleaner (SC_MODE=same unless set) saves a second a spec
   ms() { mkdir -p "$work/$1"; { echo "$HDR"; cat; } > "$work/$1/$2.spec"; }   # ms <dir> <name> < spec body
@@ -1240,11 +1242,26 @@ EOF
   pspec pp-ok net hello 'test "$(grep -c : /proc/net/dev)" -eq 1'
   # shellcheck disable=SC2016
   pspec pp-ok home hello 'test ! -e "$HOME/.gate-test-secret"'
-  pspec pp-ok esc hello "python3 -c 'import importlib; importlib.import_module(\"gatetest\\x1b[2Jmod\")'" \
+  # nothing of the gate's environment, no core dumps or journals: not even bwrap's PID 1 holds it
+  pspec pp-ok secret hello 'grep -q GATE_TEST_SECRET /proc/1/environ /proc/self/environ 2>/dev/null && exit 1 || :' \
+    'test ! -e /var/lib/systemd/coredump' 'test ! -e /var/log/journal'
+  # an escape sequence in upstream output (a build script's message) must not reach the verdict line
+  pspec pp-ok esc hello "sh -c 'printf \"gatetest\\033[2Jcmd: command not found\\n\" >&2; exit 127'" \
     -- 'BuildRequires:  gate-test-no-such-devel'
   printf '%s\n' 'Source1:        gate-test-made-by-tar.tar.gz' '%description' t '%prep' '%setup -q -c -T -a 1' '%files' | ms pp-ok svc
   printf '<services>\n  <service name="tar" mode="buildtime"/>\n</services>\n' > "$work/pp-ok/_service"
   pspec pp-cache ok hello
+  # a pass recorded before %prep ran in the sandbox (an unsalted key) does not count
+  pspec pp-salt salt hello
+  mkdir -p "$XDG_CACHE_HOME/opensuse-packaging/prep"
+  (cd "$work/pp-salt" && python3 -I - "$XDG_CACHE_HOME/opensuse-packaging/prep" <<'PY'
+import hashlib, os, subprocess, sys
+h = hashlib.sha256(subprocess.run(["rpm", "--version"], capture_output=True, text=True).stdout.encode() + b"\0salt.spec")
+for n in sorted(x for x in os.listdir(".") if os.path.isfile(x)):
+    h.update(("%s  %s\n" % (hashlib.md5(open(n, "rb").read()).hexdigest(), n)).encode())
+open(os.path.join(sys.argv[1], h.hexdigest()), "w").close()
+PY
+  )
   pspec pp-red bad goodbye
   pspec pp-red mixed hello 'gate-test-no-such-cmd || :' 'false'   # only the command that failed counts
   pspec pp-red typo hello 'gate-test-no-such-cmd'                 # every BuildRequires is here: a typo
@@ -1286,13 +1303,16 @@ PY
   rpmbuild -bb --quiet --define "_topdir $work/emb-rpm" --define 'debug_package %{nil}' --define '__os_install_post %{nil}' \
     "$work/emb-rpm/e.spec" > /dev/null 2>&1 && find "$work/emb-rpm/RPMS" -name '*.rpm' -exec cp {} "$work/emb-rpms/" \;
 
-  bg rs-ok; bg rs-sc SC_MODE=group; bg rs-red
-  bg pp-ok HOME="$work/home"; bg pp-cache; bg pp-red; bg pp-log -- --build-log "$work/build.log"
-  bg pp-nobw HOME="$work/home" PATH="$work/nobw:$PATH"; bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2
+  bg rs-ok; bg rs-sc SC_MODE=group; bg rs-red; bg pp-log -- --build-log "$work/build.log"
+  bg pp-nobw HOME="$work/home" PATH="$work/nobw:$PATH"
   bg sp-defect SC_MODE=unbrace; bg sp-dash SC_MODE=unbrace; bg sp-group SC_MODE=group
   bg pp-emb -- --rpms "$work/emb-rpms"
+  if [ "$sbx" = 1 ]; then
+    bg pp-ok HOME="$work/home" GATE_TEST_SECRET=leaked; bg pp-cache; bg pp-red; bg pp-salt
+    bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2
+  fi
   wait
-  bash "$GATE" "$work/pp-cache" > "$work/pp-cache.out" 2>&1   # the second run of the same tree
+  [ "$sbx" = 0 ] || bash "$GATE" "$work/pp-cache" > "$work/pp-cache.out" 2>&1   # the second run of the same tree
 
   got rs-ok
   sec rs-ok rpmspec 0
@@ -1300,7 +1320,7 @@ PY
   has rs-ok rpmspec "note: sectnote.spec:6: %build in a comment" "a section name other than %prep in a comment is a note"
   has rs-ok rpmspec "note: noflavor.spec: the default build does not parse, and the spec builds only its flavors" "a flavor-only spec is judged by its flavors"
   has rs-ok rpmspec "UNKNOWN: hostmacro.spec: rpmspec -P stopped on what this host lacks: macro %gate_test_no_such_macro" "a macro of a missing BuildRequires is UNKNOWN"
-  has rs-ok prep "UNKNOWN: %prep of hostmacro.spec not run: rpmspec -P stopped on this host" "not run after an UNKNOWN parse"
+  [ "$sbx" = 0 ] || has rs-ok prep "UNKNOWN: %prep of hostmacro.spec not run: rpmspec -P stopped on this host" "not run after an UNKNOWN parse"
   grep -qE '^VERDICT: .*not proven on this host.*gate_test_no_such_macro' <<<"$out" \
     && pass "rpmspec: an UNKNOWN parse is named on the verdict line" || { fail "rpmspec: UNKNOWN not on the verdict line"; grep VERDICT <<<"$out"; }
   got rs-sc; hasnt rs-sc spec-cleaner "KNOWN DEFECT" "a flavor-only spec's cleaned copy parses as its flavor"
@@ -1326,29 +1346,6 @@ PY
     || has rs-red rpmspec "obsolete.spec: rpmspec -P fails: error: %patchN is obsolete" "%patchN is red on rpm 4.20"
   hasnt rs-red rpmspec "UNKNOWN" "no wrong spec passes as a host gap"
 
-  got pp-ok
-  sec pp-ok prep 0
-  has pp-ok prep "OK: %prep of ok.spec ran in" "a patch that applies"
-  has pp-ok prep "UNKNOWN: %prep of host.spec stopped on what this host lacks: /usr/share/gate-test-no-such-pkg/*" "a /usr file of a missing BuildRequires is UNKNOWN"
-  has pp-ok prep "UNKNOWN: %prep of arch.spec stopped on what this host lacks: a build arch (rpm: Architecture is excluded:" "an excluded host arch is UNKNOWN"
-  has pp-ok prep "OK: %prep of net.spec ran in" "no network but loopback in the sandbox"
-  has pp-ok prep "OK: %prep of home.spec ran in" "\$HOME is empty in the sandbox"
-  has pp-ok prep "UNKNOWN: %prep of svc.spec stopped on what this host lacks: gate-test-made-by-tar.tar.gz, which a source service makes" "a source a buildtime service makes is UNKNOWN"
-  has pp-ok prep "python module gatetest" "a module of a missing BuildRequires is UNKNOWN"
-  grep '^VERDICT' <<<"$out" | grep -q $'\x1b' && fail "prep: an escape from upstream text reached the verdict line" \
-    || pass "prep: upstream text is sanitized on the verdict line"
-  has pp-cache prep "OK: %prep of ok.spec passed on these sources before (cached)" "a pass is cached"
-
-  got pp-red
-  sec pp-red prep 1
-  has pp-red prep "bad.spec: %prep fails" "a patch that does not apply is red"
-  has pp-red prep "mixed.spec: %prep fails" "an earlier miss the spec tolerates is no excuse"
-  has pp-red prep "typo.spec: %prep fails" "a missing command with every BuildRequires here is red"
-  has pp-red prep "rofs.spec: %prep fails" "writing into the checkout fails"
-  [ ! -e "$work/pp-red/gate-written" ] && pass "prep: the checkout stays untouched" || fail "prep: %prep wrote into the checkout"
-  has pp-red prep "svc.spec: %prep fails" "a missing source no source service makes is red"
-  has pp-red prep "noparse.spec: not run: the spec does not parse" "an unparsable spec is red"
-  grep -qE '^VERDICT: RED — [^(]*\bprep\b' <<<"$out" && pass "prep: red on the verdict line" || fail "prep: not on the verdict line"
   got pp-log; sec pp-log prep 0; has pp-log prep "note: not run: the --build-log build ran %prep" "skipped with --build-log"
 
   got pp-nobw
@@ -1357,22 +1354,50 @@ PY
   [ ! -e "$work/home/.gate-test-ran" ] && pass "prep: nothing ran without the sandbox" || fail "prep: %prep ran unsandboxed"
   grep -qE '^VERDICT: .*not proven on this host.*no sandbox' <<<"$out" && pass "prep: no sandbox is on the verdict line" \
     || { fail "prep: no sandbox not on the verdict line"; grep VERDICT <<<"$out"; }
-  got pp-df; sec pp-df prep 0; has pp-df prep "UNKNOWN: %prep of room.spec not run: not enough free space under /var/tmp" "too little space is UNKNOWN"
+  if [ "$sbx" = 1 ]; then
+    got pp-ok
+    sec pp-ok prep 0
+    has pp-ok prep "OK: %prep of ok.spec ran in" "a patch that applies"
+    has pp-ok prep "UNKNOWN: %prep of host.spec stopped on what this host lacks: /usr/share/gate-test-no-such-pkg/*" "a /usr file of a missing BuildRequires is UNKNOWN"
+    has pp-ok prep "UNKNOWN: %prep of arch.spec stopped on what this host lacks: a build arch (rpm: Architecture is excluded:" "an excluded host arch is UNKNOWN"
+    has pp-ok prep "OK: %prep of net.spec ran in" "no network but loopback in the sandbox"
+    has pp-ok prep "OK: %prep of home.spec ran in" "\$HOME is empty in the sandbox"
+    has pp-ok prep "OK: %prep of secret.spec ran in" "no environment, core dump or journal of the host in the sandbox"
+    has pp-ok prep "UNKNOWN: %prep of svc.spec stopped on what this host lacks: gate-test-made-by-tar.tar.gz, which a source service makes" "a source a buildtime service makes is UNKNOWN"
+    has pp-ok prep "UNKNOWN: %prep of esc.spec stopped on what this host lacks: gatetest" "a command of a missing BuildRequires is UNKNOWN"
+    grep '^VERDICT' <<<"$out" | grep -q $'\x1b' && fail "prep: an escape from upstream text reached the verdict line" \
+      || pass "prep: upstream text is sanitized on the verdict line"
+    has pp-cache prep "OK: %prep of ok.spec passed on these sources before (cached)" "a pass is cached"
+    has pp-salt prep "OK: %prep of salt.spec ran in" "a pass from before the sandbox is no pass"
 
-  gone() { # gone <pkg> <sleep arg> <what>: no %prep process and no scratch directory left
-    local _; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "sleep $2" > /dev/null || break; sleep 0.3; done
-    if ! pgrep -f "sleep $2" > /dev/null && ! compgen -G "/var/tmp/gate-prep-$1.*" > /dev/null; then pass "prep: $3"
-    else fail "prep: $3: left $(pgrep -f "sleep $2" | wc -l) process(es), $(compgen -G "/var/tmp/gate-prep-$1.*" | wc -l) dir(s)"
-         pkill -f "sleep $2"; for d in /var/tmp/gate-prep-"$1".*; do [ ! -d "$d" ] || { chmod -R u+w "$d"; rm -rf "$d"; }; done; fi
-  }
-  got pp-tmo; sec pp-tmo prep 1; has pp-tmo prep "UNKNOWN: %prep of slow.spec did not finish in 2 s" "the time limit is red"
-  gone pp-tmo "$s2" "the time limit leaves nothing behind"
-  bash "$GATE" "$work/pp-sig" > "$work/sig.out" 2>&1 & gp=$!
-  for _ in $(seq 1 100); do pgrep -f "sleep $s1" > /dev/null && break; sleep 0.2; done
-  kill -TERM "$gp"; wait "$gp"; rc=$?
-  [ "$rc" = 130 ] && pass "prep: a TERM exits 130" || fail "prep: TERM: rc=$rc"
-  gone pp-sig "$s1" "a TERM leaves nothing behind"
+    got pp-red
+    sec pp-red prep 1
+    has pp-red prep "bad.spec: %prep fails" "a patch that does not apply is red"
+    has pp-red prep "mixed.spec: %prep fails" "an earlier miss the spec tolerates is no excuse"
+    has pp-red prep "typo.spec: %prep fails" "a missing command with every BuildRequires here is red"
+    has pp-red prep "rofs.spec: %prep fails" "writing into the checkout fails"
+    [ ! -e "$work/pp-red/gate-written" ] && pass "prep: the checkout stays untouched" || fail "prep: %prep wrote into the checkout"
+    has pp-red prep "svc.spec: %prep fails" "a missing source no source service makes is red"
+    has pp-red prep "noparse.spec: not run: the spec does not parse" "an unparsable spec is red"
+    grep -qE '^VERDICT: RED — [^(]*\bprep\b' <<<"$out" && pass "prep: red on the verdict line" || fail "prep: not on the verdict line"
+    got pp-df; sec pp-df prep 0; has pp-df prep "UNKNOWN: %prep of room.spec not run: not enough free space under /var/tmp" "too little space is UNKNOWN"
 
+    gone() { # gone <pkg> <sleep arg> <what>: no %prep process and no scratch directory left
+      local _; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "sleep $2" > /dev/null || break; sleep 0.3; done
+      if ! pgrep -f "sleep $2" > /dev/null && ! compgen -G "/var/tmp/gate-prep-$1.*" > /dev/null; then pass "prep: $3"
+      else fail "prep: $3: left $(pgrep -f "sleep $2" | wc -l) process(es), $(compgen -G "/var/tmp/gate-prep-$1.*" | wc -l) dir(s)"
+           pkill -f "sleep $2"; for d in /var/tmp/gate-prep-"$1".*; do [ ! -d "$d" ] || { chmod -R u+w "$d"; rm -rf "$d"; }; done; fi
+    }
+    got pp-tmo; sec pp-tmo prep 1; has pp-tmo prep "UNKNOWN: %prep of slow.spec did not finish in 2 s" "the time limit is red"
+    gone pp-tmo "$s2" "the time limit leaves nothing behind"
+    bash "$GATE" "$work/pp-sig" > "$work/sig.out" 2>&1 & gp=$!
+    for _ in $(seq 1 100); do pgrep -f "sleep $s1" > /dev/null && break; sleep 0.2; done
+    kill -TERM "$gp"; wait "$gp"; rc=$?
+    [ "$rc" = 130 ] && pass "prep: a TERM exits 130" || fail "prep: TERM: rc=$rc"
+    gone pp-sig "$s1" "a TERM leaves nothing behind"
+  else
+    echo "SKIP: the %prep cases in the sandbox (no bwrap sandbox starts here)"
+  fi
   got pp-emb
   grep -qE '^VERDICT: .*1 EMBEDS\? line\(s\) for the review' <<<"$out" && pass "source-binaries: an EMBEDS? line is counted on the verdict line" \
     || { fail "source-binaries: EMBEDS? not on the verdict line"; grep -E 'EMBEDS|VERDICT' <<<"$out" | sed 's/^/    /'; }
