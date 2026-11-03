@@ -2739,6 +2739,7 @@ GATE_VALUED = {
     "--build-log",
     "--rpms",
     "--cleaner-deviation",
+    "--no-entry",
 }
 REVIEW_WORD = Rx(r"(?<![\w-])--review(?![\w-])")
 # expansions that make several words, quoted or not

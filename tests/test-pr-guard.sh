@@ -1566,6 +1566,8 @@ for n in review-array review-function review-script-array review-ifs; do
   ask_ "$n" gate-args "gate.sh from the main session with an argument only the shell knows"
 done
 ask_ review-xargs               gate-args "gate.sh from the main session with the arguments xargs adds"
+# --no-entry takes the next word, as --cleaner-deviation does: its value is no --review.
+case_ gate-no-entry-value        0 - ""
 # A substitution whose text spells --review is a review, wherever it stands.
 for n in review-brace review-brace-empty review-symlink review-substitution review-substitution-last review-unknown-word; do
   ask_ "$n" review-self "gate.sh --review from the main session"
