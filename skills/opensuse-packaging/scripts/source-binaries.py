@@ -11,7 +11,10 @@ tarball), and nothing is extracted.
               (osc getbinaries -d, or a build root's RPMS): a payload file
               that is, or carries verbatim, a prebuilt binary from the sources
               is SHIPPED, red whatever its exception says, firmware alone
-              excepted
+              excepted; one that carries the code of a static library or
+              object (not a copy of it) is an EMBEDS? line for the review:
+              the package may have rebuilt the same sources with the same
+              compiler
   --all       list every hit (default: the first 20, then a count per kind and
               per directory)
   --no-cache  rescan archives scanned before (results are cached by sha256
@@ -69,13 +72,14 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 5  # bump when detection changes, so cached results are rescanned
+VERSION = 6  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
 CHUNK = 8 << 20
 NESTED_ZIP_CAP = 256 << 20
 SHOW = 20
+LINKABLE = ("ar archive", "ELF object", "COFF object")  # what a build links, not runs
 EXCEPTION = re.compile(r"^#\s*Source-Binary-Exception:(.*)$")
 EXCEPTION_BODY = re.compile(
     r"^\s*(\S+)\s+--\s+(bootstrap|firmware|test-data):\s*(\S.*)$"
@@ -157,7 +161,9 @@ DECODE = (
 def kind(head, name):
     """What prebuilt binary head (a file's first bytes) is, or None."""
     if head[:4] == b"\x7fELF":
-        return "ELF"
+        end = "big" if head[5:6] == b"\x02" else "little"
+        # a relocatable object (ET_REL) is what a static library holds
+        return "ELF object" if int.from_bytes(head[16:18], end) == 1 else "ELF"
     if head[:2] == b"MZ":
         off = int.from_bytes(head[60:64], "little") if len(head) >= 64 else -1
         if 0 <= off <= len(head) - 4 and head[off : off + 4] == b"PE\0\0":
@@ -816,7 +822,7 @@ def main():
         return e is not None
 
     # a payload file with a source binary's bytes ships it; only firmware may ship
-    shipped = []
+    shipped, review = [], []
     if a.rpms is not None:
         prebuilt, prints = {}, {}
         for p, k, h, fp in hits:
@@ -826,6 +832,12 @@ def main():
                 if fp:
                     prints.setdefault(bytes.fromhex(fp), p)
         shipped, bad_rpms, rpms = rpm_payloads(a.rpms, prebuilt, prints)
+        # A static library's or object's code in a shipped file may be the
+        # package's own build of the same sources by the same compiler (swift-lang's
+        # compiler-rt and its seed's): the review decides. A copy stays SHIPPED.
+        static = {p for p, k, _, _ in hits if k.startswith(LINKABLE)}
+        review = [x for x in shipped if x[1] == "embeds" and x[2] in static]
+        shipped = [x for x in shipped if x not in review]
         unknown += bad_rpms
         if not rpms and not bad_rpms:
             unknown.append((a.rpms, "no binary RPM to read"))
@@ -837,6 +849,11 @@ def main():
         print(f"MALFORMED {line}")
     for where, how, src in shipped:
         print(f"SHIPPED {where} {how} the prebuilt {src}")
+    for where, _, src in review:
+        print(
+            f"EMBEDS? {where} shares code with the prebuilt {src}: the review decides "
+            "whether it was linked or rebuilt"
+        )
     shown = uncovered if a.all else uncovered[:SHOW]
     for path, k in shown:
         print(f"HIT {path}: {k}")
@@ -880,6 +897,8 @@ def main():
         return 2
     n = sum(covered.values())
     checked = f", {a.rpms} read for shipped ones" if a.rpms is not None else ""
+    if review:
+        checked += f", {len(review)} EMBEDS? line(s) for the review"
     print(
         f"OK: no prebuilt binaries in the sources{f' outside the {n} excepted' if n else ''}"
         f"{checked}{tail}"

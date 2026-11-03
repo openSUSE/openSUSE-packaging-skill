@@ -231,7 +231,8 @@ case_ usage 2 "is not a directory" "$work/nonexistent"
 # its exception says; so does one that carries them inside (opencode 2.2.5's
 # bun executable held its pty helper verbatim); firmware alone may ship.
 d=$(pkg ship); mkdir -p "$work/t/sh/bin"
-{ printf '\177ELF\002\001\001\000'; head -c 10000 /dev/urandom; } > "$work/t/sh/bin/helper"
+# an executable (e_type 2), so a fingerprint match of it is red
+{ printf '\177ELF\002\001\001\000\0\0\0\0\0\0\0\0\002\000'; head -c 10000 /dev/urandom; } > "$work/t/sh/bin/helper"
 elf "$work/t/sh/bin/go"; tar -C "$work/t/sh" -czf "$d/vendor.tar.gz" .
 printf '# Source-Binary-Exception: vendor.tar.gz:./* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
 if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
@@ -254,13 +255,14 @@ if command -v rpmbuild > /dev/null && command -v rpm2cpio > /dev/null; then
   d=$(pkg fp); mkdir -p "$work/t/fp/tests" "$work/t/fp/lib"
   { printf '\177ELF\002\001\001\000'; head -c 12288 /dev/zero; head -c 6144 /dev/urandom; } > "$work/t/fp/tests/padded.so"
   head -c 8192 /dev/urandom > "$work/fp-symtab"
-  python3 - "$work/t/fp/lib/libx.a" "$work/fp-symtab" <<'PY'
-import os, sys
+  head -c 6144 /dev/urandom > "$work/fp-member"
+  python3 - "$work/t/fp/lib/libx.a" "$work/fp-symtab" "$work/fp-member" <<'PY'
+import sys
 def member(name, data):
     hdr = b"%-16s%-12s%-6s%-6s%-8s%-10d`\n" % (name.encode(), b"0", b"0", b"0", b"644", len(data))
     return hdr + data + (b"\n" if len(data) % 2 else b"")
-symtab = open(sys.argv[2], "rb").read()
-open(sys.argv[1], "wb").write(b"!<arch>\n" + member("/", symtab) + member("x.o/", os.urandom(6144)))
+symtab, code = (open(f, "rb").read() for f in sys.argv[2:4])
+open(sys.argv[1], "wb").write(b"!<arch>\n" + member("/", symtab) + member("x.o/", code))
 PY
   tar -C "$work/t/fp" -czf "$d/fp.tar.gz" .
   printf '# Source-Binary-Exception: fp.tar.gz:./* -- bootstrap: %s\n' "$BOOT" >> "$d/p.spec"
@@ -275,6 +277,23 @@ PY
   case_ shipped-padding 0 "read for shipped ones" "$d" --rpms "$work/rpms-fp"
   ! grep -q '^SHIPPED' <<<"$LAST" && pass "shipped: zero padding and a shared symbol table are no embed" \
     || fail "shipped: false SHIPPED: $(grep '^SHIPPED' <<<"$LAST" | head -3)"
+  # A static library's code in a shipped file may be the package's own build of
+  # the same sources with the same compiler (swift-lang's compiler-rt and the
+  # seed's): the review decides. An exact copy of the archive stays red.
+  shiprpm() { # shiprpm <dir> <file>: a noarch RPM of dir shipping file as /usr/lib/f/lib
+    mkdir -p "$work/$1/SOURCES" "$work/$1-out"; cp "$2" "$work/$1/SOURCES/lib"
+    printf 'Name: g\nVersion: 1\nRelease: 0\nSummary: g\nLicense: MIT\nBuildArch: noarch\nSource0: lib\n%%description\ng\n%%install\ninstall -D -m 0644 %%{SOURCE0} %%{buildroot}/usr/lib/f/lib\n%%files\n/usr/lib/f\n' > "$work/$1/g.spec"
+    rpmbuild -bb --quiet --define "_topdir $work/$1" --define 'debug_package %{nil}' --define '__os_install_post %{nil}' \
+      "$work/$1/g.spec" > /dev/null 2>&1
+    find "$work/$1/RPMS" -name '*.rpm' -exec cp {} "$work/$1-out/" \;
+  }
+  { head -c 2000 /dev/urandom; cat "$work/fp-member"; head -c 2000 /dev/urandom; } > "$work/fp-linked"
+  shiprpm rpm-emb "$work/fp-linked"
+  case_ embeds-archive 0 "EMBEDS? g-1-0.noarch.rpm:./usr/lib/f/lib shares code with the prebuilt fp.tar.gz:./lib/libx.a" "$d" --rpms "$work/rpm-emb-out"
+  ! grep -q '^SHIPPED' <<<"$LAST" && pass "embeds: an archive's code in a shipped file is for the review, not red" \
+    || fail "embeds: archive code is SHIPPED: $(grep '^SHIPPED' <<<"$LAST" | head -2)"
+  shiprpm rpm-copy "$work/t/fp/lib/libx.a"
+  case_ shipped-archive-copy 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt fp.tar.gz:./lib/libx.a" "$d" --rpms "$work/rpm-copy-out"
 else
   echo "note: no rpmbuild/rpm2cpio here, the --rpms cases are not run"
 fi

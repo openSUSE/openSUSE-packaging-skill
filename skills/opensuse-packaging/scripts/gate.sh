@@ -52,7 +52,8 @@
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
-#                gate notes that the RPMs went unchecked
+#                gate notes that the RPMs went unchecked. A static library's code
+#                a shipped file carries is an EMBEDS? line for the review
 #   --cleaner-deviation  the spec-cleaner diff left is a documented deviation
 #                (references/spec-cleaner.md "Checking a spec file"): name it.
 #                The gate passes, prints the reason and keeps the diff for the
