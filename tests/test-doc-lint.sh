@@ -11,6 +11,8 @@
 #     verb on an osc, tea, gh, netrc, cookie-jar or api-key file, a token piped
 #     out of `gh auth token`, a key on a command line, a concrete Authorization
 #     header or a password in a URL. Credentials stay inside the tools.
+#   - a doc in SKILL.md, agents/ or references/ chains `&& osc ci` or
+#     `&& osc sr` after another command, which pr-guard refuses
 # Exit 0 = clean; 1 = findings (file:line: message).
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom, not a broken if/then/else: pass and fail both return 0 (verified), so exactly
@@ -149,4 +151,14 @@ elif [ -n "$hits" ]; then
   fail "a doc teaches a credential recipe (credentials stay inside the tools):"
   printf '%s\n' "$hits" | sed "s|$ROOT/||; s|$HERE/\.\./||; s/^/    /"
 else pass "no credential recipe in the docs"; fi
+# A recipe that chains a commit or a submit after another command: pr-guard
+# refuses it (the gate judges the tree before the call runs), so an agent that
+# follows it is stopped -- gate in one call, osc ci or osc sr in the next.
+CHAIN='&&[[:space:]]*osc[[:space:]]+(ci|commit|checkin|sr|submitreq|submitrequest)\b'
+# shellcheck disable=SC2016  # the backticks are the probe's markdown
+printf 'run `gate.sh && osc ci -m x`\nthen `osc ci -m x` alone\n' | grep -cE "$CHAIN" | grep -qx 1 \
+  && pass "chained-commit pattern self-test" || fail "chained-commit pattern self-test: the regex is broken"
+hits=$(grep -nE "$CHAIN" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no doc chains a commit or submit after another command" \
+  || { fail "a doc chains osc ci/sr after another command (pr-guard refuses it):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
