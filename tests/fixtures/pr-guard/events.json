@@ -9310,5 +9310,19 @@
     "tool_input": {
       "command": "echo x >> @OSC@/devel/x/x.spec; osc sr devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
     }
+  },
+  "nomsg-review-add": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review add -U someone 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "nomsg-rq-wipe": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq wipe 1390001"
+    },
+    "cwd": "@PLAIN@"
   }
 }
