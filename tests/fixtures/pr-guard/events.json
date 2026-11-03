@@ -9400,5 +9400,12 @@
       "command": "tar -xf /var/tmp/src.tar && osc ci -m 'Update x to 1.1'"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "gate-no-entry-value": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh . --no-entry \"$R\" --full"
+    },
+    "cwd": "@OSC@/devel/x"
   }
 }
