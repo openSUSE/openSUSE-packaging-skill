@@ -165,7 +165,7 @@ os.makedirs(api, exist_ok=True)
 s = json.load(open(spec))
 def stub(path, text):
     open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
-def stamp(prj, pkg, files, review=True, build=True):
+def stamp(prj, pkg, files, review=True, build=True, no_entry=""):
     d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
     os.makedirs(d, exist_ok=True)
     st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
@@ -173,6 +173,8 @@ def stamp(prj, pkg, files, review=True, build=True):
         st["review"] = {"verdict": "PASS"}
     if build:
         st["build"] = {"verdict": "GREEN", "kind": "log"}
+    if no_entry:
+        st["no_entry"] = no_entry
     json.dump(st, open(os.path.join(d, prj + ".json"), "w"))
 def pairs(key):
     return [tuple(e) for e in s[key]]
@@ -189,6 +191,8 @@ for prj, pkg in pairs("noreview"):
     stamp(prj, pkg, listing(prj, pkg), review=False)
 for prj, pkg in pairs("nobuild"):
     stamp(prj, pkg, listing(prj, pkg), build=False)
+for prj, pkg in pairs("noentry"):
+    stamp(prj, pkg, listing(prj, pkg), no_entry="comment-only cleanup")
 for prj, pkg in pairs("stale"):
     listing(prj, pkg)
     stamp(prj, pkg, {f"{pkg}.spec": "0" * 32})
@@ -1598,6 +1602,10 @@ ask_ sr-unstamped               gate-stamp "unstamped: no GREEN gate.sh run with
 ask_ sr-unreviewed              gate-stamp "unreviewed: no GREEN gate.sh run with a recorded review PASS"
 ask_ sr-restaged                gate-stamp "restaged: no GREEN gate.sh run with a recorded review PASS"
 ask_ sr-unbuilt                 build-evidence "osc sr of $h:tester:spark/unbuilt: the reviewed tree has no GREEN build recorded"
+# A tree gated under --no-entry goes to a devel project, never to openSUSE:Factory: its
+# factory-auto declines a request with no new .changes entry whatever the reason.
+ask_ sr-factory-no-entry        gate-stamp "osc sr of devel:tools/quiet: its gate.sh run waived the .changes entry (--no-entry)"
+case_ sr-devel-no-entry         0 - ""
 ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
 ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
 # A "." the guard cannot place names no project it can judge.

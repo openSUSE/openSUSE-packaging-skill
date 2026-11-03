@@ -1520,6 +1520,28 @@ cp "$O/devel:example/baz/"* "$work/t-ce-baz/.osc/sources/"; cp "$O/devel:example
 ce committed-vs-factory 1 "RED: vendor.tar changed vs openSUSE:Factory/baz, and no .changes has a top entry it lacks" "$work/t-ce-baz"
 grep -qF "OK: no file differs from the committed copy" <<<"$out" && pass "changes-entry committed-vs-factory: nothing to commit" \
   || fail "changes-entry committed-vs-factory: the committed copy differs"
+# --no-entry waives a missing entry for a devel target, Factory compared beside it or not:
+# committed (here), a commit there (A) or a branch of it (C), devel equal to Factory. Never
+# for openSUSE:Factory as the target (D): factory-auto declines that whatever the reason.
+ce no-entry-vs-factory 0 "NO ENTRY: comment-only cleanup" "$work/t-ce-baz" --no-entry "comment-only cleanup"
+printf 'Name: same\nVersion: 1.0\n' | put openSUSE:Factory/same same.spec
+e "Mon Jan  5" "Update to 1.0" | put openSUSE:Factory/same same.changes
+mkdir -p "$O/devel:example/same"; cp "$O/openSUSE:Factory/same/"* "$O/devel:example/same/"; echo devel:example/same > "$O/devel/same"
+same_co() { # <dir> <project> <link project or ->: a checkout of same, a comment added to its spec
+  rm -rf "$1"; mkdir -p "$1/.osc/sources"; printf 'same\n' > "$1/.osc/_package"; printf '%s\n' "$2" > "$1/.osc/_project"
+  printf '2.0\n' > "$1/.osc/_osclib_version"; cp "$O/devel:example/same/"* "$1/.osc/sources/"; cp "$O/devel:example/same/"* "$1/"
+  md5_files "$1"; [ "$3" = - ] || sed -i "s|rev=\"1\">|&<linkinfo project=\"$3\" package=\"same\" srcmd5=\"x\"/>|" "$1/.osc/_files"
+  echo '# built from source' >> "$1/same.spec"
+}
+same_co "$work/t-ce-sa" devel:example -
+ce no-entry-devel-commit 0 "NO ENTRY: comment-only cleanup" "$work/t-ce-sa" --no-entry "comment-only cleanup"
+same_co "$work/t-ce-sc" 'home:<you>:branches:devel:example' devel:example
+ce no-entry-devel-branch 0 "NO ENTRY: comment-only cleanup" "$work/t-ce-sc" --no-entry "comment-only cleanup"
+same_co "$work/t-ce-sd" 'home:<you>:branches:openSUSE:Factory' openSUSE:Factory
+ce factory-target 1 "RED: same.spec changed vs openSUSE:Factory/same" "$work/t-ce-sd" --target openSUSE:Factory
+grep -qF -- "--no-entry REASON" <<<"$out" && fail "changes-entry factory-target: the red line offers --no-entry" \
+  || pass "changes-entry factory-target: the red line offers no --no-entry"
+ce no-entry-factory-target 1 "NO ENTRY refused" "$work/t-ce-sd" --target openSUSE:Factory --no-entry "comment-only cleanup"
 # --amend-top: devel's unaccepted top entry, which Factory lacks, still describes the fix.
 co "$work/t-ce-amend" devel:example - "$O/devel:example/foo"; md5_files "$work/t-ce-amend"
 cp "$work/t-ce-amend/.osc/sources/foo.changes" "$work/t-ce-amend/foo.changes"

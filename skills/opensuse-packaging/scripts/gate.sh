@@ -65,7 +65,9 @@
 #   --no-entry   the change adds no .changes entry on purpose (the user said so,
 #                or it is cosmetic, a comment-only cleanup): name why. The
 #                changes-entry gate passes, and the verdict and the stamp carry
-#                the reason for the change review
+#                the reason for the change review; never with openSUSE:Factory as
+#                the target (factory-auto declines "No changelog"), nor a failed
+#                lookup
 #   --full       print every gate's complete output (default: last 12 lines each;
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
 #   --review FILE  record the change review instead of running the gates: FILE's
@@ -1231,9 +1233,10 @@ def entry(label, against, elabel, basedir, *changes):
         return 0
     few = ", ".join(diff[:4]) + (", …" if len(diff) > 4 else "")
     lacks = "it lacks" if elabel == label else "%s lacks" % elabel
+    waive = "" if os.environ.get("ENTRY_FACTORY") else (
+        "; only when the user said so or the change is cosmetic, --no-entry REASON")
     print("RED: %s changed vs %s, and no .changes has a top entry %s: add one, or amend"
-          " your own top entry Factory lacks with --amend-top (amend, don't stack); only"
-          " when the user said so or the change is cosmetic, --no-entry REASON" % (few, label, lacks))
+          " your own top entry Factory lacks with --amend-top (amend, don't stack)%s" % (few, label, lacks, waive))
     return 1
 
 
@@ -1867,18 +1870,21 @@ if [ -e "${changes[0]}" ]; then
       fi
     fi
   fi
+  tofac=""; [ "$tprj" != openSUSE:Factory ] || tofac=1   # factory-auto declines it whatever the reason
   if [ $rc -eq 0 ] && [ -n "$tlist" ]; then
     ebase=$tbase; elabel=$tlabel
     [ -z "$amend$squash" ] || [ $fseen = 0 ] || { ebase=$fbase; elabel=$fac; }
-    py entry "$tlabel" "$tlist" "$elabel" "$ebase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
+    ENTRY_FACTORY=$tofac py entry "$tlabel" "$tlist" "$elabel" "$ebase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
     [ $erc -eq 0 ] || rc=$erc
   fi
   if [ $rc -eq 0 ] && [ $fbound = 1 ] && [ $fseen = 1 ]; then
     py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
     [ $erc -eq 0 ] || rc=$erc
   fi
-  # rc 1: an entry is missing, which --no-entry may waive; 2: a lookup failed, which it never does
-  if [ $rc -eq 1 ] && [ -n "$noentry" ]; then
+  # rc 1: an entry is missing, which --no-entry may waive but for Factory; 2: a lookup failed, which it never does
+  if [ $rc -eq 1 ] && [ -n "$noentry" ] && [ -n "$tofac" ]; then
+    echo "NO ENTRY refused: openSUSE:Factory is the target, and factory-auto declines a request with no new entry (\"No changelog\") whatever the reason" >> "$log/changes-entry.txt"
+  elif [ $rc -eq 1 ] && [ -n "$noentry" ]; then
     echo "NO ENTRY: $noentry — the change review judges it" >> "$log/changes-entry.txt"; rc=0
   fi
   show changes-entry $rc "$log/changes-entry.txt"
