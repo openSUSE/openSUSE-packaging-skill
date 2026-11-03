@@ -16,6 +16,8 @@
 #   exit 2  usage error
 #
 # Usage: devel-of.sh <package> [target-project]   (target default: openSUSE:Factory)
+# A batch caller sets DEVEL_OF_CACHE to a directory: the target's package list
+# is then read once per run.
 set -uo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
@@ -34,9 +36,16 @@ elif meta="$(osc api "/source/$target/$pkg/_meta" 2>&1)"; then
 elif grep -q '404' <<<"$meta"; then
   # A miss by this spelling only: Factory shipped python-Authlib while an SR
   # filed python-authlib anew.
-  if ! list="$(osc ls "$target" 2>&1)"; then
+  cached="${DEVEL_OF_CACHE:+$DEVEL_OF_CACHE/ls.$target}"
+  # parallel callers wait for the one listing (the lock goes with this process)
+  [ -z "$cached" ] || { exec 9> "$cached.lock" && flock 9; } || cached=""
+  if [ -n "$cached" ] && [ -f "$cached" ]; then
+    list="$(cat "$cached")"
+  elif ! list="$(osc ls "$target" 2>&1)"; then
     echo "ERROR: cannot list $target to check other spellings of $pkg: $(head -n 1 <<<"$list")" >&2
     exit 5
+  elif [ -n "$cached" ]; then
+    printf '%s\n' "$list" > "$cached"
   fi
   near="$(python3 -I -c '
 import re, sys

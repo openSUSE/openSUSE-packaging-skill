@@ -147,6 +147,7 @@ cache=""
 if [ -n "$batch" ]; then
   [ -r "$batch" ] || { echo "cannot read $batch" >&2; exit 2; }
   cache="$(mktemp -d)"; trap 'rm -rf "$cache"' EXIT
+  mkdir "$cache/devel-of" && export DEVEL_OF_CACHE="$cache/devel-of"  # one package list a run
   rc_any=0; rows=0
   rank() { case $1 in 5) echo 4;; 6) echo 3;; 3) echo 2;; 4) echo 1;; *) echo 0;; esac; }
   while IFS=$'\t' read -r bp bk; do
