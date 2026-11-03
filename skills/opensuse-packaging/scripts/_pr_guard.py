@@ -2597,6 +2597,10 @@ def gate_submit(run, ctx, cwd):
     ]
     query = "?expand=1" + (f"&rev={revs[-1]}" if revs else "")
     for words in submit_operands(run):
+        # Factory takes no --no-entry stamp; a target osc picks itself may be Factory
+        dst = words[2] if len(words) >= 3 else words[0] if words else None
+        dsts = spellings(dst, ctx, cwd) if dst else []
+        factory = not dsts or any(d in (None, "openSUSE:Factory") for d in dsts)
         for src, pkg in sources(words, ctx, cwd):
             if not src or not pkg or not PKG_NAME.fullmatch(pkg):
                 ask(ctx, "gate-stamp", f"cannot tell what osc {sub} sends")
@@ -2619,14 +2623,16 @@ def gate_submit(run, ctx, cwd):
             stamps = os.path.join(
                 os.path.expanduser(GATE_STAMPS), glob.escape(pkg), "*.json"
             )
-            if not any(reviewed(path, files) for path in glob.glob(stamps)):
-                ask(
-                    ctx,
-                    "gate-stamp",
-                    f"osc {sub} of {src}/{pkg}: no GREEN gate.sh run with a recorded "
-                    "review PASS has these files",
+            paths = glob.glob(stamps)
+            if not any(reviewed(path, files, False, factory) for path in paths):
+                why = (
+                    "its gate.sh run waived the .changes entry (--no-entry), and "
+                    "openSUSE:Factory declines a request without a new one"
+                    if any(reviewed(path, files) for path in paths)
+                    else "no GREEN gate.sh run with a recorded review PASS has these files"
                 )
-            elif not any(reviewed(path, files, True) for path in glob.glob(stamps)):
+                ask(ctx, "gate-stamp", f"osc {sub} of {src}/{pkg}: {why}")
+            elif not any(reviewed(path, files, True, factory) for path in paths):
                 ask(
                     ctx,
                     "build-evidence",
@@ -2705,10 +2711,10 @@ def gate_writers(ctx):
             )
 
 
-def reviewed(path, files, built=False):
+def reviewed(path, files, built=False, factory=False):
     """Whether gate.sh's stamp at path is GREEN, holds a review PASS (built:
-    and a GREEN build, a local log's or OBS's), and judged exactly files
-    ({name: md5})."""
+    and a GREEN build, a local log's or OBS's; factory: and no --no-entry
+    waiver), and judged exactly files ({name: md5})."""
     import json
 
     try:
@@ -2724,6 +2730,7 @@ def reviewed(path, files, built=False):
         and review.get("verdict") == "PASS"
         and st.get("files") == files
         and (not built or isinstance(build, dict) and build.get("verdict") == "GREEN")
+        and not (factory and st.get("no_entry"))
     )
 
 

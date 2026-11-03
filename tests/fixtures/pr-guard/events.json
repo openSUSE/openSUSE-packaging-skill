@@ -8894,6 +8894,20 @@
       "command": "osc sr --cleanup home:tester:spark unbuilt devel:tools -m 'Update unbuilt to 1.1: fixes.'"
     }
   },
+  "sr-factory-no-entry": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools quiet openSUSE:Factory -m 'Update quiet to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-devel-no-entry": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark quiet devel:tools -m 'Update quiet to 1.1: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
   "review-bash-options": {
     "tool_name": "Bash",
     "tool_input": {
