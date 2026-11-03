@@ -212,7 +212,7 @@ r=$(check "$work/vendor.tar" "$work/stray.tar" vendor/libc-0.2.170/stray.o) && p
   || fail "unlisted file: $r"
 
 # Not a cargo vendor tarball, or not an archive at all.
-mkdir -p "$work/plain/a"; echo x > "$work/plain/a/f"; tar -C "$work/plain" -cf "$work/plain.tar" a
+mkdir -p "$work/plain/a"; echo x > "$work/plain/a/f"; timeout 60 tar -C "$work/plain" -cf "$work/plain.tar" a
 run 2 ".cargo-checksum.json" "$work/plain.tar" -o "$work/x.tar" 'a/*'
 echo "not a tarball" > "$work/junk.tar.zst"
 run 2 "cannot read" "$work/junk.tar.zst" -o "$work/x.tar" 'a/*'
@@ -278,7 +278,8 @@ run 1 "hard link" "$work/links.tar" -o "$work/x.tar" 'foo-*/lib/a.o'
 run 1 "symlink" "$work/links.tar" -o "$work/x.tar" 'foo-*/lib/b.o'
 [ ! -e "$work/x.tar" ] && pass "dangling links: nothing written" || fail "a dangling-link run wrote $work/x.tar"
 run 0 "STRIPPED: 4 member(s)" "$work/links.tar" -o "$work/links-out.tar" 'foo-*/lib/*.o'
-got=$(tar -xOf "$work/links-out.tar" vendor/foo-1.0/.cargo-checksum.json)
+# bounded: GNU tar can spin on a dangling hard link, the case refused above
+got=$(timeout 60 tar -xOf "$work/links-out.tar" vendor/foo-1.0/.cargo-checksum.json)
 want=$(printf '{\n  "files": {\n    "Cargo.toml": "aa",\n    "lib/c.rs": "dd"\n  },\n  "package": "ee"\n}')
 [ "$got" = "$want" ] && pass "a pretty-printed map keeps its layout" || fail "pretty map: $got"
 
