@@ -15,7 +15,8 @@
 # bump crosses that the new .changes entries never name, or describe again.
 #
 # Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [--target PRJ[/PKG]]
-#                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON] [--full]
+#                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON]
+#                [--no-entry REASON] [--full]
 #        gate.sh [DIR] --review FILE
 #        gate.sh [DIR] --obs-build [--rpms DIR]
 #   DIR          package checkout (default .)
@@ -61,6 +62,10 @@
 #                (references/spec-cleaner.md "Checking a spec file"): name it.
 #                The gate passes, prints the reason and keeps the diff for the
 #                change review, which judges every hunk of it
+#   --no-entry   the change adds no .changes entry on purpose (the user said so,
+#                or it is cosmetic, a comment-only cleanup): name why. The
+#                changes-entry gate passes, and the verdict and the stamp carry
+#                the reason for the change review
 #   --full       print every gate's complete output (default: last 12 lines each;
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
 #   --review FILE  record the change review instead of running the gates: FILE's
@@ -80,7 +85,7 @@
 # Entry: a tree that differs from the target needs a .changes top entry the
 # target lacks (factory-auto: "No changelog"), and one Factory lacks too when
 # the target is Factory's devel project; --amend-top and --squash-mine take an
-# entry Factory lacks.
+# entry Factory lacks, --no-entry REASON none.
 # Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
 # the md5 and name of every file osc would commit (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
@@ -346,6 +351,8 @@ def stamp(path, d, prj, pkg, target, rpms="", *logs):
         return 1
     st = {"project": prj, "package": pkg, "target": target, "tree": key(fm),
           "files": fm, "verdict": "GREEN", "time": now()}
+    if os.environ.get("GATE_NO_ENTRY"):  # the change review sees why the change adds no entry
+        st["no_entry"] = os.environ["GATE_NO_ENTRY"]
     old = load(path)
     if old and old.get("tree") == st["tree"]:
         # A rerun of the same tree keeps its review, build and RPM check.
@@ -1224,8 +1231,9 @@ def entry(label, against, elabel, basedir, *changes):
         return 0
     few = ", ".join(diff[:4]) + (", …" if len(diff) > 4 else "")
     lacks = "it lacks" if elabel == label else "%s lacks" % elabel
-    print("RED: %s changed vs %s, and no .changes has a top entry %s: add one for the"
-          " change (factory-auto declines \"No changelog\")" % (few, label, lacks))
+    print("RED: %s changed vs %s, and no .changes has a top entry %s: add one, or amend"
+          " your own top entry Factory lacks with --amend-top (amend, don't stack); only"
+          " when the user said so or the change is cosmetic, --no-entry REASON" % (few, label, lacks))
     return 1
 
 
@@ -1235,14 +1243,16 @@ CMT_CODE = re.compile(r"\s*#\s*(?:%[\w{(!?]|Source-Binary-Exception:|(?:Build)?R
                       r"|Recommends:|Suggests:|Provides:|Obsoletes:|Conflicts:|(?:Source|Patch)\d*:)")
 BULLET = re.compile(r"\s*#\s*[-*]\s")
 CONT = re.compile(r"\s*#\s{2,}\S")
-NOTICE = "Legal-Review-Notice:"
-LONG, BULLETS = 3, 10
+BARE = re.compile(r"\s*#\s*$")
+NOTICE = re.compile(r"Legal-Review-Notice\b[^:]*:")  # "Legal-Review-Notice (boo#N):" too
+LONG = 3
 
 
 def comments(spec, basespec=""):
     """The comment blocks spec adds over basespec (every one without it), the
-    header excepted, that run past LONG lines; a Legal-Review-Notice block may
-    be its notice line and up to BULLETS bullets of at most two lines each."""
+    header excepted, that run past LONG lines, bare "#" lines not counted; a
+    Legal-Review-Notice block may be its notice line, wrapped once, and bullets
+    of at most two lines each."""
     try:
         lines = read_lines(spec)
     except OSError as e:
@@ -1259,7 +1269,8 @@ def comments(spec, basespec=""):
         for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, base, lines, autojunk=False).get_opcodes():
             if tag in ("replace", "insert"):
                 added.update(range(j1, j2))
-        moved = {ln.strip() for ln in base if CMT.match(ln)}  # a block moved or kept is not added
+        # a comment moved or kept is not added; a bare "#" says nothing either way
+        moved = {ln.strip() for ln in base if CMT.match(ln) and not BARE.match(ln)}
         added = {i for i in added if lines[i].strip() not in moved}
     head = 0
     while head < len(lines) and CMT.match(lines[head]):
@@ -1277,30 +1288,36 @@ def comments(spec, basespec=""):
         block = range(i, j)
         new = {k for k in block if k in added and not CMT_CODE.match(lines[k])}
         why, fix = None, "one line, two at most, saying why"
-        if new and any(NOTICE in lines[k] for k in block):
+        if new and any(NOTICE.search(lines[k]) for k in block):
             fix = "the findings as short bullets"
-            bullets, cont = 0, 0
+            bullets, cont, wrap = 0, 0, 0
             for k in block:
-                if NOTICE in lines[k]:
+                if NOTICE.search(lines[k]):
+                    wrap = 1
+                elif BARE.match(lines[k]):
                     continue
-                if BULLET.match(lines[k]):
-                    bullets, cont = bullets + 1, 0
+                elif BULLET.match(lines[k]):
+                    bullets, cont, wrap = bullets + 1, 0, 0
+                elif wrap:
+                    wrap = 0  # the notice line, wrapped once
                 elif CONT.match(lines[k]) and bullets and not cont:
                     cont = 1
                 elif k in added:
-                    why = "a %s line that is no short bullet: %s" % (NOTICE, lines[k].strip()[:60])
+                    why = "a Legal-Review-Notice line that is no short bullet: %s" % lines[k].strip()[:60]
                     break
-            if not why and bullets > BULLETS:
-                why = "a %s with %d bullets (at most %d)" % (NOTICE, bullets, BULLETS)
+                else:
+                    wrap = 0
         elif new:
             run = longest = 0
             for k in block:
+                if BARE.match(lines[k]):
+                    continue  # neither counts nor splits the comment
                 run = run + 1 if k in new else 0
                 longest = max(longest, run)
             if longest > LONG:
                 why = "a %d-line comment" % longest
         if why:
-            print("%s:%d: %s: %s (references/specfile-guidelines.md \"Spec file — general"
+            print("%s:%d: %s — %s (references/specfile-guidelines.md \"Spec file — general"
                   " rules\")" % (spec, i + 1, why, fix))
             bad = 1
         i = j
@@ -1314,11 +1331,11 @@ fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbu
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
-dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; full=0; review=""; nopts=0
+dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; noentry=""; full=0; review=""; nopts=0
 obsbuild=0
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--full) nopts=$((nopts+1)) ;; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--full) nopts=$((nopts+1)) ;; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --entries) [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "gate.sh: --entries takes a positive integer, got '$2'" >&2; exit 2; }
@@ -1331,6 +1348,8 @@ while [ $# -gt 0 ]; do
     --rpms) rpms=$(realpath -m -- "$2"); shift 2 ;;
     --cleaner-deviation) [ -n "$2" ] || { echo "gate.sh: --cleaner-deviation needs the reason" >&2; exit 2; }
                          deviation=$2; shift 2 ;;
+    --no-entry) [ -n "$2" ] || { echo "gate.sh: --no-entry needs the reason" >&2; exit 2; }
+                noentry=$2; shift 2 ;;
     --full) full=1; shift ;;
     --review) review=$(realpath -m -- "$2"); shift 2 ;;
     --obs-build) obsbuild=1; shift ;;
@@ -1851,10 +1870,15 @@ if [ -e "${changes[0]}" ]; then
   if [ $rc -eq 0 ] && [ -n "$tlist" ]; then
     ebase=$tbase; elabel=$tlabel
     [ -z "$amend$squash" ] || [ $fseen = 0 ] || { ebase=$fbase; elabel=$fac; }
-    py entry "$tlabel" "$tlist" "$elabel" "$ebase" "${changes[@]}" >> "$log/changes-entry.txt" || rc=1
+    py entry "$tlabel" "$tlist" "$elabel" "$ebase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
+    [ $erc -eq 0 ] || rc=$erc
   fi
   if [ $rc -eq 0 ] && [ $fbound = 1 ] && [ $fseen = 1 ]; then
-    py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt" || rc=1
+    py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
+    [ $erc -eq 0 ] || rc=$erc
+  fi
+  if [ $rc -eq 1 ] && [ -n "$noentry" ]; then   # a missing entry; an unreadable lookup stays red
+    echo "NO ENTRY: $noentry — the change review judges it" >> "$log/changes-entry.txt"; rc=0
   fi
   show changes-entry $rc "$log/changes-entry.txt"
 fi
@@ -1875,12 +1899,13 @@ emb=$(grep -c '^EMBEDS?' "$log/source-binaries.txt"); review=""
 
 [ -z "$hostnote" ] || hostnote=$(printf '%s' "$hostnote" | python3 -I "$HERE/_sanitize.py")
 if [ ${#red[@]} -eq 0 ]; then
-  t=""
+  t=""; ne=""; grep -q '^NO ENTRY' "$log/changes-entry.txt" 2>/dev/null && ne=$noentry
   if [ -n "$stampf" ]; then
-    if t=$(py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$rpms" "${blogs[@]}"); then
+    if t=$(GATE_NO_ENTRY=$ne py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$rpms" "${blogs[@]}"); then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
+  [ -z "$ne" ] || t+=", no new .changes entry: $ne"
   [ -z "$hostnote" ] || t+=", not proven on this host: $hostnote"
   t+=$review
   if [ -n "$deviation" ] && grep -q '^DEVIATION' "$log/spec-cleaner.txt" 2>/dev/null; then
