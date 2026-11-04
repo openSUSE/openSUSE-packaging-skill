@@ -70,7 +70,7 @@ PY
 case_ zip-pe 3 "HIT tools.zip:win/tool.exe: PE" "$d"
 ! grep -qF "mz.txt" <<<"$LAST" && pass "zip: an MZ text file is not a PE" || fail "zip: MZ text flagged: $LAST"
 
-# A nested zip whose version field zipfile refuses (a format-test corpus) is unread, not a crash.
+# A zip whose version field zipfile refuses (a format-test corpus) is unread, not a crash.
 d=$(pkg zipver); mkdir -p "$work/t/zv"
 python3 - "$work/t/zv/bogus.zip" <<'PY2'
 import sys, zipfile
@@ -84,6 +84,8 @@ open(sys.argv[1], "wb").write(b)
 PY2
 tar -C "$work/t/zv" -czf "$d/v.tar.gz" bogus.zip
 case_ zip-bogus-version 2 "UNKNOWN v.tar.gz:bogus.zip: cannot read the zip archive: zip file version 9.9" "$d"
+d=$(pkg zipver-top); cp "$work/t/zv/bogus.zip" "$d/"
+case_ zip-bogus-version-top 2 "UNKNOWN bogus.zip: cannot read the zip archive: zip file version 9.9" "$d"
 
 # obscpio (newc), with wasm, a Java class and a fat Mach-O told apart.
 d=$(pkg cpio)
