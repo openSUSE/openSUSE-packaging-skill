@@ -148,6 +148,7 @@ osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$wo
 osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
   && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
 osc_co_ "$work/osc/fresh/y" devel:tools; osc_co_ "$work/osc/edited/z" devel:tools
+osc_co_ "$work/osc/obs/obsbare" devel:tools
 osc_co_ "$work/osc/prjco" devel:tools
 # osc co PRJ PKG: a project checkout around its one package, and one around three.
 osc_co_ "$work/osc/single" devel:tools; osc_co_ "$work/osc/single/x" devel:tools && printf 'x\n' > "$work/osc/single/x/.osc/_package"
@@ -201,6 +202,8 @@ for prj, pkg in pairs("obs_factory"):
     stamp(prj, pkg, listing(prj, pkg), obs=[])
 for prj, pkg in pairs("obs_repos"):
     stamp(prj, pkg, listing(prj, pkg), obs=["16.0"])
+for prj, pkg in pairs("obs_sle"):
+    stamp(prj, pkg, listing(prj, pkg), obs=["SLE_15_SP7"])
 for prj, pkg in pairs("stale"):
     listing(prj, pkg)
     stamp(prj, pkg, {f"{pkg}.spec": "0" * 32})
@@ -210,7 +213,7 @@ for prj, pkg in pairs("own"):
     stub(f"/source/{prj}/{pkg}/_meta",
          f'<package name="{pkg}" project="{prj}"><person userid="tester" role="maintainer"/></package>')
     stub(f"/source/{prj}/_meta", f'<project name="{prj}"/>')
-for key in ("checkouts", "unstamped", "edited"):
+for key in ("checkouts", "unstamped", "edited", "obs_checkouts"):
     for rel, prj, pkg in s[key]:
         d = os.path.join(work, rel)
         open(os.path.join(d, ".osc/_package"), "w").write(pkg + "\n")
@@ -218,11 +221,11 @@ for key in ("checkouts", "unstamped", "edited"):
             f'<directory name="{pkg}"><entry name="{pkg}.spec" md5="0"/></directory>')
         open(os.path.join(d, pkg + ".spec"), "w").write(f"Name: {pkg}\n")
         md5 = hashlib.md5(f"Name: {pkg}\n".encode()).hexdigest()
-        if key == "checkouts":  # and committed: the source listing a submit reads
+        if key in ("checkouts", "obs_checkouts"):  # and committed: the source listing a submit reads
             stub(f"/source/{prj}/{pkg}?expand=1",
                  f'<directory name="{pkg}"><entry name="{pkg}.spec" md5="{md5}"/></directory>')
         if key != "unstamped":
-            stamp(prj, pkg, {f"{pkg}.spec": md5})
+            stamp(prj, pkg, {f"{pkg}.spec": md5}, obs=[] if key == "obs_checkouts" else None)
         if key == "edited":
             open(os.path.join(d, pkg + ".spec"), "a").write("Version: 2\n")
 PY
@@ -1621,6 +1624,11 @@ case_ sr-obs-devel              0 - ""
 ask_ sr-obs-factory-leap        build-evidence "osc sr of devel:tools/obsfac: its OBS build judged no repo of openSUSE:Leap:16.0"
 ask_ sr-obs-factory-leap        build-evidence "--obs-build once OBS built the commit (it judges the Factory/Tumbleweed repos; --repos REGEX adds the target's)"
 case_ sr-obs-repos-leap         0 - ""
+ask_ sr-obs-repos-leap-other    build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Leap:16.1"
+case_ sr-obs-sle-sp             0 - ""
+ask_ sr-obs-sle-other          build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15-SP7:Update"
+# No written target: osc picks the link or devel target, which a Factory-judged build covers.
+case_ sr-obs-bare               0 - ""
 ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
 ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
 # A "." the guard cannot place names no project it can judge.

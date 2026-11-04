@@ -8918,6 +8918,31 @@
       "command": "osc sr devel:tools obsrepos openSUSE:Leap:16.0 -m 'Update obsrepos to 1.1: fixes.'"
     }
   },
+  "sr-obs-repos-leap-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos openSUSE:Leap:16.1 -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-sle-sp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obssle SUSE:SLE-15-SP7:Update -m 'Update obssle to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-bare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr -m 'Update obsbare to 1.1: fixes.'"
+    },
+    "cwd": "@OSC@/obs/obsbare"
+  },
+  "sr-obs-sle-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos SUSE:SLE-15-SP7:Update -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
   "sr-factory-no-entry": {
     "tool_name": "Bash",
     "tool_input": {

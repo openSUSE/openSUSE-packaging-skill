@@ -2723,6 +2723,7 @@ def gate_writers(ctx):
 
 PRODUCT = Rx(r"^(openSUSE:(Leap|Backports|Step)|SUSE:)")
 VERSION = Rx(r"\d+(\.\d+)+")
+SLE_SP = Rx(r"SLE-(\d+)-SP(\d+)")
 
 
 def covers(build, dst, target):
@@ -2730,7 +2731,8 @@ def covers(build, dst, target):
     stamp from before gate.sh judged repos, covers any; an OBS build covers
     Factory and the gate's target (its devel project) when it judged a
     Factory/Tumbleweed repo, any other project only through the repos --repos
-    added, one naming dst's version when dst has one."""
+    added, one naming dst's version when dst has one (SLE-15-SP7: 15_SP7,
+    15-SP7 or 15.7)."""
     if build.get("kind") != "obs" or not isinstance(build.get("repos"), list):
         return True
     target = (target or "").split("/")[0]
@@ -2742,8 +2744,13 @@ def covers(build, dst, target):
     ):
         return build.get("factory") is True
     others = build.get("others") if isinstance(build.get("others"), list) else []
-    ver = VERSION.search(dst)
-    return bool(others) and (not ver or any(ver.group(0) in r for r in others))
+    sp, ver = SLE_SP.search(dst), VERSION.search(dst)
+    if sp:
+        a, b = sp.groups()
+        names = [f"{a}_SP{b}", f"{a}-SP{b}", f"{a}.{b}"]
+    else:
+        names = [ver.group(0)] if ver else []
+    return bool(others) and (not names or any(n in r for n in names for r in others))
 
 
 def reviewed(path, files, built=False, factory=False, dsts=None):
