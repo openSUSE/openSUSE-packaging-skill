@@ -8,6 +8,8 @@
 // entry would undo it. git runs "git obs" as git-obs, so each git-obs pattern
 // comes in both spellings.
 {
+  // A top-level key, not a permission: the update-build agent starts its own changes-review agent.
+  "experimental": { "subagent_depth": 2 },
   "permissions": [
     // Absolute or ~ directory globs, checked when a tool (read, grep, glob) reaches
     // outside the project directory, and for a directory the shell scanner infers

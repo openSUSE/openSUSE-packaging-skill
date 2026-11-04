@@ -158,6 +158,9 @@ path has both.
   measured that way.
 - A deny cannot be narrowed by an allow here, so `osc token` is refused whole, and `tea
   pr *merge *` also refuses a PR create whose title holds the word "merge".
+- Nested sub-agents are on by default, three levels deep, so the update-build agent starts its
+  own changes-review agent. `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` (settings.json `env`)
+  disables nesting; the author then hands back `REVIEW-PENDING`.
 
 ### opencode 1.x
 
@@ -204,6 +207,8 @@ agents` lists all 114 entries of `opencode-v2/opencode.jsonc` (5 `external_direc
 needs its own port (`opencode service set port N` in the throw-away home); on the default
 one every command hung.
 
+- `experimental.subagent_depth` defaults to 1, which refuses the changes-review agent the
+  update-build agent starts ("Subagent depth limit reached (1)"); the snippet sets it to 2.
 - opencode 2.x still loads the 1.x snippet: `permission.bash` becomes `shell`, in key
   order, so its `"*"` allow stays first. A `permissions` array in the same file is
   appended after those entries, so use one snippet, not both. Edits to the file reached the
