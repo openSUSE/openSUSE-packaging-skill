@@ -566,7 +566,8 @@ ASKS = {
     "call, and file once gate.sh --review recorded the change review's PASS.",
     "build-evidence": "{0}. Record its build first: {s}/gate.sh with --build-log LOG "
     "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
-    "commit; then file.",
+    "commit (it judges the Factory/Tumbleweed repos; --repos REGEX adds the "
+    "target's); then file.",
     "gate-args": "{0}, so the guard cannot see whether --review is among them. "
     "Write {s}/gate.sh's arguments out literally (no --review is involved).",
     "review-self": "{0}: only the changes-review agent that ran the review records "
@@ -2639,6 +2640,15 @@ def gate_submit(run, ctx, cwd):
                     f"osc {sub} of {src}/{pkg}: the reviewed tree has no GREEN build "
                     "recorded",
                 )
+            elif not any(
+                reviewed(path, files, True, factory, dsts or [None]) for path in paths
+            ):
+                ask(
+                    ctx,
+                    "build-evidence",
+                    f"osc {sub} of {src}/{pkg}: its OBS build judged no repo of "
+                    f"{dst or 'the target'}",
+                )
             else:
                 what = f"osc {sub} of {src}/{pkg}"
                 ctx.gate_pending.append(
@@ -2711,10 +2721,36 @@ def gate_writers(ctx):
             )
 
 
-def reviewed(path, files, built=False, factory=False):
+PRODUCT = Rx(r"^(openSUSE:(Leap|Backports|Step)|SUSE:)")
+VERSION = Rx(r"\d+(\.\d+)+")
+
+
+def covers(build, dst, target):
+    """Whether a GREEN build covers a request to dst: a local log, or an OBS
+    stamp from before gate.sh judged repos, covers any; an OBS build covers
+    Factory and the gate's target (its devel project) when it judged a
+    Factory/Tumbleweed repo, any other project only through the repos --repos
+    added, one naming dst's version when dst has one."""
+    if build.get("kind") != "obs" or not isinstance(build.get("repos"), list):
+        return True
+    target = (target or "").split("/")[0]
+    if (
+        dst is None
+        or dst == "openSUSE:Factory"
+        or dst.startswith("openSUSE:Factory:")
+        or (dst == target and not PRODUCT.search(dst))
+    ):
+        return build.get("factory") is True
+    others = build.get("others") if isinstance(build.get("others"), list) else []
+    ver = VERSION.search(dst)
+    return bool(others) and (not ver or any(ver.group(0) in r for r in others))
+
+
+def reviewed(path, files, built=False, factory=False, dsts=None):
     """Whether gate.sh's stamp at path is GREEN, holds a review PASS (built:
     and a GREEN build, a local log's or OBS's; factory: and no --no-entry
-    waiver), and judged exactly files ({name: md5})."""
+    waiver; dsts: a build that covers each of them), and judged exactly files
+    ({name: md5})."""
     import json
 
     try:
@@ -2731,6 +2767,7 @@ def reviewed(path, files, built=False, factory=False):
         and st.get("files") == files
         and (not built or isinstance(build, dict) and build.get("verdict") == "GREEN")
         and not (factory and st.get("no_entry"))
+        and (dsts is None or all(covers(build, d, st.get("target")) for d in dsts))
     )
 
 

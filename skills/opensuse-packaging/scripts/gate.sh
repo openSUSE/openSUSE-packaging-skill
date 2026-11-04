@@ -18,7 +18,7 @@
 #                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON]
 #                [--no-entry REASON] [--full]
 #        gate.sh [DIR] --review FILE
-#        gate.sh [DIR] --obs-build [--rpms DIR]
+#        gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX]
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
@@ -78,7 +78,13 @@
 #                repo/arch/flavor succeeded from them (each log's srcmd5), and
 #                build-summary.sh reads each log GREEN; --rpms DIR also records
 #                the shipped-binary check of OBS's RPMs. A red build drops the
-#                tree's recorded build
+#                tree's recorded build. Only the Factory/Tumbleweed repos are
+#                judged (openSUSE_Factory*, openSUSE_Tumbleweed, an
+#                openSUSE:Factory project's standard); every other repo is a note
+#                with its state, never red or pending. The stamp records the
+#                repos it judged
+#   --repos REGEX  with --obs-build: also judge the repos whose name matches
+#                (re.search), when the user says another target matters
 # Parsing a spec runs its %(...) on this host as you, and %prep runs the
 # package's code (sandboxed, which keeps it off the network and out of $HOME but
 # is no reason to trust it): run the gate only on a checkout you are changing
@@ -446,7 +452,15 @@ def xml(text):
         return None
 
 
-def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
+FACTORY_REPO = re.compile(r"openSUSE_(Factory(_\w+)?|Tumbleweed)")
+
+
+def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
+    try:
+        extra = re.compile(repos) if repos else None
+    except re.error as e:
+        print("gate.sh: --repos %r: %s" % (repos, e), file=sys.stderr)
+        return 2
     fm = files(d)
     t = key(fm) if fm is not None and present(fm) else ""
     st = load(path)
@@ -490,14 +504,27 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
     if res is None:
         print("VERDICT: UNKNOWN — cannot read the build results of %s: %s" % (who, err or "unparseable"))
         return 1
-    rows, bad, odd, waiting = [], [], [], []
+    rows, bad, odd, waiting, notes, judged, others = [], [], [], [], [], set(), set()
+    factory = False
     for r in res.findall("result"):
+        repo = r.get("repository") or ""
+        fac = bool(FACTORY_REPO.fullmatch(repo)) or (
+            repo == "standard" and (prj == "openSUSE:Factory" or prj.startswith("openSUSE:Factory:")))
         for s in r.findall("status"):
             name = s.get("package") or ""
             if name != pkg and not name.startswith(pkg + ":"):
                 continue
             label = "%s/%s%s" % (r.get("repository"), r.get("arch"), name[len(pkg):])
             code = s.get("code") or ""
+            if not fac and not (extra and extra.search(repo)):
+                if code not in SKIPPED:
+                    notes.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code or "no code"))
+                continue
+            if code not in SKIPPED:
+                judged.add(repo)
+                factory = factory or fac
+                if not fac:
+                    others.add(repo)
             if r.get("dirty") == "true" or code in WAITING:
                 waiting.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code))
             elif code in ("succeeded", "failed"):
@@ -506,6 +533,11 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
                 bad.append("%s %s" % (label, code))
             elif code not in SKIPPED:
                 odd.append("%s %s" % (label, code or "no code"))
+    if notes:
+        print("note: not judged, not a Factory/Tumbleweed repo (--repos REGEX judges one): %s"
+              % (", ".join(notes[:8]) + (" +%d more" % (len(notes) - 8) if len(notes) > 8 else "")))
+    if not judged:
+        return unknown("no Factory/Tumbleweed repo builds it; pass --repos REGEX for the repos that matter")
     if bad:
         return red(", ".join(bad))
     if odd:
@@ -553,7 +585,8 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms=""):
         return 1
     if rpms:
         cur["rpms"] = {"dir": rpms, "time": now()}
-    cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done, "time": now()}
+    cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done,
+                    "repos": sorted(judged), "factory": factory, "others": sorted(others), "time": now()}
     save(path, cur)
     shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""
@@ -1335,9 +1368,9 @@ sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
 dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; noentry=""; full=0; review=""; nopts=0
-obsbuild=0
+obsbuild=0; repos=""
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--review) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--review|--repos) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--full) nopts=$((nopts+1)) ;; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -1356,13 +1389,15 @@ while [ $# -gt 0 ]; do
     --full) full=1; shift ;;
     --review) review=$(realpath -m -- "$2"); shift 2 ;;
     --obs-build) obsbuild=1; shift ;;
+    --repos) repos=$2; shift 2 ;;
     -*) echo "gate.sh: unknown option $1" >&2; exit 2 ;;
     *) dir=$1; shift ;;
   esac
 done
 [ -z "$review" ] || [ "$nopts" = 0 ] || { echo "gate.sh: --review records a verdict and runs no gate: it takes DIR only" >&2; exit 2; }
 [ "$obsbuild" = 0 ] || { [ -z "$review" ] && [ "$nopts" = "$([ -n "$rpms" ] && echo 1 || echo 0)" ]; } \
-  || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR and --rpms only" >&2; exit 2; }
+  || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR, --rpms and --repos only" >&2; exit 2; }
+[ -z "$repos" ] || [ "$obsbuild" = 1 ] || { echo "gate.sh: --repos goes with --obs-build" >&2; exit 2; }
 cd "$dir" || exit 2
 # Anywhere else source_validator reports rc=0 over nothing: a green piece of a
 # verdict about no package.
@@ -1386,7 +1421,7 @@ if [ "$obsbuild" = 1 ]; then
   # the logs go under /var/tmp, not the /tmp tmpfs; the summaries stay with the gate's output
   dl=$(mktemp -d -p /var/tmp "gate-obs-$pkg.XXXXXX") || { echo "VERDICT: UNKNOWN — no scratch directory under /var/tmp"; exit 1; }
   sums="${TMPDIR:-/tmp}/gate-$pkg/obs-build"; rm -rf "$sums"
-  py obsbuild "$stampf" . "$own" "$pkg" "$dl" "$sums" "$HERE/build-summary.sh" "$HERE/source-binaries.py" "$rpms"; rc=$?
+  py obsbuild "$stampf" . "$own" "$pkg" "$dl" "$sums" "$HERE/build-summary.sh" "$HERE/source-binaries.py" "$rpms" "$repos"; rc=$?
   rm -rf "$dl"; exit $rc
 fi
 log="${TMPDIR:-/tmp}/gate-$pkg"; rm -rf "$log"; mkdir -p "$log"
