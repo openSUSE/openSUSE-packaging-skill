@@ -8894,6 +8894,30 @@
       "command": "osc sr --cleanup home:tester:spark unbuilt devel:tools -m 'Update unbuilt to 1.1: fixes.'"
     }
   },
+  "sr-obs-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsfac openSUSE:Factory -m 'Update obsfac to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark obsfac devel:tools -m 'Update obsfac to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-factory-leap": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsfac openSUSE:Leap:16.0 -m 'Update obsfac to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-repos-leap": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos openSUSE:Leap:16.0 -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
   "sr-factory-no-entry": {
     "tool_name": "Bash",
     "tool_input": {

@@ -873,6 +873,37 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo unresolvable)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && [ -z "$(sv "$SO" build)" ] && [ "$(sv "$SO" review.verdict)" = PASS ] \
   && pass "--obs-build: unresolvable is red and drops the recorded build, not the review" \
   || { fail "--obs-build unresolvable: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Only the Factory/Tumbleweed repos are judged: another repo is a note, never red or pending.
+lp() { printf '<result repository="%s" arch="x86_64"><status package="foo" code="%s"/></result>' "$@"; }
+blog16() { printf "[    0s] Building foo for project '%s' repository '16.1' arch 'x86_64' srcmd5 '%s'\n[  100s] ... failed \"build foo.spec\" at Mon Nov  2 2026.\n" "$P" "$SRC" > "$work/ob/log-16.1-x86_64-foo"; }
+blog16
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)$(lp 15.7 unresolvable)"; ob
+[ "$rc" = 0 ] && grep -qF "note: not judged" <<<"$out" && grep -qF "16.1/x86_64 failed" <<<"$out" \
+  && [ "$(sv "$SO" build.repos)" = "['openSUSE_Tumbleweed']" ] && [ "$(sv "$SO" build.factory)" = True ] && [ "$(sv "$SO" build.others)" = "[]" ] \
+  && pass "--obs-build: Factory green with Leap red is GREEN, the Leap repos a note, the judged repos recorded" \
+  || { fail "--obs-build Factory green, Leap red: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo failed)$(lp 16.1 succeeded)"; blog aarch64 "$SRC" failed; ob
+[ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
+  && pass "--obs-build: Factory red is red, whatever Leap does" || { fail "--obs-build Factory red: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+blog aarch64 "$SRC" finished
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo building)$(lp 16.1 failed)"; ob
+[ "$rc" = 4 ] && grep -qF "openSUSE_Tumbleweed/aarch64 building" <<<"$out" \
+  && pass "--obs-build: Factory still building is pending (rc=4) with Leap done" || { fail "--obs-build Factory building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 building)"; ob
+[ "$rc" = 0 ] && grep -qF "16.1/x86_64 building" <<<"$out" \
+  && pass "--obs-build: a Leap repo still building is a note, not pending" || { fail "--obs-build Leap building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob --repos '16\.1'
+[ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "16.1/x86_64" <<<"$out" \
+  && pass "--obs-build --repos '16\.1': a red 16.1 is red" || { fail "--obs-build --repos 16.1: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sed -i 's/\] \.\.\. failed /] ... finished /' "$work/ob/log-16.1-x86_64-foo"
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 succeeded)"; ob --repos '16\.1'
+[ "$rc" = 0 ] && [ "$(sv "$SO" build.others)" = "['16.1']" ] \
+  && pass "--obs-build --repos: a green 16.1 is recorded among the judged repos" || { fail "--obs-build --repos green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(lp 16.1 succeeded)$(lp 15.7 failed)"; ob
+[ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "no Factory/Tumbleweed repo builds it" <<<"$out" \
+  && pass "--obs-build: no Factory/Tumbleweed repo is UNKNOWN, naming --repos" || { fail "--obs-build no Factory repo: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+ob --repos '('
+[ "$rc" = 2 ] && pass "--obs-build --repos: a bad regex is usage" || { fail "--obs-build bad --repos: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 results succeeded
 ob --entries 2
 [ "$rc" = 2 ] && grep -qF -- "--obs-build records OBS's build and runs no gate" <<<"$out" \

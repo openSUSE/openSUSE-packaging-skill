@@ -299,7 +299,7 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON]
                [--no-entry REASON] [--full]
        gate.sh [DIR] --review FILE
-       gate.sh [DIR] --obs-build [--rpms DIR]
+       gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX]
   DIR          package checkout (default .)
   --entries N  entries the submission adds vs the target (changes-lint and
                changes-patches, default 1)
@@ -359,7 +359,13 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                repo/arch/flavor succeeded from them (each log's srcmd5), and
                build-summary.sh reads each log GREEN; --rpms DIR also records
                the shipped-binary check of OBS's RPMs. A red build drops the
-               tree's recorded build
+               tree's recorded build. Only the Factory/Tumbleweed repos are
+               judged (openSUSE_Factory*, openSUSE_Tumbleweed, an
+               openSUSE:Factory project's standard); every other repo is a note
+               with its state, never red or pending. The stamp records the
+               repos it judged
+  --repos REGEX  with --obs-build: also judge the repos whose name matches
+               (re.search), when the user says another target matters
 Parsing a spec runs its %(...) on this host as you, and %prep runs the
 package's code (sandboxed, which keeps it off the network and out of $HOME but
 is no reason to trust it): run the gate only on a checkout you are changing

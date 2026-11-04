@@ -165,7 +165,7 @@ os.makedirs(api, exist_ok=True)
 s = json.load(open(spec))
 def stub(path, text):
     open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
-def stamp(prj, pkg, files, review=True, build=True, no_entry=""):
+def stamp(prj, pkg, files, review=True, build=True, no_entry="", obs=None):
     d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
     os.makedirs(d, exist_ok=True)
     st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
@@ -173,6 +173,10 @@ def stamp(prj, pkg, files, review=True, build=True, no_entry=""):
         st["review"] = {"verdict": "PASS"}
     if build:
         st["build"] = {"verdict": "GREEN", "kind": "log"}
+    if obs is not None:
+        st["target"] = "devel:tools"
+        st["build"] = {"verdict": "GREEN", "kind": "obs", "repos": sorted(["openSUSE_Tumbleweed"] + obs),
+                       "factory": True, "others": obs}
     if no_entry:
         st["no_entry"] = no_entry
     json.dump(st, open(os.path.join(d, prj + ".json"), "w"))
@@ -193,6 +197,10 @@ for prj, pkg in pairs("nobuild"):
     stamp(prj, pkg, listing(prj, pkg), build=False)
 for prj, pkg in pairs("noentry"):
     stamp(prj, pkg, listing(prj, pkg), no_entry="comment-only cleanup")
+for prj, pkg in pairs("obs_factory"):
+    stamp(prj, pkg, listing(prj, pkg), obs=[])
+for prj, pkg in pairs("obs_repos"):
+    stamp(prj, pkg, listing(prj, pkg), obs=["16.0"])
 for prj, pkg in pairs("stale"):
     listing(prj, pkg)
     stamp(prj, pkg, {f"{pkg}.spec": "0" * 32})
@@ -1606,6 +1614,13 @@ ask_ sr-unbuilt                 build-evidence "osc sr of $h:tester:spark/unbuil
 # factory-auto declines a request with no new .changes entry whatever the reason.
 ask_ sr-factory-no-entry        gate-stamp "osc sr of devel:tools/quiet: its gate.sh run waived the .changes entry (--no-entry)"
 case_ sr-devel-no-entry         0 - ""
+# gate.sh --obs-build judges the Factory/Tumbleweed repos: that build covers a request to
+# Factory or the devel project, another target only through the repos --repos added.
+case_ sr-obs-factory            0 - ""
+case_ sr-obs-devel              0 - ""
+ask_ sr-obs-factory-leap        build-evidence "osc sr of devel:tools/obsfac: its OBS build judged no repo of openSUSE:Leap:16.0"
+ask_ sr-obs-factory-leap        build-evidence "--obs-build once OBS built the commit (it judges the Factory/Tumbleweed repos; --repos REGEX adds the target's)"
+case_ sr-obs-repos-leap         0 - ""
 ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
 ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
 # A "." the guard cannot place names no project it can judge.
