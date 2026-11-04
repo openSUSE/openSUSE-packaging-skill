@@ -54,10 +54,12 @@ are always-on, not a phase.
   in a file under `/var/tmp/<task>/`.
 - **One package per child**, dispatched only after `scripts/preflight.sh` said proceed; never two
   children on one checkout. Resume an aborted child instead of starting over, and keep parallel
-  children below the provider's concurrency limit.
+  children below the provider's concurrency limit, counting two sessions per child (its reviewer).
 - **The review runs in a context of its own** — a changes-review sub-agent, never the author's own
-  context. A PASS the author wrote for its own change is no review. The reviewer records its own
-  verdict (`gate.sh --review`): pr-guard asks before any other context does.
+  context. A PASS the author wrote for its own change is no review. Each child starts its own
+  reviewer, nested; the reviewer records its own verdict (`gate.sh --review`): pr-guard asks before
+  any other context does. Only for a child that handed back `REVIEW-PENDING` (its spawn refused)
+  does the orchestrator start the review: at once, without asking the user, once per tree.
 - **Quote the user's request verbatim** in the brief, with every instruction it carries ("use the
   cargo macros"): a paraphrase is where instructions get lost.
 - **Run children in the background and take each as it returns** — review the ones that handed back
