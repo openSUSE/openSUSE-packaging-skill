@@ -150,10 +150,11 @@ UNSUPPORTED = {b"7z\xbc\xaf\x27\x1c": "7z archive", b"Rar!\x1a\x07": "rar archiv
 COFF_MACHINES = {0x014C, 0x8664, 0xAA64, 0x01C4, 0xA641}
 # ANON_OBJECT_HEADER_BIGOBJ's ClassID {D1BAA1C7-BAEE-4BA9-AF20-FAF66AA4DCB8}
 BIGOBJ_CLASS = bytes.fromhex("c7a1bad1eebaa94baf20faf66aa4dcb8")
-# what a corrupt or exotic archive raises while it is read
+# what a corrupt or exotic archive raises while it is read (zipfile: NotImplementedError)
 DECODE = (
     tarfile.TarError,
     zipfile.BadZipFile,
+    NotImplementedError,
     zlib.error,
     lzma.LZMAError,
     OSError,
