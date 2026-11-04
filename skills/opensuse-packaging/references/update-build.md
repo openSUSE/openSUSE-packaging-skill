@@ -175,9 +175,9 @@ something the others structurally cannot:
    pass over the **whole** change — spec hunks, patches, sources/service moves, the rpmlint/`%check`
    result and the `.changes` entry — read against the `osc diff` and the upstream release notes.
    It runs in a context that did not write the change: a changes-review sub-agent, which records its
-   own verdict, or the user. The author starts it itself; if refused, it stops at `REVIEW-PENDING`
-   and the orchestrator starts one. It must have **completed** with no blockers before anything is
-   committed or submitted.
+   own verdict, or the user. The author starts it itself; if it cannot (refused, or no Agent/task
+   tool), it stops at `REVIEW-PENDING`, the refusal quoted if any, and the orchestrator starts one.
+   It must have **completed** with no blockers before anything is committed or submitted.
 
 ## Lint the built packages with rpmcrab
 
