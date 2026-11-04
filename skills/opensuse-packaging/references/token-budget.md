@@ -58,8 +58,10 @@ are always-on, not a phase.
 - **The review runs in a context of its own** — a changes-review sub-agent, never the author's own
   context. A PASS the author wrote for its own change is no review. Each child starts its own
   reviewer, nested; the reviewer records its own verdict (`gate.sh --review`): pr-guard asks before
-  any other context does. Only for a child that handed back `REVIEW-PENDING` (its spawn refused)
-  does the orchestrator start the review: at once, without asking the user, once per tree.
+  any other context does. Only for a child that handed back `REVIEW-PENDING` (it cannot start one: the spawn
+  was refused, or there is no Agent/task tool; the refusal quoted, if any) does the orchestrator
+  start the review: at once, without asking the user, once per tree. A child that hands back after
+  a third BLOCK is reported to the user as blocked, with no further review round.
 - **Quote the user's request verbatim** in the brief, with every instruction it carries ("use the
   cargo macros"): a paraphrase is where instructions get lost.
 - **Run children in the background and take each as it returns** — review the ones that handed back
