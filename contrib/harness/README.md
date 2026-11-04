@@ -208,7 +208,8 @@ needs its own port (`opencode service set port N` in the throw-away home); on th
 one every command hung.
 
 - `experimental.subagent_depth` defaults to 1, which refuses the changes-review agent the
-  update-build agent starts ("Subagent depth limit reached (1)"); the snippet sets it to 2.
+  update-build agent starts ("Subagent depth limit reached (1)"); the snippet sets it to 2. Merge
+  that top-level key into the config's own `experimental` object, not into `permissions`.
 - opencode 2.x still loads the 1.x snippet: `permission.bash` becomes `shell`, in key
   order, so its `"*"` allow stays first. A `permissions` array in the same file is
   appended after those entries, so use one snippet, not both. Edits to the file reached the

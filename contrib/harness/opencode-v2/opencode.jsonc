@@ -1,6 +1,7 @@
 // Append these entries to the "permissions" array of ~/.config/opencode/opencode.jsonc
 // (opencode 2.x), after the entries already there. Use this snippet or
-// ../opencode/opencode.jsonc, not both.
+// ../opencode/opencode.jsonc, not both. Merge the top-level "experimental" key into
+// the file's own "experimental" object, if it has one.
 // A backstop for pr-guard.py, not a replacement: these patterns see one command
 // at a time and cannot resolve a push destination or read a script. The last
 // matching entry wins, in file order, over a base policy that already allows
@@ -8,7 +9,7 @@
 // entry would undo it. git runs "git obs" as git-obs, so each git-obs pattern
 // comes in both spellings.
 {
-  // A top-level key, not a permission: the update-build agent starts its own changes-review agent.
+  // The update-build agent starts its own changes-review agent, one level deeper.
   "experimental": { "subagent_depth": 2 },
   "permissions": [
     // Absolute or ~ directory globs, checked when a tool (read, grep, glob) reaches
