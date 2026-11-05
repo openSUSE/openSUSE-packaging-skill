@@ -551,8 +551,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     rows, bad, odd, waiting, pre, judged = [], [], [], [], [], set()
     for repo, arch, name, label, code, state, fac in entries:
         there = theirs.get((repo, arch, name[len(pkg):]))
-        # disabled only: excluded follows the spec, whose ExclusiveArch the change may edit
-        if there == "disabled":
+        if there in scope.OFF:
             notes.append("%s %s (%s in %s)" % (label, state, there, origin[0]))
             continue
         judged.add(repo)

@@ -8,8 +8,9 @@ import re
 FACTORY_REPO = re.compile(r"openSUSE_(Factory(_\w+)?|Tumbleweed)")
 LEAP16_REPO = re.compile(r"(openSUSE_Leap_)?16\.\d+")
 ARCHES = {"x86_64", "aarch64"}
-# osc results codes the origin uses for a repo/arch it does not build
-OFF = {"disabled", "excluded"}
+# the origin's code for a repo/arch it does not build: disabled only, since
+# excluded follows the spec, whose ExclusiveArch the change may edit
+OFF = {"disabled"}
 
 
 def factory(prj, repo):
