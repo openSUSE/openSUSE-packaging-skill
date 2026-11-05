@@ -43,9 +43,11 @@ Output without the count line was cut off before the end: never read it as
   GONE                         the package is no longer in the devel project
   WRONG-DEVEL                  openSUSE:Factory develops it in another project,
                                or has it under another spelling
-  NEW-IN-FACTORY               yours, not in openSUSE:Factory yet, and no
-                               devel SR of yours landed: ask before submitting
-                               it (one of yours landed: DUE, noting this)
+  NEW-IN-FACTORY               yours, not in openSUSE:Factory, and the devel
+                               package was not created by an accepted request
+                               of yours, or Factory deleted it: ask before
+                               submitting it (created by yours and never in
+                               Factory: DUE, noting this)
   DUE                          yours to forward (autoforward-gate.sh ELIGIBLE)
   MAINTAINERS                  not yours to forward: the devel maintainers do
   UNKNOWN                      a lookup failed; never read as done
@@ -210,7 +212,8 @@ class Package:
 
     def __init__(self, prj, pkg, user, own):
         self.prj, self.pkg, self.user, self.own = prj, pkg, user, own
-        self.landed = own is None  # --mine lists only your accepted requests
+        self.accepted = None  # ids of your requests accepted into prj/pkg
+        self.dropped = False  # openSUSE:Factory deleted it
         self.devel = None
         self.factory = None
         self.older = []  # declined forwards of older sources, for the role step
@@ -327,6 +330,30 @@ class Package:
             self.older.append((r, why))
         return None
 
+    def yours_new(self):
+        """Whether an accepted request of yours created the devel package
+        (its first revision's request) and openSUSE:Factory never had it."""
+        if self.accepted is None:
+            _, self.accepted = one(self.prj, self.pkg, self.user)
+        if not self.accepted:
+            return False
+        path = f"/source/{self.prj}/{self.pkg}/_history"
+        try:
+            revs = ET.fromstring(osc("api", path)).findall("revision")
+        except ET.ParseError as e:
+            raise Lookup(f"unreadable {path}: {e}", False)
+        first = (revs[0].findtext("requestid") or "").strip() if revs else ""
+        if not first.isdigit() or int(first) not in self.accepted:
+            return False
+        try:
+            osc("api", f"/source/{FACTORY}/{self.pkg}?deleted=1")
+        except Lookup as e:
+            if e.args[1]:
+                return True
+            raise
+        self.dropped = True
+        return False
+
     def role(self, verdict):
         """The verdict once autoforward-gate.sh has decided the role."""
         if verdict is SKIPPED:
@@ -337,14 +364,26 @@ class Package:
             return "MAINTAINERS", "reviewer role set" if verdict == "BLOCKED" else ""
         if verdict != "ELIGIBLE":
             return "UNKNOWN", f"autoforward-gate.sh: {verdict or 'no answer'}"
-        if self.factory is None and not self.landed:
-            return "NEW-IN-FACTORY", "ask before submitting a new package"
+        if self.factory is None:
+            try:
+                created = self.yours_new()
+            except Skipped:
+                return "UNKNOWN", NOT_LOOKED_UP
+            except Lookup as e:
+                return "UNKNOWN", clean(str(e.args[0]), 160)
+            if not created:
+                if self.dropped:
+                    return (
+                        "NEW-IN-FACTORY",
+                        "deleted from openSUSE:Factory: ask before submitting it again",
+                    )
+                return "NEW-IN-FACTORY", "ask before submitting a new package"
         theirs = [w for r, w in self.older if r["creator"] != self.user]
         if theirs:
             return "FOREIGN-DECLINED", theirs[0]
         mine = [r for r, _ in self.older if r["creator"] == self.user]
         notes = (
-            ["NEW-IN-FACTORY from your own devel SR"] if self.factory is None else []
+            ["NEW-IN-FACTORY, created by your request"] if self.factory is None else []
         )
         notes += [f"supersede {mine[0]['id']} with -s"] if mine else []
         return "DUE", "; ".join(notes)
@@ -413,7 +452,7 @@ def mine_since(user, since):
 
 def one(prj, pkg, user):
     """(your latest request to prj/pkg not accepted after it was filed, or
-    None; whether a request of yours to it was accepted)."""
+    None; the ids of yours to it that were accepted)."""
     reqs = search(
         f"@creator='{user}' and action/@type='submit' and "
         f"action/target/@project='{prj}' and action/target/@package='{pkg}'"
@@ -424,7 +463,8 @@ def one(prj, pkg, user):
         for r in reqs
         if r["state"] in ("new", "review", "declined") and r["created"] > landed
     ]
-    return (max(pending, key=lambda r: r["id"]) if pending else None), bool(landed)
+    accepted = {r["id"] for r in reqs if r["state"] == "accepted"}
+    return (max(pending, key=lambda r: r["id"]) if pending else None), accepted
 
 
 def pairs(words, where):
@@ -535,7 +575,7 @@ def main():
     def decide(p):
         try:
             if p.own == "lookup":
-                p.own, p.landed = one(p.prj, p.pkg, user)
+                p.own, p.accepted = one(p.prj, p.pkg, user)
             return p, p.decide()
         except Skipped:
             return p, ("UNKNOWN", NOT_LOOKED_UP)
