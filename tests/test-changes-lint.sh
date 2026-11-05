@@ -220,7 +220,13 @@ case_ cve-na-ok-scope-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-scope-he
 entry cve-na-ok-scope-list.changes "- Update to 3.1.2:" "  * Security fixes, 3.0.x is not affected:" \
   "    + CVE-2026-1111: heap overflow (bsc#1)"
 case_ cve-na-ok-scope-list 0 "OK: clean" --entries 1 "$work/cve-na-ok-scope-list.changes"
-# ... but a header that opens with the phrase lists not-affected ids, whatever their layout.
+# ... but a header that opens with the phrase, or whose list is what is not affected,
+# lists not-affected ids, whatever their layout.
+entry cve-na-by-list.changes "- The bundled copy is newer, so the package is not affected by:" \
+  "  * CVE-2026-1111: overflow (bsc#1)"
+case_ cve-na-by-list 1 "cve-na-by-list.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" --entries 1 "$work/cve-na-by-list.changes"
+entry cve-na-following.changes "- Update to 1.2; the following are not affected:" "  * CVE-2026-1111: overflow (bsc#1)"
+case_ cve-na-following 1 "cve-na-following.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" --entries 1 "$work/cve-na-following.changes"
 entry cve-na-header-layout.changes "- Not affected, vendored dependencies are above the fixed version:" \
   "  * CVE-2026-1111: package is 1.2.3, fixed in 1.2.0 (bsc#1)"
 case_ cve-na-header-layout 1 "cve-na-header-layout.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" \

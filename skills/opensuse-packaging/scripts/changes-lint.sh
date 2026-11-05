@@ -245,6 +245,12 @@ CLAUSE = re.compile(r";|\.\s")
 PATCH_NAME = re.compile(r"\S\.(?:patch|diff|dif)\b", re.I)
 NEAR = re.compile(r"\s+(?:by|to)\s+[\[(]?(?P<ids>" + IDS + ")", re.I)
 LISTS = re.compile(r"(?:\s*[^\s:;]+){0,2}?\s*:")   # "not affected here: CVE-1 (boo#1), CVE-2 …"
+# a header whose list is what is not affected: "… not affected by:", "the following are not affected:"
+BY_LIST = re.compile(r"\s+(?:by|to)(?:\s+the\s+following)?\s*:$", re.I)
+WHO_LIST = re.compile(r"\b(?:the\s+following|these|those)\b[^;,]*$", re.I)
+def lists_lead(t, hits):
+    return t.endswith(":") and any(BY_LIST.match(t, m.end()) or (re.match(r"\s*:$", t[m.end():])
+                                   and WHO_LIST.search(t, 0, m.start())) for m in hits)
 def norm(i):
     i = i.upper()
     return i if i.startswith("CVE") or "#" in i else i[:3] + "#" + i[3:]
@@ -336,7 +342,7 @@ for k in range(ncheck):
             if not sub and t.endswith(":"):   # a ':' list at the header's own indent
                 sub = [x for _, x, i in itertools.takewhile(
                     lambda y: y[2] == ind and LEAD_ID.match(y[1]), bullets[b + 1:])]
-            if not na_open:                   # a header's scope note leaves its fix sub-bullets alone
+            if not (na_open or lists_lead(tk, hits)):   # a scope note leaves its fix sub-bullets alone
                 sub = [x for x in sub if not FIX_LAYOUT.match(x) or NOTAFF.search(KEEP.sub(" ", x))]
             lead = ID_LEAD.match(tk)
             # a fix that also says what is not affected names only the ids next to that phrase
