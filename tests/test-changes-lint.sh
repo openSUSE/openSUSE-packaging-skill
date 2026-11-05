@@ -175,6 +175,10 @@ does-not-affect|- CVE-2026-1111 (bsc#1) does not affect this package
 isnt-affected|- The vendored foo isn't affected by CVE-2026-1111 (bsc#1)
 not-vulnerable|- This package is not vulnerable to CVE-2026-1111 (bsc#1)
 already-fixed|- The parser overflow (bsc#1) was already fixed in 1.1
+already-upstream|- The parser overflow (bsc#1) was already fixed upstream
+hyphen|- CVE-2026-1111 (bsc#1): not-affected, ships 1.2
+not-impacted|- This package is not impacted by CVE-2026-1111 (bsc#1)
+id-led-fix-verb|- CVE-2026-1111 (bsc#1): this package is not affected; a guard prevents it
 EOF
 while IFS='|' read -r name text <&3; do
   entry "cve-na-ok-$name.changes" "- Update to 1.2:" "$text"
@@ -185,13 +189,40 @@ fix-bug|- Fix a crash (boo#1234567); Wayland sessions are not affected
 patch-named|- Add fix-resume.patch: Wayland sessions are unaffected (boo#1)
 keep|- Keep configs unaffected by the upgrade (boo#1234567)
 over-patched|- Prefer system zlib over the patched bundled copy (boo#1234567)
+bump-above|- Bump vendored slab to 0.4.12, above the 0.4.11 fix (boo#1)
+arrow-above|- slab 0.4.11 -> 0.4.12, above the 0.4.11 fix (CVE-2025-55159)
+id-led-bump|- CVE-2025-55159 (boo#1): slab bumped to 0.4.12, above the fix
+update-scope|- Update foo to 2.0 (boo#1); 1.x is not affected
+fixed-by-update|- CVE-2026-1111 (bsc#1): fixed by this update; 1.x is not affected
+fixes-it|- CVE-2026-1111 (bsc#1): crash, 1.x unaffected; the bump fixes it
+id-led-fix|- CVE-2026-1111 (bsc#1): crash, closed by the bump; 2.x unaffected
+harden|- Harden the parser (CVE-2026-1111, bsc#1); 2.x is not affected
+reject|- Reject long headers (CVE-2026-1111, bsc#1); 2.x is not affected
+mitigate|- Mitigate the desync (CVE-2026-1111, bsc#1); 2.x is not affected
+prevent|- Prevent the overflow (CVE-2026-1111, bsc#1); 2.x is not affected
+sanitize|- Sanitize the header (CVE-2026-1111, bsc#1); 2.x is not affected
+close|- Close the desync (CVE-2026-1111, bsc#1); 2.x is not affected
 EOF
-entry cve-na-ok-patch-layout.changes "- CVE-2026-1111: heap overflow; arm is not affected (bsc#1)" \
-  "  * fix-CVE-2026-1111.patch"
-case_ cve-na-ok-patch-layout 0 "OK: clean" --entries 1 "$work/cve-na-ok-patch-layout.changes"
-entry cve-na-ok-security-header.changes "- Update to 3.1.2:" "  * Security fixes (3.0.x is not affected):" \
+# A fixing bump reads "above the fix" too (pi-coding-agent).
+entry cve-na-ok-fix-floor.changes "- Update to 1.5.0:" "  * CVE-2026-87018 (boo#1285858): undici is 8.12.3, above the" \
+  "    8.12.2 fix floor, so this update fixes it"
+case_ cve-na-ok-fix-floor 0 "OK: clean" --entries 1 "$work/cve-na-ok-fix-floor.changes"
+# The bump closes one id; the other is a real not-affected one (zed).
+entry cve-na-closes.changes "- Update to 0.200.0:" "  * async-tar 0.5.0 -> 0.6.1 takes an entry's size from its PAX" \
+  "    header, closing the desync upstream cites as CVE-2025-62518;" \
+  "    it is not affected by CVE-2026-53600, a desync that fix introduced"
+case_ cve-na-closes 1 "cve-na-closes.changes:5: $NA_MSG (CVE-2026-53600)" --entries 1 "$work/cve-na-closes.changes"
+# A scope note in a header does not reach the fixes listed under it ...
+entry cve-na-ok-scope-header.changes "- Update to 3.1.2 (3.0.x is not affected):" "  * CVE-2026-1111: heap overflow (bsc#1)"
+case_ cve-na-ok-scope-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-scope-header.changes"
+entry cve-na-ok-scope-list.changes "- Update to 3.1.2:" "  * Security fixes, 3.0.x is not affected:" \
   "    + CVE-2026-1111: heap overflow (bsc#1)"
-case_ cve-na-ok-security-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-security-header.changes"
+case_ cve-na-ok-scope-list 0 "OK: clean" --entries 1 "$work/cve-na-ok-scope-list.changes"
+# ... but a header that opens with the phrase lists not-affected ids, whatever their layout.
+entry cve-na-header-layout.changes "- Not affected, vendored dependencies are above the fixed version:" \
+  "  * CVE-2026-1111: package is 1.2.3, fixed in 1.2.0 (bsc#1)"
+case_ cve-na-header-layout 1 "cve-na-header-layout.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" \
+  --entries 1 "$work/cve-na-header-layout.changes"
 # A long id list is linear: 6000 ids took 40 s when each list was re-read from every id.
 { printf '%s\nMon Sep 14 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Not affected by:\n' "$SEP"
   for i in $(seq 10000 12999); do printf '  CVE-2026-%s (boo#%s), CVE-2026-%s (boo#%s),\n' "$i" "2$i" "$((i + 5000))" "3$i"; done
@@ -199,6 +230,12 @@ case_ cve-na-ok-security-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-secur
 out=$(timeout 20 bash "$LINT" --entries 1 "$work/cve-na-long.changes" 2>&1); rc=$?
 [ $rc = 1 ] && grep -qF "cve-na-long.changes:4: $NA_MSG" <<<"$out" && pass "cve-na-long-list (rc=1, in time)" \
   || fail "cve-na-long-list: rc=$rc (124 = timed out)"
+entry cve-na-ok-patch-layout.changes "- CVE-2026-1111: heap overflow; arm is not affected (bsc#1)" \
+  "  * fix-CVE-2026-1111.patch"
+case_ cve-na-ok-patch-layout 0 "OK: clean" --entries 1 "$work/cve-na-ok-patch-layout.changes"
+entry cve-na-ok-security-header.changes "- Update to 3.1.2:" "  * Security fixes (3.0.x is not affected):" \
+  "    + CVE-2026-1111: heap overflow (bsc#1)"
+case_ cve-na-ok-security-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-security-header.changes"
 
 # Request ids and staging order belong in the SR message, not in .changes.
 # Real case: sr#1385697, wrapped over a continuation line.
