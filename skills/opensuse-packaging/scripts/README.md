@@ -369,8 +369,9 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                A red (failed, unresolvable, broken) the link origin has at the
                same repo/arch is PRE-EXISTING: listed, not red, and GREEN needs
                one judged build that succeeded; a repo/arch the origin disables
-               or excludes is not judged. The stamp records the repos judged
-               and the PRE-EXISTING ones
+               or excludes is not judged. The stamp records the repos judged,
+               the green ones --repos added, whether a Tumbleweed build
+               succeeded, and the PRE-EXISTING ones
   --repos REGEX  with --obs-build: also judge the repos whose name matches
                (re.search), when the user says another target matters
   --arches REGEX  with --obs-build: also judge the arches that match

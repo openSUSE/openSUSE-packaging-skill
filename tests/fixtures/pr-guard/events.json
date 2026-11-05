@@ -8949,6 +8949,30 @@
     },
     "cwd": "@OSC@/obs/obsbare"
   },
+  "sr-obs-default-sle15": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos SUSE:SLE-15:Update -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-default-slfo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos SUSE:SLFO:Main -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-default-step": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos openSUSE:Step:15-SP4 -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-nofac-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsnofac openSUSE:Factory -m 'Update obsnofac to 1.1: fixes.'"
+    }
+  },
   "sr-obs-pre-factory": {
     "tool_name": "Bash",
     "tool_input": {

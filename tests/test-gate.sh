@@ -912,8 +912,8 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 15.7 faile
   && pass "--obs-build --repos '15\.7': a red 15.7 is red" || { fail "--obs-build --repos 15.7: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 blogr 15.7 x86_64 finished; blogr 16.1 x86_64 finished
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 succeeded)$(lp 15.7 succeeded)"; ob --repos '15\.7'
-[ "$rc" = 0 ] && [ "$(sv "$SO" build.others)" = "['15.7', '16.1']" ] \
-  && pass "--obs-build --repos: a green 15.7 is recorded among the judged repos, beside 16.1" || { fail "--obs-build --repos green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && [ "$(sv "$SO" build.others)" = "['15.7', '16.1']" ] && [ "$(sv "$SO" build.added)" = "['15.7']" ] \
+  && pass "--obs-build --repos: a green 15.7 is recorded among the judged repos, beside 16.1, as one --repos added" || { fail "--obs-build --repos green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rx "$(lp 15.7 succeeded)$(lp SLE_15_SP7 failed)$(st_ i586 '' foo succeeded)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "no Tumbleweed or Leap 16 repo builds it" <<<"$out" \
   && pass "--obs-build: no Tumbleweed or Leap 16 repo on x86_64/aarch64 is UNKNOWN, naming --repos/--arches" || { fail "--obs-build no judged repo: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -953,6 +953,11 @@ orx "$(st_ x86_64 '' foo failed)$(st_ aarch64 '' foo unresolvable)"; blog x86_64
 rx "$(st_ x86_64 '' foo failed)$(st_ aarch64 '' foo unresolvable)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "no judged build succeeded" <<<"$out" \
   && pass "--obs-build: only PRE-EXISTING reds and nothing green is UNKNOWN" || { fail "--obs-build only pre-existing: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+blogr 16.0 x86_64 finished
+rx "$(st_ x86_64 '' foo failed)$(st_ aarch64 '' foo unresolvable)$(lp 16.0 succeeded)"; ob
+[ "$rc" = 0 ] && [ "$(sv "$SO" build.factory)" = False ] && [ "$(sv "$SO" build.others)" = "['16.0']" ] && [ "$(sv "$SO" build.added)" = "[]" ] \
+  && pass "--obs-build: Tumbleweed only PRE-EXISTING, 16.0 green: GREEN, but no Tumbleweed build recorded for Factory" \
+  || { fail "--obs-build Tumbleweed pre-existing, 16.0 green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 blog x86_64 "$SRC" finished; rm -f "$work/ob/origin.xml"; listing "$(md5_ "$work/t-ob/foo.spec")"
 ob --arches '('
 [ "$rc" = 2 ] && pass "--obs-build --arches: a bad regex is usage" || { fail "--obs-build bad --arches: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
