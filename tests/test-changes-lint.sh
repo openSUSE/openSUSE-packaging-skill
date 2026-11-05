@@ -209,6 +209,11 @@ EOF
 entry cve-na-ok-fix-floor.changes "- Update to 1.5.0:" "  * CVE-2026-87018 (boo#1285858): undici is 8.12.3, above the" \
   "    8.12.2 fix floor, so this update fixes it"
 case_ cve-na-ok-fix-floor 0 "OK: clean" --entries 1 "$work/cve-na-ok-fix-floor.changes"
+# "above the fixed version" is a claim about what ships, even in a bump's bullet.
+entry cve-na-update-floor.changes "- Update to 2.103.3, vendored deps are above the fixed version" \
+  "  (CVE-2026-1111, bsc#1)"
+case_ cve-na-update-floor 1 "cve-na-update-floor.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" \
+  --entries 1 "$work/cve-na-update-floor.changes"
 # The bump closes one id; the other is a real not-affected one (zed).
 entry cve-na-closes.changes "- Update to 0.200.0:" "  * async-tar 0.5.0 -> 0.6.1 takes an entry's size from its PAX" \
   "    header, closing the desync upstream cites as CVE-2025-62518;" \

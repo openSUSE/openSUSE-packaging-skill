@@ -244,6 +244,7 @@ THIS_FIX = re.compile(r"\bthis\s+(?:update|release|version|bump|upgrade)\s+(?:al
 CLAUSE = re.compile(r";|\.\s")
 PATCH_NAME = re.compile(r"\S\.(?:patch|diff|dif)\b", re.I)
 NEAR = re.compile(r"\s+(?:by|to)\s+[\[(]?(?P<ids>" + IDS + ")", re.I)
+FLOOR_IDS = re.compile(r"(?:\s+versions?)?\s*[\[(](?P<ids>" + IDS + ")", re.I)
 LISTS = re.compile(r"(?:\s*[^\s:;]+){0,2}?\s*:")   # "not affected here: CVE-1 (boo#1), CVE-2 …"
 # a header whose list is what is not affected: "… not affected by:", "the following are not affected:"
 BY_LIST = re.compile(r"\s+(?:by|to)(?:\s+the\s+following)?\s*:$", re.I)
@@ -269,9 +270,12 @@ def clause(t, m):
     a = max((c.end() for c in CLAUSE.finditer(t, 0, m.start())), default=0)
     z = CLAUSE.search(t, m.end())
     return t[a:z.start() if z else len(t)]
+def floor_claim(m):
+    """'above the fixed version': a not-affected claim even beside a bump, unlike 'above the X fix'"""
+    return re.search(r"(?:fixed|patched)$", m.group(), re.I)
 def moved(t):
     """the clauses where 'above the X fix' sits beside a version move: a fix, not a claim"""
-    return [c for m in NOTAFF.finditer(t) if m.group().lower().startswith("above")
+    return [c for m in NOTAFF.finditer(t) if m.group().lower().startswith("above") and not floor_claim(m)
             for c in [clause(t, m)] if BUMP.search(c)]
 def fixed_here(t, own=True):
     """the ids t states this update fixes; under a not-affected opening (own=False)
@@ -292,6 +296,8 @@ def about(t, m, lead=False):
     else:
         ids = ANYID.findall(" ".join(re.split(r"[;,]|\.\s", t[:m.start()])[-1].split()[-3:]))
     near, lists = NEAR.match(t, m.end()), LISTS.match(t, m.end())
+    if floor_claim(m):                  # "above the fixed version (CVE-1, bsc#1)"
+        near = near or FLOOR_IDS.match(t, m.end())
     if near:
         ids += ANYID.findall(near.group("ids"))
     if lists:
