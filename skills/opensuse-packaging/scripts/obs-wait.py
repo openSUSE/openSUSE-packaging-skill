@@ -8,7 +8,9 @@ build    PKG and its multibuild flavors on the repos/arches gate.sh
          --repo/--arch name exactly what to wait on), judged only on a build of
          the CURRENT expanded sources: a result of an older srcmd5 reads
          pending, never green or failed. In that default scope a repo/arch the
-         link origin disables or excludes is not waited on
+         link origin disables is not waited on (one it excludes is: the change
+         may edit ExclusiveArch), and --target openSUSE:Factory leaves Leap 16
+         out, as gate.sh does for a Factory target
 request  request ID, by its request number
 
 It opens OBS's public event stream first (server-sent events from
@@ -40,7 +42,7 @@ green either.
 Exit:
   0 = green on every applicable repo/arch from the current sources; request accepted
   1 = still pending at --timeout: repeat the same call
-  2 = settled failure: failed/unresolvable/broken/unknown code or nothing to build; request declined/revoked/superseded/deleted
+  2 = settled failure: failed/unresolvable/broken/unknown code, or nothing to build (with --all, --repo or --arch); request declined/revoked/superseded/deleted
   3 = no answer: usage, an osc lookup failed, was empty or did not parse, or no repo/arch in scope
   4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
   5 = BLOCKED-UPSTREAM: only blocked arches left, blocked in the link origin too, the rest green; not green, check back later
@@ -181,6 +183,14 @@ def build_check(t):
     return code, line
 
 
+def out_of_scope(who):
+    return (
+        f"no repo/arch of {who} in scope builds it (Tumbleweed, or Leap 16 unless "
+        "--target is openSUSE:Factory, on x86_64 or aarch64): --repos/--arches "
+        "REGEX widen it, --all takes every one"
+    )
+
+
 def listing(t):
     src = parse(osc(["api", f"/source/{t.prj}/{t.pkg}?expand=1"]), "source listing")
     if not src.get("srcmd5"):
@@ -197,7 +207,7 @@ def build_verdict(t, notes):
     for res in root.findall("result"):
         repo, arch = res.get("repository") or "", res.get("arch") or ""
         inside = not t.scoped or scope.judged(
-            t.prj, repo, arch, True, t.repos, t.arches
+            t.prj, repo, arch, t.leap, t.repos, t.arches
         )
         dirty = res.get("dirty") == "true"
         dirty_repo |= dirty and inside
@@ -215,17 +225,15 @@ def build_verdict(t, notes):
     if not rows and dirty_repo:
         return 1, f"PENDING — {who}: no status yet (repository dirty)"
     if not rows and notes:
-        raise Lookup(
-            f"no repo/arch of {who} in scope (Tumbleweed or Leap 16 on x86_64 or "
-            "aarch64): --repos/--arches REGEX widen it, --all takes every one"
-        )
+        raise Lookup(out_of_scope(who))
     if not rows:
         raise Lookup(f"no build results for {who}{t.where}")
     # the link origin, read once and only when a judged build is not green
     src, there, upstream = None, {}, None
     if t.scoped and any(d or c not in GREEN | SKIP for _, _, _, c, d, _ in rows):
-        src = listing(t)
-        upstream = scope.origin(src, t.pkg)
+        # unexpanded: a broken link fails to expand, and its reds must still read red
+        raw = parse(osc(["api", f"/source/{t.prj}/{t.pkg}"]), "source listing")
+        upstream = scope.origin(raw, t.pkg)
     if upstream:
         theirs = scope.codes(
             parse(
@@ -266,6 +274,8 @@ def build_verdict(t, notes):
     if red:
         return 2, f"FAILED — {who}: {summary(red)}"
     if not (failed or pending or ok):
+        if t.scoped:
+            raise Lookup(out_of_scope(who))
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
     t.srcmd5 = (src if src is not None else listing(t)).get("srcmd5")
@@ -533,8 +543,8 @@ def main(argv=None):
     ap = Parser(
         prog="obs-wait.py",
         allow_abbrev=False,
-        usage="obs-wait.py build PRJ PKG [--repos REGEX] [--arches REGEX] [--all] [--repo R] [--arch A]\n"
-        "                          [--timeout S] [--recheck S]\n"
+        usage="obs-wait.py build PRJ PKG [--repos REGEX] [--arches REGEX] [--target PRJ] [--all]\n"
+        "                          [--repo R] [--arch A] [--timeout S] [--recheck S]\n"
         "       obs-wait.py request ID [--timeout S] [--recheck S]",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -547,6 +557,7 @@ def main(argv=None):
     b.add_argument("--arch", metavar="A")
     b.add_argument("--repos", metavar="REGEX", type=regex)
     b.add_argument("--arches", metavar="REGEX", type=regex)
+    b.add_argument("--target", metavar="PRJ")
     b.add_argument("--all", action="store_true")
     r = sub.add_parser("request", prog="obs-wait.py request", allow_abbrev=False)
     r.add_argument("id")
@@ -563,6 +574,10 @@ def main(argv=None):
         if t.all and (t.repos or t.arches):
             ap.error("--all already takes every repo/arch: drop --repos/--arches")
         t.scoped = not (t.all or t.repo or t.arch)
+        tprj = (t.target or "").split("/")[0]
+        t.leap = not (
+            tprj == "openSUSE:Factory" or tprj.startswith("openSUSE:Factory:")
+        )
         t.where = f" on {t.repo or '*'}/{t.arch or '*'}" if t.repo or t.arch else ""
         mode = (build_check, build_event)
     else:

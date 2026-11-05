@@ -36,6 +36,8 @@ serve() { # the n-th call of a kind gets <kind>@n, else the highest below n, els
 case "$1 $2" in
   "results --xml") if [ "$3" = devel:origin ]; then serve origin; else serve results; fi ;;
   "api /source/"*"/_history"*) serve history ;;
+  "api /source/"*"?expand=1"*) serve source ;;
+  "api /source/"*) if [ -f "$FIX/rawsource" ]; then serve rawsource; else serve source; fi ;;
   "api /source/"*) serve source ;;
   "api /request/"*) serve request ;;
   "api /build/"*"/_jobhistory?limit="*) serve repojobs ;;
@@ -423,6 +425,36 @@ new blocked-nolink; src source $CUR; job jobhist $CUR
 rres results $TW/x86_64=succeeded $TW/aarch64=blocked
 run blocked-nolink build $P $K --timeout 0
 expect "blocked with no link origin is pending" 1 "PENDING"
+# An exclusion follows the spec, which the change may edit: a red there still counts.
+new origin-excluded; lsrc source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=failed
+rres origin $TW/x86_64=succeeded $TW/aarch64=excluded
+run origin-excluded build $P $K --timeout 0
+expect "a red where the origin excludes the arch is a settled failure, not skipped" 2 "failed: $TW/aarch64"
+# A broken link does not expand: its reds are still a settled failure, not no answer.
+new broken-link; lsrc rawsource $CUR; echo "@ERR Server returned an error: HTTP Error 400: conflict in file foo.spec" > "$FIX/source"
+rres results $TW/x86_64=broken $TW/aarch64=broken
+rres origin $TW/x86_64=succeeded $TW/aarch64=succeeded
+run broken-link build $P $K --timeout 0
+expect "a broken link's reds are a settled failure (exit 2), not exit 3" 2 "broken: $TW/x86_64, $TW/aarch64"
+# For a Factory target the gate leaves Leap 16 out, and so does the wait.
+new target-factory; src source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=succeeded 16.1/x86_64=building
+run target-factory build $P $K --timeout 0 --target openSUSE:Factory
+expect "--target openSUSE:Factory leaves Leap 16 out" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64, $TW/aarch64 (not judged: building: 16.1/x86_64)"
+run target-factory build $P $K --timeout 0 --target devel:tools
+expect "--target a devel project waits on Leap 16" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: building: 16.1/x86_64"
+# Nothing left in scope (an s390x-only package, or all off in the origin) is no answer, as the gate's UNKNOWN.
+new s390x-only; src source $CUR; job jobhist $CUR
+rres results $TW/x86_64=excluded $TW/aarch64=excluded openSUSE_Factory_zSystems/s390x=succeeded
+run s390x-only build $P $K --timeout 0
+expect "every judged repo/arch excluded is no answer, naming --arches" 3 "VERDICT: UNKNOWN — no repo/arch of $P/$K in scope builds it"
+has "$out" "--repos/--arches REGEX widen it" && pass "  ...with the hint" || fail "  hint missing: $out"
+new all-off; lsrc source $CUR; job jobhist $CUR
+rres results 16.1/x86_64=building
+rres origin 16.1/x86_64=disabled
+run all-off build $P $K --timeout 0
+expect "every judged repo/arch disabled in the origin is no answer" 3 "no repo/arch of $P/$K in scope builds it"
 new blocked-old; lsrc source $CUR; job jobhist $OLD
 rres results $TW/x86_64=succeeded $TW/aarch64=blocked
 rres origin $TW/aarch64=blocked
