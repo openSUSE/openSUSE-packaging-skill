@@ -1067,6 +1067,9 @@ case_ osc-rdelete-dot-home          0 - ""
 case_ osc-meta-pkg-read             0 - ""
 case_ osc-meta-prj-blame            0 - ""
 case_ osc-meta-pkg-home-file        0 - ""
+# A new package's maintainer role, set in the devel project the user maintains: no ask.
+case_ osc-meta-pkg-devel-file       0 - ""
+case_ osc-maintainer-add-devel      0 - ""
 # A request is filed with osc, which checks the devel project and the message;
 # one created through the API skips both.
 case_ request-api-osc-create        2 request-api "a request created through the API"
