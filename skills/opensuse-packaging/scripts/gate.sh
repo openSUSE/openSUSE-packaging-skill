@@ -86,8 +86,8 @@
 #                A red (failed, unresolvable, broken) the link origin has at the
 #                same repo/arch is PRE-EXISTING: listed, not red, and GREEN needs
 #                one judged build that succeeded; a repo/arch the origin disables
-#                or excludes is not judged. The stamp records the repos judged,
-#                the green ones --repos added, whether a Tumbleweed build
+#                is not judged (one it excludes is). The stamp records the repos
+#                judged, the green ones --repos added, whether a Tumbleweed build
 #                succeeded, and the PRE-EXISTING ones
 #   --repos REGEX  with --obs-build: also judge the repos whose name matches
 #                (re.search), when the user says another target matters
@@ -557,7 +557,8 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     rows, bad, odd, waiting, pre, judged = [], [], [], [], [], set()
     for repo, arch, name, label, code, state, fac in entries:
         there = theirs.get((repo, arch, name[len(pkg):]))
-        if there in SKIPPED:
+        # disabled only: excluded follows the spec, whose ExclusiveArch the change may edit
+        if there == "disabled":
             notes.append("%s %s (%s in %s)" % (label, state, there, origin[0]))
             continue
         judged.add(repo)
