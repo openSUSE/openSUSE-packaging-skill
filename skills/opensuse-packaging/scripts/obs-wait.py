@@ -2,9 +2,13 @@
 """Wait for ONE OBS build or request to settle, in one bounded call, instead of
 a sleep loop.
 
-build    PKG and its multibuild flavors on every repo/arch (or --repo/--arch),
-         judged only on a build of the CURRENT expanded sources: a result of an
-         older srcmd5 reads pending, never green or failed
+build    PKG and its multibuild flavors on the repos/arches gate.sh
+         --obs-build judges (Tumbleweed/Factory and Leap 16 on x86_64 and
+         aarch64; --repos/--arches REGEX widen it, --all takes every one,
+         --repo/--arch name exactly what to wait on), judged only on a build of
+         the CURRENT expanded sources: a result of an older srcmd5 reads
+         pending, never green or failed. In that default scope a repo/arch the
+         link origin disables or excludes is not waited on
 request  request ID, by its request number
 
 It opens OBS's public event stream first (server-sent events from
@@ -24,21 +28,29 @@ green from the current sources, is QUEUED-STUCK once 30 minutes have passed
 since both the last commit and the last build job that ended in each such
 repo/arch (a package scheduled because its dependency just built is not
 stuck): those arches wait for a worker, which no wait shortens. Report it and
-come back later; it is not green, and every arch must be green before an
-update is filed.
+come back later; it is not green, and every judged repo/arch must be green
+before an update is filed.
+
+In the default scope, a build whose only unfinished repos/arches are
+"blocked", with the link origin blocked at the same repo/arch too and the rest
+green from the current sources, is BLOCKED-UPSTREAM: a dependency rebuild
+outside this change holds both. Report it and come back later; it is not
+green either.
 
 Exit:
   0 = green on every applicable repo/arch from the current sources; request accepted
   1 = still pending at --timeout: repeat the same call
   2 = settled failure: failed/unresolvable/broken/unknown code or nothing to build; request declined/revoked/superseded/deleted
-  3 = no answer: usage, or an osc lookup failed or did not parse
+  3 = no answer: usage, an osc lookup failed, was empty or did not parse, or no repo/arch in scope
   4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
+  5 = BLOCKED-UPSTREAM: only blocked arches left, blocked in the link origin too, the rest green; not green, check back later
 """
 
 import argparse
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -47,6 +59,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _obs_scope as scope  # the repos/arches gate.sh --obs-build judges
 import _sanitize  # escape/Unicode-smuggling filter for third-party text
 
 FEED_URL = "https://rabbit.opensuse.org/cgi-bin/webevents.py"
@@ -161,25 +174,75 @@ def summary(items, show=4):
 
 
 def build_check(t):
+    notes = []
+    code, line = build_verdict(t, notes)
+    if notes:
+        line += f" (not judged: {summary(notes, 3)})"
+    return code, line
+
+
+def listing(t):
+    src = parse(osc(["api", f"/source/{t.prj}/{t.pkg}?expand=1"]), "source listing")
+    if not src.get("srcmd5"):
+        raise Lookup(f"no srcmd5 in the {t.prj}/{t.pkg} source listing")
+    return src
+
+
+def build_verdict(t, notes):
     cmd = ["results", "--xml"]
     cmd += ["-r", t.repo] if t.repo else []
     cmd += ["-a", t.arch] if t.arch else []
     root = parse(osc(cmd + [t.prj, t.pkg]), "osc results")
     rows, dirty_repo = [], False
     for res in root.findall("result"):
-        where = f"{res.get('repository')}/{res.get('arch')}"
+        repo, arch = res.get("repository") or "", res.get("arch") or ""
+        inside = not t.scoped or scope.judged(
+            t.prj, repo, arch, True, t.repos, t.arches
+        )
         dirty = res.get("dirty") == "true"
-        dirty_repo |= dirty
+        dirty_repo |= dirty and inside
         for s in res.findall("status"):
             name = s.get("package", "")
             if name == t.pkg or name.startswith(t.pkg + ":"):
-                label = where + name[len(t.pkg) :]
-                rows.append((res, name, label, s.get("code", ""), dirty, s))
+                label = f"{repo}/{arch}" + name[len(t.pkg) :]
+                code = s.get("code", "")
+                if not inside:
+                    if code not in SKIP:
+                        notes.append((code or "no code", label, ""))
+                    continue
+                rows.append((res, name, label, code, dirty, s))
     who = f"{t.prj}/{t.pkg}"
     if not rows and dirty_repo:
         return 1, f"PENDING — {who}: no status yet (repository dirty)"
+    if not rows and notes:
+        raise Lookup(
+            f"no repo/arch of {who} in scope (Tumbleweed or Leap 16 on x86_64 or "
+            "aarch64): --repos/--arches REGEX widen it, --all takes every one"
+        )
     if not rows:
         raise Lookup(f"no build results for {who}{t.where}")
+    # the link origin, read once and only when a judged build is not green
+    src, there, upstream = None, {}, None
+    if t.scoped and any(d or c not in GREEN | SKIP for _, _, _, c, d, _ in rows):
+        src = listing(t)
+        upstream = scope.origin(src, t.pkg)
+    if upstream:
+        theirs = scope.codes(
+            parse(
+                osc(["results", "--xml", *upstream]), f"osc results of {upstream[0]}"
+            ),
+            upstream[1],
+        )
+        kept = []
+        for row in rows:
+            res, name, label = row[0], row[1], row[2]
+            c = theirs.get((res.get("repository"), res.get("arch"), name[len(t.pkg) :]))
+            if c in scope.OFF and row[3] not in SKIP:
+                notes.append((f"{c} in {upstream[0]}", label, ""))
+                continue
+            there[label] = c
+            kept.append(row)
+        rows = kept
 
     red, failed, pending, ok, waits = [], [], [], [], []
     for res, name, label, code, dirty, s in rows:
@@ -205,10 +268,7 @@ def build_check(t):
     if not (failed or pending or ok):
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
-    src = parse(osc(["api", f"/source/{t.prj}/{t.pkg}?expand=1"]), "source listing")
-    t.srcmd5 = src.get("srcmd5")
-    if not t.srcmd5:
-        raise Lookup(f"no srcmd5 in the {who} source listing")
+    t.srcmd5 = (src if src is not None else listing(t)).get("srcmd5")
     who += f" sources {t.srcmd5[:12]}"
     older = "built from older sources"
     for res, name, label in failed:
@@ -222,7 +282,12 @@ def build_check(t):
     # only scheduled arches left, the rest succeeded: maybe queued-stuck, once
     # the succeeded ones are known to be of the current sources
     queued = bool(ok) and all(state == "scheduled" for state, _, _ in pending)
-    if pending and not queued:
+    # blocked here and in the link origin too: what holds it is not this change
+    held = bool(ok) and all(
+        state == "blocked" and there.get(label) == "blocked"
+        for state, label, _ in pending
+    )
+    if pending and not (queued or held):
         return 1, f"PENDING — {who}: {summary(pending)}"
     for res, name, label in ok:
         got = last_job(t, res.get("repository"), res.get("arch"), name)
@@ -244,6 +309,13 @@ def build_check(t):
                 f"min with no commit or finished job there, {green}; not green: report "
                 "it and check back later"
             )
+    if held and pending and all(state == "blocked" for state, _, _ in pending):
+        green = summary([("succeeded", x[2], "") for x in ok], 8)
+        return 5, (
+            f"BLOCKED-UPSTREAM — {who}: {summary(pending)}, blocked in {upstream[0]} "
+            f"too, {green}; not green: a dependency rebuild outside this change, "
+            "report it and check back later"
+        )
     if pending:
         return 1, f"PENDING — {who}: {summary(pending)}"
     return 0, f"GREEN — {who}: " + summary([("succeeded", x[2], "") for x in ok], 8)
@@ -450,11 +522,19 @@ def seconds(minimum):
     return integer
 
 
+def regex(s):
+    try:
+        return re.compile(s)
+    except re.error as e:
+        raise argparse.ArgumentTypeError(f"not a regular expression: {e}")
+
+
 def main(argv=None):
     ap = Parser(
         prog="obs-wait.py",
         allow_abbrev=False,
-        usage="obs-wait.py build PRJ PKG [--repo R] [--arch A] [--timeout S] [--recheck S]\n"
+        usage="obs-wait.py build PRJ PKG [--repos REGEX] [--arches REGEX] [--all] [--repo R] [--arch A]\n"
+        "                          [--timeout S] [--recheck S]\n"
         "       obs-wait.py request ID [--timeout S] [--recheck S]",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -465,6 +545,9 @@ def main(argv=None):
     b.add_argument("pkg")
     b.add_argument("--repo", metavar="R")
     b.add_argument("--arch", metavar="A")
+    b.add_argument("--repos", metavar="REGEX", type=regex)
+    b.add_argument("--arches", metavar="REGEX", type=regex)
+    b.add_argument("--all", action="store_true")
     r = sub.add_parser("request", prog="obs-wait.py request", allow_abbrev=False)
     r.add_argument("id")
     for p in (b, r):
@@ -477,6 +560,9 @@ def main(argv=None):
         t.id = str(int(t.id))
     t.srcmd5 = None
     if t.mode == "build":
+        if t.all and (t.repos or t.arches):
+            ap.error("--all already takes every repo/arch: drop --repos/--arches")
+        t.scoped = not (t.all or t.repo or t.arch)
         t.where = f" on {t.repo or '*'}/{t.arch or '*'}" if t.repo or t.arch else ""
         mode = (build_check, build_event)
     else:
