@@ -43,8 +43,9 @@ Output without the count line was cut off before the end: never read it as
   GONE                         the package is no longer in the devel project
   WRONG-DEVEL                  openSUSE:Factory develops it in another project,
                                or has it under another spelling
-  NEW-IN-FACTORY               yours, but not in openSUSE:Factory yet: ask
-                               before submitting a new package
+  NEW-IN-FACTORY               yours, not in openSUSE:Factory yet, and no
+                               devel SR of yours landed: ask before submitting
+                               it (one of yours landed: DUE, noting this)
   DUE                          yours to forward (autoforward-gate.sh ELIGIBLE)
   MAINTAINERS                  not yours to forward: the devel maintainers do
   UNKNOWN                      a lookup failed; never read as done
@@ -209,6 +210,7 @@ class Package:
 
     def __init__(self, prj, pkg, user, own):
         self.prj, self.pkg, self.user, self.own = prj, pkg, user, own
+        self.landed = own is None  # --mine lists only your accepted requests
         self.devel = None
         self.factory = None
         self.older = []  # declined forwards of older sources, for the role step
@@ -335,13 +337,17 @@ class Package:
             return "MAINTAINERS", "reviewer role set" if verdict == "BLOCKED" else ""
         if verdict != "ELIGIBLE":
             return "UNKNOWN", f"autoforward-gate.sh: {verdict or 'no answer'}"
-        if self.factory is None:
+        if self.factory is None and not self.landed:
             return "NEW-IN-FACTORY", "ask before submitting a new package"
         theirs = [w for r, w in self.older if r["creator"] != self.user]
         if theirs:
             return "FOREIGN-DECLINED", theirs[0]
         mine = [r for r, _ in self.older if r["creator"] == self.user]
-        return "DUE", f"supersede {mine[0]['id']} with -s" if mine else ""
+        notes = (
+            ["NEW-IN-FACTORY from your own devel SR"] if self.factory is None else []
+        )
+        notes += [f"supersede {mine[0]['id']} with -s"] if mine else []
+        return "DUE", "; ".join(notes)
 
 
 def gate(packages, user):
@@ -406,7 +412,8 @@ def mine_since(user, since):
 
 
 def one(prj, pkg, user):
-    """Your latest request to prj/pkg not accepted after it was filed, if any."""
+    """(your latest request to prj/pkg not accepted after it was filed, or
+    None; whether a request of yours to it was accepted)."""
     reqs = search(
         f"@creator='{user}' and action/@type='submit' and "
         f"action/target/@project='{prj}' and action/target/@package='{pkg}'"
@@ -417,7 +424,7 @@ def one(prj, pkg, user):
         for r in reqs
         if r["state"] in ("new", "review", "declined") and r["created"] > landed
     ]
-    return max(pending, key=lambda r: r["id"]) if pending else None
+    return (max(pending, key=lambda r: r["id"]) if pending else None), bool(landed)
 
 
 def pairs(words, where):
@@ -528,7 +535,7 @@ def main():
     def decide(p):
         try:
             if p.own == "lookup":
-                p.own = one(p.prj, p.pkg, user)
+                p.own, p.landed = one(p.prj, p.pkg, user)
             return p, p.decide()
         except Skipped:
             return p, ("UNKNOWN", NOT_LOOKED_UP)
