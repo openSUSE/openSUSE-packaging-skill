@@ -5,7 +5,7 @@
   TARBALL     a cargo_vendor tarball: tar, or tar.zst/.xz/.gz/.bz2 (told by its
               magic, not its name); the output keeps that compression
   GLOB        a member path relative to the vendor root (the directory holding
-              the crates, vendor/ for cargo_vendor), e.g. ring-*/pregenerated/*.o;
+              the crates, vendor/ for cargo_vendor), e.g. foo-sys-*/prebuilt/*.a;
               * ? [..] stay inside one path segment, ** spans any number of them
   -o OUTPUT   write the result there; it may be TARBALL, which is then replaced
   --dry-run   list what would be removed and write nothing
