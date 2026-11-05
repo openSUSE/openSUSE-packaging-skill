@@ -179,6 +179,8 @@ already-upstream|- The parser overflow (bsc#1) was already fixed upstream
 hyphen|- CVE-2026-1111 (bsc#1): not-affected, ships 1.2
 not-impacted|- This package is not impacted by CVE-2026-1111 (bsc#1)
 id-led-fix-verb|- CVE-2026-1111 (bsc#1): this package is not affected; a guard prevents it
+upstream-fixed-it|- Not affected by CVE-2026-1111 (bsc#1): upstream 1.2 fixed it
+upstream-fixed-them|- CVE-2026-1111 (bsc#1) is not affected, as upstream 1.2 fixed them
 EOF
 while IFS='|' read -r name text <&3; do
   entry "cve-na-ok-$name.changes" "- Update to 1.2:" "$text"
@@ -194,7 +196,7 @@ arrow-above|- slab 0.4.11 -> 0.4.12, above the 0.4.11 fix (CVE-2025-55159)
 id-led-bump|- CVE-2025-55159 (boo#1): slab bumped to 0.4.12, above the fix
 update-scope|- Update foo to 2.0 (boo#1); 1.x is not affected
 fixed-by-update|- CVE-2026-1111 (bsc#1): fixed by this update; 1.x is not affected
-fixes-it|- CVE-2026-1111 (bsc#1): crash, 1.x unaffected; the bump fixes it
+fixes-it|- CVE-2026-1111 (bsc#1): crash, 1.x unaffected; this bump fixes it
 id-led-fix|- CVE-2026-1111 (bsc#1): crash, closed by the bump; 2.x unaffected
 harden|- Harden the parser (CVE-2026-1111, bsc#1); 2.x is not affected
 reject|- Reject long headers (CVE-2026-1111, bsc#1); 2.x is not affected
