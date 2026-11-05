@@ -9003,6 +9003,12 @@
       "command": "osc sr devel:tools obsrepos openSUSE:Step:15-SP4 -m 'Update obsrepos to 1.1: fixes.'"
     }
   },
+  "sr-obs-default-sles16": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obsrepos SUSE:SLFO:Products:SLES:16.0 -m 'Update obsrepos to 1.1: fixes.'"
+    }
+  },
   "sr-obs-nofac-factory": {
     "tool_name": "Bash",
     "tool_input": {
