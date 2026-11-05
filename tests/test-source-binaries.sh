@@ -230,7 +230,8 @@ done
 # other-platform: a file for another OS or CPU that the build leaves alone
 # (python-uv's Windows import libraries, ring's and aws-lc-sys's Windows objects,
 # psm's wasm32.o). It holds by the file's bytes, never its name: a Linux-target
-# object, an archive holding one, an EFI image or a .NET assembly is refused.
+# object, an archive holding one, an EFI image, a .NET assembly or a wasm module
+# (node or wasmtime run one: opencode embedded tree-sitter.wasm) is refused.
 mkdir -p "$work/t/op/ok" "$work/t/op/no"
 python3 - "$work/t/op/ok" "$work/t/op/no" <<'PY'
 import os, struct, sys
@@ -280,18 +281,24 @@ put(no, "aarch64.so", elf(183, etype=3))
 put(no, "linux.a", ar(("/", bytes(8)), ("a.o/", coff()), ("b.o/", elf(62))))
 put(no, "BOOTX64.EFI", pe(subsystem=10))
 put(no, "managed.dll", pe(clr=True))
+# a module (a type section, no "linking"), one cut short, one with a section id wasm has not
+put(no, "module.wasm", b"\0asm\1\0\0\0\x01\x04\x01\x60\0\0")
+put(no, "truncated.wasm", b"\0asm\1\0\0\0\0\x20\x07linking\x02")
+put(no, "garbled.wasm", b"\0asm\1\0\0\0\x7f\x02\0\0\0\x09\x07linking\x02")
 PY
 # the why may say the build never uses the file: that is this kind's claim
 OPW='Windows, macOS, wasm, FreeBSD and SPARC objects the Linux build never uses'
 d=$(pkg otherplat); tar -C "$work/t/op" -czf "$d/v.tar.gz" ./ok
 printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$OPW" >> "$d/p.spec"
 case_ other-platform 0 "EXCEPTION v.tar.gz:./ok/* (other-platform: $OPW): 9 hit(s), for Apple, FreeBSD, SPARC, Windows, wasm" "$d"
-for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll; do
+for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll truncated.wasm garbled.wasm module.wasm; do
   d=$(pkg "op-$f"); rm -rf "$work/t/op1"; mkdir -p "$work/t/op1/no"; cp "$work/t/op/no/$f" "$work/t/op1/no/"
   tar -C "$work/t/op1" -czf "$d/v.tar.gz" ./no
   printf '# Source-Binary-Exception: v.tar.gz:./no/* -- other-platform: Windows objects for another target\n' >> "$d/p.spec"
   case_ "other-platform-refused-$f" 3 "other-platform holds only for a file whose bytes show another OS or CPU, not v.tar.gz:./no/$f" "$d"
 done
+grep -qF "not v.tar.gz:./no/module.wasm (wasm): build it from source or unbundle it, or except it as bootstrap" <<<"$LAST" \
+  && pass "other-platform: a wasm module is refused, pointing at unbundling or bootstrap" || fail "other-platform refusal hint: $LAST"
 for why in 'unused here' 'objects nobody here uses'; do
   d=$(pkg op-why); cp "$work/otherplat/v.tar.gz" "$d/"
   printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$why" >> "$d/p.spec"

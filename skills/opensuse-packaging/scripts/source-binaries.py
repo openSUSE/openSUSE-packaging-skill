@@ -44,7 +44,8 @@ exception is named on the verdict line (references/specfile-guidelines.md
 that the build does not use, with a why of 3+ words naming the platform. It
 holds only for a file whose bytes show the platform: a Windows PE image or
 COFF object, an ar archive of COFF and import objects alone (a MinGW or MSVC
-import library), a Mach-O, wasm, or an ELF whose EI_OSABI names another OS or
+import library), a Mach-O, a wasm relocatable object (a module, which node
+or wasmtime run, is refused), or an ELF whose EI_OSABI names another OS or
 whose e_machine is a CPU openSUSE does not build. A Linux-target ELF (x86,
 Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image, a .NET
 assembly or a file that cannot be read is refused. The shipped check finds a
@@ -407,12 +408,40 @@ def platform(b, k):
     if k.startswith("Mach-O"):
         return "Apple"
     if k.startswith("wasm"):
-        return "wasm"
+        return wasm_platform(b)
     if k.startswith("PE"):
         return pe_platform(b)
     if k.startswith("ELF"):
         return elf_platform(b)
     return None
+
+
+def leb(b, i):
+    """The unsigned LEB128 number at b[i] and the offset past it; None, i if none."""
+    n = 0
+    for j in range(i, min(i + 5, len(b))):
+        n |= (b[j] & 0x7F) << 7 * (j - i)
+        if b[j] < 0x80:
+            return n, j + 1
+    return None, i
+
+
+def wasm_platform(b):
+    """wasm for a relocatable wasm object, which carries a "linking" custom
+    section for wasm-ld; None for a module, which node or wasmtime run, or a
+    file whose sections do not parse to its end."""
+    if b[4:8] != b"\1\0\0\0":
+        return None
+    pos, linking = 8, False
+    while pos < len(b):
+        size, start = leb(b, pos + 1)
+        if b[pos] > 13 or size is None or start + size > len(b):
+            return None
+        if b[pos] == 0:
+            n, name = leb(b, start)
+            linking |= n is not None and b[name : name + n] == b"linking"
+        pos = start + size
+    return "wasm" if linking else None
 
 
 def pe_platform(b):
@@ -1055,8 +1084,8 @@ def main():
         more = f" and {len(what) - 1} more" if len(what) > 1 else ""
         bad.append(
             f"{e[3]}: other-platform holds only for a file whose bytes show another OS or "
-            f"CPU, not {what[0]}{more}: a Linux-target binary is built from source or "
-            "unbundled, or excepted as bootstrap or test-data when it is one"
+            f"CPU, not {what[0]}{more}: build it from source or unbundle it, or except "
+            "it as bootstrap or test-data when it is one"
         )
     print(f"source-binaries: {scanned} files, {members} archive members scanned")
     for line in bad:
