@@ -123,6 +123,9 @@ put foreign tester;   fact foreign "$(req 3006 other declined 2026-09-01T08:00:0
 put due tester
 put newpkg tester -
 put newmaint maint -
+# newpkg was created by tester's accepted request 2000, updated by 2100 since.
+obs /source/devel:a/newpkg/_history \
+  '<revisionlist><revision rev="1"><requestid>2000</requestid></revision><revision rev="2"><requestid>2100</requestid></revision></revisionlist>'
 put maintdue maint
 put wrong tester;     printf 'devel:b/wrong\n' > "$B/devel/wrong"
 # Not in Factory by this name, but under another spelling (devel-of.sh exit 6).
@@ -196,10 +199,20 @@ case_ mine-declined-older 4 "DUE supersede 3008 with -s" \
 
 echo "--- then the role decides"
 case_ due            4 "devel:a/due  DUE" : devel:a due
-# A new package your own devel SR brought is forwarded like any other; without one, ask.
-case_ new-own-devel-sr 4 "devel:a/newpkg  DUE NEW-IN-FACTORY from your own devel SR" : devel:a newpkg
+# A new package your accepted request created is forwarded like any other; else ask.
+case_ new-own-devel-sr 4 "devel:a/newpkg  DUE NEW-IN-FACTORY, created by your request" : devel:a newpkg
+grep -qF "osc api /source/openSUSE:Factory/newpkg?deleted=1" "$LASTDIR/calls" && pass "  ...after asking whether Factory deleted it" \
+  || fail "new-own-devel-sr: no deleted-package lookup"
 case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" 'rm search/own-devel:a-newpkg' devel:a newpkg
-absent "DUE" "new-in-factory: no devel SR of yours landed, so not DUE"
+absent "DUE" "new-in-factory: no accepted request of yours, so not DUE"
+case_ new-updated-only 4 "devel:a/newpkg  NEW-IN-FACTORY ask before submitting a new package" \
+  "sed -i 's/>2000</>1999</' obs/_source_devel:a_newpkg__history" devel:a newpkg
+absent "DUE" "new-updated-only: your request updated it, someone else's created it, so not DUE"
+case_ new-no-request 4 "devel:a/newpkg  NEW-IN-FACTORY ask before submitting a new package" \
+  "sed -i 's|<requestid>2000</requestid>||' obs/_source_devel:a_newpkg__history" devel:a newpkg
+case_ new-deleted    4 "devel:a/newpkg  NEW-IN-FACTORY deleted from openSUSE:Factory: ask before submitting it again" \
+  'obs "/source/openSUSE:Factory/newpkg?deleted=1" "$(srcdir old aaa)"' devel:a newpkg
+case_ new-history-err 3 "devel:a/newpkg  UNKNOWN" 'echo @ERR > obs/_source_devel:a_newpkg__history' devel:a newpkg
 case_ new-not-yours  0 "devel:a/newmaint  MAINTAINERS" : devel:a newmaint
 case_ maintainers    0 "devel:a/maintdue  MAINTAINERS" : devel:a maintdue
 case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL openSUSE:Factory develops it in devel:b" : devel:a wrong
