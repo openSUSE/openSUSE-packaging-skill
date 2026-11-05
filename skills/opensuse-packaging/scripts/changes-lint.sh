@@ -182,9 +182,10 @@ UNFIXED = re.compile(
 # A bug ref is stated fixed the same ways: "Fix a crash (boo#1)", "CVE-1 (bsc#1): fixed".
 ID = r"(?:CVE-\d{4}-\d{4,}|(?:boo|bsc|bnc)#\d+)"
 IDS = ID + r"(?:[\])]?(?:\s*,\s*|\s+and\s+|\s+(?=[\[(]))[\[(]?" + ID + r")*"
-FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+){0,3}?\s+[\[(]?"
-                   r"(?P<ids>" + IDS + ")", re.I)
-FIXED = re.compile(r"(?P<ids>" + IDS + r")[\])]?:?\s+(?:is\s+|are\s+|was\s+|were\s+|now\s+)?(?:fixed|addressed)\b", re.I)
+RUN = re.compile(IDS, re.I)
+# each id list is read once, by what precedes and follows it: linear in a long list
+FIX_HEAD = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+){0,3}?\s+[\[(]?$", re.I)
+FIX_TAIL = re.compile(r"[\])]?:?\s+(?:is\s+|are\s+|was\s+|were\s+|now\s+)?(?:fixed|addressed)\b", re.I)
 NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
 PATCHED = re.compile(r"(CVE-\d{4}-\d{4,}|(?:boo|bsc|bnc)#?\d+)[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
 # a CVE id cut short or left as a placeholder: CVE-2026-XXXX, CVE-2026, CVE-2026-12
@@ -234,11 +235,12 @@ def norm(i):
     i = i.upper()
     return i if i.startswith("CVE") or "#" in i else i[:3] + "#" + i[3:]
 def stated_fixed(t):
-    ids = {norm(i) for m in FIXED.finditer(t) for i in ANYID.findall(m.group("ids"))}
-    ids.update(norm(i) for i in PATCHED.findall(t))
-    for m in FIXES.finditer(t):
-        if not NEGATED.search(t[:m.start()]):
-            ids.update(norm(i) for i in ANYID.findall(m.group("ids")))
+    ids = {norm(i) for i in PATCHED.findall(t)}
+    for r in RUN.finditer(t):
+        head = t[max(0, r.start() - 200):r.start()]
+        h = FIX_HEAD.search(head)
+        if FIX_TAIL.match(t, r.end()) or (h and not NEGATED.search(head[:h.start()])):
+            ids.update(norm(i) for i in ANYID.findall(r.group()))
     return ids
 def plain(t):
     """t without its not-affected wording and upstream fix floors, neither a fix statement"""
