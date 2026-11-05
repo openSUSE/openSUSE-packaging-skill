@@ -560,7 +560,7 @@ MESSAGES = {
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
-# take and retry, never an osc command to hand the user.
+# take and retry, never an osc, tea or git-obs command to hand the user.
 ASKS = {
     "comment": "{0}: a comment is public and speaks for the user. Post only "
     "what they asked for, as they approved it; a note for them goes in your report.",

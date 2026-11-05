@@ -278,7 +278,7 @@ The XML tells you everything you need to triage a staging in one call: `<staged_
 osc sr <target-project> -m "<short message>"    # the next call
 ```
 
-**HARD RULE — you file it yourself**, and on `autoforward-gate.sh`'s ELIGIBLE also accept it and file the Factory forward ("Auto-forwarding your own submissions" below); otherwise stop at the devel SR, waiting for its maintainer. Never hand the user an osc command: a pr-guard refusal of your own request names a step — take it, retry.
+**HARD RULE — you file it yourself**, and on `autoforward-gate.sh`'s ELIGIBLE also accept it and file the Factory forward ("Auto-forwarding your own submissions" below); otherwise stop at the devel SR, waiting for its maintainer. Never hand the user an osc, tea or git-obs command: a pr-guard refusal of your own request names a step — take it, retry.
 
 **HARD RULE — an SR or PR message is one headline of a few words saying what the request does (pr-guard refuses over 160 characters of prose), then `- ` lines only for what the reviewer needs — first what must be staged with it or land before it.** No work notes (build, sweep or session status) and no `.changes` paste. Format, examples, forwards: `references/request-text.md` "SR and PR messages".
 

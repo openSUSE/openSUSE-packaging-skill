@@ -90,7 +90,7 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
           throw new Error(`pr-guard printed what it should not: ${r.stdout.trim().slice(0, 200)}`)
         }
         if (d?.permissionDecision === "ask")
-          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc command; if it persists, report the blocker)`)
+          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc, tea or git-obs command; if it persists, report the blocker)`)
       }
     },
   }

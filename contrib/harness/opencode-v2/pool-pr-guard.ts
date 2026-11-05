@@ -75,7 +75,7 @@ const asked = (out: string) => {
   try {
     const d = JSON.parse(out)?.hookSpecificOutput
     if (d?.permissionDecision !== "ask") return undefined
-    return `${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc command; if it persists, report the blocker)`
+    return `${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc, tea or git-obs command; if it persists, report the blocker)`
   } catch {
     return `pr-guard printed what it should not: ${out.trim().slice(0, 200)}`
   }
