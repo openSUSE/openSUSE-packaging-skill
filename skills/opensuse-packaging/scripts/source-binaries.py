@@ -44,11 +44,15 @@ exception is named on the verdict line (references/specfile-guidelines.md
 that the build does not use, with a why of 3+ words naming the platform. It
 holds only for a file whose bytes show the platform: a Windows PE image or
 COFF object, an ar archive of COFF and import objects alone (a MinGW or MSVC
-import library), a Mach-O, a wasm relocatable object (a module, which node
-or wasmtime run, is refused), or an ELF whose EI_OSABI names another OS or
-whose e_machine is a CPU openSUSE does not build. A Linux-target ELF (x86,
-Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image, a .NET
-assembly or a file that cannot be read is refused. The shipped check finds a
+import library; symbol and name tables only first, holding no binary), a
+Mach-O (a fat one's every slice), a wasm relocatable object (a module, which
+node or wasmtime run, is refused), or an ELF whose e_machine is a CPU
+openSUSE does not build (EI_OSABI proves nothing). Anything but zeros past
+the format's own extent, or a zip end record, refuses it too. A Linux-target
+ELF (x86, Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image,
+a .NET assembly or a file that cannot be read is refused. Every line that
+matches a hit is tried in turn, so a later test-data line still covers a
+fixture an other-platform line does not. The shipped check finds a
 binary copied into an RPM and one a bundler embeds
 verbatim in its single executable (a fingerprint of 1-4 KiB from each hit's own
 code: its ELF executable sections or archive members, bytes with real entropy
@@ -82,7 +86,7 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 8  # bump when detection changes, so cached results are rescanned
+VERSION = 9  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
@@ -113,17 +117,6 @@ PLATFORM = re.compile(
     r"|ia-?64|itanium)\b",
     re.I,
 )
-# EI_OSABI values that name another OS: 0 (System V) and 3 (GNU) are what Linux
-# writes, and 64 and up mean something per CPU, so neither names one
-ELF_OS = {
-    1: "HP-UX",
-    2: "NetBSD",
-    6: "Solaris",
-    7: "AIX",
-    8: "IRIX",
-    9: "FreeBSD",
-    12: "OpenBSD",
-}
 # e_machine of CPUs openSUSE does not build; any other may be one it builds, or
 # code Linux loads (BPF, GPU)
 ELF_CPU = {
@@ -140,6 +133,16 @@ ELF_CPU = {
 }
 # PE subsystems of Windows programs; EFI images (10-13) are what openSUSE builds and boots
 PE_WINDOWS = (1, 2, 3, 9)
+MACHO_THIN = (
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+)
+FAT = (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
+TAIL = 22 + 0xFFFF  # a zip end record and the longest comment after it
+# what a GNU or MSVC long-name table holds: names, "/\n" or NUL ends
+NAME_TABLE = re.compile(rb"[ -~\n\0]*")
 # a why that says the build does not use the file: the build is what never
 # invokes it ("this Linux build never invokes it", "not required by the build",
 # "only the Android build invokes it", "unused"). What a real bootstrap says of a
@@ -326,11 +329,13 @@ class Limited(io.RawIOBase):
 
 
 class Tee(io.RawIOBase):
-    """head, then the rest of stream, hashed and kept in buf up to FP_CAP."""
+    """head, then the rest of stream, hashed: its first FP_CAP bytes kept in buf
+    and its last TAIL in tail, its length in n, and in end the length up to its
+    last nonzero byte."""
 
     def __init__(self, head, stream):
         self.src, self.h = Prefixed(head, stream), hashlib.sha256()
-        self.buf = bytearray()
+        self.buf, self.tail, self.n, self.end = bytearray(), b"", 0, 0
 
     def readable(self):
         return True
@@ -341,6 +346,12 @@ class Tee(io.RawIOBase):
         self.h.update(data)
         if len(self.buf) < FP_CAP:
             self.buf += data[: FP_CAP - len(self.buf)]
+        chunk = data.tobytes()
+        kept = len(chunk.rstrip(b"\0"))
+        if kept:
+            self.end = self.n + kept
+        self.n += n
+        self.tail = (self.tail + chunk)[-TAIL:]
         return n
 
 
@@ -352,20 +363,68 @@ def digest(head, stream, k):
     is the other one the file is for (platform()), or ""."""
     t = Tee(head, stream)
     r = io.BufferedReader(t, 1 << 20)
-    ar = ar_platform(r) if k.startswith("ar archive") else None
+    # an ar archive and a fat Mach-O are judged member by member as they stream
+    whole = k.startswith("ar archive") or (k.startswith("Mach-O") and head[:4] in FAT)
+    plat = (
+        (ar_platform if k.startswith("ar archive") else fat_platform)(r)
+        if whole
+        else None
+    )
     drain(r)
     buf = bytes(t.buf)
-    return t.h.hexdigest(), fingerprint(buf, k).hex(), ar or platform(buf, k) or ""
+    if not whole:
+        plat = platform(buf, k)
+        # nothing but zeros past what the format itself accounts for: a zip or
+        # a Linux binary appended to a Windows or Apple header is no artifact of one
+        ext = extent(buf, k) if plat else None
+        plat = plat if ext is not None and t.end <= ext else None
+    if plat and zip_end(t.tail):
+        plat = None
+    return t.h.hexdigest(), fingerprint(buf, k).hex(), plat or ""
+
+
+def skip(r, n, zero=False):
+    """Read n bytes of r (to its end when n is None); whether they were all
+    there and, with zero, all zero."""
+    while n is None or n > 0:
+        data = r.read(1 << 20 if n is None else min(n, 1 << 20))
+        if not data:
+            return n is None
+        if zero and data.strip(b"\0"):
+            return False
+        if n is not None:
+            n -= len(data)
+    return True
+
+
+def zip_end(tail):
+    """Whether tail, a file's last bytes, holds a zip end record that unzip or
+    zipfile would read a zip by, whatever precedes it: its central directory
+    (or zip64 locator) right before it, or, when that lies past tail, the
+    record ending the file."""
+    i = tail.rfind(b"PK\5\6")
+    while i >= 0:
+        if i + 22 <= len(tail):
+            size, note = struct.unpack_from("<I4xH", tail, i + 12)
+            if (
+                (i >= 20 and tail[i - 20 : i - 16] == b"PK\6\7")
+                or (0 < size <= i and tail[i - size : i - size + 4] == b"PK\1\2")
+                or (size > i and i + 22 + note == len(tail))
+            ):
+                return True
+        i = tail.rfind(b"PK\5\6", 0, i)
+    return False
 
 
 def ar_platform(r):
-    """The other platform every member of the ar archive stream r is for (its
-    symbol and name tables aside), or None: a member that may be for one
-    openSUSE builds, a thin archive (its members lie elsewhere), no member, or
-    a header that does not parse."""
+    """The other platform every member of the ar archive stream r is for, or
+    None: a member that may be for one openSUSE builds, a thin archive (its
+    members lie elsewhere), no member, or a header that does not parse. Only
+    the archive's leading members may be its symbol and name tables, and only
+    when they hold no binary."""
     if r.read(8) != b"!<arch>\n":
         return None
-    found = set()
+    found, tables = set(), 0
     while True:
         hdr = r.read(60)
         if not hdr:
@@ -379,34 +438,63 @@ def ar_platform(r):
         name = hdr[:16].decode("latin-1").rstrip()
         # BSD ar (macOS): "#1/N" puts the N-byte name first in the member's data
         lead = int(name[3:]) if name.startswith("#1/") and name[3:].isdigit() else 0
+        if lead > min(size, HEAD):
+            return None
         body = r.read(min(size, lead + HEAD))
-        if len(body) < min(size, lead + HEAD) or len(body) < lead:
+        if len(body) < min(size, lead + HEAD):
             return None
         if lead:
             name, body = body[:lead].rstrip(b"\0").decode("latin-1"), body[lead:]
-        if name not in AR_TABLES:
+        if (
+            name in AR_TABLES
+            and not found
+            and tables < 4
+            and kind(body, "") is None
+            and (name not in ("//", "ARFILENAMES/") or NAME_TABLE.fullmatch(body))
+        ):
+            tables += 1
+        else:
             p = member_platform(body)
             if p is None:
                 return None
             found.add(p)
-        rest = size - lead - len(body) + (size & 1)
-        while rest > 0:
-            data = r.read(min(rest, 1 << 20))
-            if not data:
-                if rest > size & 1:  # only the last member's pad byte may be missing
-                    return None
-                break
-            rest -= len(data)
+        if not skip(r, size - lead - len(body)):
+            return None
+        r.read(size & 1)  # the pad byte, which the last member may lack
+
+
+def fat_platform(r):
+    """Apple when every slice of the fat Mach-O stream r lies inside it and
+    starts as a thin Mach-O, and the bytes around them are zeros; else None."""
+    hdr = r.read(8)
+    entry = 32 if hdr[:4] == b"\xca\xfe\xba\xbf" else 20
+    n = int.from_bytes(hdr[4:8], "big")
+    table = r.read(n * entry) if 1 <= n < 45 else b""
+    if len(table) < max(n, 1) * entry:
+        return None
+    wide = entry == 32
+    slices = sorted(
+        struct.unpack_from(">QQ" if wide else ">II", table, i * entry + 8)
+        for i in range(n)
+    )
+    pos = 8 + n * entry
+    for off, size in slices:
+        if off < pos or size < 4 or not skip(r, off - pos, zero=True):
+            return None
+        if r.read(4) not in MACHO_THIN or not skip(r, size - 4):
+            return None
+        pos = off + size
+    return "Apple" if skip(r, None, zero=True) else None
 
 
 def platform(b, k):
     """The other OS or CPU the prebuilt b of kind k is for, read from its bytes;
     None when it may be for one openSUSE builds, or cannot be told (an ar
-    archive: ar_platform())."""
+    archive or a fat Mach-O: ar_platform(), fat_platform())."""
     if k.startswith("COFF object"):
         return "Windows"
     if k.startswith("Mach-O"):
-        return "Apple"
+        return "Apple" if b[:4] in MACHO_THIN else None
     if k.startswith("wasm"):
         return wasm_platform(b)
     if k.startswith("PE"):
@@ -416,10 +504,189 @@ def platform(b, k):
     return None
 
 
+def extent(b, k):
+    """How many bytes of the file b starts the format accounts for (headers,
+    sections, symbol and string tables, signatures), or None when the fields
+    that say so lie past b or do not parse."""
+    try:
+        if k.startswith("COFF object"):
+            return coff_extent(b)
+        if k.startswith("PE"):
+            return pe_extent(b)
+        if k.startswith("Mach-O"):
+            return macho_extent(b)
+        if k.startswith("ELF"):
+            return elf_extent(b)
+        if k.startswith("wasm"):
+            return len(b)  # wasm_platform() parsed its sections to the end of b
+    except struct.error:
+        return None
+    return None
+
+
+def sections_extent(b, at, nsec, symptr, nsym, symsize, ext):
+    """extent() of a COFF object or PE image whose nsec section headers start at
+    at, past ext: their raw data, relocations and line numbers, then the
+    symbol table and the string table after it."""
+    if at + 40 * nsec > len(b):
+        return None
+    for i in range(nsec):
+        raw, ptr, rel, line, nrel, nline, flags = struct.unpack_from(
+            "<IIIIHHI", b, at + 40 * i + 16
+        )
+        if flags & 0x01000000 and nrel == 0xFFFF:  # IMAGE_SCN_LNK_NRELOC_OVFL
+            nrel = (
+                int.from_bytes(b[rel : rel + 4], "little") if rel + 4 <= len(b) else 0
+            )
+            if not nrel:
+                return None
+        ext = max(ext, ptr + raw if ptr else 0, rel + 10 * nrel, line + 6 * nline)
+    if symptr:
+        strings = symptr + symsize * nsym
+        size = b[strings : strings + 4]
+        ext = max(
+            ext,
+            strings + max(4, int.from_bytes(size, "little"))
+            if len(size) == 4
+            else strings,
+        )
+    return ext
+
+
+def coff_extent(b):
+    machine, nsec = struct.unpack_from("<HH", b, 0)
+    if machine == 0 and nsec == 0xFFFF:  # bigobj
+        nsec, symptr, nsym = struct.unpack_from("<III", b, 44)
+        return sections_extent(b, 56, nsec, symptr, nsym, 20, 56 + 40 * nsec)
+    symptr, nsym, opt = struct.unpack_from("<IIH", b, 8)
+    return sections_extent(b, 20 + opt, nsec, symptr, nsym, 18, 20 + opt + 40 * nsec)
+
+
+def pe_extent(b):
+    off = int.from_bytes(b[60:64], "little")
+    nsec, _, symptr, nsym, opt_size = struct.unpack_from("<HIIIH", b, off + 6)
+    opt = off + 24
+    dirs = opt + (96 if int.from_bytes(b[opt : opt + 2], "little") == 0x10B else 112)
+    ext = max(
+        int.from_bytes(b[opt + 60 : opt + 64], "little"), opt + opt_size + 40 * nsec
+    )
+    if int.from_bytes(b[dirs - 4 : dirs], "little") > 4:
+        # the certificate table's address is a file offset: a signature
+        cert, size = struct.unpack_from("<II", b, dirs + 32)
+        ext = max(ext, cert + size if cert else 0)
+    return sections_extent(b, opt + opt_size, nsec, symptr, nsym, 18, ext)
+
+
+# load commands with (offset, size) pairs of file data, and where the pairs sit
+MACHO_DATA = {
+    0x2: None,  # LC_SYMTAB: its own layout
+    0xB: None,  # LC_DYSYMTAB: its own layout
+    0x22: (8, 5),  # LC_DYLD_INFO: rebase, bind, weak, lazy, export
+    0x80000022: (8, 5),
+    0x1D: (8, 1),  # LC_CODE_SIGNATURE and the other linkedit_data_command ones
+    0x1E: (8, 1),
+    0x26: (8, 1),
+    0x29: (8, 1),
+    0x2B: (8, 1),
+    0x2E: (8, 1),
+    0x36: (8, 1),
+    0x80000033: (8, 1),
+    0x80000034: (8, 1),
+}
+
+
+def macho_extent(b):
+    e = "<" if b[:4] in (b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe") else ">"
+    wide = b[:4] in (b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
+    ncmds, cmds = struct.unpack_from(e + "II", b, 16)
+    at = 32 if wide else 28
+    if at + cmds > len(b) or ncmds > cmds // 8:
+        return None
+    ext, o = at + cmds, at
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from(e + "II", b, o)
+        if size < 8 or o + size > at + cmds:
+            return None
+        if cmd in (0x1, 0x19):  # LC_SEGMENT, LC_SEGMENT_64 and their sections
+            fileoff, filesize = struct.unpack_from(
+                e + ("QQ" if wide else "II"), b, o + (40 if wide else 32)
+            )
+            nsects = int.from_bytes(
+                b[o + (64 if wide else 48) : o + (68 if wide else 52)],
+                "little" if e == "<" else "big",
+            )
+            ext = max(ext, fileoff + filesize)
+            for i in range(nsects):
+                sec = o + (72 if wide else 56) + i * (80 if wide else 68)
+                if wide:
+                    sz, off, _, rel, nrel, flags = struct.unpack_from(
+                        e + "QIIIII", b, sec + 40
+                    )
+                else:
+                    sz, off, _, rel, nrel, flags = struct.unpack_from(
+                        e + "IIIIII", b, sec + 36
+                    )
+                if flags & 0xFF not in (0x1, 0xC, 0x12):  # zerofill holds no file data
+                    ext = max(ext, off + sz if off else 0)
+                ext = max(ext, rel + 8 * nrel)
+        elif cmd == 0x2:
+            symoff, nsyms, stroff, strsize = struct.unpack_from(e + "IIII", b, o + 8)
+            ext = max(ext, symoff + nsyms * (16 if wide else 12), stroff + strsize)
+        elif cmd == 0xB:
+            f = struct.unpack_from(e + "18I", b, o + 8)
+            entries = (
+                (6, 8),
+                (8, 56 if wide else 52),
+                (10, 4),
+                (12, 4),
+                (14, 8),
+                (16, 8),
+            )
+            ext = max([ext] + [f[i] + f[i + 1] * n for i, n in entries])
+        elif cmd == 0x31:  # LC_NOTE
+            off, sz = struct.unpack_from(e + "QQ", b, o + 24)
+            ext = max(ext, off + sz)
+        elif cmd in MACHO_DATA:
+            first, pairs = MACHO_DATA[cmd]
+            f = struct.unpack_from(e + "%dI" % (2 * pairs), b, o + first)
+            ext = max([ext] + [f[i] + f[i + 1] for i in range(0, 2 * pairs, 2)])
+        o += size
+    return ext
+
+
+def elf_extent(b):
+    e = "<" if b[5] == 1 else ">"
+    if b[4] == 2:
+        phoff, shoff = struct.unpack_from(e + "QQ", b, 0x20)
+        ehsize, phsz, phn, shsz, shn = struct.unpack_from(e + "HHHHH", b, 0x34)
+    else:
+        phoff, shoff = struct.unpack_from(e + "II", b, 0x1C)
+        ehsize, phsz, phn, shsz, shn = struct.unpack_from(e + "HHHHH", b, 0x28)
+    ext = max(ehsize, 64 if b[4] == 2 else 52, phoff + phsz * phn, shoff + shsz * shn)
+    if phoff + phsz * phn > len(b) or shoff + shsz * shn > len(b):
+        return None
+    for i in range(phn):
+        o = phoff + i * phsz
+        off, filesz = (
+            struct.unpack_from(e + "8xQ16xQ", b, o)
+            if b[4] == 2
+            else struct.unpack_from(e + "4xI8xI", b, o)
+        )
+        ext = max(ext, off + filesz)
+    for i in range(shn):
+        o = shoff + i * shsz
+        if b[4] == 2:
+            typ, off, size = struct.unpack_from(e + "4xI16xQQ", b, o)
+        else:
+            typ, off, size = struct.unpack_from(e + "4xI8xII", b, o)
+        ext = max(ext, off + size if typ != 8 else 0)  # SHT_NOBITS holds no file data
+    return ext
+
+
 def leb(b, i):
     """The unsigned LEB128 number at b[i] and the offset past it; None, i if none."""
     n = 0
-    for j in range(i, min(i + 5, len(b))):
+    for j in range(i, min(i + 10, len(b))):
         n |= (b[j] & 0x7F) << 7 * (j - i)
         if b[j] < 0x80:
             return n, j + 1
@@ -427,12 +694,13 @@ def leb(b, i):
 
 
 def wasm_platform(b):
-    """wasm for a relocatable wasm object, which carries a "linking" custom
-    section for wasm-ld; None for a module, which node or wasmtime run, or a
-    file whose sections do not parse to its end."""
+    """wasm for a relocatable wasm object: its sections parse to the end, one
+    is the "linking" custom section wasm-ld reads, and it imports
+    env.__linear_memory as every object does; None for a module, which node or
+    wasmtime run, or anything else."""
     if b[4:8] != b"\1\0\0\0":
         return None
-    pos, linking = 8, False
+    pos, linking, memory = 8, False, False
     while pos < len(b):
         size, start = leb(b, pos + 1)
         if b[pos] > 13 or size is None or start + size > len(b):
@@ -440,8 +708,42 @@ def wasm_platform(b):
         if b[pos] == 0:
             n, name = leb(b, start)
             linking |= n is not None and b[name : name + n] == b"linking"
+        elif b[pos] == 2:
+            memory = linear_memory(b[start : start + size])
         pos = start + size
-    return "wasm" if linking else None
+    return "wasm" if linking and memory else None
+
+
+def linear_memory(s):
+    """Whether the wasm import section s imports env.__linear_memory as a memory."""
+    count, i = leb(s, 0)
+    for _ in range(count or 0):
+        names = []
+        for _ in (0, 1):
+            n, i = leb(s, i)
+            if n is None:
+                return False
+            names.append(s[i : i + n])
+            i += n
+        if i >= len(s):
+            return False
+        what, i = s[i], i + 1
+        if what == 2 and names == [b"env", b"__linear_memory"]:
+            return True
+        # step over the import's type: a function, table, memory, global or tag
+        if what in (0, 4):
+            i = leb(s, i + (what == 4))[1]
+        elif what in (1, 2):
+            i += what == 1
+            flags = s[i] if i < len(s) else 0
+            i = leb(s, i + 1)[1]
+            if flags & 1:
+                i = leb(s, i)[1]
+        elif what == 3:
+            i += 2
+        else:
+            return False
+    return False
 
 
 def pe_platform(b):
@@ -463,12 +765,11 @@ def pe_platform(b):
 
 
 def elf_platform(b):
-    """The OS its EI_OSABI names, or the CPU its e_machine names when openSUSE
-    does not build that CPU; None for every other ELF."""
+    """The CPU its e_machine names when openSUSE does not build that CPU; None
+    for every other ELF. EI_OSABI proves nothing: one byte, and Linux runs and
+    links an x86-64 ELF that says FreeBSD."""
     if len(b) < 20 or b[5] not in (1, 2):
         return None
-    if b[7] in ELF_OS:
-        return ELF_OS[b[7]]
     return ELF_CPU.get(int.from_bytes(b[18:20], "little" if b[5] == 1 else "big"))
 
 
@@ -754,6 +1055,8 @@ def cpio_files(stream):
         mode = int(hdr[14:22], 16)
         size = int(hdr[54:62], 16)
         nsize = int(hdr[94:102], 16)
+        if nsize > HEAD:  # a header's length is never read unbounded
+            raise ValueError(f"a cpio name of {nsize} bytes")
         name = stream.read(nsize).rstrip(b"\0").decode("utf-8", "replace")
         stream.read((4 - (110 + nsize) % 4) % 4)
         if name == "TRAILER!!!":
@@ -1031,33 +1334,39 @@ def main():
         unknown += s.unknown
         members += s.members
         scanned += 1
-    covered = collections.Counter()
+    covered, matched = collections.Counter(), set()
     # an other-platform glob: the platforms it covered; its line: what it does not hold for
     plats, refused = collections.defaultdict(set), collections.defaultdict(list)
 
-    def exception(path):
+    def exception(path, plat):
+        """The first line matching path whose kind holds for it, and the
+        other-platform lines before it that matched but do not."""
+        passed = []
         for e in excs:
             if fnmatch.fnmatchcase(path, e[0]):
-                return e
-        return None
+                matched.add(e[0])
+                if e[1] != "other-platform" or plat:
+                    return e, passed
+                passed.append(e)
+        return None, passed
 
     def excepted(path, what, plat):
-        e = exception(path)
-        if e and e[1] == "other-platform" and not plat:
-            refused[e].append(f"{path} ({what})")
-            return False
+        e, passed = exception(path, plat)
         if e:
             covered[e[0]] += 1
-            if plat:
+            if plat and e[1] == "other-platform":
                 plats[e[0]].add(plat)
+        else:
+            for x in passed:
+                refused[x].append(f"{path} ({what})")
         return e is not None
 
     # a payload file with a source binary's bytes ships it; only firmware may ship
     shipped, review = [], []
     if a.rpms is not None:
         prebuilt, prints = {}, {}
-        for p, k, h, fp, _ in hits:
-            e = exception(p)
+        for p, k, h, fp, pl in hits:
+            e = exception(p, pl)[0]
             if not (e and e[1] == "firmware"):
                 prebuilt.setdefault(h, p)
                 if fp:
@@ -1069,8 +1378,9 @@ def main():
         # A copy stays SHIPPED, and so does any other library's code.
         static = {
             p
-            for p, k, *_ in hits
-            if k.startswith(LINKABLE) and (exception(p) or ("", ""))[1] == "bootstrap"
+            for p, k, _, _, pl in hits
+            if k.startswith(LINKABLE)
+            and (exception(p, pl)[0] or ("", ""))[1] == "bootstrap"
         }
         review = [x for x in shipped if x[1] == "embeds" and x[2] in static]
         shipped = [x for x in shipped if x not in review]
@@ -1114,8 +1424,12 @@ def main():
         if covered[glob]:
             on = f", for {', '.join(sorted(plats[glob]))}" if plats[glob] else ""
             print(f"EXCEPTION {glob} ({reason}: {why}): {covered[glob]} hit(s){on}")
-        elif not any(e[0] == glob for e in refused):
+        elif glob not in matched:
             print(f"note: exception {glob} matches nothing")
+        elif not any(e[0] == glob for e in refused):
+            print(
+                f"note: exception {glob} holds for none it matches; other lines cover them"
+            )
     boot = [f"{g}: {w}" for g, r, w, _ in excs if r == "bootstrap" and covered[g]]
     tail = f" (bootstrap: {'; '.join(boot)})" if boot else ""
     if uncovered or bad or shipped:

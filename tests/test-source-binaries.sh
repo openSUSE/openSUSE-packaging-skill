@@ -231,10 +231,13 @@ done
 # (python-uv's Windows import libraries, ring's and aws-lc-sys's Windows objects,
 # psm's wasm32.o). It holds by the file's bytes, never its name: a Linux-target
 # object, an archive holding one, an EFI image, a .NET assembly or a wasm module
-# (node or wasmtime run one: opencode embedded tree-sitter.wasm) is refused.
+# (node or wasmtime run one: opencode embedded tree-sitter.wasm) is refused, and
+# so is what a review hid behind a foreign header: a Linux object named like an
+# archive's symbol table, a fat Mach-O around one, a zip appended to a Windows or
+# Apple file, an EI_OSABI byte patched to FreeBSD, a BSD name 10^13 bytes long.
 mkdir -p "$work/t/op/ok" "$work/t/op/no"
 python3 - "$work/t/op/ok" "$work/t/op/no" <<'PY'
-import os, struct, sys
+import io, os, struct, sys, zipfile
 ok, no = sys.argv[1:3]
 def put(d, name, data):
     open(os.path.join(d, name), "wb").write(data)
@@ -267,15 +270,26 @@ def pe(subsystem=3, clr=False):
         struct.pack_into("<II", b, 152 + 112 + 14 * 8, 0x2008, 0x48)
     return bytes(b)
 macho = b"\xcf\xfa\xed\xfe" + struct.pack("<iiIIII", 0x0100000C, 0, 6, 0, 0, 0) + bytes(64)
+def fat(*slices):
+    out = struct.pack(">II", 0xCAFEBABE, len(slices))
+    out += b"".join(struct.pack(">iiIII", 0x0100000C, 0, 4096 * (i + 1), len(s), 12) for i, s in enumerate(slices))
+    return out.ljust(4096, b"\0") + b"".join(s.ljust(4096, b"\0") for s in slices)
+def zipped(data):
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        z.writestr("lib/libx.so", data)
+    return b.getvalue()
+# every relocatable object imports env.__linear_memory; a module need not
+memory = b"\x02\x18\x01\x03env\x0f__linear_memory\x02\x00\x00"
 put(ok, "x86_64-mont-nasm.obj", coff())
 put(ok, "windows.0.52.0.lib", ar(("/", bytes(8)), ("/", bytes(8)), ("//", b"x\0"), ("KERNEL32.dll/", coff()), ("KERNEL32.dll/", short)))
 put(ok, "libwindows.0.52.0.a", ar(("/", bytes(8)), ("dmmjs00001.o/", coff(0xAA64))))
-put(ok, "wasm32.o", b"\0asm\1\0\0\0\0\x09\x07linking\x02")
+put(ok, "wasm32.o", b"\0asm\1\0\0\0" + memory + b"\0\x09\x07linking\x02")
 put(ok, "libfoo.dylib", macho)
 put(ok, "libfoo-macos.a", ar(("__.SYMDEF SORTED", bytes(8)), ("foo.o", macho), bsd=True))
 put(ok, "tool.exe", pe())
-put(ok, "libc.so.7", elf(62, osabi=9, etype=3))
 put(ok, "sparc.o", elf(43, big=True))
+put(ok, "fat.dylib", fat(macho, macho))
 put(no, "x86_64.o", elf(62))
 put(no, "aarch64.so", elf(183, etype=3))
 put(no, "linux.a", ar(("/", bytes(8)), ("a.o/", coff()), ("b.o/", elf(62))))
@@ -283,15 +297,34 @@ put(no, "BOOTX64.EFI", pe(subsystem=10))
 put(no, "managed.dll", pe(clr=True))
 # a module (a type section, no "linking"), one cut short, one with a section id wasm has not
 put(no, "module.wasm", b"\0asm\1\0\0\0\x01\x04\x01\x60\0\0")
-put(no, "truncated.wasm", b"\0asm\1\0\0\0\0\x20\x07linking\x02")
-put(no, "garbled.wasm", b"\0asm\1\0\0\0\x7f\x02\0\0\0\x09\x07linking\x02")
+put(no, "truncated.wasm", b"\0asm\1\0\0\0" + memory + b"\0\x20\x07linking\x02")
+put(no, "garbled.wasm", b"\0asm\1\0\0\0" + memory + b"\x7f\x02\0\0\0\x09\x07linking\x02")
+# a module node runs (type, function, export, code) that carries a "linking" section
+put(no, "linking-module.wasm", b"\0asm\1\0\0\0\x01\x05\x01\x60\x00\x01\x7f\x03\x02\x01\x00"
+    b"\x07\x07\x01\x03run\x00\x00\x0a\x06\x01\x04\x00\x41\x2a\x0b\x00\x09\x07linking\x02")
+linux = elf(62, etype=3) + bytes(4096)
+put(no, "freebsd.so", elf(62, osabi=9, etype=3))
+put(no, "symdef.a", ar(("/", bytes(8)), ("a.obj/", coff()), ("__.SYMDEF", linux)))
+put(no, "names.a", ar(("/", bytes(8)), ("//", linux), ("a.obj/", coff())))
+put(no, "huge-name.a", b"!<arch>\n" + b"%-16s%-12s%-6s%-6s%-8s%-10s`\n" % (b"#1/9999999999999", b"0", b"0", b"0", b"644", b"9999999999") + b"x" * 100)
+put(no, "fat-linux.dylib", fat(linux))
+put(no, "zip.dylib", macho + zipped(linux))
+put(no, "sfx.exe", pe() + zipped(linux))
+put(no, "zip.obj", coff() + zipped(linux))
+put(no, "elf-appended.obj", coff() + linux)  # past the object's own extent, no zip
+# a zip that is the object's last section: inside its extent, still what unzip reads
+z = zipped(linux)
+sec = b".rdata\0\0" + struct.pack("<IIIIIIHHI", 0, 0, len(z), 60, 0, 0, 0, 0, 0x40000040)
+put(no, "zip-in-section.obj", struct.pack("<HHIIIHH", 0x8664, 1, 0, 0, 0, 0, 0) + sec + z)
 PY
 # the why may say the build never uses the file: that is this kind's claim
-OPW='Windows, macOS, wasm, FreeBSD and SPARC objects the Linux build never uses'
+OPW='Windows, macOS, wasm and SPARC objects the Linux build never uses'
 d=$(pkg otherplat); tar -C "$work/t/op" -czf "$d/v.tar.gz" ./ok
 printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$OPW" >> "$d/p.spec"
-case_ other-platform 0 "EXCEPTION v.tar.gz:./ok/* (other-platform: $OPW): 9 hit(s), for Apple, FreeBSD, SPARC, Windows, wasm" "$d"
-for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll truncated.wasm garbled.wasm module.wasm; do
+case_ other-platform 0 "EXCEPTION v.tar.gz:./ok/* (other-platform: $OPW): 9 hit(s), for Apple, SPARC, Windows, wasm" "$d"
+for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll truncated.wasm garbled.wasm linking-module.wasm \
+  freebsd.so symdef.a names.a fat-linux.dylib zip.dylib sfx.exe zip.obj elf-appended.obj \
+  zip-in-section.obj module.wasm; do
   d=$(pkg "op-$f"); rm -rf "$work/t/op1"; mkdir -p "$work/t/op1/no"; cp "$work/t/op/no/$f" "$work/t/op1/no/"
   tar -C "$work/t/op1" -czf "$d/v.tar.gz" ./no
   printf '# Source-Binary-Exception: v.tar.gz:./no/* -- other-platform: Windows objects for another target\n' >> "$d/p.spec"
@@ -299,6 +332,14 @@ for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll truncated.wasm garb
 done
 grep -qF "not v.tar.gz:./no/module.wasm (wasm): build it from source or unbundle it, or except it as bootstrap" <<<"$LAST" \
   && pass "other-platform: a wasm module is refused, pointing at unbundling or bootstrap" || fail "other-platform refusal hint: $LAST"
+# a "#1/N" name longer than its member is refused before anything is read: a
+# 10^13-byte one died of MemoryError with no verdict (in 1 GiB, as on a small worker)
+d=$(pkg op-huge); rm -rf "$work/t/op1"; mkdir -p "$work/t/op1/no"; cp "$work/t/op/no/huge-name.a" "$work/t/op1/no/"
+tar -C "$work/t/op1" -czf "$d/v.tar.gz" ./no
+printf '# Source-Binary-Exception: v.tar.gz:./no/* -- other-platform: Windows objects for another target\n' >> "$d/p.spec"
+out="$(ulimit -v 1048576; python3 "$SB" "$d" 2>&1)"; rc=$?
+[ "$rc" = 3 ] && grep -qF "not v.tar.gz:./no/huge-name.a (ar archive)" <<<"$out" \
+  && pass "other-platform: a BSD name past its member is refused (rc=3)" || { fail "huge BSD name: rc=$rc"; printf '%s\n' "$out" | tail -3 | sed 's/^/    /'; }
 for why in 'unused here' 'objects nobody here uses'; do
   d=$(pkg op-why); cp "$work/otherplat/v.tar.gz" "$d/"
   printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$why" >> "$d/p.spec"
@@ -308,6 +349,16 @@ d=$(pkg op-7z); mkdir -p "$work/t/op7/w"; printf '7z\274\257\047\034rest' > "$wo
 tar -C "$work/t/op7" -czf "$d/v.tar.gz" ./w
 printf '# Source-Binary-Exception: v.tar.gz:./w/* -- other-platform: a Windows SDK archive\n' >> "$d/p.spec"
 case_ other-platform-unreadable 3 "not v.tar.gz:./w/sdk.7z (not readable)" "$d"
+# every line that matches is tried in turn: an other-platform line that does not
+# hold leaves a fixture to the test-data line after it
+d=$(pkg op-order); mkdir -p "$work/t/opo/w/tests"; cp "$work/t/op/no/x86_64.o" "$work/t/opo/w/tests/fixture.o"
+tar -C "$work/t/opo" -czf "$d/v.tar.gz" ./w
+printf '# Source-Binary-Exception: v.tar.gz:./w/* -- other-platform: the Windows SDK files
+# Source-Binary-Exception: v.tar.gz:./w/tests/* -- test-data: a fixture the tests only read
+' >> "$d/p.spec"
+case_ other-platform-then-test-data 0 "EXCEPTION v.tar.gz:./w/tests/* (test-data: a fixture the tests only read): 1 hit(s)" "$d"
+grep -qF "note: exception v.tar.gz:./w/* holds for none it matches; other lines cover them" <<<"$LAST" \
+  && pass "other-platform: a line another one covers for is named so" || fail "shadowed line note: $LAST"
 
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
