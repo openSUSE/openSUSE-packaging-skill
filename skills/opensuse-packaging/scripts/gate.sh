@@ -124,6 +124,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -511,9 +512,13 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         print("VERDICT: UNKNOWN — %s: %s; the recorded build stays" % (who, why))
         return 1
 
+    # the wait takes the gate's scope, or it can call green what the gate still waits on
+    scoped = ([] if leap else ["--target", "openSUSE:Factory"]) + \
+        [w for opt, v in (("--repos", repos), ("--arches", arches)) if v for w in (opt, shlex.quote(v))]
+
     def pending(why):
-        print("VERDICT: PENDING — %s sources %s: %s; wait with obs-wait.py build %s %s, then rerun"
-              % (who, srcmd5[:12], why, prj, pkg))
+        print("VERDICT: PENDING — %s sources %s: %s; wait with obs-wait.py build %s, then rerun"
+              % (who, srcmd5[:12], why, " ".join([prj, pkg] + scoped)))
         return 4
 
     text, err = osc_run(["results", "--xml", prj, pkg])

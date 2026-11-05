@@ -906,6 +906,9 @@ st = json.load(open(sys.argv[1])); st["target"] = sys.argv[2]; json.dump(st, ope
 stt openSUSE:Factory; ob
 [ "$rc" = 0 ] && grep -qF "note: not judged" <<<"$out" && grep -qF "16.1/x86_64 failed" <<<"$out" && [ "$(sv "$SO" build.others)" = "[]" ] \
   && pass "--obs-build: a gate run targeting openSUSE:Factory judges no Leap 16 repo" || { fail "--obs-build Factory target: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo building)"; ob --repos '15\.7' --arches s390x
+[ "$rc" = 4 ] && grep -qF "wait with obs-wait.py build $P foo --target openSUSE:Factory --repos '15\.7' --arches s390x, then rerun" <<<"$out" \
+  && pass "--obs-build: the PENDING hint waits on the gate's own scope" || { fail "--obs-build pending hint scope: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 stt devel:example/foo
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 15.7 failed)"; ob --repos '15\.7'
 [ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "15.7/x86_64" <<<"$out" \
