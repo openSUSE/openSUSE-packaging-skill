@@ -27,19 +27,28 @@ it from source or unbundle it. "Only used at build time" is no exception either:
 the source package still redistributes it. A hit is allowed only when a spec
 comment in DIR names it:
 
-  # Source-Binary-Exception: <glob> -- bootstrap|firmware|test-data: <why>
+  # Source-Binary-Exception: <glob> -- <kind>: <why>
 
-<glob> (fnmatch: * spans /) matches the hit's path, FILE, FILE:MEMBER or
-FILE:MEMBER!INNER. firmware: a blob no source exists for; test-data: a fixture
-the tests only read, so the glob must lie under a test directory (tests/,
-testdata/, fixtures/, corpus/, golden/, or an example's examples/ or
-samples/); bootstrap: a compiler or toolchain that needs a previous build of
-itself, used only during the build and never shipped, with a why of at least
-8 words saying what it builds and why no packaged predecessor can; a why
-saying the build does not use the file (never invoked, unused) is refused:
-that file is removed from the sources. Every bootstrap exception is named
-on the verdict line (references/specfile-guidelines.md "Spec file — general
-rules"). The shipped check finds a binary copied into an RPM and one a bundler embeds
+<kind> is bootstrap, firmware, test-data or other-platform. <glob> (fnmatch: *
+spans /) matches the hit's path, FILE, FILE:MEMBER or FILE:MEMBER!INNER.
+firmware: a blob no source exists for; test-data: a fixture the tests only
+read, so the glob must lie under a test directory (tests/, testdata/,
+fixtures/, corpus/, golden/, or an example's examples/ or samples/);
+bootstrap: a compiler or toolchain that needs a previous build of itself, used
+only during the build and never shipped, with a why of at least 8 words saying
+what it builds and why no packaged predecessor can; a bootstrap why saying the
+build does not use the file (never invoked, unused) is refused: that file is
+removed from the sources, or declared other-platform. Every bootstrap
+exception is named on the verdict line (references/specfile-guidelines.md
+"Spec file — general rules"). other-platform: a file for another OS or CPU
+that the build does not use, with a why of 3+ words naming the platform. It
+holds only for a file whose bytes show the platform: a Windows PE image or
+COFF object, an ar archive of COFF and import objects alone (a MinGW or MSVC
+import library), a Mach-O, wasm, or an ELF whose EI_OSABI names another OS or
+whose e_machine is a CPU openSUSE does not build. A Linux-target ELF (x86,
+Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image, a .NET
+assembly or a file that cannot be read is refused. The shipped check finds a
+binary copied into an RPM and one a bundler embeds
 verbatim in its single executable (a fingerprint of 1-4 KiB from each hit's own
 code: its ELF executable sections or archive members, bytes with real entropy
 found once in the hit, never zero padding or a symbol table that unrelated
@@ -72,7 +81,7 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 7  # bump when detection changes, so cached results are rescanned
+VERSION = 8  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
@@ -85,7 +94,7 @@ SHOW = 20
 LINKABLE = ("ar archive", "ELF object", "COFF object")  # what a build links, not runs
 EXCEPTION = re.compile(r"^#\s*Source-Binary-Exception:(.*)$")
 EXCEPTION_BODY = re.compile(
-    r"^\s*(\S+)\s+--\s+(bootstrap|firmware|test-data):\s*(\S.*)$"
+    r"^\s*(\S+)\s+--\s+(bootstrap|firmware|test-data|other-platform):\s*(\S.*)$"
 )
 # a test directory: tests/, testdata/, manual_tests/, AUTOTEST/, autotests/, fixtures/, fuzz/corpus/, golden-*/,
 # examples/ and samples/ (an example's input data);
@@ -96,6 +105,40 @@ TEST_PATH = re.compile(
     re.I,
 )
 BOOTSTRAP_WORDS = 8
+OTHER_WORDS = 3
+PLATFORM = re.compile(
+    r"\b(?:windows|win(?:32|64)|mingw\w*|msvc|macos|darwin|apple|ios|mach-o|wasm\w*|webassembly"
+    r"|\w*bsd|solaris|illumos|aix|hp-ux|irix|sparc\w*|mips\w*|m68k|alpha|pa-risc|hppa|superh"
+    r"|ia-?64|itanium)\b",
+    re.I,
+)
+# EI_OSABI values that name another OS: 0 (System V) and 3 (GNU) are what Linux
+# writes, and 64 and up mean something per CPU, so neither names one
+ELF_OS = {
+    1: "HP-UX",
+    2: "NetBSD",
+    6: "Solaris",
+    7: "AIX",
+    8: "IRIX",
+    9: "FreeBSD",
+    12: "OpenBSD",
+}
+# e_machine of CPUs openSUSE does not build; any other may be one it builds, or
+# code Linux loads (BPF, GPU)
+ELF_CPU = {
+    2: "SPARC",
+    4: "m68k",
+    8: "MIPS",
+    10: "MIPS",
+    15: "PA-RISC",
+    18: "SPARC",
+    42: "SuperH",
+    43: "SPARC",
+    50: "IA-64",
+    0x9026: "Alpha",
+}
+# PE subsystems of Windows programs; EFI images (10-13) are what openSUSE builds and boots
+PE_WINDOWS = (1, 2, 3, 9)
 # a why that says the build does not use the file: the build is what never
 # invokes it ("this Linux build never invokes it", "not required by the build",
 # "only the Android build invokes it", "unused"). What a real bootstrap says of a
@@ -135,8 +178,8 @@ def denial(why):
 
 FIX = (
     "a binary the package ships, embeds, loads or links is never an exception: build "
-    "it from source or unbundle it (BuildRequires the system package; Rust: cargo_vendor "
-    "filter=true, then strip what is left and drop it from .cargo-checksum.json)"
+    "it from source or unbundle it (BuildRequires the system package); a file for another "
+    "OS or CPU that the build does not use is declared other-platform, not stripped"
 )
 LFS = b"version https://git-lfs.github.com/spec/v1"
 COMPRESSED = {  # magic: (external tool, python module)
@@ -222,10 +265,12 @@ def coff(head):
     return all(section_name(n) for n in names)
 
 
+SECTION_NAME = re.compile(rb"[./][!-~]*\0*")
+
+
 def section_name(raw):
     """A COFF section name: .text, .debug$S, or /4 for a long one, NUL-padded."""
-    s = raw.rstrip(b"\0")
-    return s[:1] in (b".", b"/") and b"\0" not in s and all(33 <= c < 127 for c in s)
+    return SECTION_NAME.fullmatch(raw) is not None
 
 
 def archive(head):
@@ -279,20 +324,132 @@ class Limited(io.RawIOBase):
         return len(data)
 
 
+class Tee(io.RawIOBase):
+    """head, then the rest of stream, hashed and kept in buf up to FP_CAP."""
+
+    def __init__(self, head, stream):
+        self.src, self.h = Prefixed(head, stream), hashlib.sha256()
+        self.buf = bytearray()
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        n = self.src.readinto(b)
+        data = memoryview(b)[:n]
+        self.h.update(data)
+        if len(self.buf) < FP_CAP:
+            self.buf += data[: FP_CAP - len(self.buf)]
+        return n
+
+
 def digest(head, stream, k):
-    """(sha256, fingerprint) of head and the rest of stream, read to its end.
-    The fingerprint is up to 4 KiB of the hit's own code: what a bundler that
-    embeds the file in its single executable still carries verbatim, and what
-    no unrelated binary shares (fingerprint())."""
-    h, buf = hashlib.sha256(head), bytearray(head)
+    """(sha256, fingerprint, platform) of head and the rest of stream, read to
+    its end. The fingerprint is up to 4 KiB of the hit's own code: what a
+    bundler that embeds the file in its single executable still carries
+    verbatim, and what no unrelated binary shares (fingerprint()). The platform
+    is the other one the file is for (platform()), or ""."""
+    t = Tee(head, stream)
+    r = io.BufferedReader(t, 1 << 20)
+    ar = ar_platform(r) if k.startswith("ar archive") else None
+    drain(r)
+    buf = bytes(t.buf)
+    return t.h.hexdigest(), fingerprint(buf, k).hex(), ar or platform(buf, k) or ""
+
+
+def ar_platform(r):
+    """The other platform every member of the ar archive stream r is for (its
+    symbol and name tables aside), or None: a member that may be for one
+    openSUSE builds, a thin archive (its members lie elsewhere), no member, or
+    a header that does not parse."""
+    if r.read(8) != b"!<arch>\n":
+        return None
+    found = set()
     while True:
-        data = stream.read(1 << 20)
-        if not data:
-            break
-        h.update(data)
-        if len(buf) < FP_CAP:
-            buf += data[: FP_CAP - len(buf)]
-    return h.hexdigest(), fingerprint(bytes(buf), k).hex()
+        hdr = r.read(60)
+        if not hdr:
+            return "/".join(sorted(found)) or None
+        try:
+            size = int(hdr[48:58])
+        except ValueError:
+            return None
+        if len(hdr) < 60 or hdr[58:60] != b"`\n" or size < 0:
+            return None
+        name = hdr[:16].decode("latin-1").rstrip()
+        # BSD ar (macOS): "#1/N" puts the N-byte name first in the member's data
+        lead = int(name[3:]) if name.startswith("#1/") and name[3:].isdigit() else 0
+        body = r.read(min(size, lead + HEAD))
+        if len(body) < min(size, lead + HEAD) or len(body) < lead:
+            return None
+        if lead:
+            name, body = body[:lead].rstrip(b"\0").decode("latin-1"), body[lead:]
+        if name not in AR_TABLES:
+            p = member_platform(body)
+            if p is None:
+                return None
+            found.add(p)
+        rest = size - lead - len(body) + (size & 1)
+        while rest > 0:
+            data = r.read(min(rest, 1 << 20))
+            if not data:
+                if rest > size & 1:  # only the last member's pad byte may be missing
+                    return None
+                break
+            rest -= len(data)
+
+
+def platform(b, k):
+    """The other OS or CPU the prebuilt b of kind k is for, read from its bytes;
+    None when it may be for one openSUSE builds, or cannot be told (an ar
+    archive: ar_platform())."""
+    if k.startswith("COFF object"):
+        return "Windows"
+    if k.startswith("Mach-O"):
+        return "Apple"
+    if k.startswith("wasm"):
+        return "wasm"
+    if k.startswith("PE"):
+        return pe_platform(b)
+    if k.startswith("ELF"):
+        return elf_platform(b)
+    return None
+
+
+def pe_platform(b):
+    """Windows for a Windows program or library; None for an EFI image (openSUSE
+    builds and boots those), a .NET assembly (mono and dotnet run it on Linux)
+    or a header that does not parse."""
+    off = int.from_bytes(b[60:64], "little") if len(b) >= 64 else -1
+    if off < 0 or b[off : off + 4] != b"PE\0\0":
+        return None
+    opt = off + 24
+    dirs = {0x10B: 96, 0x20B: 112}.get(int.from_bytes(b[opt : opt + 2], "little"))
+    if dirs is None or len(b) < opt + dirs:
+        return None
+    if int.from_bytes(b[opt + 68 : opt + 70], "little") not in PE_WINDOWS:
+        return None
+    count = int.from_bytes(b[opt + dirs - 4 : opt + dirs], "little")
+    clr = b[opt + dirs + 112 : opt + dirs + 120] if count > 14 else bytes(8)
+    return "Windows" if len(clr) == 8 and not any(clr) else None
+
+
+def elf_platform(b):
+    """The OS its EI_OSABI names, or the CPU its e_machine names when openSUSE
+    does not build that CPU; None for every other ELF."""
+    if len(b) < 20 or b[5] not in (1, 2):
+        return None
+    if b[7] in ELF_OS:
+        return ELF_OS[b[7]]
+    return ELF_CPU.get(int.from_bytes(b[18:20], "little" if b[5] == 1 else "big"))
+
+
+def member_platform(m):
+    """platform() of an ar member's first bytes: a COFF short import object (an
+    MSVC import library holds one per function) is Windows."""
+    if m[:4] == b"\0\0\xff\xff" and len(m) >= 8 and m[4:6] == b"\0\0":
+        return "Windows" if int.from_bytes(m[6:8], "little") in COFF_MACHINES else None
+    k = kind(m, "")
+    return platform(m, k) if k and not k.startswith("ar archive") else None
 
 
 def lively(w):
@@ -347,7 +504,15 @@ def elf_code(b, base=0):
         return []
 
 
-AR_TABLES = ("/", "//", "/SYM64/", "__.SYMDEF", "__.SYMDEF SORTED", "ARFILENAMES/")
+AR_TABLES = (
+    "/",
+    "//",
+    "/SYM64/",
+    "/<ECSYMBOLS>/",
+    "__.SYMDEF",
+    "__.SYMDEF SORTED",
+    "ARFILENAMES/",
+)
 
 
 def ar_members(b):
@@ -668,7 +833,7 @@ def cached_scan(path, name, use_cache):
             s = Scan()
             # cached paths start with the name the file had then
             old = d["name"]
-            s.hits = [(name + p[len(old) :], k, h, f) for p, k, h, f in d["hits"]]
+            s.hits = [(name + p[len(old) :], *rest) for p, *rest in d["hits"]]
             s.unknown = [(name + p[len(old) :], w) for p, w in d["unknown"]]
             s.members = d["members"]
             return s
@@ -696,7 +861,7 @@ def cached_scan(path, name, use_cache):
 
 
 def exceptions(d):
-    """[(glob, reason, why)] from every spec in d, and malformed lines."""
+    """[(glob, reason, why, where)] from every spec in d, and malformed lines."""
     out, bad = [], []
     for spec in sorted(f for f in os.listdir(d) if f.endswith(".spec")):
         try:
@@ -712,7 +877,7 @@ def exceptions(d):
             where = f"{spec}:{n}: {line.strip()}"
             if not b:
                 bad.append(
-                    f"{where}: want '<glob> -- bootstrap|firmware|test-data: <why>'"
+                    f"{where}: want '<glob> -- bootstrap|firmware|test-data|other-platform: <why>'"
                 )
                 continue
             glob, reason, why = b.groups()
@@ -735,10 +900,17 @@ def exceptions(d):
                     f"{where}: a bootstrap is a toolchain the build runs, and this why says it "
                     f"does not ('{denial(why)}'): a file the build does not use "
                     "is removed from the sources (the tarball repack or the _service exclude), "
-                    "never excepted"
+                    "or declared other-platform when it is for another OS or CPU"
+                )
+            elif reason == "other-platform" and (
+                len(why.split()) < OTHER_WORDS or not PLATFORM.search(why)
+            ):
+                bad.append(
+                    f"{where}: other-platform needs a why of {OTHER_WORDS}+ words naming the "
+                    "platform the file is for (Windows, macOS, wasm, FreeBSD, ...)"
                 )
             else:
-                out.append((glob, reason, why))
+                out.append((glob, reason, why, where))
     return out, bad
 
 
@@ -831,6 +1003,8 @@ def main():
         members += s.members
         scanned += 1
     covered = collections.Counter()
+    # an other-platform glob: the platforms it covered; its line: what it does not hold for
+    plats, refused = collections.defaultdict(set), collections.defaultdict(list)
 
     def exception(path):
         for e in excs:
@@ -838,17 +1012,22 @@ def main():
                 return e
         return None
 
-    def excepted(path):
+    def excepted(path, what, plat):
         e = exception(path)
+        if e and e[1] == "other-platform" and not plat:
+            refused[e].append(f"{path} ({what})")
+            return False
         if e:
             covered[e[0]] += 1
+            if plat:
+                plats[e[0]].add(plat)
         return e is not None
 
     # a payload file with a source binary's bytes ships it; only firmware may ship
     shipped, review = [], []
     if a.rpms is not None:
         prebuilt, prints = {}, {}
-        for p, k, h, fp in hits:
+        for p, k, h, fp, _ in hits:
             e = exception(p)
             if not (e and e[1] == "firmware"):
                 prebuilt.setdefault(h, p)
@@ -861,7 +1040,7 @@ def main():
         # A copy stays SHIPPED, and so does any other library's code.
         static = {
             p
-            for p, k, _, _ in hits
+            for p, k, *_ in hits
             if k.startswith(LINKABLE) and (exception(p) or ("", ""))[1] == "bootstrap"
         }
         review = [x for x in shipped if x[1] == "embeds" and x[2] in static]
@@ -869,9 +1048,16 @@ def main():
         unknown += bad_rpms
         if not rpms and not bad_rpms:
             unknown.append((a.rpms, "no binary RPM to read"))
-    uncovered = [(p, k) for p, k, _, _ in hits if not excepted(p)]
+    uncovered = [(p, k) for p, k, _, _, pl in hits if not excepted(p, k, pl)]
     # an exception may name what cannot be read too (a format-test corpus)
-    unknown = [(p, w) for p, w in unknown if not excepted(p)]
+    unknown = [(p, w) for p, w in unknown if not excepted(p, "not readable", "")]
+    for e, what in refused.items():
+        more = f" and {len(what) - 1} more" if len(what) > 1 else ""
+        bad.append(
+            f"{e[3]}: other-platform holds only for a file whose bytes show another OS or "
+            f"CPU, not {what[0]}{more}: a Linux-target binary is built from source or "
+            "unbundled, or excepted as bootstrap or test-data when it is one"
+        )
     print(f"source-binaries: {scanned} files, {members} archive members scanned")
     for line in bad:
         print(f"MALFORMED {line}")
@@ -895,12 +1081,13 @@ def main():
         print(f"UNKNOWN {path}: {why}")
     if not a.all and len(unknown) > SHOW:
         print(f"... first {SHOW} of {len(unknown)} UNKNOWN (--all lists every one)")
-    for glob, reason, why in excs:
+    for glob, reason, why, _ in excs:
         if covered[glob]:
-            print(f"EXCEPTION {glob} ({reason}: {why}): {covered[glob]} hit(s)")
-        else:
+            on = f", for {', '.join(sorted(plats[glob]))}" if plats[glob] else ""
+            print(f"EXCEPTION {glob} ({reason}: {why}): {covered[glob]} hit(s){on}")
+        elif not any(e[0] == glob for e in refused):
             print(f"note: exception {glob} matches nothing")
-    boot = [f"{g}: {w}" for g, r, w in excs if r == "bootstrap" and covered[g]]
+    boot = [f"{g}: {w}" for g, r, w, _ in excs if r == "bootstrap" and covered[g]]
     tail = f" (bootstrap: {'; '.join(boot)})" if boot else ""
     if uncovered or bad or shipped:
         what = []
