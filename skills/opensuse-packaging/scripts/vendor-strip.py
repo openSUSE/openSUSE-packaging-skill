@@ -24,8 +24,15 @@ filter=true, or not at all), and a kept hard link or symlink to a removed
 member. A tarball with anything but zeros after the last member tarfile can
 read is unreadable, not cut short.
 
-cargo_vendor writes the files back on every run: redo the strip after each
-re-vendor, and keep the command in a spec comment above the vendor Source line.
+Only for what no Source-Binary-Exception covers: a prebuilt file the Linux
+build would link, run or load, or one the package ships, which the build then
+also takes from the system or the source. A file for another OS or CPU (ring's
+pregenerated Windows objects, the windows_* import libraries) stays, declared
+other-platform (source-binaries.py). cargo_vendor writes the files back on
+every run: redo the strip after each re-vendor. A spec or .changes never names
+this script, which Factory reviewers can neither see nor run: the spec comment
+says what was removed (the tar members, and their keys dropped from
+.cargo-checksum.json), or the _service does the strip.
 
 Exit: 0 written (--dry-run: listed) · 1 refused, nothing written · 2 usage, or
 the tarball cannot be read or the result cannot be written
