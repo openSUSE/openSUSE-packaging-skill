@@ -237,8 +237,9 @@ FIX_VERB = re.compile(r"(?<!\bthe )(?<!\ba )(?<!\bthat )(?<!\bthis )(?<!\bits )\
                       r"harden(?:s|ed|ing)?|saniti[sz](?:e|es|ed|ing))\b", re.I)
 # a version move: "above the X fix" beside one is how a fixing bump reads
 BUMP = re.compile(r"\b(?:updat(?:e|es|ed|ing)|bump(?:s|ed|ing)?|upgrad(?:e|es|ed|ing))\b|->|→|\bto\s+v?\d+(?:\.\d+)+", re.I)
-# "…, so this update fixes it": the ids before it are fixed
-THIS_FIX = re.compile(r"\b(?:fix(?:es|ed)?|address(?:es|ed)?|resolv(?:es|ed)|clos(?:es|ed))\s+(?:it|them|both)\b"
+# "…, so this update fixes it": the ids before it are fixed. Never "upstream 1.2 fixed it".
+THIS_FIX = re.compile(r"\bthis\s+(?:update|release|version|bump|upgrade)\s+(?:also\s+)?"
+                      r"(?:fix(?:es|ed)?|address(?:es|ed)?|resolv(?:es|ed)|clos(?:es|ed))\s+(?:it|them|both)\b"
                       r"|\bfixed\s+by\s+this\s+(?:update|release|version|bump|upgrade)\b", re.I)
 CLAUSE = re.compile(r";|\.\s")
 PATCH_NAME = re.compile(r"\S\.(?:patch|diff|dif)\b", re.I)
@@ -266,14 +267,15 @@ def moved(t):
     """the clauses where 'above the X fix' sits beside a version move: a fix, not a claim"""
     return [c for m in NOTAFF.finditer(t) if m.group().lower().startswith("above")
             for c in [clause(t, m)] if BUMP.search(c)]
-def fixed_here(t, moves=True):
-    """the ids t states this update fixes"""
+def fixed_here(t, own=True):
+    """the ids t states this update fixes; under a not-affected opening (own=False)
+    only a fix that names its id counts"""
     q = plain(t)
     ids = stated_fixed(q)
-    for m in THIS_FIX.finditer(q):
-        if not NEGATED.search(q[max(0, m.start() - 40):m.start()]):
-            ids.update(norm(i) for i in ANYID.findall(q[:m.start()]))
-    if moves:
+    if own:
+        for m in THIS_FIX.finditer(q):
+            if not NEGATED.search(q[max(0, m.start() - 40):m.start()]):
+                ids.update(norm(i) for i in ANYID.findall(q[:m.start()]))
         ids.update(norm(i) for c in moved(t) for i in ANYID.findall(c))
     return ids
 def about(t, m, lead=False):
