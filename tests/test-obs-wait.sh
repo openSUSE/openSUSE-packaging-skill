@@ -34,7 +34,7 @@ serve() { # the n-th call of a kind gets <kind>@n, else the highest below n, els
   cat "$f"
 }
 case "$1 $2" in
-  "results --xml") serve results ;;
+  "results --xml") if [ "$3" = devel:origin ]; then serve origin; else serve results; fi ;;
   "api /source/"*"/_history"*) serve history ;;
   "api /source/"*) serve source ;;
   "api /request/"*) serve request ;;
@@ -152,12 +152,15 @@ req() { # req NAME STATE [ATTRS] [COMMENT] [REVIEWS]
     "$2" "${3:-}" "${4:-}" "${5:-}" > "$FIX/$1"
 }
 
-run() { # run CASE ARGS... — sets rc, out, err, ms
+# run CASE ARGS... — sets rc, out, err, ms. A build waits on every repo/arch
+# (--all), as before the default became the gate's scope, unless SCOPED=1.
+run() {
   FIX="$work/$1"; shift; export FIX
   : > "$FIX/calls"
-  local t0; t0=$(date +%s%N)
+  local t0 all=(); t0=$(date +%s%N)
+  [ "${1:-}" = build ] && [ -z "${SCOPED:-}" ] && all=(--all)
   out=$(PATH="$work/bin:$PATH" PYTHONPATH="$work/py" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
-        timeout 60 "$PY" "$SCRIPT" "$@" 2>"$FIX/err"); rc=$?
+        timeout 60 "$PY" "$SCRIPT" "$@" "${all[@]}" 2>"$FIX/err"); rc=$?
   ms=$(( ($(date +%s%N) - t0) / 1000000 ))
   err=$(cat "$FIX/err")
 }
@@ -335,6 +338,120 @@ new queued-no-history; res results x86_64=succeeded aarch64=scheduled; src sourc
 echo '<revisionlist/>' > "$FIX/history"
 run queued-no-history build $P $K --timeout 0
 expect "no commit time is no answer, never stuck or pending" 3 "VERDICT: UNKNOWN — no commit time in the $P/$K history"
+
+# ---------------------------------------------------------------- scope
+# By default a build is waited on where gate.sh --obs-build judges it:
+# Tumbleweed and Leap 16 on x86_64/aarch64, through the same _obs_scope.py.
+rres() { # rres NAME REPO/ARCH[:FLAVOR]=CODE ... — results across named repositories
+  local f="$FIX/$1" spec ra r a code flav; shift
+  { echo '<resultlist state="0">'
+    for spec in "$@"; do
+      ra=${spec%%=*}; code=${spec#*=}; r=${ra%%/*}; a=${ra#*/}; flav=
+      case $a in *:*) flav=":${a#*:}"; a=${a%%:*} ;; esac
+      echo "  <result project=\"$P\" repository=\"$r\" arch=\"$a\" code=\"x\" state=\"x\">"
+      echo "    <status package=\"$K$flav\" code=\"$code\"/>"
+      echo '  </result>'
+    done
+    echo '</resultlist>'; } > "$f"
+}
+lsrc() { echo "<directory name=\"$K\" rev=\"3\" srcmd5=\"$2\"><linkinfo project=\"devel:origin\" package=\"$K\"/></directory>" > "$FIX/$1"; }
+TW=openSUSE_Tumbleweed
+SCOPED=1
+
+new scope-default; src source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=succeeded $TW/i586=building 15.7/x86_64=failed 16.1/aarch64=succeeded
+run scope-default build $P $K --timeout 0
+expect "by default only Tumbleweed and Leap 16 on x86_64/aarch64 are waited on" 0 \
+  "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64, $TW/aarch64, 16.1/aarch64"
+has "$out" "(not judged: building: $TW/i586; failed: 15.7/x86_64)" && pass "  ...the rest is named, not judged" \
+  || fail "  not-judged note missing: $out"
+[ "$(calls results)" = 1 ] && pass "  ...all green: the link origin is not asked" || fail "  $(calls results) results calls"
+run scope-default build $P $K --timeout 0 --all
+expect "--all waits on every repo/arch" 2 "failed: 15.7/x86_64"
+run scope-default build $P $K --timeout 0 --arches i586
+expect "--arches i586 adds i586" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: building: $TW/i586"
+run scope-default build $P $K --timeout 0 --repos '^15\.7$'
+expect "--repos adds 15.7" 2 "failed: 15.7/x86_64"
+run scope-default build $P $K --timeout 0 --all --repos x
+expect "--all with --repos is usage" 3 ""
+run scope-default build $P $K --timeout 0 --repos '('
+expect "a bad --repos regex is usage" 3 ""
+
+new scope-none; src source $CUR; job jobhist $CUR
+rres results 15.7/x86_64=succeeded $TW/i586=succeeded
+run scope-none build $P $K --timeout 0
+expect "no repo/arch in scope is no answer, naming --all" 3 "VERDICT: UNKNOWN — no repo/arch of $P/$K in scope"
+
+for c in empty list; do
+  new "scope-$c"; src source $CUR; job jobhist $CUR
+  if [ "$c" = empty ]; then : > "$FIX/results"; else echo '<resultlist state="0"/>' > "$FIX/results"; fi
+  run "scope-$c" build $P $K --timeout 0
+  expect "an $c osc results answer is no answer (exit 3), never settled" 3 "VERDICT: UNKNOWN"
+done
+
+# The link origin disables openSUSE_Factory_zSystems: the branch building it is not waited on.
+new origin-off; lsrc source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=succeeded openSUSE_Factory_zSystems/s390x=building
+rres origin $TW/x86_64=succeeded openSUSE_Factory_zSystems/s390x=disabled
+run origin-off build $P $K --timeout 0 --arches s390x
+expect "a repo/arch the link origin disables is not waited on" 0 "VERDICT: GREEN"
+has "$out" "disabled in devel:origin: openSUSE_Factory_zSystems/s390x" && pass "  ...and named" || fail "  note missing: $out"
+grep -q "^osc results --xml devel:origin $K$" "$FIX/calls" && pass "  ...read from the origin's results" \
+  || fail "  origin not asked: $(grep '^osc results' "$FIX/calls")"
+rres origin $TW/x86_64=succeeded openSUSE_Factory_zSystems/s390x=succeeded
+run origin-off build $P $K --timeout 0 --arches s390x
+expect "one the origin builds is waited on" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: building: openSUSE_Factory_zSystems/s390x"
+echo "@ERR Server returned an error: HTTP Error 500: boom-origin" > "$FIX/origin"
+run origin-off build $P $K --timeout 0 --arches s390x
+expect "a failed origin lookup is no answer" 3 "boom-origin"
+: > "$FIX/origin"
+run origin-off build $P $K --timeout 0 --arches s390x
+expect "an empty origin answer is no answer" 3 "VERDICT: UNKNOWN"
+
+# Blocked behind a rebuild the origin waits on too: not this change, and no wait shortens it.
+new blocked-up; lsrc source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=blocked
+rres origin $TW/x86_64=succeeded $TW/aarch64=blocked
+run blocked-up build $P $K --timeout 20
+expect "blocked here and in the origin, the rest green: BLOCKED-UPSTREAM" 5 \
+  "VERDICT: BLOCKED-UPSTREAM — $P/$K sources aaaaaaaaaaaa: blocked: $TW/aarch64, blocked in devel:origin too, succeeded: $TW/x86_64; not green"
+[ "$ms" -lt 5000 ] && pass "  ...at once (${ms}ms)" || fail "  waited ${ms}ms"
+rres origin $TW/x86_64=succeeded $TW/aarch64=succeeded
+run blocked-up build $P $K --timeout 0
+expect "blocked here but built in the origin is pending" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: blocked: $TW/aarch64"
+new blocked-nolink; src source $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=blocked
+run blocked-nolink build $P $K --timeout 0
+expect "blocked with no link origin is pending" 1 "PENDING"
+new blocked-old; lsrc source $CUR; job jobhist $OLD
+rres results $TW/x86_64=succeeded $TW/aarch64=blocked
+rres origin $TW/aarch64=blocked
+run blocked-old build $P $K --timeout 0
+expect "a green arch of older sources keeps it pending" 1 "built from older sources"
+SCOPED=
+
+# The gate and the wait take their scope from one place.
+for f in gate.sh obs-wait.py; do
+  g="$REPO/skills/opensuse-packaging/scripts/$f"
+  grep -q "import _obs_scope as scope" "$g" && ! grep -qE "^(FACTORY_REPO|LEAP16_REPO|ARCHES) *=" "$g" \
+    && pass "$f takes its repo/arch scope from _obs_scope.py" || fail "$f has a scope of its own"
+done
+"$PY" - "$REPO/skills/opensuse-packaging/scripts" <<'PYEOF' && pass "_obs_scope.judged: the documented scope" || fail "_obs_scope.judged"
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import _obs_scope as s
+yes = [("devel:a", "openSUSE_Tumbleweed", "x86_64"), ("devel:a", "openSUSE_Factory", "aarch64"),
+       ("devel:a", "openSUSE_Factory_ARM", "aarch64"), ("devel:a", "16.0", "x86_64"),
+       ("devel:a", "openSUSE_Leap_16.1", "aarch64"), ("openSUSE:Factory", "standard", "x86_64")]
+no = [("devel:a", "openSUSE_Tumbleweed", "i586"), ("devel:a", "openSUSE_Factory_zSystems", "s390x"),
+      ("devel:a", "15.7", "x86_64"), ("devel:a", "SLE_15_SP7", "x86_64"), ("devel:a", "standard", "x86_64"),
+      ("devel:a", "openSUSE_Slowroll", "x86_64"), ("devel:a", "116.0", "x86_64")]
+assert all(s.judged(*c) for c in yes), [c for c in yes if not s.judged(*c)]
+assert not any(s.judged(*c) for c in no), [c for c in no if s.judged(*c)]
+assert not s.judged("devel:a", "16.0", "x86_64", leap=False)
+assert s.judged("devel:a", "15.7", "x86_64", repos=re.compile(r"15\.7"))
+assert s.judged("devel:a", "openSUSE_Tumbleweed", "i586", arches=re.compile("i586"))
+PYEOF
 
 # ---------------------------------------------------------------- the stream
 

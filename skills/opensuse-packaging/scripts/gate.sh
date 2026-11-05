@@ -459,13 +459,14 @@ def xml(text):
         return None
 
 
-FACTORY_REPO = re.compile(r"openSUSE_(Factory(_\w+)?|Tumbleweed)")
-LEAP16_REPO = re.compile(r"(openSUSE_Leap_)?16\.\d+")
-ARCHES = {"x86_64", "aarch64"}
 REDS = {"failed", "unresolvable", "broken"}
 
 
 def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", arches=""):
+    # the judged set is obs-wait.py's too: _obs_scope.py sits beside build-summary.sh
+    sys.path.insert(0, os.path.dirname(os.path.abspath(summary)))
+    import _obs_scope as scope
+
     rx = {}
     for opt, v in (("--repos", repos), ("--arches", arches)):
         try:
@@ -487,8 +488,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     if not srcmd5:
         print("VERDICT: UNKNOWN — cannot read the sources of %s: %s" % (who, err or "no srcmd5 in the listing"))
         return 1
-    li = src.find("linkinfo")
-    origin = (li.get("project"), li.get("package") or pkg) if li is not None and li.get("project") else None
+    origin = scope.origin(src, pkg)
     tprj = (st.get("target") or "").split("/")[0]
     leap = not (tprj == "openSUSE:Factory" or tprj.startswith("openSUSE:Factory:"))
     remote = {e.get("name"): e.get("md5") for e in src.findall("entry")
@@ -524,10 +524,8 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     entries, notes = [], []
     for r in res.findall("result"):
         repo, arch = r.get("repository") or "", r.get("arch") or ""
-        fac = bool(FACTORY_REPO.fullmatch(repo)) or (
-            repo == "standard" and (prj == "openSUSE:Factory" or prj.startswith("openSUSE:Factory:")))
-        inside = (fac or (leap and LEAP16_REPO.fullmatch(repo)) or (extra and extra.search(repo))) \
-            and (arch in ARCHES or (wide and wide.search(arch)))
+        fac = scope.factory(prj, repo)
+        inside = scope.judged(prj, repo, arch, leap, extra, wide)
         for s in r.findall("status"):
             name = s.get("package") or ""
             if name != pkg and not name.startswith(pkg + ":"):
@@ -549,11 +547,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         if ores is None:
             return unknown("cannot read the build results of %s/%s, the link origin: %s"
                            % (origin[0], origin[1], err or "unparseable"))
-        for r in ores.findall("result"):
-            for s in r.findall("status"):
-                name = s.get("package") or ""
-                if name == origin[1] or name.startswith(origin[1] + ":"):
-                    theirs[(r.get("repository"), r.get("arch"), name[len(origin[1]):])] = s.get("code") or ""
+        theirs = scope.codes(ores, origin[1])
     rows, bad, odd, waiting, pre, judged = [], [], [], [], [], set()
     for repo, arch, name, label, code, state, fac in entries:
         there = theirs.get((repo, arch, name[len(pkg):]))
@@ -615,7 +609,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
                 factory = True
             else:
                 others.add(repo)
-                if not (leap and LEAP16_REPO.fullmatch(repo)):
+                if not (leap and scope.LEAP16_REPO.fullmatch(repo)):
                     added.add(repo)
     if pre:
         print("note: PRE-EXISTING, red in %s too (reported, not red): %s" % (origin[0], ", ".join(pre)))
