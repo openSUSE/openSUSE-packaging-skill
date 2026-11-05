@@ -4512,6 +4512,18 @@
     },
     "cwd": "@PLAIN@"
   },
+  "osc-meta-pkg-devel-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc meta pkg devel:tools newpkg -F meta.xml"
+    }
+  },
+  "osc-maintainer-add-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer -a tester -r maintainer devel:tools newpkg"
+    }
+  },
   "osc-meta-pkg-file": {
     "tool_name": "Bash",
     "tool_input": {

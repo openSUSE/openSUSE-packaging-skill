@@ -76,6 +76,7 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 
 - `osc develproject PRJ PKG` (dp) — the registered devel project.
 - `osc maintainer PRJ PKG` — maintainers of a package (`osc maintainer PRJ` for a project); `-U USER` lists what a user maintains. Not `osc bugowner`: that alias lists bugowners only.
+- `osc maintainer -a USER -r maintainer PRJ PKG` — adds USER's `maintainer` role to PKG's `_meta` (write access to it needed). Always `-r maintainer`: without it osc adds `bugowner` too, whatever its help says. Always PRJ and PKG: one name is an owner search, and the role lands wherever that points.
 - `osc whois USER` (user) — account name and email.
 - `osc search TERM` (se) — find packages/projects; `osc search --package TERM` matches package names only.
 - `osc api PATH` — a read-only GET for what no subcommand covers (search, `/request?view=collection`). Not a workaround for a failing subcommand: find its right form here.
