@@ -8937,6 +8937,18 @@
     },
     "cwd": "@OSC@/obs/obsbare"
   },
+  "sr-obs-pre-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools obspre openSUSE:Factory -m 'Update obspre to 1.1: fixes.'"
+    }
+  },
+  "sr-obs-pre-devel": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --cleanup home:tester:spark obspre devel:tools -m 'Update obspre to 1.1: fixes.'"
+    }
+  },
   "sr-obs-sle-other": {
     "tool_name": "Bash",
     "tool_input": {
