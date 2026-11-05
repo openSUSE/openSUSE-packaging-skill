@@ -4542,6 +4542,12 @@
       "command": "osc maintainer openSUSE:Leap:15.6:Update x"
     }
   },
+  "osc-maintainer-devel-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer -D devel:foo openSUSE:Leap:15.6:Update x"
+    }
+  },
   "osc-meta-pkg-devel-file": {
     "tool_name": "Bash",
     "tool_input": {

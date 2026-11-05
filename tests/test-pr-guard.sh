@@ -1082,6 +1082,7 @@ case_ osc-maintainer-del-update     2 maintenance-write "an osc maintainer into 
 case_ osc-bugowner-add-update       2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
 case_ osc-maintainer-add-search     2 maintenance-unknown "a role an osc maintainer search (not PRJ PKG) finds"
 case_ osc-maintainer-read-update    0 - ""
+case_ osc-maintainer-devel-update   2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
 # A request is filed with osc, which checks the devel project and the message;
 # one created through the API skips both.
 case_ request-api-osc-create        2 request-api "a request created through the API"

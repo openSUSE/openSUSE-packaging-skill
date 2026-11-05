@@ -327,8 +327,10 @@ OSC_ALIAS.update(
     {"getpac": "branch", "sdp": "setdevelproject", "unpublish": "wipebinaries"}
 )
 OSC_ALIAS["bugowner"] = "maintainer"
-# osc maintainer options that write a role into the meta of what they name
+# osc maintainer options that write into the meta of what they name: a role, or
+# (-D) the devel project
 ROLE_WRITES = {"-a", "--add", "-d", "--delete", "-s", "--set-bugowner"}
+ROLE_WRITES |= {"-D", "--devel-project"}
 OSC_ALIAS.update(
     {
         "metafromspec": "updatepacmetafromspec",
