@@ -192,6 +192,13 @@ case_ cve-na-ok-patch-layout 0 "OK: clean" --entries 1 "$work/cve-na-ok-patch-la
 entry cve-na-ok-security-header.changes "- Update to 3.1.2:" "  * Security fixes (3.0.x is not affected):" \
   "    + CVE-2026-1111: heap overflow (bsc#1)"
 case_ cve-na-ok-security-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-security-header.changes"
+# A long id list is linear: 6000 ids took 40 s when each list was re-read from every id.
+{ printf '%s\nMon Sep 14 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Not affected by:\n' "$SEP"
+  for i in $(seq 10000 12999); do printf '  CVE-2026-%s (boo#%s), CVE-2026-%s (boo#%s),\n' "$i" "2$i" "$((i + 5000))" "3$i"; done
+} > "$work/cve-na-long.changes"
+out=$(timeout 20 bash "$LINT" --entries 1 "$work/cve-na-long.changes" 2>&1); rc=$?
+[ $rc = 1 ] && grep -qF "cve-na-long.changes:4: $NA_MSG" <<<"$out" && pass "cve-na-long-list (rc=1, in time)" \
+  || fail "cve-na-long-list: rc=$rc (124 = timed out)"
 
 # Request ids and staging order belong in the SR message, not in .changes.
 # Real case: sr#1385697, wrapped over a continuation line.
