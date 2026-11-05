@@ -166,7 +166,7 @@ os.makedirs(api, exist_ok=True)
 s = json.load(open(spec))
 def stub(path, text):
     open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
-def stamp(prj, pkg, files, review=True, build=True, no_entry="", obs=None, pre=None):
+def stamp(prj, pkg, files, review=True, build=True, no_entry="", obs=None, pre=None, added=None, factory=True):
     d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
     os.makedirs(d, exist_ok=True)
     st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
@@ -177,7 +177,9 @@ def stamp(prj, pkg, files, review=True, build=True, no_entry="", obs=None, pre=N
     if obs is not None:
         st["target"] = "devel:tools"
         st["build"] = {"verdict": "GREEN", "kind": "obs", "repos": sorted(["openSUSE_Tumbleweed"] + obs),
-                       "factory": True, "others": obs}
+                       "factory": factory, "others": obs}
+        if added is not None:
+            st["build"]["added"] = added
         if pre is not None:
             st["build"]["repos"] = sorted(set(st["build"]["repos"]) | {p.split("/")[0] for p in pre})
             st["build"]["preexisting"] = pre
@@ -204,9 +206,12 @@ for prj, pkg in pairs("noentry"):
 for prj, pkg in pairs("obs_factory"):
     stamp(prj, pkg, listing(prj, pkg), obs=[])
 for prj, pkg in pairs("obs_repos"):
-    stamp(prj, pkg, listing(prj, pkg), obs=["16.0"])
+    stamp(prj, pkg, listing(prj, pkg), obs=["16.0"], added=[])
 for prj, pkg in pairs("obs_sle"):
-    stamp(prj, pkg, listing(prj, pkg), obs=["SLE_15_SP7"])
+    stamp(prj, pkg, listing(prj, pkg), obs=["SLE_15_SP7"], added=["SLE_15_SP7"])
+for prj, pkg in pairs("obs_nofac"):
+    stamp(prj, pkg, listing(prj, pkg), obs=["16.0"], added=[], factory=False,
+          pre=["openSUSE_Tumbleweed/x86_64 failed", "openSUSE_Tumbleweed/aarch64 failed"])
 for prj, pkg in pairs("obs_pre"):
     stamp(prj, pkg, listing(prj, pkg), obs=[], pre=["16.1/x86_64 failed", "16.1/aarch64 unresolvable"])
 for prj, pkg in pairs("stale"):
@@ -1634,6 +1639,13 @@ ask_ sr-obs-factory-leap        build-evidence "--obs-build once OBS built the c
 case_ sr-obs-repos-leap         0 - ""
 ask_ sr-obs-repos-leap-other    build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Leap:16.1"
 case_ sr-obs-sle-sp             0 - ""
+# A default stamp's green Leap 16 repo covers a Leap 16 target only: a product whose
+# version the guard cannot read, or any other, needs a repo --repos added for it.
+ask_ sr-obs-default-sle15       build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15:Update"
+ask_ sr-obs-default-slfo        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLFO:Main"
+ask_ sr-obs-default-step        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Step:15-SP4"
+# No Tumbleweed build succeeded (both arches PRE-EXISTING), so Factory is not covered.
+ask_ sr-obs-nofac-factory       build-evidence "osc sr of devel:tools/obsnofac: its OBS build judged no repo of openSUSE:Factory"
 ask_ sr-obs-sle-other          build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15-SP7:Update"
 # No written target: osc picks the link or devel target, which a Factory-judged build covers.
 case_ sr-obs-bare               0 - ""

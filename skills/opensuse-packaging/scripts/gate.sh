@@ -86,8 +86,9 @@
 #                A red (failed, unresolvable, broken) the link origin has at the
 #                same repo/arch is PRE-EXISTING: listed, not red, and GREEN needs
 #                one judged build that succeeded; a repo/arch the origin disables
-#                or excludes is not judged. The stamp records the repos judged
-#                and the PRE-EXISTING ones
+#                or excludes is not judged. The stamp records the repos judged,
+#                the green ones --repos added, whether a Tumbleweed build
+#                succeeded, and the PRE-EXISTING ones
 #   --repos REGEX  with --obs-build: also judge the repos whose name matches
 #                (re.search), when the user says another target matters
 #   --arches REGEX  with --obs-build: also judge the arches that match
@@ -554,14 +555,12 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
                 if name == origin[1] or name.startswith(origin[1] + ":"):
                     theirs[(r.get("repository"), r.get("arch"), name[len(origin[1]):])] = s.get("code") or ""
     rows, bad, odd, waiting, pre, judged = [], [], [], [], [], set()
-    factory = False
     for repo, arch, name, label, code, state, fac in entries:
         there = theirs.get((repo, arch, name[len(pkg):]))
         if there in SKIPPED:
             notes.append("%s %s (%s in %s)" % (label, state, there, origin[0]))
             continue
         judged.add(repo)
-        factory = factory or fac
         if state == "dirty" or code in WAITING:
             waiting.append("%s %s" % (label, state))
         elif code in REDS and there in REDS:
@@ -587,7 +586,8 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     if waiting:
         return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
     os.makedirs(outdir, exist_ok=True)
-    reds, older, done, others = [], [], [], set()
+    # factory: a Tumbleweed build succeeded; added: a green repo only --repos brought in
+    reds, older, done, others, added, factory = [], [], [], set(), set(), False
     for repo, arch, name, label, fac, red_there in rows:
         logf = os.path.join(tmp, "%s-%s-%s.log" % (repo, arch, name.replace(":", "_")))
         with open(logf, "w", encoding="utf-8") as fh:
@@ -610,8 +610,12 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
             reds.append("%s %s" % (label, v))
         else:
             done.append(label)
-            if not fac:
+            if fac:
+                factory = True
+            else:
                 others.add(repo)
+                if not (leap and LEAP16_REPO.fullmatch(repo)):
+                    added.add(repo)
     if pre:
         print("note: PRE-EXISTING, red in %s too (reported, not red): %s" % (origin[0], ", ".join(pre)))
     if reds:
@@ -636,7 +640,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         cur["rpms"] = {"dir": rpms, "time": now()}
     cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done,
                     "repos": sorted(judged), "factory": factory, "others": sorted(others),
-                    "preexisting": pre, "time": now()}
+                    "added": sorted(added), "preexisting": pre, "time": now()}
     save(path, cur)
     shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""

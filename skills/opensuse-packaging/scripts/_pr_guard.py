@@ -2723,6 +2723,7 @@ def gate_writers(ctx):
 
 
 PRODUCT = Rx(r"^(openSUSE:(Leap|Backports|Step)|SUSE:)")
+LEAP16 = Rx(r"^openSUSE:(Leap:16\.|Backports:SLE-16\.)")
 VERSION = Rx(r"\d+(\.\d+)+")
 SLE_SP = Rx(r"SLE-(\d+)-SP(\d+)")
 
@@ -2730,11 +2731,12 @@ SLE_SP = Rx(r"SLE-(\d+)-SP(\d+)")
 def covers(build, dst, target):
     """Whether a GREEN build covers a request to dst: a local log, or an OBS
     stamp from before gate.sh judged repos, covers any; an OBS build covers
-    Factory and the gate's target (its devel project) when it judged a
-    Factory/Tumbleweed repo, its PRE-EXISTING reds (the link origin's too)
-    included, any other project only through a judged repo that built green,
-    one naming dst's version when dst has one (SLE-15-SP7: 15_SP7, 15-SP7 or
-    15.7)."""
+    Factory and the gate's target (its devel project) when a
+    Factory/Tumbleweed build of it succeeded, a Leap 16 target through a
+    green repo naming its version, any other target only through a green
+    repo --repos added (before gate.sh recorded those: any green non-Factory
+    repo) naming dst's version (SLE-15-SP7: 15_SP7, 15-SP7 or 15.7); a
+    product whose version it cannot read, never."""
     if build.get("kind") != "obs" or not isinstance(build.get("repos"), list):
         return True
     target = (target or "").split("/")[0]
@@ -2746,13 +2748,17 @@ def covers(build, dst, target):
     ):
         return build.get("factory") is True
     others = build.get("others") if isinstance(build.get("others"), list) else []
+    added = build.get("added") if isinstance(build.get("added"), list) else others
     sp, ver = SLE_SP.search(dst), VERSION.search(dst)
     if sp:
         a, b = sp.groups()
         names = [f"{a}_SP{b}", f"{a}-SP{b}", f"{a}.{b}"]
     else:
         names = [ver.group(0)] if ver else []
-    return bool(others) and (not names or any(n in r for n in names for r in others))
+    if not names:
+        return not PRODUCT.search(dst) and bool(added)
+    pool = others if LEAP16.search(dst) else added
+    return any(n in r for n in names for r in pool)
 
 
 def reviewed(path, files, built=False, factory=False, dsts=None):
