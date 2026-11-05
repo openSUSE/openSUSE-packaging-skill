@@ -255,7 +255,7 @@ for k in range(ncheck):
         if NOTAFF.search(t):
             sub = [x for _, x, i in itertools.takewhile(lambda y: y[2] > ind, bullets[b + 1:])]
             scope = t + " " + " ".join(sub) if t.endswith(":") else t
-            fixed = stated_fixed(scope)
+            fixed = stated_fixed(NOTAFF.sub(" ", scope))  # "above the fixed version: CVE-1" fixes nothing
             ids = {i.upper() for i in ANYID.findall(scope)}
             cves = {i for i in ids if i.startswith("CVE")}
             if cves - fixed or (ids - cves and not fixed):
