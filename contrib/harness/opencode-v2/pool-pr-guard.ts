@@ -7,7 +7,7 @@ import { join, normalize, resolve } from "node:path"
 // Pool PR guard for opencode 2.x: hands a matching shell, write or edit call to
 // the pinned pr-guard.py (and the _pr_guard.py beside it) and refuses the call
 // when the guard exits non-zero or asks for the user's go (this hook cannot
-// prompt). Install: contrib/harness/README.md. A missing guard or python3
+// prompt, so the agent takes the step an ask names, or reports it as a blocker). Install: contrib/harness/README.md. A missing guard or python3
 // refuses only the calls that match the prefilter. opencode 1.x does not run this
 // file; it takes ../opencode/pool-pr-guard.ts.
 
@@ -69,13 +69,13 @@ const judge = (event: Record<string, unknown>) =>
     })
     child.stdin.end(JSON.stringify(event))
   })
-// The guard's ask on stdout, as a refusal: the user runs the command once they approve.
+// The guard's ask on stdout, as a refusal naming the step for the agent to take.
 const asked = (out: string) => {
   if (!out.trim()) return undefined
   try {
     const d = JSON.parse(out)?.hookSpecificOutput
     if (d?.permissionDecision !== "ask") return undefined
-    return `${d.permissionDecisionReason} (opencode cannot ask here: take a step it names yourself, such as running gate.sh, then retry; only what needs the user's go goes to them as the command, never a commit or request of a tree gate.sh has not stamped GREEN)`
+    return `${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc command; if it persists, report the blocker)`
   } catch {
     return `pr-guard printed what it should not: ${out.trim().slice(0, 200)}`
   }

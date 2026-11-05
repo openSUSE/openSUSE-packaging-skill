@@ -7,7 +7,7 @@ import { join, normalize } from "node:path"
 // Pool PR guard for opencode: hands a matching bash/shell, write or edit call to
 // the pinned pr-guard.py (and the _pr_guard.py beside it) and refuses the call
 // when the guard exits non-zero or asks for the user's go (this hook cannot
-// prompt). Install: contrib/harness/README.md. A missing guard or python3
+// prompt, so the agent takes the step an ask names, or reports it as a blocker). Install: contrib/harness/README.md. A missing guard or python3
 // refuses only the calls that match the prefilter.
 
 const GUARD = join(homedir(), ".claude", "hooks", "pr-guard.py")
@@ -81,7 +81,7 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
           || (r.error ? `pr-guard could not run: ${r.error.message}` : `pr-guard exited ${r.status ?? r.signal}`)
         throw new Error(why)
       }
-      // This hook cannot prompt: a call the guard leaves to the user ("ask") is refused.
+      // This hook cannot prompt: an ask is refused, naming the step for the agent to take.
       if ((r.stdout || "").trim()) {
         let d: Record<string, unknown> | undefined
         try {
@@ -90,7 +90,7 @@ export const PoolPrGuardPlugin: Plugin = async ({ directory }) => {
           throw new Error(`pr-guard printed what it should not: ${r.stdout.trim().slice(0, 200)}`)
         }
         if (d?.permissionDecision === "ask")
-          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: take a step it names yourself, such as running gate.sh, then retry; only what needs the user's go goes to them as the command, never a commit or request of a tree gate.sh has not stamped GREEN)`)
+          throw new Error(`${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; never hand the user an osc command; if it persists, report the blocker)`)
       }
     },
   }
