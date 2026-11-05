@@ -1075,6 +1075,13 @@ case_ osc-meta-pkg-home-file        0 - ""
 # A new package's maintainer role, set in the devel project the user maintains: no ask.
 case_ osc-meta-pkg-devel-file       0 - ""
 case_ osc-maintainer-add-devel      0 - ""
+# osc maintainer/bugowner -a, -d and -s write the meta: the maintenance rules hold, and
+# an owner search (one name, -U/-G) lands where the guard cannot tell.
+case_ osc-maintainer-add-update     2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
+case_ osc-maintainer-del-update     2 maintenance-write "an osc maintainer into openSUSE:Backports:SLE-15-SP7:Update"
+case_ osc-bugowner-add-update       2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
+case_ osc-maintainer-add-search     2 maintenance-unknown "a role an osc maintainer search (not PRJ PKG) finds"
+case_ osc-maintainer-read-update    0 - ""
 # A request is filed with osc, which checks the devel project and the message;
 # one created through the API skips both.
 case_ request-api-osc-create        2 request-api "a request created through the API"

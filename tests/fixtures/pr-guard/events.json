@@ -4512,6 +4512,36 @@
     },
     "cwd": "@PLAIN@"
   },
+  "osc-maintainer-add-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer -a tester -r maintainer openSUSE:Leap:15.6:Update x"
+    }
+  },
+  "osc-maintainer-del-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer -d tester openSUSE:Backports:SLE-15-SP7:Update x"
+    }
+  },
+  "osc-bugowner-add-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc bugowner -a tester openSUSE:Leap:15.6:Update x"
+    }
+  },
+  "osc-maintainer-add-search": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer -a tester -r maintainer newpkg"
+    }
+  },
+  "osc-maintainer-read-update": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc maintainer openSUSE:Leap:15.6:Update x"
+    }
+  },
   "osc-meta-pkg-devel-file": {
     "tool_name": "Bash",
     "tool_input": {
