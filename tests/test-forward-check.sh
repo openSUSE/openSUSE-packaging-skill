@@ -122,6 +122,7 @@ put theydecl maint;   fact theydecl "$(req 3005 maint declined 2026-10-16T08:00:
 put foreign tester;   fact foreign "$(req 3006 other declined 2026-09-01T08:00:00 devel:a old 'nothing provides group(x)' dimstar)"
 put due tester
 put newpkg tester -
+put newmaint maint -
 put maintdue maint
 put wrong tester;     printf 'devel:b/wrong\n' > "$B/devel/wrong"
 # Not in Factory by this name, but under another spelling (devel-of.sh exit 6).
@@ -195,7 +196,11 @@ case_ mine-declined-older 4 "DUE supersede 3008 with -s" \
 
 echo "--- then the role decides"
 case_ due            4 "devel:a/due  DUE" : devel:a due
-case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" : devel:a newpkg
+# A new package your own devel SR brought is forwarded like any other; without one, ask.
+case_ new-own-devel-sr 4 "devel:a/newpkg  DUE NEW-IN-FACTORY from your own devel SR" : devel:a newpkg
+case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" 'rm search/own-devel:a-newpkg' devel:a newpkg
+absent "DUE" "new-in-factory: no devel SR of yours landed, so not DUE"
+case_ new-not-yours  0 "devel:a/newmaint  MAINTAINERS" : devel:a newmaint
 case_ maintainers    0 "devel:a/maintdue  MAINTAINERS" : devel:a maintdue
 case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL openSUSE:Factory develops it in devel:b" : devel:a wrong
 case_ near-spelling  4 "devel:a/near  WRONG-DEVEL NOT IN openSUSE:Factory as near, but it has Near" "echo Near > ls" devel:a near
