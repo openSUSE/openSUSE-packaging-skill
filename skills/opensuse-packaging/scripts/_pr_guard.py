@@ -315,12 +315,20 @@ OSC_OPTS.update(
         ),
         "addchannels": ("", "; skip-disabled enable-all"),
         "addcontainers": ("", "; extend-package-names"),
+        "maintainer": (
+            "DaUGsSdrm",
+            "devel-project add user group set-bugowner set-bugowner-request delete "
+            "role message; bugowner-only bugowner email nodevelproject all",
+        ),
     }
 )
 OSC_ALIAS = {"ci": "commit", "checkin": "commit", "bco": "branch", "branchco": "branch"}
 OSC_ALIAS.update(
     {"getpac": "branch", "sdp": "setdevelproject", "unpublish": "wipebinaries"}
 )
+OSC_ALIAS["bugowner"] = "maintainer"
+# osc maintainer options that write a role into the meta of what they name
+ROLE_WRITES = {"-a", "--add", "-d", "--delete", "-s", "--set-bugowner"}
 OSC_ALIAS.update(
     {
         "metafromspec": "updatepacmetafromspec",
@@ -1196,6 +1204,15 @@ def osc_writes(run, ctx, cwd):
                 if prj and MAINT_PRJ.fullmatch(prj):
                     block(rule, f"an osc {sub} into {prj}")
         return
+    if sub == "maintainer" and {k for k, _ in opts} & ROLE_WRITES:
+        # one name is an owner search, -U/-G a user's or group's: the role
+        # lands wherever the search points
+        keys = {k for k, _ in opts}
+        words = [w for p in pos for w in p.strip("/").split("/")]
+        if len(words) == 1 or keys & {"-U", "--user", "-G", "--group"}:
+            block(
+                "maintenance-unknown", f"a role an osc {sub} search (not PRJ PKG) finds"
+            )
     if sub != "api":
         for target in filter(None, osc_targets(sub, pos, opts)):
             if target == ".":
@@ -2992,6 +3009,8 @@ def osc_targets(sub, pos, opts):
         return [rest[0] if len(rest) > (words[0] == "pkg") else "."]
     if sub == "branch":
         return words[2:3]
+    if sub == "maintainer":  # PRJ [PKG], or the checkout's
+        return (words[:1] or ["."]) if keys & ROLE_WRITES else []
     if sub in ("copypac", "linkpac", "aggregatepac"):
         rest = list(pos)
         project(rest)
