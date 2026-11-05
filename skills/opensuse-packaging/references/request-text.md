@@ -105,9 +105,10 @@ git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # a
 or one in a repository you maintain: pr-guard lets the plain form through,
 `osc comment create -c "$(cat FILE)" request <id>`, or
 `tea comments --login src.opensuse.org --repo <owner>/<pkg> <n> '<text>'` with the text
-inline on one line, no `$`, backslash or backtick, and the command alone in the call. Hand
-the user a command only when the guard asks: someone else's item, or any other form.
-opencode refuses an ask, so there the user runs it.
+inline on one line, no `$`, backslash or backtick, and the command alone in the call. Only
+someone else's item, or a comment in any other form, needs the user's go: the guard asks, and
+the user answers the harness's prompt. opencode cannot prompt and refuses the call: report it
+as waiting for the user's go, with no osc or tea command for them to run.
 
 ## Comments: what OBS renders
 

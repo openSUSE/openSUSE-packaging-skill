@@ -550,8 +550,9 @@ MESSAGES = {
     "api": "{0} goes past the tools that hold the login. OBS: osc api PATH; "
     "Gitea: git-obs -G src.opensuse.org api PATH; or the skill's scripts.",
 }
-# Allowed only on the user's go: the harness asks them (opencode cannot ask,
-# so its plugin refuses and the user runs the command).
+# Allowed only on the user's go: the harness asks them. opencode cannot ask, so
+# its plugin refuses: on the agent's own commit or request that names a step to
+# take and retry, never an osc command to hand the user.
 ASKS = {
     "comment": "{0}: a comment is public and speaks for the user. Post only "
     "what they asked for, as they approved it; a note for them goes in your report.",

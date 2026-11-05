@@ -765,6 +765,10 @@ create must be refused too, the `AI/zzz` create must run, and so must
   were both refused (measured). That refuses only calls that matched the prefilter; the
   rest never reach the guard. The 2.x plugin also refuses a `shell`, `write` or `edit`
   call whose input it cannot read.
+- opencode cannot prompt from these hooks, so a guard ask reaches the model as a refusal:
+  on the agent's own commit or request it names a missing step to take before retrying, the
+  agent never hands the user an osc command, and one that persists is reported as a blocker
+  (someone else's item: as waiting for the user's go).
 
 ## Limits
 
