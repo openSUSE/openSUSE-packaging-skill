@@ -1652,6 +1652,8 @@ case_ sr-obs-sle-sp             0 - ""
 ask_ sr-obs-default-sle15       build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15:Update"
 ask_ sr-obs-default-slfo        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLFO:Main"
 ask_ sr-obs-default-step        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Step:15-SP4"
+# A version alone is not enough: 16.0 of a non-Leap product is no Leap 16 target.
+ask_ sr-obs-default-sles16      build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLFO:Products:SLES:16.0"
 # No Tumbleweed build succeeded (both arches PRE-EXISTING), so Factory is not covered.
 ask_ sr-obs-nofac-factory       build-evidence "osc sr of devel:tools/obsnofac: its OBS build judged no repo of openSUSE:Factory"
 ask_ sr-obs-sle-other          build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15-SP7:Update"
