@@ -227,6 +227,81 @@ for why in \
     || { fail "bootstrap accepted: $why (rc=$rc)"; }
 done
 
+# other-platform: a file for another OS or CPU that the build leaves alone
+# (python-uv's Windows import libraries, ring's and aws-lc-sys's Windows objects,
+# psm's wasm32.o). It holds by the file's bytes, never its name: a Linux-target
+# object, an archive holding one, an EFI image or a .NET assembly is refused.
+mkdir -p "$work/t/op/ok" "$work/t/op/no"
+python3 - "$work/t/op/ok" "$work/t/op/no" <<'PY'
+import os, struct, sys
+ok, no = sys.argv[1:3]
+def put(d, name, data):
+    open(os.path.join(d, name), "wb").write(data)
+def coff(machine=0x8664):
+    names = [b".text", b".data", b".debug$S"]
+    hdr = struct.pack("<HHIIIHH", machine, len(names), 0, 0, 0, 0, 0)
+    return hdr + b"".join(n.ljust(8, b"\0") + b"\0" * 32 for n in names) + b"\0" * 64
+def ar(*members, bsd=False):
+    out = b"!<arch>\n"
+    for name, data in members:
+        if bsd:  # macOS: "#1/N", and the name leads the data
+            n = name.encode() + bytes(4 - len(name) % 4)
+            name, data = f"#1/{len(n)}", n + data
+        out += b"%-16s%-12s%-6s%-6s%-8s%-10d`\n" % (name.encode(), b"0", b"0", b"0", b"644", len(data))
+        out += data + (b"\n" if len(data) % 2 else b"")
+    return out
+# an MSVC import library holds a short import object per function
+short = struct.pack("<HHHHIIHH", 0, 0xFFFF, 0, 0x8664, 0, 26, 0, 0) + b"GetTickCount\0KERNEL32.dll\0"
+def elf(machine, osabi=0, etype=1, big=False):
+    ident = b"\x7fELF\x02" + (b"\x02" if big else b"\x01") + b"\x01" + bytes([osabi]) + bytes(8)
+    return ident + struct.pack(">HHI" if big else "<HHI", etype, machine, 1) + bytes(64)
+def pe(subsystem=3, clr=False):
+    b = bytearray(512)
+    b[:2], b[60:64], b[128:132] = b"MZ", (128).to_bytes(4, "little"), b"PE\0\0"
+    struct.pack_into("<HHIIIH", b, 132, 0x8664, 1, 0, 0, 0, 240)
+    struct.pack_into("<H", b, 152, 0x20B)  # PE32+
+    struct.pack_into("<H", b, 152 + 68, subsystem)
+    struct.pack_into("<I", b, 152 + 108, 16)  # data directories
+    if clr:  # the CLI header's directory: a .NET assembly
+        struct.pack_into("<II", b, 152 + 112 + 14 * 8, 0x2008, 0x48)
+    return bytes(b)
+macho = b"\xcf\xfa\xed\xfe" + struct.pack("<iiIIII", 0x0100000C, 0, 6, 0, 0, 0) + bytes(64)
+put(ok, "x86_64-mont-nasm.obj", coff())
+put(ok, "windows.0.52.0.lib", ar(("/", bytes(8)), ("/", bytes(8)), ("//", b"x\0"), ("KERNEL32.dll/", coff()), ("KERNEL32.dll/", short)))
+put(ok, "libwindows.0.52.0.a", ar(("/", bytes(8)), ("dmmjs00001.o/", coff(0xAA64))))
+put(ok, "wasm32.o", b"\0asm\1\0\0\0\0\x09\x07linking\x02")
+put(ok, "libfoo.dylib", macho)
+put(ok, "libfoo-macos.a", ar(("__.SYMDEF SORTED", bytes(8)), ("foo.o", macho), bsd=True))
+put(ok, "tool.exe", pe())
+put(ok, "libc.so.7", elf(62, osabi=9, etype=3))
+put(ok, "sparc.o", elf(43, big=True))
+put(no, "x86_64.o", elf(62))
+put(no, "aarch64.so", elf(183, etype=3))
+put(no, "linux.a", ar(("/", bytes(8)), ("a.o/", coff()), ("b.o/", elf(62))))
+put(no, "BOOTX64.EFI", pe(subsystem=10))
+put(no, "managed.dll", pe(clr=True))
+PY
+# the why may say the build never uses the file: that is this kind's claim
+OPW='Windows, macOS, wasm, FreeBSD and SPARC objects the Linux build never uses'
+d=$(pkg otherplat); tar -C "$work/t/op" -czf "$d/v.tar.gz" ./ok
+printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$OPW" >> "$d/p.spec"
+case_ other-platform 0 "EXCEPTION v.tar.gz:./ok/* (other-platform: $OPW): 9 hit(s), for Apple, FreeBSD, SPARC, Windows, wasm" "$d"
+for f in x86_64.o aarch64.so linux.a BOOTX64.EFI managed.dll; do
+  d=$(pkg "op-$f"); rm -rf "$work/t/op1"; mkdir -p "$work/t/op1/no"; cp "$work/t/op/no/$f" "$work/t/op1/no/"
+  tar -C "$work/t/op1" -czf "$d/v.tar.gz" ./no
+  printf '# Source-Binary-Exception: v.tar.gz:./no/* -- other-platform: Windows objects for another target\n' >> "$d/p.spec"
+  case_ "other-platform-refused-$f" 3 "other-platform holds only for a file whose bytes show another OS or CPU, not v.tar.gz:./no/$f" "$d"
+done
+for why in 'unused here' 'objects nobody here uses'; do
+  d=$(pkg op-why); cp "$work/otherplat/v.tar.gz" "$d/"
+  printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$why" >> "$d/p.spec"
+  case_ "other-platform-why: $why" 3 "other-platform needs a why of 3+ words naming the platform" "$d"
+done
+d=$(pkg op-7z); mkdir -p "$work/t/op7/w"; printf '7z\274\257\047\034rest' > "$work/t/op7/w/sdk.7z"
+tar -C "$work/t/op7" -czf "$d/v.tar.gz" ./w
+printf '# Source-Binary-Exception: v.tar.gz:./w/* -- other-platform: a Windows SDK archive\n' >> "$d/p.spec"
+case_ other-platform-unreadable 3 "not v.tar.gz:./w/sdk.7z (not readable)" "$d"
+
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
 case_ 7z-unknown 2 "UNKNOWN legacy.7z: a 7z archive" "$d"
@@ -321,6 +396,11 @@ PY
   tar -C "$work/t/tdl" -czf "$d/tdl.tar.gz" .
   printf '# Source-Binary-Exception: tdl.tar.gz:./tests/* -- test-data: an archive the ar tests read\n' >> "$d/p.spec"
   case_ embeds-testdata 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib embeds the prebuilt tdl.tar.gz:./tests/libx.a" "$d" --rpms "$work/rpm-emb-out"
+  # other-platform is no licence to ship: a file the RPMs carry is red
+  d=$(pkg op-ship); cp "$work/otherplat/v.tar.gz" "$d/"
+  printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$OPW" >> "$d/p.spec"
+  shiprpm rpm-op "$work/t/op/ok/tool.exe"
+  case_ other-platform-shipped 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt v.tar.gz:./ok/tool.exe" "$d" --rpms "$work/rpm-op-out"
   # a small helper (gcc -O2: under 1 KiB of .text in a 64 KiB file) embedded in a bundle
   if command -v gcc > /dev/null; then
     d=$(pkg tiny); mkdir -p "$work/t/tiny/bin"
