@@ -946,6 +946,13 @@ orx "$(st_ x86_64 '' foo succeeded)$(zs succeeded)"; ob --arches s390x
 ob
 [ "$rc" = 0 ] && grep -qF "openSUSE_Factory_zSystems/s390x building" <<<"$out" \
   && pass "--obs-build: s390x is a note unless --arches names it" || { fail "--obs-build s390x note: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# An exclusion follows the spec, which the change may have edited: a red there is judged.
+orx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo excluded)"
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo failed)"; blog aarch64 "$SRC" failed; ob
+[ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
+  && pass "--obs-build: a red where the link origin excludes the arch is red, not skipped" \
+  || { fail "--obs-build red where the origin excludes: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+blog aarch64 "$SRC" finished
 rm -f "$work/ob/origin.xml"; rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "the link origin" <<<"$out" \
   && pass "--obs-build: a failed lookup of the link origin's results is UNKNOWN" || { fail "--obs-build origin lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
