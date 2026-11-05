@@ -46,13 +46,18 @@
 #       .changes as fixed here (references/changelog-rules.md "CVEs and
 #       security bullets")
 #     - no bullet that says an issue is not affected ('not affected', 'is not
-#       affected by', 'unaffected', 'no longer affected', 'above the fixed
-#       version', 'above the X.Y fix') carries a CVE or boo#/bsc#/bnc# id, and
-#       a ':' bullet saying so takes the ids of the sub-bullets under it, unless
-#       the bullet states this update fixes that id: the Leap, PackageHub and
-#       SLFO trackers read any id in .changes as fixed here, so a not-affected
-#       assessment goes in the bug comment (references/changelog-rules.md "CVEs
-#       and security bullets"; real decline: pool/gh PR #11)
+#       affected by', 'unaffected', 'no longer affected', 'does not affect',
+#       'not vulnerable', 'above the fixed version', 'above the X.Y fix',
+#       'already fixed in X.Y') carries a CVE or boo#/bsc#/bnc# id it does not
+#       state this update fixes; a ':' bullet saying so takes the ids of the
+#       bullets it lists (indented under it, or id-led at its own indent), and
+#       one that opens with the phrase those of its sub-bullets. A fix that
+#       also says what is not affected — it opens 'CVE-…:', has a fix verb or
+#       names a patch — answers only for the ids next to that phrase. The
+#       finding names the ids. The Leap, PackageHub and SLFO trackers read any
+#       id in .changes as fixed here, so a not-affected assessment goes in the
+#       bug comment (references/changelog-rules.md "CVEs and security
+#       bullets"; real decline: pool/gh PR #11)
 #     - no bullet carries an incomplete CVE id ('CVE-2026-XXXX', 'CVE-2026',
 #       'CVE-2026-12'), and no top-level bullet (its sub-bullets included)
 #       says 'CVEs'/'CVE' or claims a security fix ('security fix/issue/update
@@ -173,12 +178,15 @@ UNFIXED = re.compile(
     r"|\b(?:does|did|do)(?:\s+not|n['’]t)\s+(?:yet\s+)?(?:fix|address)\b"
     r"|\b(?:is|are|was|were)n['’]t\s+(?:yet\s+)?(?:fixed|addressed|patched)\b"
     r"|\bremains?\s+(?:open|unfixed|unpatched|vulnerable)\b", re.I)
-# "Fix CVE-1 and CVE-2" / "CVE-1: fixed" state a fix; "did not fix CVE-1" does not
-FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+){0,3}?\s+\(?"
-                   r"(?P<ids>CVE-\d{4}-\d{4,}(?:\)?(?:\s*,\s*|\s+and\s+)\(?CVE-\d{4}-\d{4,})*)", re.I)
-FIXED = re.compile(r"(?P<id>CVE-\d{4}-\d{4,})\)?:?\s+(?:is\s+|was\s+|now\s+)?(?:fixed|addressed)\b", re.I)
+# "Fix CVE-1 and CVE-2" / "CVE-1: fixed" state a fix; "did not fix CVE-1" does not.
+# A bug ref is stated fixed the same ways: "Fix a crash (boo#1)", "CVE-1 (bsc#1): fixed".
+ID = r"(?:CVE-\d{4}-\d{4,}|(?:boo|bsc|bnc)#\d+)"
+IDS = ID + r"(?:[\])]?(?:\s*,\s*|\s+and\s+|\s+(?=[\[(]))[\[(]?" + ID + r")*"
+FIXES = re.compile(r"\b(?:fix(?:es|ed|ing)?|address(?:es|ed|ing)?)(?:\s+[^\s.;]+){0,3}?\s+[\[(]?"
+                   r"(?P<ids>" + IDS + ")", re.I)
+FIXED = re.compile(r"(?P<ids>" + IDS + r")[\])]?:?\s+(?:is\s+|are\s+|was\s+|were\s+|now\s+)?(?:fixed|addressed)\b", re.I)
 NEGATED = re.compile(r"(?:\bnot|n['’]t|\bnever)\s+(?:yet\s+)?$", re.I)
-PATCHED = re.compile(r"(CVE-\d{4}-\d{4,})[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
+PATCHED = re.compile(r"(CVE-\d{4}-\d{4,}|(?:boo|bsc|bnc)#?\d+)[^\s,;()]*\.(?:patch|diff|dif)\b", re.I)  # named for the fix
 # a CVE id cut short or left as a placeholder: CVE-2026-XXXX, CVE-2026, CVE-2026-12
 PARTIAL = re.compile(r"\bCVE-(?:\d{4}-(?!\d{4})\S*|\d{4}\b(?!-)|(?!\d{4}-)[^\s,;)]+)", re.I)
 BARE_CVE = re.compile(r"\bCVEs?\b(?!-)", re.I)
@@ -205,15 +213,44 @@ STAGING = re.compile(r"\b(?:lands?|landing|goes\s+in)\s+(?:after|before|together
 def names_request(t):
     return bool(STAGING.search(t)) or any(not UPSTREAM_PR.search(t[:m.start()])
                                           for m in REQUEST_ID.finditer(t))
-NOTAFF = re.compile(r"\b(?:not|never|no\s+longer)\s+(?:be\s+)?affected\b|\bn['’]t\s+affected\b|\bunaffected\b"
-                    r"|\b(?:above|over)\s+the\s+(?:\S+\s+)?(?:fix(?:ed)?\b|patched\b)", re.I)
+NOTAFF_RX = (r"\b(?:not|never|no\s+longer)\s+(?:be\s+)?affected\b|n['’]t\s+(?:be\s+)?affected\b|\bunaffected\b"
+             r"|\b(?:does|do|did)(?:\s+not|n['’]t)\s+affect\b|\bnot\s+vulnerable\b|n['’]t\s+vulnerable\b"
+             r"|\babove\s+the\s+(?:\S+\s+)?(?:fix(?:ed)?\b|patched\b)"
+             r"|\balready\s+fixed\s+(?:in|by)\s+(?:\S+\s+){0,2}?v?\d")
+NOTAFF = re.compile(NOTAFF_RX, re.I)
+KEEP = re.compile(r"\b(?:keep|keeps|kept|keeping|leave|leaves|leaving)\s+(?:\S+\s+){0,3}?unaffected\b", re.I)
+FLOOR = re.compile(r"\bfixed\s+(?:upstream\b|(?:in|since|as\s+of)\s+(?:\S+\s+)?v?\d)", re.I)  # the upstream fix, not this one
 ANYID = re.compile(r"\bCVE-\d{4}-\d{4,}\b|\b(?:boo|bsc|bnc)#\d+", re.I)
+LEAD_ID = re.compile(r"^[-*+]\s+[\[(]?" + ID, re.I)
+# says it of itself: opens with the phrase, or with an id not in the 'CVE-…:' fix layout
+STRONG = re.compile(r"^[-*+]\s+(?:(?:(?:is|are|was|were|still)\s+)*(?:" + NOTAFF_RX + ")|" + ID + r"\b(?!\s*:))", re.I)
+FIX_LAYOUT = re.compile(r"^[-*+]\s+CVE-\d{4}-\d{4,}:", re.I)
+FIX_VERB = re.compile(r"(?<!\bthe )(?<!\ba )(?<!\bthat )(?<!\bthis )(?<!\bits )\b(?:fix(?:es|ed|ing)?|"
+                      r"address(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|patch(?:es|ed|ing)?|backport(?:s|ed|ing)?)\b", re.I)
+PATCH_NAME = re.compile(r"\S\.(?:patch|diff|dif)\b", re.I)
+NEAR = re.compile(r"\s+(?:by|to)\s+[\[(]?(?P<ids>" + IDS + ")", re.I)
+LISTS = re.compile(r"(?:\s*[^\s:;]+){0,2}?\s*:")   # "not affected here: CVE-1 (boo#1), CVE-2 …"
+def norm(i):
+    i = i.upper()
+    return i if i.startswith("CVE") or "#" in i else i[:3] + "#" + i[3:]
 def stated_fixed(t):
-    ids = {m.group("id").upper() for m in FIXED.finditer(t)}
-    ids.update(i.upper() for i in PATCHED.findall(t))
+    ids = {norm(i) for m in FIXED.finditer(t) for i in ANYID.findall(m.group("ids"))}
+    ids.update(norm(i) for i in PATCHED.findall(t))
     for m in FIXES.finditer(t):
         if not NEGATED.search(t[:m.start()]):
-            ids.update(i.upper() for i in CVE.findall(m.group("ids")))
+            ids.update(norm(i) for i in ANYID.findall(m.group("ids")))
+    return ids
+def plain(t):
+    """t without its not-affected wording and upstream fix floors, neither a fix statement"""
+    return FLOOR.sub(" ", NOTAFF.sub(" ", KEEP.sub(" ", t)))
+def about(t, m):
+    """The ids the not-affected phrase m names: just before it in its clause, or after it."""
+    ids = ANYID.findall(" ".join(re.split(r"[;,]|\.\s", t[:m.start()])[-1].split()[-3:]))
+    near, lists = NEAR.match(t, m.end()), LISTS.match(t, m.end())
+    if near:
+        ids += ANYID.findall(near.group("ids"))
+    if lists:
+        ids += ANYID.findall(re.split(r";|\.\s", t[lists.end():])[0])
     return ids
 ncheck = len(seps) if nent == 0 else min(nent, len(seps))
 for k in range(ncheck):
@@ -252,15 +289,29 @@ for k in range(ncheck):
             bad.append((n, "bullet names a CVE id as not fixed — if this update fixes it, "
                            "say so without the not-fixed phrase; if it does not, leave the "
                            "id out (any CVE id in .changes reads as fixed here)"))
-        if NOTAFF.search(t):
+        tk = KEEP.sub(" ", t)
+        hits = list(NOTAFF.finditer(tk))
+        if hits:
             sub = [x for _, x, i in itertools.takewhile(lambda y: y[2] > ind, bullets[b + 1:])]
-            scope = t + " " + " ".join(sub) if t.endswith(":") else t
-            fixed = stated_fixed(NOTAFF.sub(" ", scope))  # "above the fixed version: CVE-1" fixes nothing
-            ids = {i.upper() for i in ANYID.findall(scope)}
-            cves = {i for i in ids if i.startswith("CVE")}
-            if cves - fixed or (ids - cves and not fixed):
-                bad.append((n, "bullet cites an id for an issue it says is not affected — the "
-                               "trackers read any CVE/boo#/bsc#/bnc# in .changes as fixed here; put "
+            if not sub and t.endswith(":"):   # a ':' list at the header's own indent
+                sub = [x for _, x, i in itertools.takewhile(
+                    lambda y: y[2] == ind and LEAD_ID.match(y[1]), bullets[b + 1:])]
+            strong = STRONG.match(tk)
+            # a fix that also says what is not affected names only the ids next to that phrase
+            if not strong and (FIX_LAYOUT.match(t) or PATCH_NAME.search(t) or FIX_VERB.search(plain(t))):
+                pieces = [t] + (sub if t.endswith(":") and NOTAFF.search(tk.rsplit(")", 1)[-1]) else [])
+                cited = [i for m in hits for i in about(tk, m)] + ANYID.findall(" ".join(pieces[1:]))
+            else:
+                pieces = [t] + (sub if t.endswith(":") or strong else [])
+                cited = ANYID.findall(" ".join(pieces))
+            fixed = set().union(*(stated_fixed(plain(p)) for p in pieces))
+            left = {}
+            for i in cited:
+                if norm(i) not in fixed:
+                    left.setdefault(norm(i), i)
+            if left:
+                bad.append((n, f"bullet cites an id for an issue it says is not affected ({', '.join(left.values())}) — "
+                               "the trackers read any CVE/boo#/bsc#/bnc# in .changes as fixed here; put "
                                "the assessment in the bug comment (references/changelog-rules.md "
                                '"CVEs and security bullets")'))
         if REVIEW.search(t):

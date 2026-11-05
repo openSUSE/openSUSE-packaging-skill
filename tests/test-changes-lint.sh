@@ -105,7 +105,7 @@ entry cve-dash-nested.changes "- Update to 1.2:" "    - CVE-2026-2222 remains un
 case_ cve-dash-nested 1 "cve-dash-nested.changes:5: bullet names a CVE id as not fixed" --entries 1 "$work/cve-dash-nested.changes"
 # A bullet that states the fix of the id it cites is not a finding, even
 # when it also says what an earlier attempt left undone; an id it does not
-# state as fixed still is. The not-affected form is the sanctioned one.
+# state as fixed still is. A not-affected id is no way out: see below.
 entry cve-fix-stated.changes "- Fix CVE-2026-1234, which 1.1 did not fix completely"
 case_ cve-fix-stated-clean 0 "OK: clean" --entries 1 "$work/cve-fix-stated.changes"
 entry cve-fixed-id-first.changes "- CVE-2026-1234: fixed; the 1.1 patch did not address the" "  32-bit path"
@@ -148,9 +148,50 @@ case_ cve-na-no-id-clean 0 "OK: clean" --entries 1 "$work/cve-na-no-id.changes"
 # "the fixed version" is not-affected wording, not a statement that an id is fixed
 entry cve-na-header-one.changes "- Not affected, vendored dependencies are above the fixed version:" \
   "  * CVE-2026-1111 (bsc#1)"
-case_ cve-na-header-one 1 "cve-na-header-one.changes:4: $NA_MSG" --entries 1 "$work/cve-na-header-one.changes"
+case_ cve-na-header-one 1 "cve-na-header-one.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" --entries 1 "$work/cve-na-header-one.changes"
 entry cve-na-oneliner.changes "- Not affected (above the fixed versions): CVE-2026-1111," "  CVE-2026-2222 (bsc#1, bsc#2)"
-case_ cve-na-oneliner 1 "cve-na-oneliner.changes:4: $NA_MSG" --entries 1 "$work/cve-na-oneliner.changes"
+case_ cve-na-oneliner 1 "cve-na-oneliner.changes:4: $NA_MSG (CVE-2026-1111, CVE-2026-2222, bsc#1, bsc#2)" \
+  --entries 1 "$work/cve-na-oneliner.changes"
+# a header without its ':', or a list at the header's own indent
+entry cve-na-no-colon.changes "- Not affected, vendored dependencies are above the fixed version" \
+  "  * CVE-2026-1111 (bsc#1): package is 1.2.3, fixed in 1.2.0"
+case_ cve-na-no-colon 1 "cve-na-no-colon.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" --entries 1 "$work/cve-na-no-colon.changes"
+entry cve-na-same-indent.changes "- Not affected, vendored dependencies are above the fixed version:" \
+  "- CVE-2026-1111 (bsc#1): package is 1.2.3, fixed in 1.2.0" "- Fix a crash on empty input (boo#3)"
+case_ cve-na-same-indent 1 "cve-na-same-indent.changes:4: $NA_MSG (CVE-2026-1111, bsc#1)" --entries 1 "$work/cve-na-same-indent.changes"
+# A fix that also says what is not affected: only the ids next to that phrase count.
+entry cve-na-fix-and-na.changes "- Fix CVE-2026-1111 (boo#1); boo#2 is not affected"
+case_ cve-na-fix-and-na 1 "cve-na-fix-and-na.changes:4: $NA_MSG (boo#2)" --entries 1 "$work/cve-na-fix-and-na.changes"
+entry cve-na-fix-list.changes "- Update to 0.23.0:" "  * The other CVEs fixed by this release are in bindings this" \
+  "    package does not build, so it is not affected here:" "    CVE-2026-1111 (boo#1, Lua), CVE-2026-2222 (boo#2, Java)"
+case_ cve-na-fix-list 1 "cve-na-fix-list.changes:5: $NA_MSG (CVE-2026-1111, boo#1, CVE-2026-2222, boo#2)" \
+  --entries 1 "$work/cve-na-fix-list.changes"
+while IFS='|' read -r name text <&3; do
+  entry "cve-na-$name.changes" "$text"
+  case_ "cve-na-$name" 1 "cve-na-$name.changes:4: $NA_MSG" --entries 1 "$work/cve-na-$name.changes"
+done 3<<'EOF'
+fix-layout|- CVE-2026-1111: not affected, ships 1.2 (bsc#1)
+does-not-affect|- CVE-2026-1111 (bsc#1) does not affect this package
+isnt-affected|- The vendored foo isn't affected by CVE-2026-1111 (bsc#1)
+not-vulnerable|- This package is not vulnerable to CVE-2026-1111 (bsc#1)
+already-fixed|- The parser overflow (bsc#1) was already fixed in 1.1
+EOF
+while IFS='|' read -r name text <&3; do
+  entry "cve-na-ok-$name.changes" "- Update to 1.2:" "$text"
+  case_ "cve-na-ok-$name" 0 "OK: clean" --entries 1 "$work/cve-na-ok-$name.changes"
+done 3<<'EOF'
+bump-layout|  * CVE-2026-1111: heap overflow; 1.x is not affected (bsc#1)
+fix-bug|- Fix a crash (boo#1234567); Wayland sessions are not affected
+patch-named|- Add fix-resume.patch: Wayland sessions are unaffected (boo#1)
+keep|- Keep configs unaffected by the upgrade (boo#1234567)
+over-patched|- Prefer system zlib over the patched bundled copy (boo#1234567)
+EOF
+entry cve-na-ok-patch-layout.changes "- CVE-2026-1111: heap overflow; arm is not affected (bsc#1)" \
+  "  * fix-CVE-2026-1111.patch"
+case_ cve-na-ok-patch-layout 0 "OK: clean" --entries 1 "$work/cve-na-ok-patch-layout.changes"
+entry cve-na-ok-security-header.changes "- Update to 3.1.2:" "  * Security fixes (3.0.x is not affected):" \
+  "    + CVE-2026-1111: heap overflow (bsc#1)"
+case_ cve-na-ok-security-header 0 "OK: clean" --entries 1 "$work/cve-na-ok-security-header.changes"
 
 # Request ids and staging order belong in the SR message, not in .changes.
 # Real case: sr#1385697, wrapped over a continuation line.
