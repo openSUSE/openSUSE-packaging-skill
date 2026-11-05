@@ -229,7 +229,7 @@ def build_verdict(t, notes):
     if not rows:
         raise Lookup(f"no build results for {who}{t.where}")
     # the link origin, read once and only when a judged build is not green
-    src, there, upstream = None, {}, None
+    there, upstream = {}, None
     if t.scoped and any(d or c not in GREEN | SKIP for _, _, _, c, d, _ in rows):
         # unexpanded: a broken link fails to expand, and its reds must still read red
         raw = parse(osc(["api", f"/source/{t.prj}/{t.pkg}"]), "source listing")
@@ -278,7 +278,7 @@ def build_verdict(t, notes):
             raise Lookup(out_of_scope(who))
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
-    t.srcmd5 = (src if src is not None else listing(t)).get("srcmd5")
+    t.srcmd5 = listing(t).get("srcmd5")
     who += f" sources {t.srcmd5[:12]}"
     older = "built from older sources"
     for res, name, label in failed:
