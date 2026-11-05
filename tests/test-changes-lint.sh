@@ -145,6 +145,12 @@ case_ cve-na-mixed 1 "cve-na-mixed.changes:4: $NA_MSG" --entries 1 "$work/cve-na
 entry cve-na-no-id.changes "- Refresh the vendored dependencies" "- Fix CVE-2026-1111 (boo#1): crash on empty input" \
   "- The bundled foo is above the fixed version for the other issue"
 case_ cve-na-no-id-clean 0 "OK: clean" --entries 1 "$work/cve-na-no-id.changes"
+# "the fixed version" is not-affected wording, not a statement that an id is fixed
+entry cve-na-header-one.changes "- Not affected, vendored dependencies are above the fixed version:" \
+  "  * CVE-2026-1111 (bsc#1)"
+case_ cve-na-header-one 1 "cve-na-header-one.changes:4: $NA_MSG" --entries 1 "$work/cve-na-header-one.changes"
+entry cve-na-oneliner.changes "- Not affected (above the fixed versions): CVE-2026-1111," "  CVE-2026-2222 (bsc#1, bsc#2)"
+case_ cve-na-oneliner 1 "cve-na-oneliner.changes:4: $NA_MSG" --entries 1 "$work/cve-na-oneliner.changes"
 
 # Request ids and staging order belong in the SR message, not in .changes.
 # Real case: sr#1385697, wrapped over a continuation line.
