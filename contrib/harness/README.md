@@ -767,8 +767,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
   call whose input it cannot read.
 - opencode cannot prompt from these hooks, so a guard ask reaches the model as a refusal:
   on the agent's own commit or request it names a missing step to take before retrying, the
-  agent never hands the user an osc command, and one that persists is reported as a blocker
-  (someone else's item: as waiting for the user's go).
+  agent never hands the user an osc, tea or git-obs command, and one that persists is
+  reported as a blocker (someone else's item: as waiting for the user's go).
 
 ## Limits
 
