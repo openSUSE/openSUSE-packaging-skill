@@ -18,7 +18,7 @@
 #                [--git-base REF] [--build-log FILE] [--rpms DIR] [--cleaner-deviation REASON]
 #                [--no-entry REASON] [--full]
 #        gate.sh [DIR] --review FILE
-#        gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX]
+#        gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX] [--arches REGEX]
 #   DIR          package checkout (default .)
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
@@ -78,13 +78,19 @@
 #                repo/arch/flavor succeeded from them (each log's srcmd5), and
 #                build-summary.sh reads each log GREEN; --rpms DIR also records
 #                the shipped-binary check of OBS's RPMs. A red build drops the
-#                tree's recorded build. Only the Factory/Tumbleweed repos are
-#                judged (openSUSE_Factory*, openSUSE_Tumbleweed, an
-#                openSUSE:Factory project's standard); every other repo is a note
-#                with its state, never red or pending. The stamp records the
-#                repos it judged
+#                tree's recorded build. Judged: the Tumbleweed and Leap 16 repos
+#                (openSUSE_Factory*, openSUSE_Tumbleweed, an openSUSE:Factory
+#                project's standard; 16.N and openSUSE_Leap_16.N unless the
+#                stamp's target is openSUSE:Factory) on x86_64 and aarch64; any
+#                other repo/arch is a note with its state, never red or pending.
+#                A red (failed, unresolvable, broken) the link origin has at the
+#                same repo/arch is PRE-EXISTING: listed, not red, and GREEN needs
+#                one judged build that succeeded; a repo/arch the origin disables
+#                or excludes is not judged. The stamp records the repos judged
+#                and the PRE-EXISTING ones
 #   --repos REGEX  with --obs-build: also judge the repos whose name matches
 #                (re.search), when the user says another target matters
+#   --arches REGEX  with --obs-build: also judge the arches that match
 # Parsing a spec runs its %(...) on this host as you, and %prep runs the
 # package's code (sandboxed, which keeps it off the network and out of $HOME but
 # is no reason to trust it): run the gate only on a checkout you are changing
@@ -453,14 +459,20 @@ def xml(text):
 
 
 FACTORY_REPO = re.compile(r"openSUSE_(Factory(_\w+)?|Tumbleweed)")
+LEAP16_REPO = re.compile(r"(openSUSE_Leap_)?16\.\d+")
+ARCHES = {"x86_64", "aarch64"}
+REDS = {"failed", "unresolvable", "broken"}
 
 
-def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
-    try:
-        extra = re.compile(repos) if repos else None
-    except re.error as e:
-        print("gate.sh: --repos %r: %s" % (repos, e), file=sys.stderr)
-        return 2
+def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", arches=""):
+    rx = {}
+    for opt, v in (("--repos", repos), ("--arches", arches)):
+        try:
+            rx[opt] = re.compile(v) if v else None
+        except re.error as e:
+            print("gate.sh: %s %r: %s" % (opt, v, e), file=sys.stderr)
+            return 2
+    extra, wide = rx["--repos"], rx["--arches"]
     fm = files(d)
     t = key(fm) if fm is not None and present(fm) else ""
     st = load(path)
@@ -474,6 +486,10 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
     if not srcmd5:
         print("VERDICT: UNKNOWN — cannot read the sources of %s: %s" % (who, err or "no srcmd5 in the listing"))
         return 1
+    li = src.find("linkinfo")
+    origin = (li.get("project"), li.get("package") or pkg) if li is not None and li.get("project") else None
+    tprj = (st.get("target") or "").split("/")[0]
+    leap = not (tprj == "openSUSE:Factory" or tprj.startswith("openSUSE:Factory:"))
     remote = {e.get("name"): e.get("md5") for e in src.findall("entry")
               if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
     mine = st.get("files") if isinstance(st.get("files"), dict) else {}
@@ -504,51 +520,75 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
     if res is None:
         print("VERDICT: UNKNOWN — cannot read the build results of %s: %s" % (who, err or "unparseable"))
         return 1
-    rows, bad, odd, waiting, notes, judged, others = [], [], [], [], [], set(), set()
-    factory = False
+    entries, notes = [], []
     for r in res.findall("result"):
-        repo = r.get("repository") or ""
+        repo, arch = r.get("repository") or "", r.get("arch") or ""
         fac = bool(FACTORY_REPO.fullmatch(repo)) or (
             repo == "standard" and (prj == "openSUSE:Factory" or prj.startswith("openSUSE:Factory:")))
+        inside = (fac or (leap and LEAP16_REPO.fullmatch(repo)) or (extra and extra.search(repo))) \
+            and (arch in ARCHES or (wide and wide.search(arch)))
         for s in r.findall("status"):
             name = s.get("package") or ""
             if name != pkg and not name.startswith(pkg + ":"):
                 continue
-            label = "%s/%s%s" % (r.get("repository"), r.get("arch"), name[len(pkg):])
+            label = "%s/%s%s" % (repo, arch, name[len(pkg):])
             code = s.get("code") or ""
-            if not fac and not (extra and extra.search(repo)):
-                if code not in SKIPPED:
-                    notes.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code or "no code"))
+            state = "dirty" if r.get("dirty") == "true" else code or "no code"
+            if code in SKIPPED:
                 continue
-            if code not in SKIPPED:
-                judged.add(repo)
-                factory = factory or fac
-                if not fac:
-                    others.add(repo)
-            if r.get("dirty") == "true" or code in WAITING:
-                waiting.append("%s %s" % (label, "dirty" if r.get("dirty") == "true" else code))
-            elif code in ("succeeded", "failed"):
-                rows.append((r.get("repository"), r.get("arch"), name, label))
-            elif code in ("unresolvable", "broken"):
-                bad.append("%s %s" % (label, code))
-            elif code not in SKIPPED:
-                odd.append("%s %s" % (label, code or "no code"))
+            if not inside:
+                notes.append("%s %s" % (label, state))
+                continue
+            entries.append((repo, arch, name, label, code, state, fac))
+    # the link origin's state of each judged repo/arch, read only when one is not green
+    theirs = {}
+    if origin and any(e[5] != "succeeded" for e in entries):
+        text, err = osc_run(["results", "--xml", origin[0], origin[1]])
+        ores = xml(text)
+        if ores is None:
+            return unknown("cannot read the build results of %s/%s, the link origin: %s"
+                           % (origin[0], origin[1], err or "unparseable"))
+        for r in ores.findall("result"):
+            for s in r.findall("status"):
+                name = s.get("package") or ""
+                if name == origin[1] or name.startswith(origin[1] + ":"):
+                    theirs[(r.get("repository"), r.get("arch"), name[len(origin[1]):])] = s.get("code") or ""
+    rows, bad, odd, waiting, pre, judged = [], [], [], [], [], set()
+    factory = False
+    for repo, arch, name, label, code, state, fac in entries:
+        there = theirs.get((repo, arch, name[len(pkg):]))
+        if there in SKIPPED:
+            notes.append("%s %s (%s in %s)" % (label, state, there, origin[0]))
+            continue
+        judged.add(repo)
+        factory = factory or fac
+        if state == "dirty" or code in WAITING:
+            waiting.append("%s %s" % (label, state))
+        elif code in REDS and there in REDS:
+            if code == "failed":
+                rows.append((repo, arch, name, label, fac, True))
+            else:
+                pre.append("%s %s" % (label, code))
+        elif code in ("succeeded", "failed"):
+            rows.append((repo, arch, name, label, fac, False))
+        elif code in REDS:
+            bad.append("%s %s" % (label, code))
+        else:
+            odd.append("%s %s" % (label, state))
     if notes:
-        print("note: not judged, not a Factory/Tumbleweed repo (--repos REGEX judges one): %s"
+        print("note: not judged (--repos/--arches REGEX judges one): %s"
               % (", ".join(notes[:8]) + (" +%d more" % (len(notes) - 8) if len(notes) > 8 else "")))
     if not judged:
-        return unknown("no Factory/Tumbleweed repo builds it; pass --repos REGEX for the repos that matter")
+        return unknown("no Tumbleweed or Leap 16 repo builds it on x86_64 or aarch64; pass --repos/--arches REGEX for the ones that matter")
     if bad:
         return red(", ".join(bad))
     if odd:
         return unknown("states the gate cannot judge: " + ", ".join(odd[:6]))
     if waiting:
         return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
-    if not rows:
-        return unknown("nothing built: no repo/arch builds it (no results, or all disabled or excluded)")
     os.makedirs(outdir, exist_ok=True)
-    reds, older, done = [], [], []
-    for repo, arch, name, label in rows:
+    reds, older, done, others = [], [], [], set()
+    for repo, arch, name, label, fac, red_there in rows:
         logf = os.path.join(tmp, "%s-%s-%s.log" % (repo, arch, name.replace(":", "_")))
         with open(logf, "w", encoding="utf-8") as fh:
             _, err = osc_run(["rbl", prj, name, repo, arch], out=fh)
@@ -559,6 +599,9 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
         if not m or m.group(1) != srcmd5:
             older.append("%s on %s" % (label, m.group(1)[:12] if m else "unknown sources"))
             continue
+        if red_there:
+            pre.append("%s failed" % label)
+            continue
         p = subprocess.run([summary, logf], capture_output=True, text=True, cwd=d)
         with open(os.path.join(outdir, label.replace("/", "-").replace(":", "_") + ".txt"), "w", encoding="utf-8") as fh:
             fh.write(p.stdout + p.stderr)
@@ -567,10 +610,16 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
             reds.append("%s %s" % (label, v))
         else:
             done.append(label)
+            if not fac:
+                others.add(repo)
+    if pre:
+        print("note: PRE-EXISTING, red in %s too (reported, not red): %s" % (origin[0], ", ".join(pre)))
     if reds:
         return red("build-summary.sh: %s (summaries: %s)" % ("; ".join(reds), outdir))
     if older:
         return pending("built from older sources: " + ", ".join(older[:6]))
+    if not done:
+        return unknown("no judged build succeeded, only reds %s has too" % origin[0])
     if rpms:
         p = subprocess.run([scan, d, "--rpms", rpms], capture_output=True, text=True, cwd=d)
         with open(os.path.join(outdir, "source-binaries.txt"), "w", encoding="utf-8") as fh:
@@ -586,11 +635,14 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos=""):
     if rpms:
         cur["rpms"] = {"dir": rpms, "time": now()}
     cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done,
-                    "repos": sorted(judged), "factory": factory, "others": sorted(others), "time": now()}
+                    "repos": sorted(judged), "factory": factory, "others": sorted(others),
+                    "preexisting": pre, "time": now()}
     save(path, cur)
     shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""
-    print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s (summaries: %s)" % (t[:12], srcmd5[:12], shown, rp, outdir))
+    pe = "; PRE-EXISTING: %s" % ", ".join(pre) if pre else ""
+    print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s%s (summaries: %s)"
+          % (t[:12], srcmd5[:12], shown, rp, pe, outdir))
     return 0
 
 
@@ -1368,9 +1420,9 @@ sys.exit(fn(*args))
 PYEOF
 py() { python3 -c "$PY" "$@"; }
 dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; noentry=""; full=0; review=""; nopts=0
-obsbuild=0; repos=""
+obsbuild=0; repos=""; arches=""
 while [ $# -gt 0 ]; do
-  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--review|--repos) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
+  case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--review|--repos|--arches) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
   case "$1" in --entries|--amend-top|--squash-mine|--target|--git-base|--build-log|--rpms|--cleaner-deviation|--no-entry|--full) nopts=$((nopts+1)) ;; esac
   case "$1" in
     -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -1390,14 +1442,15 @@ while [ $# -gt 0 ]; do
     --review) review=$(realpath -m -- "$2"); shift 2 ;;
     --obs-build) obsbuild=1; shift ;;
     --repos) repos=$2; shift 2 ;;
+    --arches) arches=$2; shift 2 ;;
     -*) echo "gate.sh: unknown option $1" >&2; exit 2 ;;
     *) dir=$1; shift ;;
   esac
 done
 [ -z "$review" ] || [ "$nopts" = 0 ] || { echo "gate.sh: --review records a verdict and runs no gate: it takes DIR only" >&2; exit 2; }
 [ "$obsbuild" = 0 ] || { [ -z "$review" ] && [ "$nopts" = "$([ -n "$rpms" ] && echo 1 || echo 0)" ]; } \
-  || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR, --rpms and --repos only" >&2; exit 2; }
-[ -z "$repos" ] || [ "$obsbuild" = 1 ] || { echo "gate.sh: --repos goes with --obs-build" >&2; exit 2; }
+  || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR, --rpms, --repos and --arches only" >&2; exit 2; }
+[ -z "$repos$arches" ] || [ "$obsbuild" = 1 ] || { echo "gate.sh: --repos and --arches go with --obs-build" >&2; exit 2; }
 cd "$dir" || exit 2
 # Anywhere else source_validator reports rc=0 over nothing: a green piece of a
 # verdict about no package.
@@ -1421,7 +1474,7 @@ if [ "$obsbuild" = 1 ]; then
   # the logs go under /var/tmp, not the /tmp tmpfs; the summaries stay with the gate's output
   dl=$(mktemp -d -p /var/tmp "gate-obs-$pkg.XXXXXX") || { echo "VERDICT: UNKNOWN — no scratch directory under /var/tmp"; exit 1; }
   sums="${TMPDIR:-/tmp}/gate-$pkg/obs-build"; rm -rf "$sums"
-  py obsbuild "$stampf" . "$own" "$pkg" "$dl" "$sums" "$HERE/build-summary.sh" "$HERE/source-binaries.py" "$rpms" "$repos"; rc=$?
+  py obsbuild "$stampf" . "$own" "$pkg" "$dl" "$sums" "$HERE/build-summary.sh" "$HERE/source-binaries.py" "$rpms" "$repos" "$arches"; rc=$?
   rm -rf "$dl"; exit $rc
 fi
 log="${TMPDIR:-/tmp}/gate-$pkg"; rm -rf "$log"; mkdir -p "$log"

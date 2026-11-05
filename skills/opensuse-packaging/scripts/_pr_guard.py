@@ -566,8 +566,8 @@ ASKS = {
     "call, and file once gate.sh --review recorded the change review's PASS.",
     "build-evidence": "{0}. Record its build first: {s}/gate.sh with --build-log LOG "
     "(a local build of this tree), or gate.sh DIR --obs-build once OBS built the "
-    "commit (it judges the Factory/Tumbleweed repos; --repos REGEX adds the "
-    "target's); then file.",
+    "commit (it judges Tumbleweed and Leap 16 on x86_64 and aarch64; --repos and "
+    "--arches REGEX add the target's); then file.",
     "gate-args": "{0}, so the guard cannot see whether --review is among them. "
     "Write {s}/gate.sh's arguments out literally (no --review is involved).",
     "review-self": "{0}: only the changes-review agent that ran the review records "
@@ -2730,9 +2730,10 @@ def covers(build, dst, target):
     """Whether a GREEN build covers a request to dst: a local log, or an OBS
     stamp from before gate.sh judged repos, covers any; an OBS build covers
     Factory and the gate's target (its devel project) when it judged a
-    Factory/Tumbleweed repo, any other project only through the repos --repos
-    added, one naming dst's version when dst has one (SLE-15-SP7: 15_SP7,
-    15-SP7 or 15.7)."""
+    Factory/Tumbleweed repo, its PRE-EXISTING reds (the link origin's too)
+    included, any other project only through a judged repo that built green,
+    one naming dst's version when dst has one (SLE-15-SP7: 15_SP7, 15-SP7 or
+    15.7)."""
     if build.get("kind") != "obs" or not isinstance(build.get("repos"), list):
         return True
     target = (target or "").split("/")[0]
