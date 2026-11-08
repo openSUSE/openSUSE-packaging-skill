@@ -451,6 +451,7 @@ case "$1" in
   develproject) [ -f "$OBS/devel/$3" ] && { cat "$OBS/devel/$3"; exit 0; } ;;
   api) case "$2" in
          */_scmsync.obsinfo) [ -e "$OBS/fail-obsinfo" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+                  [ -f "$OBS/obsinfo-race" ] && { cat "$OBS/obsinfo-race"; exit 0; }
                   p=${2#/source/}; [ -f "$OBS/$p" ] && { cat "$OBS/$p"; exit 0; } ;;
          */_meta) [ -e "$OBS/fail-meta" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
                   p=${2#/source/}; p=${p%/_meta}; [ -d "$OBS/$p" ] && { echo "<package name=\"${p#*/}\"/>"; exit 0; } ;;
@@ -1309,6 +1310,17 @@ for x in "printf 'y\n' >> .gitignore && git update-index --assume-unchanged .git
   [ "$rc" = 0 ] && grep -qF "note: no tree to stamp: git's index hides changes to $( [ $n = 1 ] && echo .gitignore || echo link ) (assume-unchanged or skip-worktree)" <<<"$out" \
     && pass "scmsync git checkout, an index flag hides an edit (case $n): no tree" || { fail "scmsync index flag $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 done
+# The _scmsync.obsinfo read must be the one the listing named: OBS synced again in between.
+scmgit "$work/t-scm"; printf 'mtime: 2\ncommit: %s\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "$O/obsinfo-race"
+pys tracked "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "UNKNOWN: the _scmsync.obsinfo read is not the one OBS lists for devel:example/scmpkg: the listing changed, rerun" <<<"$out" \
+  && pass "scmsync git checkout, the obsinfo changed since the listing: UNKNOWN, red" || { fail "scmsync obsinfo race: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm "$O/obsinfo-race"
+# Its md5 is over the bytes osc api writes: CRLF line ends are no change.
+printf 'mtime: 1\r\ncommit: %s\r\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "$O/devel:example/scmpkg/_scmsync.obsinfo"
+pys tracked "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists" <<<"$out" \
+  && pass "scmsync git checkout, an obsinfo with CRLF line ends: tracked green" || { fail "scmsync obsinfo CRLF: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 scmgit "$work/t-scm"; : > "$O/fail-obsinfo"
 pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the commit OBS synced for devel:example/scmpkg" <<<"$out" \

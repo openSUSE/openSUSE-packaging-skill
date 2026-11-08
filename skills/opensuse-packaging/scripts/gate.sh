@@ -180,11 +180,11 @@ SCM_MADE = {"_scmsync.obsinfo", "build.specials.obscpio"}
 SCM_WHY = []
 
 
-def scm_stray(d, prj, pkg, local):
+def scm_stray(d, prj, pkg, local, remote):
     # What in scmsync checkout d is not the commit OBS synced, which a build
     # of the tree still copies in: with .git, HEAD must be the commit:
-    # _scmsync.obsinfo names, no index flag may hide a file from git, and
-    # git must see nothing untracked, ignored or
+    # _scmsync.obsinfo names (the one remote lists), no index flag may hide
+    # a file from git, and git must see nothing untracked, ignored or
     # changed (but the top-level files the md5 check holds to OBS's); without,
     # no directory, symlink or dotfile but .osc and .git*. "" when none,
     # else why
@@ -197,11 +197,16 @@ def scm_stray(d, prj, pkg, local):
         return note("the checkout holds a directory, symlink or dotfile OBS does not list: %s"
                     % ", ".join(odd[:4])) if odd else ""
     p = subprocess.run(["osc", "api", "/source/%s/%s/_scmsync.obsinfo" % (prj, pkg)],
-                       capture_output=True, text=True)
+                       capture_output=True)
     if p.returncode != 0:
-        err = (p.stderr.strip().splitlines() or ["osc exited %d" % p.returncode])[-1][:160]
+        err = (p.stderr.decode("utf-8", "replace").strip().splitlines()
+               or ["osc exited %d" % p.returncode])[-1][:160]
         return "UNKNOWN: cannot read the commit OBS synced for %s/%s: %s" % (prj, pkg, err)
-    synced = [ln.split(":", 1)[1].strip() for ln in p.stdout.splitlines() if ln.startswith("commit:")]
+    if hashlib.md5(p.stdout).hexdigest() != remote.get("_scmsync.obsinfo"):
+        return ("UNKNOWN: the _scmsync.obsinfo read is not the one OBS lists for %s/%s:"
+                " the listing changed, rerun" % (prj, pkg))
+    synced = [ln.split(":", 1)[1].strip() for ln in p.stdout.decode("utf-8", "replace").splitlines()
+              if ln.startswith("commit:")]
     g = subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True)
     head = g.stdout.strip() if g.returncode == 0 else ""
     if not synced or not head or synced[0].lower() != head.lower():
@@ -257,7 +262,7 @@ def scm(d):
                        " holds (%s); a change goes by git PR, and once OBS synced it, osc up and rerun"
                        % (prj, pkg, ", ".join(odd[:4])))
         return None
-    stray = scm_stray(d, prj, pkg, local)
+    stray = scm_stray(d, prj, pkg, local, remote)
     if stray:
         SCM_WHY.append(stray)
         return None
