@@ -1379,6 +1379,7 @@ ask_ comment-osc-api-post       comment "osc api POST"
 case_ comment-osc-api-get       0 - ""
 # A comment on a request whose every target package the account maintains runs, whoever filed it.
 case_ comment-request-own-pkg     0 - ""
+case_ comment-request-git-pkg     0 - ""
 case_ comment-request-own-req     0 - ""
 case_ comment-api-own-pkg         0 - ""
 ask_ comment-request-unreadable   comment "osc comment create: cannot read request 1390005"
@@ -1418,6 +1419,12 @@ ask_ comment-tea-others-item      comment "tea comment: AI has no _maintainershi
 ask_ comment-tea-pkg-other        comment "tea comment: lua/lua-y is maintained by other"
 ask_ comment-tea-prj-not-pkg      comment "tea comment: perl/perl-Bar is maintained by boss"
 ask_ comment-tea-pool-other       comment "tea comment: pool/dlib: science:machinelearning/dlib is maintained by other"
+# A devel project kept in git (devel:openSUSE:Factory) has stub package _meta: its
+# project git's _maintainership.json decides, never the OBS persons.
+case_ comment-tea-pool-git        0 - ""
+ask_ comment-tea-pool-git-group   comment "tea comment: pool/hwgrp: devel:gitprj/hwgrp is maintained by @team (gitprj/_ObsPrj)"
+ask_ comment-tea-pool-git-other   comment "tea comment: pool/hwother: devel:gitprj/hwother is maintained by other (gitprj/_ObsPrj)"
+ask_ comment-tea-pool-git-unreadable comment "tea comment: pool/hwbad: cannot read repos/gitbad/_ObsPrj/raw/_maintainership.json"
 ask_ comment-tea-no-login         comment "tea comment: it names no --login src.opensuse.org"
 ask_ comment-tea-other-login      comment "tea comment: it names no --login src.opensuse.org"
 ask_ comment-tea-no-repo          comment "tea comment: it names no --repo owner/name"
@@ -1479,6 +1486,7 @@ case_ comment-git-obs-close-plain 0 - ""
 
 echo "--- an accept or a forward is unattended only where autoforward-gate.sh says ELIGIBLE"
 case_ accept-own-eligible       0 - ""
+case_ accept-git-eligible       0 - ""
 case_ accept-own-var            0 - ""
 # Who filed it does not matter: a maintainer accepts contributions to their package.
 case_ accept-others-request     0 - ""

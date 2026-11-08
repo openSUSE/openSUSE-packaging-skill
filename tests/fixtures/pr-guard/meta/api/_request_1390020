@@ -1,0 +1,1 @@
+<request id="1390020" creator="other"><action type="submit"><source project="home:other:branches:devel:gitprj" package="hwgit" rev="2"/><target project="devel:gitprj" package="hwgit"/></action><state name="new"/></request>
