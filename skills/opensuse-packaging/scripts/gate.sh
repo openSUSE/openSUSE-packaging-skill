@@ -111,7 +111,9 @@
 # syncs from git, .osc/_scm) takes no osc ci: a change goes by git PR. Its tree
 # is the files OBS lists, the ones a forward's osc sr sends, stamped only while
 # the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
-# build.specials.obscpio, which OBS makes) and no other; --review and
+# build.specials.obscpio, which OBS makes) and no other, its git HEAD is the
+# commit OBS synced, and git sees nothing untracked, ignored or changed (with
+# no .git: no directory, symlink or dotfile but .osc and .git*); --review and
 # --obs-build then work as in any osc checkout.
 # Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
 #       red (VERDICT names them; --review: the verdict file is not a PASS of this
@@ -177,11 +179,45 @@ SCM_MADE = {"_scmsync.obsinfo", "build.specials.obscpio"}
 SCM_WHY = []
 
 
+def scm_stray(d, prj, pkg, local):
+    # What in scmsync checkout d is not the commit OBS synced, which a build
+    # of the tree still copies in: with .git, HEAD must be the commit:
+    # _scmsync.obsinfo names, and git must see nothing untracked, ignored or
+    # changed (but the top-level files the md5 check holds to OBS's); without,
+    # no directory, symlink or dotfile but .osc and .git*. "" when none,
+    # else why
+    def note(why):
+        return "note: no tree to stamp: %s; a change goes by git PR, and once OBS synced it, osc up and rerun" % why
+    if not os.path.lexists(os.path.join(d, ".git")):
+        odd = sorted(n for n in os.listdir(d) if n != ".osc" and not n.startswith(".git")
+                     and (n.startswith(".") or os.path.islink(os.path.join(d, n))
+                          or os.path.isdir(os.path.join(d, n))))
+        return note("the checkout holds a directory, symlink or dotfile OBS does not list: %s"
+                    % ", ".join(odd[:4])) if odd else ""
+    p = subprocess.run(["osc", "api", "/source/%s/%s/_scmsync.obsinfo" % (prj, pkg)],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        err = (p.stderr.strip().splitlines() or ["osc exited %d" % p.returncode])[-1][:160]
+        return "UNKNOWN: cannot read the commit OBS synced for %s/%s: %s" % (prj, pkg, err)
+    synced = [ln.split(":", 1)[1].strip() for ln in p.stdout.splitlines() if ln.startswith("commit:")]
+    g = subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True)
+    head = g.stdout.strip() if g.returncode == 0 else ""
+    if not synced or not head or synced[0].lower() != head.lower():
+        return note("the checkout is at %s, OBS synced %s/%s at %s"
+                    % (head[:12] or "no commit", prj, pkg, (synced or ["no commit"])[0][:12]))
+    st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored",
+                         "--", ".", ":(exclude).osc"], cwd=d, capture_output=True, text=True)
+    if st.returncode != 0:
+        return "UNKNOWN: git status failed in %s" % d
+    odd = [ln[3:] for ln in st.stdout.splitlines() if not (ln[:3] == "!! " and ln[3:] in local)]
+    return note("git sees what the commit lacks: %s" % ", ".join(odd[:4])) if odd else ""
+
+
 def scm(d):
     # A scmsync checkout (osc co of a package OBS syncs from git) has no
     # .osc/_files: its tree is the files OBS lists, once the checkout holds
-    # each with OBS's md5 (but what OBS makes) and no other; else None, and
-    # why in SCM_WHY
+    # each with OBS's md5 (but what OBS makes), no other, and nothing past the
+    # commit OBS synced (scm_stray()); else None, and why in SCM_WHY
     try:
         prj, pkg = (open(os.path.join(d, ".osc", n), encoding="utf-8").read().strip()
                     for n in ("_project", "_package"))
@@ -209,6 +245,10 @@ def scm(d):
         SCM_WHY.append("note: no tree to stamp: OBS lists other files for %s/%s than this checkout"
                        " holds (%s); a change goes by git PR, and once OBS synced it, osc up and rerun"
                        % (prj, pkg, ", ".join(odd[:4])))
+        return None
+    stray = scm_stray(d, prj, pkg, local)
+    if stray:
+        SCM_WHY.append(stray)
         return None
     return remote
 

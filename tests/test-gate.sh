@@ -450,6 +450,8 @@ cat > "$work/obin/osc" <<'EOF'
 case "$1" in
   develproject) [ -f "$OBS/devel/$3" ] && { cat "$OBS/devel/$3"; exit 0; } ;;
   api) case "$2" in
+         */_scmsync.obsinfo) [ -e "$OBS/fail-obsinfo" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+                  p=${2#/source/}; [ -f "$OBS/$p" ] && { cat "$OBS/$p"; exit 0; } ;;
          */_meta) [ -e "$OBS/fail-meta" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
                   p=${2#/source/}; p=${p%/_meta}; [ -d "$OBS/$p" ] && { echo "<package name=\"${p#*/}\"/>"; exit 0; } ;;
          *'?expand=1') [ -e "$OBS/fail-list" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
@@ -1262,14 +1264,51 @@ pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the files OBS lists for devel:example/scmpkg" <<<"$out" \
   && pass "scmsync checkout, a failed listing: UNKNOWN, red" || { fail "scmsync listing failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm "$O/fail-list"
-# The whole gate GREEN in a scmsync checkout stamps the same tree (the services needed).
+# Nothing past the commit OBS synced, which a build of the tree would still copy
+# in. Without .git: no directory, symlink or dotfile but .osc and .git*.
+n=0
+for x in "mkdir extra" ": > .hidden.patch" "ln -s /etc/hostname fix2.patch"; do
+  n=$((n+1)); scmco "$work/t-scm"; ( cd "$work/t-scm" && eval "$x" )
+  pys tracked "$work/t-scm"
+  [ "$rc" = 0 ] && grep -qF "note: no tree to stamp: the checkout holds a directory, symlink or dotfile OBS does not list" <<<"$out" \
+    && pass "scmsync checkout without .git, case $n ($x): no tree" || { fail "scmsync stray $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done
+# With .git: HEAD is the commit OBS's _scmsync.obsinfo names, and git sees nothing else.
+scmgit() {   # scmgit <dir>: scmco, its files committed, OBS synced at that commit
+  scmco "$1" && ( cd "$1" && g init -q -b main && printf '.osc\n' >> .git/info/exclude && g add -A && g commit -qm sync ) \
+    && printf 'mtime: 1\ncommit: %s\n' "$(git -C "$1" rev-parse HEAD)" > "$O/devel:example/scmpkg/_scmsync.obsinfo"
+}
+scmgit "$work/t-scm" || fail "scmsync git fixture"
+pys tracked "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists" <<<"$out" \
+  && pass "scmsync git checkout at the commit OBS synced: tracked green" || { fail "scmsync git: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'mtime: 1\ncommit: 0123456789ab\n' > "$O/devel:example/scmpkg/_scmsync.obsinfo"
+pys tracked "$work/t-scm"
+grep -qF "no tree to stamp: the checkout is at $(git -C "$work/t-scm" rev-parse HEAD | cut -c1-12), OBS synced devel:example/scmpkg at 0123456789ab" <<<"$out" \
+  && pass "scmsync git checkout at another commit: no tree" || { fail "scmsync other commit"; printf '%s\n' "$out" | sed 's/^/    /'; }
+n=0
+for x in "mkdir extra && : > extra/x" ": > .hidden.patch" "ln -s /etc/hostname fix2.patch" \
+  "printf 'build/\n' >> .gitignore && git add .gitignore && g commit -qm ign && mkdir build && : > build/a"; do
+  n=$((n+1)); scmgit "$work/t-scm"; ( cd "$work/t-scm" && eval "$x" ) || fail "stray fixture $n"
+  printf 'mtime: 1\ncommit: %s\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "$O/devel:example/scmpkg/_scmsync.obsinfo"
+  pys tracked "$work/t-scm"
+  [ "$rc" = 0 ] && grep -qF "note: no tree to stamp: git sees what the commit lacks" <<<"$out" \
+    && pass "scmsync git checkout, case $n: no tree" || { fail "scmsync git stray $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done
+scmgit "$work/t-scm"; : > "$O/fail-obsinfo"
+pys tracked "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the commit OBS synced for devel:example/scmpkg" <<<"$out" \
+  && pass "scmsync git checkout, the synced commit unreadable: UNKNOWN, red" || { fail "scmsync obsinfo failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm "$O/fail-obsinfo"
+# The whole gate GREEN in a scmsync checkout stamps the tree OBS lists (the services needed).
 if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
-  rm -f "$SC"; scmco "$work/t-scm"
-  ( cd "$work/t-scm" && g init -q -b main && g add -A && g commit -qm sync && git branch -q base && git branch -q -u base ) \
+  rm -f "$SC"; scmgit "$work/t-scm" && ( cd "$work/t-scm" && git branch -q base && git branch -q -u base ) \
     || fail "scmsync git fixture"
   out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-scm" 2>&1)"
   t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
-  [ -n "$t12" ] && [ "$t12" = "${TS:0:12}" ] && grep -qF "OK: devel:example is the target, by git PR" <<<"$out" \
+  [ -n "$t12" ] && [ "$t12" = "$(sv "$SC" tree | cut -c1-12)" ] && grep -qF "OK: devel:example is the target, by git PR" <<<"$out" \
+    && python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1]))
+sys.exit(sorted(d["files"]) != ["_scmsync.obsinfo", "build.specials.obscpio", "scmpkg.changes", "scmpkg.spec"])' "$SC" \
     && pass "scmsync checkout: a GREEN gate run stamps the tree OBS lists" || { fail "scmsync GREEN run"; printf '%s\n' "$out" | sed 's/^/    /'; }
 else
   echo "SKIP: GREEN gate run in a scmsync checkout (no OBS source_validator/download_files)"
