@@ -1580,6 +1580,11 @@ variants = {
                              "why": "workflow.config did not parse"},
     "git-url-space": {"git": {"foo": ["tester"]}, "url": GIT + "#main x", "want": 5,
                       "why": "whose maintainers this cannot read"},
+    # XML reads these URLs, autoforward-gate.sh's sed does not: neither reads them
+    "git-url-cdata": {"git": {"foo": ["tester"]}, "url": "<![CDATA[" + GIT + "]]>", "want": 5,
+                      "why": "a <scmsync> that is not plain text"},
+    "git-url-comment": {"git": {"foo": ["tester"]}, "url": GIT + "<!-- x -->", "want": 5,
+                        "why": "a <scmsync> that is not plain text"},
     "git-reviewers-false": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": false}', "want": 5,
                             "why": "workflow.config did not parse"},
     "git-entry-false": {"git": {"": ["tester"], "foo": False}, "want": 5},

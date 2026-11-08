@@ -170,6 +170,12 @@ case_ git-reviewer-comma  5 "UNREADABLE — gorg/_ObsPrj's workflow.config did n
   "gitea $W '{\"Reviewers\": [\"qa,tester\"]}'" devel:g hw
 case_ git-url-space       5 "UNREADABLE — devel:g is kept in https://src.opensuse.org/gorg/_ObsPrj#main x, whose maintainers this cannot read" \
   "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj#main x</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
+# A CDATA section or a comment in <scmsync> leaves sed no URL: UNREADABLE, never the OBS persons.
+n=0
+for u in '<![CDATA[https://src.opensuse.org/gorg/_ObsPrj]]>' 'https://src.opensuse.org/gorg/_ObsPrj<!-- x -->'; do
+  n=$((n+1)); case_ "git-url-markup-$n" 5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text, whose maintainers this cannot read" \
+    "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>$u</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
+done
 # Absent means none; present, Reviewers is a list or an object, and an entry a list.
 for v in false 0 '""' null; do
   case_ "git-reviewers-$v" 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
