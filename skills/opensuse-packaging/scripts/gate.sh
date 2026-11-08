@@ -112,9 +112,10 @@
 # is the files OBS lists, the ones a forward's osc sr sends, stamped only while
 # the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
 # build.specials.obscpio, which OBS makes) and no other, its git HEAD is the
-# commit OBS synced, and git sees nothing untracked, ignored or changed (with
-# no .git: no directory, symlink or dotfile but .osc and .git*); --review and
-# --obs-build then work as in any osc checkout.
+# commit OBS synced, no assume-unchanged or skip-worktree flag hides a file,
+# and git sees nothing untracked, ignored or changed (with no .git: no
+# directory, symlink or dotfile but .osc and .git*); --review and --obs-build
+# then work as in any osc checkout.
 # Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
 #       red (VERDICT names them; --review: the verdict file is not a PASS of this
 #       tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
@@ -182,7 +183,8 @@ SCM_WHY = []
 def scm_stray(d, prj, pkg, local):
     # What in scmsync checkout d is not the commit OBS synced, which a build
     # of the tree still copies in: with .git, HEAD must be the commit:
-    # _scmsync.obsinfo names, and git must see nothing untracked, ignored or
+    # _scmsync.obsinfo names, no index flag may hide a file from git, and
+    # git must see nothing untracked, ignored or
     # changed (but the top-level files the md5 check holds to OBS's); without,
     # no directory, symlink or dotfile but .osc and .git*. "" when none,
     # else why
@@ -205,6 +207,15 @@ def scm_stray(d, prj, pkg, local):
     if not synced or not head or synced[0].lower() != head.lower():
         return note("the checkout is at %s, OBS synced %s/%s at %s"
                     % (head[:12] or "no commit", prj, pkg, (synced or ["no commit"])[0][:12]))
+    # assume-unchanged (a lowercase tag) and skip-worktree (S) hide an edit from git status
+    ls = subprocess.run(["git", "ls-files", "-v", "--", ".", ":(exclude).osc"],
+                        cwd=d, capture_output=True, text=True)
+    if ls.returncode != 0:
+        return "UNKNOWN: git ls-files failed in %s" % d
+    odd = [ln[2:] for ln in ls.stdout.splitlines() if not ln.startswith("H ")]
+    if odd:
+        return note("git's index hides changes to %s (assume-unchanged or skip-worktree)"
+                    % ", ".join(odd[:4]))
     st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored",
                          "--", ".", ":(exclude).osc"], cwd=d, capture_output=True, text=True)
     if st.returncode != 0:
