@@ -1672,7 +1672,8 @@ def holders(root, role):
 
 def maintains(prj, pkg, ctx):
     """(True, "") when this account maintains prj/pkg, or the package names no
-    maintainer and the account maintains prj; else (False, why)."""
+    maintainer and the account maintains prj; else (False, why). A project
+    whose _meta has <scmsync> is judged by its project git (git_maintained())."""
     user = obs_user(ctx)
     if not user:
         return False, "the account is unknown (osc whois failed)"
@@ -1684,6 +1685,9 @@ def maintains(prj, pkg, ctx):
         if root is None:
             return False, f"cannot read {text if not ok else path}"
         metas.append(root)
+    git = project_git(metas[1], text)
+    if git:
+        return git_maintained(prj, pkg, git, ctx)
     maints = holders(metas[0], "maintainer")
     groups = {
         e.get("groupid")
@@ -1761,14 +1765,7 @@ def eligible(prj, pkg, ctx):
     if revs:
         return False, f"a reviewer role is set ({', '.join(sorted(revs))})"
     if git:
-        ok, maints = git_maintainers(git[0], git[1], pkg, ctx, git[2])
-        if not ok:
-            return False, maints
-        if user in maints:
-            return True, ""
-        who = ", ".join(sorted(maints)) or "nobody"
-        at = f"#{git[2]}" if git[2] else ""
-        return False, f"{prj}/{pkg} is maintained by {who} ({git[0]}/{git[1]}{at})"
+        return git_maintained(prj, pkg, git, ctx)
     maints = holders(meta, "maintainer")
     if user in maints or not maints and user in holders(pmeta, "maintainer"):
         return True, ""
@@ -2151,6 +2148,22 @@ def git_maintainers(owner, prjgit, pkg, ctx, ref=""):
     ):
         return False, f"{owner}'s _maintainership.json did not parse"
     return True, set(lists[0] or lists[1])
+
+
+def git_maintained(prj, pkg, git, ctx):
+    """maintains() of prj/pkg for a project kept in the project git git
+    (project_git()): (True, "") when its _maintainership.json lists this
+    account (git_maintainers()); else (False, why)."""
+    if not git[0]:
+        return False, f"{prj} is kept in {git[1]}, whose {git[2]} this cannot read"
+    ok, maints = git_maintainers(git[0], git[1], pkg, ctx, git[2])
+    if not ok:
+        return False, maints
+    if obs_user(ctx) in maints:
+        return True, ""
+    who = ", ".join(sorted(maints)) or "nobody"
+    at = f"#{git[2]}" if git[2] else ""
+    return False, f"{prj}/{pkg} is maintained by {who} ({git[0]}/{git[1]}{at})"
 
 
 def jwcc(text):

@@ -7520,6 +7520,13 @@
     },
     "cwd": "@PLAIN@"
   },
+  "accept-git-eligible": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1390020"
+    },
+    "cwd": "@PLAIN@"
+  },
   "accept-own-var": {
     "tool_name": "Bash",
     "tool_input": {
@@ -8284,6 +8291,13 @@
     },
     "cwd": "@PLAIN@"
   },
+  "comment-request-git-pkg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Thanks, applied.' request 1390020"
+    },
+    "cwd": "@PLAIN@"
+  },
   "comment-request-own-req": {
     "tool_name": "Bash",
     "tool_input": {
@@ -8463,6 +8477,34 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "tea comment 9 --login src.opensuse.org --repo pool/dlib ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-git": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 --login src.opensuse.org --repo pool/hwgit ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-git-group": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 --login src.opensuse.org --repo pool/hwgrp ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-git-other": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 --login src.opensuse.org --repo pool/hwother ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-pool-git-unreadable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 9 --login src.opensuse.org --repo pool/hwbad ok"
     },
     "cwd": "@PLAIN@"
   },
