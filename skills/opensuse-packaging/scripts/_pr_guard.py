@@ -1750,7 +1750,7 @@ def eligible(prj, pkg, ctx):
         return False, f"{prj}/{pkg}'s or {prj}'s _meta did not parse"
     revs = holders(meta, "reviewer") | holders(pmeta, "reviewer")
     # A project kept in git: its OBS _meta are stubs, its roles are in the project git.
-    git = project_git(pmeta)
+    git = project_git(pmeta, text)
     if git and not git[0]:
         return False, f"{prj} is kept in {git[1]}, whose {git[2]} this cannot read"
     if git:
@@ -2210,13 +2210,22 @@ PROJECT_GIT = Rx(
 )
 
 
-def project_git(pmeta):
+def project_git(pmeta, text):
     """(owner, repo, ref) of the src.opensuse.org project git a project
     _meta's <scmsync> names (ref "" without a fragment), None for a project
-    OBS keeps, ("", url, what) for one this cannot read: kept elsewhere, or a
-    ref that is no plain branch or commit."""
+    OBS keeps, ("", url, what) for one this cannot read: kept elsewhere, a
+    ref that is no plain branch or commit, or a <scmsync> that is not plain
+    text in the _meta's text (a CDATA section, a comment), as
+    autoforward-gate.sh cannot read it."""
+    import html
+
     el = pmeta.find("scmsync")
     url = (el.text or "").strip() if el is not None else ""
+    plain = re.findall(r"<scmsync>([^<]*)</scmsync>", text)
+    if "<scmsync" in text and (
+        not url or not plain or html.unescape(plain[-1]).strip() != url
+    ):
+        return "", "a <scmsync> that is not plain text", "maintainers"
     if not url:
         return None
     m = PROJECT_GIT.fullmatch(url)
