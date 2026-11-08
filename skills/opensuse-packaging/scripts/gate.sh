@@ -72,7 +72,8 @@
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
 #   --review FILE  record the change review instead of running the gates: FILE's
 #                first non-empty line starts with PASS and names "tree <key12>",
-#                the tree the last GREEN run printed; needs that GREEN run
+#                the tree the last GREEN run printed (a scmsync checkout's
+#                git rev-parse HEAD^{tree} too); needs that GREEN run
 #   --obs-build  record OBS's build of the committed tree instead (gate 1 in
 #                OBS-ONLY mode): OBS's expanded files are the stamped tree, every
 #                repo/arch/flavor succeeded from them (each log's srcmd5), and
@@ -542,7 +543,13 @@ def review(path, d, fpath):
     elif not trees:
         bad = "the PASS line names no 'tree <key12>'"
     else:
-        wrong = sorted({x for x in trees if not t.startswith(x)})
+        # scm() held a scmsync checkout to the commit OBS synced, so git's tree is the same tree
+        gt = ""
+        if fm is not None and os.path.exists(os.path.join(d, ".osc/_scm")) \
+                and os.path.lexists(os.path.join(d, ".git")):
+            g = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=d, capture_output=True, text=True)
+            gt = g.stdout.strip() if g.returncode == 0 else ""
+        wrong = sorted({x for x in trees if not t.startswith(x) and not (gt and gt.startswith(x))})
         if wrong:
             bad = "review names tree %s, the checkout is tree %s" % (wrong[0][:12], t[:12])
     if bad:
