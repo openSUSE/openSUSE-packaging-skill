@@ -1544,6 +1544,7 @@ root, scripts, guard = sys.argv[1:]
 me = '<person userid="tester" role="maintainer"/>'
 other = '<person userid="other" role="maintainer"/>'
 factory = '<package name="foo"><devel project="%s" package="foo"/></package>'
+GIT = "https://src.opensuse.org/g/_ObsPrj.git"
 variants = {
     "eligible": {},
     "project-maintainer": {"pkg": "", "prj": me},
@@ -1566,6 +1567,22 @@ variants = {
     "git-reviewer": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": ["-qa",],}', "want": 3},
     "git-unreadable": {"git": '{"foo": ["tester"', "want": 5},
     "git-absent": {"git": None, "want": 5},
+    # read at the ref <scmsync> names: the default branch says otherwise
+    "git-ref": {"git": {"foo": ["tester"]}, "ref": "devel", "url": GIT + "#devel",
+                "default": {"foo": ["other"]}, "want": 0},
+    "git-ref-unread": {"git": {"foo": ["tester"]}, "url": GIT + "#devel", "want": 5},
+    "git-ref-odd": {"git": {"foo": ["tester"]}, "url": GIT + "#a..b", "want": 5,
+                    "why": "whose ref this cannot read"},
+    # plain names only, and no OBS fallback for a <scmsync> neither can read
+    "git-login-newline": {"git": {"foo": ["tester\n"]}, "wf": '{"Reviewers": ["qa-bot"]}', "want": 5},
+    "git-login-junk": {"git": {"foo": ["tester", "a\nb"]}, "want": 5, "why": "_maintainership.json did not parse"},
+    "git-reviewer-newline": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": ["\\nqa"]}', "want": 5,
+                             "why": "workflow.config did not parse"},
+    "git-url-space": {"git": {"foo": ["tester"]}, "url": GIT + "#main x", "want": 5,
+                      "why": "whose maintainers this cannot read"},
+    "git-reviewers-false": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": false}', "want": 5,
+                            "why": "workflow.config did not parse"},
+    "git-entry-false": {"git": {"": ["tester"], "foo": False}, "want": 5},
 }
 out = []
 for name, v in variants.items():
@@ -1583,11 +1600,15 @@ for name, v in variants.items():
         both("/source/devel:a/foo/_meta",
              '<package name="foo"><scmsync>https://src.opensuse.org/g/foo#1</scmsync></package>')
         both("/source/devel:a/_meta",
-             '<project name="devel:a"><scmsync>https://src.opensuse.org/g/_ObsPrj.git</scmsync>%s</project>' % me)
+             '<project name="devel:a"><scmsync>%s</scmsync>%s</project>' % (v.get("url", GIT), me))
         git = v["git"] if isinstance(v["git"], str) else json.dumps(v["git"])
+        q = "?ref=" + v["ref"] if "ref" in v else ""
         if v["git"] is not None:
-            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json"), "w").write(git)
-        open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw_workflow.config"), "w").write(
+            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json" + q), "w").write(git)
+        if "default" in v:
+            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json"), "w").write(
+                json.dumps(v["default"]))
+        open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw_workflow.config" + q), "w").write(
             v.get("wf", '{"Workflows": ["pr"],}'))
     devel = v.get("devel", "devel:a")
     if devel:
@@ -1608,6 +1629,8 @@ for name, v in variants.items():
     asked = "ASK [accept-forward]" in g.stdout
     if g.returncode != 0 or (rc == 0) == asked or rc != v.get("want", rc):
         out.append("%s(gate=%d guard=%s)" % (name, rc, "ask" if asked else g.returncode))
+    elif v.get("why", "") not in g.stdout:  # the guard's reason, where only it differs
+        out.append("%s(guard did not say %r)" % (name, v["why"]))
 print(len(variants), " ".join(out))
 PY
 )"

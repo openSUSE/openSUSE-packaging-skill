@@ -1752,22 +1752,23 @@ def eligible(prj, pkg, ctx):
     # A project kept in git: its OBS _meta are stubs, its roles are in the project git.
     git = project_git(pmeta)
     if git and not git[0]:
-        return False, f"{prj} is kept in {git[1]}, whose maintainers this cannot read"
+        return False, f"{prj} is kept in {git[1]}, whose {git[2]} this cannot read"
     if git:
-        ok, more = git_reviewers(*git, ctx)
+        ok, more = git_reviewers(git[0], git[1], ctx, git[2])
         if not ok:
             return False, more
         revs |= more
     if revs:
         return False, f"a reviewer role is set ({', '.join(sorted(revs))})"
     if git:
-        ok, maints = git_maintainers(*git, pkg, ctx)
+        ok, maints = git_maintainers(git[0], git[1], pkg, ctx, git[2])
         if not ok:
             return False, maints
         if user in maints:
             return True, ""
         who = ", ".join(sorted(maints)) or "nobody"
-        return False, f"{prj}/{pkg} is maintained by {who} ({'/'.join(git)})"
+        at = f"#{git[2]}" if git[2] else ""
+        return False, f"{prj}/{pkg} is maintained by {who} ({git[0]}/{git[1]}{at})"
     maints = holders(meta, "maintainer")
     if user in maints or not maints and user in holders(pmeta, "maintainer"):
         return True, ""
@@ -2122,20 +2123,34 @@ def tea_item(owner, repo, n, ctx):
     return f"{owner}/{repo} is maintained by {', '.join(sorted(maints)) or 'nobody'}"
 
 
-def git_maintainers(owner, prjgit, pkg, ctx):
+# A login or reviewer as the project git may name one ("@" a group): nothing
+# that could split a list or a line.
+GIT_LOGIN = Rx(r"@?[A-Za-z0-9][A-Za-z0-9_.-]*")
+GIT_NAME = Rx(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+# The branch or commit a <scmsync> #fragment names.
+GIT_REF = Rx(r"(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def git_maintainers(owner, prjgit, pkg, ctx, ref=""):
     """(True, maintainers) of pkg in src.opensuse.org's owner/prjgit
-    _maintainership.json, the project git autogits reads: the package's list,
-    else the project's (""); (False, why) when it cannot be read. Only the
+    _maintainership.json at ref (its default branch when ""), the project git
+    autogits reads: the package's list, else the project's (""); (False, why)
+    when it cannot be read, or an entry is no list of plain logins. Only the
     legacy form ({name: [login, ...]}) is read."""
-    ok, m = gitea_get(f"repos/{owner}/{prjgit}/raw/_maintainership.json", ctx)
+    q = f"?ref={ref}" if ref else ""
+    ok, m = gitea_get(f"repos/{owner}/{prjgit}/raw/_maintainership.json{q}", ctx)
     if not ok:
         return False, f"cannot read {m}"
     if not isinstance(m, dict):
         return False, f"{owner} has no _maintainership.json"
-    pkgs, prj = m.get(pkg) or [], m.get("") or []
-    if not isinstance(pkgs, list) or not isinstance(prj, list):
+    lists = [m.get(k, []) for k in (pkg, "")]
+    if not all(
+        isinstance(v, list)
+        and all(isinstance(x, str) and GIT_LOGIN.fullmatch(x) for x in v)
+        for v in lists
+    ):
         return False, f"{owner}'s _maintainership.json did not parse"
-    return True, set(pkgs or prj)
+    return True, set(lists[0] or lists[1])
 
 
 def jwcc(text):
@@ -2164,41 +2179,53 @@ def jwcc(text):
     return json.loads("".join(out) + strip(code))
 
 
-def git_reviewers(owner, prjgit, ctx):
-    """(True, reviewers) that owner/prjgit's workflow.config makes autogits
-    request on every pull request: its Reviewers, a list or an object of
-    names, each without its +-*~ prefix (none without the file); (False, why)
-    when it cannot be read."""
-    path = f"repos/{owner}/{prjgit}/raw/workflow.config"
-    ok, text = gitea_get(path, ctx, raw=True)
+def git_reviewers(owner, prjgit, ctx, ref=""):
+    """(True, reviewers) that owner/prjgit's workflow.config at ref makes
+    autogits request on every pull request: its Reviewers, a list or an object
+    of names, each without its +-*~ prefix (none without the file or the key);
+    (False, why) when it cannot be read, or Reviewers is anything else."""
+    q = f"?ref={ref}" if ref else ""
+    ok, text = gitea_get(
+        f"repos/{owner}/{prjgit}/raw/workflow.config{q}", ctx, raw=True
+    )
     if not ok:
         return False, f"cannot read {text}"
     try:
         conf = jwcc(text) if text is not None else {}
     except ValueError:
         return False, f"{owner}/{prjgit}'s workflow.config did not parse"
-    revs = (conf.get("Reviewers") or []) if isinstance(conf, dict) else None
-    if not isinstance(revs, (list, dict)) or not all(isinstance(r, str) for r in revs):
+    revs = conf.get("Reviewers", []) if isinstance(conf, dict) else None
+    if not isinstance(revs, (list, dict)) or not all(
+        isinstance(r, str) and GIT_NAME.fullmatch(r.lstrip("+-*~")) for r in revs
+    ):
         return False, f"{owner}/{prjgit}'s workflow.config did not parse"
-    return True, {r.lstrip("+-*~") for r in revs} - {""}
+    return True, {r.lstrip("+-*~") for r in revs}
 
 
-# A project kept in git: its _meta's <scmsync> names the project git.
+# A project kept in git: its _meta's <scmsync> names the project git, and the
+# branch or commit autogits syncs (#fragment).
 PROJECT_GIT = Rx(
-    r"https://src\.opensuse\.org/([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*?)(?:\.git)?(?:[?#]\S*)?"
+    r"https://src\.opensuse\.org/([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*?)"
+    r"(?:\.git)?(?:\?[^#\s]*)?(?:#([^#\s]*))?"
 )
 
 
 def project_git(pmeta):
-    """(owner, repo) of the src.opensuse.org project git a project _meta's
-    <scmsync> names, None for a project OBS keeps, ("", url) for one kept
-    elsewhere."""
+    """(owner, repo, ref) of the src.opensuse.org project git a project
+    _meta's <scmsync> names (ref "" without a fragment), None for a project
+    OBS keeps, ("", url, what) for one this cannot read: kept elsewhere, or a
+    ref that is no plain branch or commit."""
     el = pmeta.find("scmsync")
     url = (el.text or "").strip() if el is not None else ""
     if not url:
         return None
     m = PROJECT_GIT.fullmatch(url)
-    return m.groups() if m else ("", url)
+    if not m:
+        return "", url, "maintainers"
+    owner, repo, ref = m.group(1), m.group(2), m.group(3) or ""
+    if ref and not GIT_REF.fullmatch(ref):
+        return "", url, "ref"
+    return owner, repo, ref
 
 
 def lone_tea(text):
