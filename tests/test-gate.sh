@@ -731,6 +731,13 @@ printf 'PASS — tree 0123456789ab — clean\n' > "$work/rv.txt"; rv "$work/rv.t
 [ "$rc" = 1 ] && grep -qF "review names tree 0123456789ab, the checkout is tree ${T:0:12}" <<<"$out" \
   && ! python3 -I -c 'import json,sys; sys.exit("review" not in json.load(open(sys.argv[1])))' "$SF" \
   && pass "--review: a PASS of another tree is red and drops the recorded review" || { fail "--review other tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# git's tree of an osc checkout someone keeps in git is no tree of the gate's.
+( cd "$work/t-st" && g init -q && g add foo.changes foo.spec && g commit -qm co ) || fail "git in an osc checkout"
+GT=$(git -C "$work/t-st" rev-parse 'HEAD^{tree}')
+printf 'PASS — tree %s — clean\n' "${GT:0:12}" > "$work/rv.txt"; rv "$work/rv.txt"
+[ "$rc" = 1 ] && grep -qF "review names tree ${GT:0:12}, the checkout is tree ${T:0:12}" <<<"$out" \
+  && pass "--review: a PASS naming git's tree in an osc checkout is red" || { fail "--review git tree, osc checkout: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -rf "$work/t-st/.git"
 printf 'BLOCK — tree %s\n' "${T:0:12}" > "$work/rv.txt"; rv "$work/rv.txt"
 [ "$rc" = 1 ] && grep -qF "not PASS" <<<"$out" && pass "--review: a BLOCK is red" || { fail "--review BLOCK: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 echo "- one more bullet" >> "$work/t-st/foo.changes"
@@ -1321,6 +1328,22 @@ printf 'mtime: 1\r\ncommit: %s\r\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "
 pys tracked "$work/t-scm"
 [ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists" <<<"$out" \
   && pass "scmsync git checkout, an obsinfo with CRLF line ends: tracked green" || { fail "scmsync obsinfo CRLF: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Held to the commit OBS synced, a scmsync checkout's tree is git's too: a PASS
+# naming git rev-parse HEAD^{tree} is recorded under the gate's key; another
+# commit's tree is not.
+scmgit "$work/t-scm"; rm -f "$SC"
+pys stamp "$SC" "$work/t-scm" devel:example scmpkg devel:example/scmpkg "" "$work/bl-ok.log"
+TS=$(sv "$SC" tree); GT=$(git -C "$work/t-scm" rev-parse 'HEAD^{tree}')
+echo "PASS — tree ${GT:0:12} — clean" > "$work/rv-scm.txt"; rvs "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "review PASS recorded for tree ${TS:0:12} of devel:example/scmpkg" <<<"$out" \
+  && [ "$(sv "$SC" tree)" = "$TS" ] && [ "$(sv "$SC" review.verdict)" = PASS ] \
+  && pass "scmsync git checkout: a PASS naming git's tree is recorded, the stamp keeps OBS's" \
+  || { fail "scmsync --review git tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+OT=$( cd "$work/t-scm" && printf 'y\n' >> .gitignore && g commit -qam two && git rev-parse 'HEAD^{tree}' && git reset -q --hard HEAD~1 )
+echo "PASS — tree ${OT:0:12} — clean" > "$work/rv-scm.txt"; rvs "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "review names tree ${OT:0:12}, the checkout is tree ${TS:0:12}" <<<"$out" && [ -z "$(sv "$SC" review)" ] \
+  && pass "scmsync git checkout: a PASS naming another commit's tree is red" \
+  || { fail "scmsync --review other git tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 scmgit "$work/t-scm"; : > "$O/fail-obsinfo"
 pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the commit OBS synced for devel:example/scmpkg" <<<"$out" \
