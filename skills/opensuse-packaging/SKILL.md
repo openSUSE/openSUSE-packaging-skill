@@ -93,7 +93,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
 - `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline. Every `references/<file>.md "<Section>"` pointer here is its argument.
 - `gate.sh` — the Block-2 gate above in one call, one VERDICT line.
-- `source-binaries.py` — prebuilt executables, libraries, Windows objects, `.node`, wasm, Java bytecode in any source, streamed through archives (one nested level); `--rpms` flags one the built RPMs ship. `# Source-Binary-Exception:` spec lines name the allowed ones. A file it cannot read completely is UNKNOWN, never clean.
+- `source-binaries.py` — prebuilt executables, libraries, Windows objects, `.node`, wasm, Java/Dalvik bytecode in any source, streamed through archives (one nested level); `--rpms` flags one the built RPMs ship. `# Source-Binary-Exception:` spec lines name the allowed ones. A file it cannot read completely is UNKNOWN, never clean.
 - `vendor-strip.py` — strip a cargo vendor tarball; no spec names it.
 - `changes-range.py` — releases the new `.changes` entry skips or repeats.
 - `changes-guard.sh` — integrity gate: a `.changes` edit must be *insertion-only*. `--amend-top "<Name> <mail>"` permits amending your OWN (`osc whois`) not-yet-accepted top entry and nothing below it; an added bug/CVE reference to an older entry passes only with a new entry on top.

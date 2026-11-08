@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prebuilt binaries in a package's sources: executables, shared and static
-libraries, native addons, Windows COFF objects, wasm, Java bytecode and RPMs in
-every file of the checkout. Archives (tar, gzip, xz, zstd, bzip2, zip, cpio/obscpio) are streamed
+libraries, native addons, Windows COFF objects, wasm, Java and Dalvik bytecode
+and RPMs in every file of the checkout. Archives (tar, gzip, xz, zstd, bzip2, zip, cpio/obscpio) are streamed
 member by member, one level into nested archives (an npm .tgz inside a vendor
 tarball), and nothing is extracted.
 
@@ -48,12 +48,13 @@ import library; symbol and name tables only first, holding no binary), a
 Mach-O (a fat one's every slice), a wasm relocatable object (a module, which
 node or wasmtime run, is refused), or an ELF whose e_machine is a CPU
 openSUSE does not build (EI_OSABI proves nothing). Anything but zeros past
-the format's own extent, or a zip end record, refuses it too. Java bytecode,
-which runs anywhere, holds by its path instead: inside a Gradle wrapper
-(gradle/wrapper/gradle-wrapper.jar), or under a directory named for the
-platform the why names (android/, ios/, macos/, osx/, darwin/, windows/,
-win32/, win64/, wince/, uwp/), in the archive member's path; the change review
-then checks the build never enters it. A Linux-target
+the format's own extent, or a zip end record, refuses it too. Java and
+Dalvik bytecode (.class, .dex), which run anywhere, hold by their path
+instead: inside a Gradle wrapper (gradle/wrapper/gradle-wrapper.jar), or
+under a directory named for the platform the why names (android/, ios/,
+macos/, osx/, darwin/, windows/, win32/, win64/, wince/, uwp/), in the
+archive member's path; the change review then checks the build never enters
+it. A Linux-target
 ELF (x86, Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image,
 a .NET assembly or a file that cannot be read is refused. Every line that
 matches a hit is tried in turn, so a later test-data line still covers a
@@ -91,7 +92,7 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 10  # bump when detection changes, so cached results are rescanned
+VERSION = 11  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
@@ -123,7 +124,7 @@ PLATFORM = re.compile(
     re.I,
 )
 # bytes that run on any platform: other-platform holds for them by path alone
-NEUTRAL = ("Java class",)
+NEUTRAL = ("Java class", "Dalvik dex")
 # a directory named for one platform, and the words that name it in a why
 PLATFORM_DIR = {
     "android": "Android",
@@ -267,6 +268,8 @@ def kind(head, name):
         return "wasm"
     if m == b"\xed\xab\xee\xdb":
         return "RPM"
+    if m == b"dex\n" and head[4:7].isdigit() and head[7:8] == b"\0":
+        return "Dalvik dex"
     if coff(head):
         return "COFF object"
     return None
@@ -1441,8 +1444,8 @@ def main():
             f"CPU, not {what[0]}{more}: build it from source or unbundle it, or except "
             "it as bootstrap or test-data when it is one"
             + (
-                "; Java bytecode holds by path: in a Gradle wrapper, or under a directory "
-                "named for the platform the why names"
+                "; Java or Dalvik bytecode holds by path: in a Gradle wrapper, or under a "
+                "directory named for the platform the why names"
                 if any(n in w for w in what for n in NEUTRAL)
                 else ""
             )

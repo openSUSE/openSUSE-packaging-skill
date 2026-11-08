@@ -384,7 +384,7 @@ jv android 0 "EXCEPTION v.tar.gz:./w/* (other-platform: the Android bindings, wh
   w/android/lib/A.class "$ANDROID"
 jv outside 3 "other-platform holds only for a file whose bytes show another OS or CPU, not v.tar.gz:./w/java/A.class (Java class)" \
   w/java/A.class "$ANDROID"
-grep -qF "Java bytecode holds by path: in a Gradle wrapper, or under a directory named for the platform the why names" <<<"$LAST" \
+grep -qF "Java or Dalvik bytecode holds by path: in a Gradle wrapper, or under a directory named for the platform the why names" <<<"$LAST" \
   && pass "path-outside: the refusal says how Java bytecode holds" || fail "path-outside hint: $LAST"
 jv other-platform-dir 3 "not v.tar.gz:./w/ios/A.class (Java class)" w/ios/A.class "$ANDROID"
 jv gradle-wrapper 0 "1 hit(s), for a Gradle wrapper (by path)" w/kn/gradle/wrapper/gradle-wrapper.jar \
@@ -401,6 +401,26 @@ with tarfile.open(sys.argv[1], "w:gz") as t:
 PY
 printf '# Source-Binary-Exception: %s\n' 'v.tar.gz:./w/* -- other-platform: the Gradle wrapper of the Android bindings' >> "$d/p.spec"
 case_ path-dotdot 3 "not v.tar.gz:./w/android/../java/A.class (Java class) and 1 more" "$d"
+# Dalvik bytecode (dex\n, three digits, \0) the same: loose, in an .apk or .aar, by path.
+printf 'dex\n035\0dex body' > "$work/t/jv/w/android/lib/classes.dex"
+mkdir -p "$work/t/jv/w/java"; cp "$work/t/jv/w/android/lib/classes.dex" "$work/t/jv/w/java/classes.dex"
+d=$(pkg dex); cp "$work/t/jv/w/java/classes.dex" "$d/"; printf 'dex\nabc\0 notes\n' > "$d/notes.txt"
+case_ dex-loose 3 "HIT classes.dex: Dalvik dex" "$d"
+! grep -qF "notes.txt" <<<"$LAST" && pass "dex: dex\\n without its version digits is no hit" || fail "dex magic: $LAST"
+d=$(pkg dex-zip)
+python3 - "$d/app.apk" "$d/lib.aar" "$work/t/jv/w/java/classes.dex" <<'PY'
+import sys, zipfile
+for f in sys.argv[1:3]:
+    with zipfile.ZipFile(f, "w") as z:
+        z.writestr("classes.dex", open(sys.argv[3], "rb").read())
+PY
+case_ dex-apk 3 "HIT app.apk:classes.dex: Dalvik dex" "$d"
+grep -qF "HIT lib.aar:classes.dex: Dalvik dex" <<<"$LAST" && pass "dex: an .aar's classes.dex is found" || fail "dex in .aar: $LAST"
+jv dex-android 0 "EXCEPTION v.tar.gz:./w/* (other-platform: the Android bindings, which this build never enters): 1 hit(s), for Android (by path)" \
+  w/android/lib/classes.dex "$ANDROID"
+jv dex-outside 3 "other-platform holds only for a file whose bytes show another OS or CPU, not v.tar.gz:./w/java/classes.dex (Dalvik dex)" \
+  w/java/classes.dex "$ANDROID"
+grep -qF "Java or Dalvik bytecode holds by path" <<<"$LAST" && pass "path-dex-outside: the refusal says how it holds" || fail "path-dex-outside hint: $LAST"
 mkdir -p "$work/t/jv/w/android/jni"; cp "$work/t/op/no/aarch64.so" "$work/t/jv/w/android/jni/libx.so"
 jv linux-elf 3 "not v.tar.gz:./w/android/jni/libx.so (ELF)" w/android/jni/libx.so "$ANDROID"
 
@@ -507,6 +527,9 @@ PY
   d=$(pkg jv-ship); cp "$work/jv-android/v.tar.gz" "$d/"; printf '# Source-Binary-Exception: %s\n' "$ANDROID" >> "$d/p.spec"
   shiprpm rpm-jv "$work/t/jv/w/android/lib/A.class"
   case_ other-platform-path-shipped 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt v.tar.gz:./w/android/lib/A.class" "$d" --rpms "$work/rpm-jv-out"
+  d=$(pkg dex-ship); cp "$work/jv-dex-android/v.tar.gz" "$d/"; printf '# Source-Binary-Exception: %s\n' "$ANDROID" >> "$d/p.spec"
+  shiprpm rpm-dex "$work/t/jv/w/android/lib/classes.dex"
+  case_ dex-path-shipped 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt v.tar.gz:./w/android/lib/classes.dex" "$d" --rpms "$work/rpm-dex-out"
   # a small helper (gcc -O2: under 1 KiB of .text in a 64 KiB file) embedded in a bundle
   if command -v gcc > /dev/null; then
     d=$(pkg tiny); mkdir -p "$work/t/tiny/bin"
