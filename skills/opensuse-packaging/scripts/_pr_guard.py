@@ -559,6 +559,9 @@ MESSAGES = {
     "Let the tool authenticate: osc api, git-obs -G src.opensuse.org api.",
     "api": "{0} goes past the tools that hold the login. OBS: osc api PATH; "
     "Gitea: git-obs -G src.opensuse.org api PATH; or the skill's scripts.",
+    "scm-commit": "{0}: a scmsync checkout, whose sources OBS syncs from git. A "
+    "change goes by a pull request to that repository, never osc commit; its "
+    "gate.sh stamp still lets the forward (osc sr) through.",
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
@@ -2684,8 +2687,10 @@ def gate_commit(run, ctx, cwd):
                     what = f"the project checkout {prj}" if prj else co
                     ask(ctx, "gate-stamp", f"osc commit of {what}: no package checkout")
                     continue
-                st = stamp_of(prj, pkg)
                 what = f"osc commit of {prj}/{pkg}"
+                if os.path.exists(os.path.join(co, ".osc", "_scm")):
+                    block("scm-commit", what)
+                st = stamp_of(prj, pkg)
                 if (
                     not st
                     or st.get("verdict") != "GREEN"

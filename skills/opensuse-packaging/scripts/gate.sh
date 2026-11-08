@@ -107,7 +107,12 @@
 # it. A rerun of the same tree keeps its review, build and --rpms check; a tree
 # that differs only in *.changes keeps the build and the --rpms check, never
 # the review. Nothing tracked (osc mkpac before osc add) is red and stamps
-# nothing, and --review refuses it.
+# nothing, and --review refuses it. A scmsync checkout (osc co of a package OBS
+# syncs from git, .osc/_scm) takes no osc ci: a change goes by git PR. Its tree
+# is the files OBS lists, the ones a forward's osc sr sends, stamped only while
+# the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
+# build.specials.obscpio, which OBS makes) and no other; --review and
+# --obs-build then work as in any osc checkout.
 # Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
 #       red (VERDICT names them; --review: the verdict file is not a PASS of this
 #       tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
@@ -159,8 +164,60 @@ def link(d, prj, pkg):
     return 0
 
 
+def md5(path):
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# what OBS adds to the files of a package it syncs from git
+SCM_MADE = {"_scmsync.obsinfo", "build.specials.obscpio"}
+SCM_WHY = []
+
+
+def scm(d):
+    # A scmsync checkout (osc co of a package OBS syncs from git) has no
+    # .osc/_files: its tree is the files OBS lists, once the checkout holds
+    # each with OBS's md5 (but what OBS makes) and no other; else None, and
+    # why in SCM_WHY
+    try:
+        prj, pkg = (open(os.path.join(d, ".osc", n), encoding="utf-8").read().strip()
+                    for n in ("_project", "_package"))
+    except OSError:
+        SCM_WHY.append("UNKNOWN: cannot read .osc/_project and .osc/_package")
+        return None
+    p = subprocess.run(["osc", "api", "/source/%s/%s?expand=1" % (prj, pkg)],
+                       capture_output=True, text=True)
+    root = None
+    try:
+        root = ET.fromstring(p.stdout) if p.returncode == 0 else None
+    except ET.ParseError:
+        pass
+    if root is None:
+        err = (p.stderr.strip().splitlines() or ["the answer did not parse"])[-1][:160]
+        SCM_WHY.append("UNKNOWN: cannot read the files OBS lists for %s/%s: %s" % (prj, pkg, err))
+        return None
+    remote = {e.get("name"): e.get("md5") for e in root.findall("entry")
+              if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    local = {n for n in os.listdir(d) if not n.startswith(".")
+             and os.path.isfile(os.path.join(d, n)) and not os.path.islink(os.path.join(d, n))}
+    odd = sorted((set(remote) - SCM_MADE) ^ local)
+    odd += [n for n in sorted(local & set(remote)) if md5(os.path.join(d, n)) != remote[n]]
+    if odd:
+        SCM_WHY.append("note: no tree to stamp: OBS lists other files for %s/%s than this checkout"
+                       " holds (%s); a change goes by git PR, and once OBS synced it, osc up and rerun"
+                       % (prj, pkg, ", ".join(odd[:4])))
+        return None
+    return remote
+
+
 def files(d):
-    # the files `osc ci` would commit, with the working copy's md5
+    # the files `osc ci` would commit, with the working copy's md5; in a
+    # scmsync checkout the ones OBS lists (scm())
+    if os.path.exists(os.path.join(d, ".osc/_scm")):
+        return scm(d)
     path = os.path.join(d, ".osc/_files")
     try:
         names = {e.get("name") for e in ET.parse(path).getroot().findall("entry")}
@@ -219,12 +276,18 @@ def present(fm):
 
 def tracked(d):
     fm = files(d)
+    if fm is None and SCM_WHY:
+        print(SCM_WHY[-1])
+        return 1 if SCM_WHY[-1].startswith("UNKNOWN") else 0
     if fm is None:
         print("note: no .osc/_files, no tree to stamp")
         return 0
     if not present(fm):
         print("nothing to stamp: no tracked files (osc add the package files first)")
         return 1
+    if os.path.exists(os.path.join(d, ".osc/_scm")):
+        print("OK: %d file(s), the ones OBS lists; a change goes by git PR, never osc ci" % len(fm))
+        return 0
     print("OK: %d file(s) osc would commit" % len(present(fm)))
     return 0
 
@@ -402,6 +465,8 @@ def review(path, d, fpath):
         return 3
     t = key(fm) if fm is not None else ""
     st = load(path)
+    if SCM_WHY:
+        print(SCM_WHY[-1])
     if not st or st.get("verdict") != "GREEN" or not t or st.get("tree") != t:
         print("VERDICT: NO GATE — no GREEN gate run of tree %s: run gate.sh, then --review" % (t[:12] or "?"))
         return 3
@@ -479,6 +544,8 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     fm = files(d)
     t = key(fm) if fm is not None and present(fm) else ""
     st = load(path)
+    if SCM_WHY:
+        print(SCM_WHY[-1])
     if not t or not st or st.get("verdict") != "GREEN" or st.get("tree") != t:
         print("VERDICT: NO GATE — no GREEN gate run of tree %s: run gate.sh before the commit, then --obs-build" % (t[:12] or "?"))
         return 3
@@ -1464,8 +1531,11 @@ if [ ! -e "${specs[0]}" ] && [ ! -r .osc/_package ]; then
   exit 2
 fi
 pkg=$(basename "$(pwd -P)"); [ -r .osc/_package ] && pkg=$(tr -d '\n' < .osc/_package)
-# A classic osc checkout (not a git/scmsync one): its own project, and the stamp.
-own=""; [ -r .osc/_project ] && [ -r .osc/_package ] && [ ! -e .osc/_scm ] && own=$(tr -d '\n' < .osc/_project)
+# An osc checkout: its own project, and the stamp. A scmsync one (osc co of a
+# package OBS syncs from git) keys its tree on the files OBS lists, and takes no
+# osc ci: a change goes by git PR, and the stamp is for the forward.
+own=""; scm=""; [ -r .osc/_project ] && [ -r .osc/_package ] && own=$(tr -d '\n' < .osc/_project)
+[ -z "$own" ] || [ ! -e .osc/_scm ] || scm=1
 stampf=""; [ -n "$own" ] && [[ $own != */* && $pkg != */* && $pkg != .* ]] \
   && stampf="$HOME/.local/state/opensuse-packaging/gate/obs/$pkg/$own.json"
 if [ -n "$review" ]; then
@@ -1528,7 +1598,9 @@ if [ -n "$own" ]; then
   fi
   if [ -n "$tgt" ]; then
     tprj=${tgt%%/*}; tpkg=$pkg; [[ $tgt == */* ]] && tpkg=${tgt#*/}
-    if [ "$tprj" = "$own" ]; then
+    if [ "$tprj" = "$own" ] && [ -n "$scm" ]; then
+      echo "OK: $own is the target, by git PR (a scmsync package takes no osc ci)" >> "$log/target.txt"
+    elif [ "$tprj" = "$own" ]; then
       echo "OK: a direct commit to $own, the target" >> "$log/target.txt"
     elif [ "$tprj" = "$base" ]; then
       echo "OK: the checkout is based on $base, the target is $tprj/$tpkg" >> "$log/target.txt"
@@ -1883,9 +1955,9 @@ if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
   fi
 elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
   against=.osc/_files                      # a direct commit: against the committed copy
-elif [ -z "$own" ] && [ -n "$gitbase" ]; then
+elif { [ -z "$own" ] || [ -n "$scm" ]; } && [ -n "$gitbase" ]; then
   against="git:$gitbase"                   # named by the caller: always the base
-elif [ -z "$own" ] && ref=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$ref" ]; then
+elif { [ -z "$own" ] || [ -n "$scm" ]; } && ref=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$ref" ]; then
   # a pushed fork or topic branch holds the change itself: it says nothing
   # about the target. The remote's default branch does (uncommitted edits).
   remote=$(git for-each-ref --format='%(upstream:remotename)' "$(git symbolic-ref -q HEAD)" 2>/dev/null)
@@ -1936,7 +2008,7 @@ if [ -e "${changes[0]}" ]; then
     for ch in "${changes[@]}"; do
       if [ -r ".osc/sources/$ch" ]; then cp ".osc/sources/$ch" "$tbase/"; elif [ -r ".osc/$ch" ]; then cp ".osc/$ch" "$tbase/"; fi
     done
-  elif [ -z "$own" ] && [ "${against#git:}" != "$against" ]; then
+  elif { [ -z "$own" ] || [ -n "$scm" ]; } && [ "${against#git:}" != "$against" ]; then
     tlabel=${against#git:}; tlist=$against
     for ch in "${changes[@]}"; do git show "$tlabel:./$ch" > "$tbase/$ch" 2>/dev/null || rm -f "$tbase/$ch"; done
   else
@@ -2001,6 +2073,7 @@ if [ ${#red[@]} -eq 0 ]; then
   if [ -n "$stampf" ]; then
     if t=$(GATE_NO_ENTRY=$ne py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$rpms" "${blogs[@]}"); then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
+    elif [ -n "$scm" ]; then t=" (no tree stamped: the checkout does not hold the files OBS lists, see tracked)"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
   [ -z "$ne" ] || t+=", no new .changes entry: $ne"

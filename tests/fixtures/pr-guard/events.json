@@ -9560,5 +9560,12 @@
       "command": "@WORK@/gate.sh . --no-entry \"$R\" --full"
     },
     "cwd": "@OSC@/devel/x"
+  },
+  "ci-scmsync": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update s to 1.1'"
+    },
+    "cwd": "@OSC@/scm/s"
   }
 }
