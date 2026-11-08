@@ -360,6 +360,40 @@ case_ other-platform-then-test-data 0 "EXCEPTION v.tar.gz:./w/tests/* (test-data
 grep -qF "note: exception v.tar.gz:./w/* holds for none it matches; other lines cover them" <<<"$LAST" \
   && pass "other-platform: a line another one covers for is named so" || fail "shadowed line note: $LAST"
 
+# Java bytecode runs anywhere, so other-platform holds for it by path: under a
+# directory named for the platform the why names, or in a Gradle wrapper
+# (mupdf's tarball carries zxing-cpp's Android and Kotlin/Native wrappers). The
+# bytes still decide what they can place: a Linux ELF under android/ is refused.
+mkdir -p "$work/t/jv/w/android/lib" "$work/t/jv/w/java" "$work/t/jv/w/ios" "$work/t/jv/w/kn/gradle/wrapper" "$work/t/jv/w/lib/gradle/wrapper"
+printf '\312\376\272\276\0\0\0\064class body' > "$work/t/jv/w/android/lib/A.class"
+cp "$work/t/jv/w/android/lib/A.class" "$work/t/jv/w/java/A.class"; cp "$work/t/jv/w/android/lib/A.class" "$work/t/jv/w/ios/A.class"
+python3 - "$work/t/jv/w/kn/gradle/wrapper/gradle-wrapper.jar" "$work/t/jv/w/lib/gradle/wrapper/tool.jar" <<'PY'
+import sys, zipfile
+for f in sys.argv[1:]:
+    with zipfile.ZipFile(f, "w") as z:
+        z.writestr("org/gradle/wrapper/GradleWrapperMain.class", b"\xca\xfe\xba\xbe\0\0\0\x34main")
+PY
+jv() { # jv <name> <rc> <expected text> <member> <exception line body>
+  local d; d=$(pkg "jv-$1"); rm -rf "$work/t/jv1"; mkdir -p "$work/t/jv1/$(dirname "$4")"
+  cp "$work/t/jv/$4" "$work/t/jv1/$4"; tar -C "$work/t/jv1" -czf "$d/v.tar.gz" ./w
+  printf '# Source-Binary-Exception: %s\n' "$5" >> "$d/p.spec"
+  case_ "path-$1" "$2" "$3" "$d"
+}
+ANDROID='v.tar.gz:./w/* -- other-platform: the Android bindings, which this build never enters'
+jv android 0 "EXCEPTION v.tar.gz:./w/* (other-platform: the Android bindings, which this build never enters): 1 hit(s), for Android (by path)" \
+  w/android/lib/A.class "$ANDROID"
+jv outside 3 "other-platform holds only for a file whose bytes show another OS or CPU, not v.tar.gz:./w/java/A.class (Java class)" \
+  w/java/A.class "$ANDROID"
+grep -qF "Java bytecode holds by path: in a Gradle wrapper, or under a directory named for the platform the why names" <<<"$LAST" \
+  && pass "path-outside: the refusal says how Java bytecode holds" || fail "path-outside hint: $LAST"
+jv other-platform-dir 3 "not v.tar.gz:./w/ios/A.class (Java class)" w/ios/A.class "$ANDROID"
+jv gradle-wrapper 0 "1 hit(s), for a Gradle wrapper (by path)" w/kn/gradle/wrapper/gradle-wrapper.jar \
+  'v.tar.gz:./w/*/gradle/wrapper/gradle-wrapper.jar!* -- other-platform: the Gradle wrapper of the Android bindings'
+jv not-the-wrapper 3 "not v.tar.gz:./w/lib/gradle/wrapper/tool.jar!org/gradle/wrapper/GradleWrapperMain.class (Java class)" \
+  w/lib/gradle/wrapper/tool.jar 'v.tar.gz:./w/* -- other-platform: the Gradle wrapper of the Android bindings'
+mkdir -p "$work/t/jv/w/android/jni"; cp "$work/t/op/no/aarch64.so" "$work/t/jv/w/android/jni/libx.so"
+jv linux-elf 3 "not v.tar.gz:./w/android/jni/libx.so (ELF)" w/android/jni/libx.so "$ANDROID"
+
 # What cannot be read is UNKNOWN, never clean; an exception may name it.
 d=$(pkg unknown); printf '7z\274\257\047\034rest' > "$d/legacy.7z"
 case_ 7z-unknown 2 "UNKNOWN legacy.7z: a 7z archive" "$d"
@@ -459,6 +493,10 @@ PY
   printf '# Source-Binary-Exception: v.tar.gz:./ok/* -- other-platform: %s\n' "$OPW" >> "$d/p.spec"
   shiprpm rpm-op "$work/t/op/ok/tool.exe"
   case_ other-platform-shipped 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt v.tar.gz:./ok/tool.exe" "$d" --rpms "$work/rpm-op-out"
+  # nor is a path: the Android class the RPMs carry is red
+  d=$(pkg jv-ship); cp "$work/jv-android/v.tar.gz" "$d/"; printf '# Source-Binary-Exception: %s\n' "$ANDROID" >> "$d/p.spec"
+  shiprpm rpm-jv "$work/t/jv/w/android/lib/A.class"
+  case_ other-platform-path-shipped 3 "SHIPPED g-1-0.noarch.rpm:./usr/lib/f/lib is the prebuilt v.tar.gz:./w/android/lib/A.class" "$d" --rpms "$work/rpm-jv-out"
   # a small helper (gcc -O2: under 1 KiB of .text in a 64 KiB file) embedded in a bundle
   if command -v gcc > /dev/null; then
     d=$(pkg tiny); mkdir -p "$work/t/tiny/bin"
