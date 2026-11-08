@@ -57,7 +57,7 @@ Treat `osc commit` like a `git push` to a shared remote: never run it speculativ
 ```
 osc api -X DELETE '/source/<prj>/<pkg>/_link?comment=drop+broken+link+(target+removed+from+Factory)'
 ```
-This `DELETE` *is itself a commit* (creates a new server revision immediately — confirm intent first, same as `osc commit`); afterwards `osc up` to sync the local checkout, and `osc st` will be clean. No `.changes` entry needed — it's pure OBS metadata, recorded in `osc log`. The alternative (re-pointing the link elsewhere) only makes sense if a valid new target exists; when Factory simply dropped the package, standalone is correct.
+This `DELETE` *is itself a commit* (creates a new server revision immediately — never speculatively, same as `osc commit`); afterwards `osc up` to sync the local checkout, and `osc st` will be clean. No `.changes` entry needed — it's pure OBS metadata, recorded in `osc log`. The alternative (re-pointing the link elsewhere) only makes sense if a valid new target exists; when Factory simply dropped the package, standalone is correct.
 
 ## Monitoring server-side builds (`osc results`, `osc rbl`)
 

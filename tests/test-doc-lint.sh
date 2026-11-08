@@ -161,4 +161,14 @@ printf 'run `gate.sh && osc ci -m x`\nthen `osc ci -m x` alone\n' | grep -cE "$C
 hits=$(grep -nE "$CHAIN" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
 [ -z "$hits" ] && pass "no doc chains a commit or submit after another command" \
   || { fail "a doc chains osc ci/sr after another command (pr-guard refuses it):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
+# The agent runs its own commits and requests (SKILL.md "End state"): a doc
+# that tells it to confirm intent or ask before one hands the step back to
+# the user, as "confirm intent first, same as osc commit" did.
+ASKS='(confirm (the )?intent|ask (the user )?(first|before))[^.]*\bosc[[:space:]]+(ci|commit|sr)\b'
+# shellcheck disable=SC2016  # the backticks are the probe's markdown
+printf 'a commit — confirm intent first, same as `osc commit`\nshow the diff, then `osc commit`\n' | grep -ciE "$ASKS" | grep -qx 1 \
+  && pass "ask-before-commit pattern self-test" || fail "ask-before-commit pattern self-test: the regex is broken"
+hits=$(grep -niE "$ASKS" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no doc asks for the user's go before the agent's own commit" \
+  || { fail "a doc asks for a go before the agent's own commit (it runs them itself):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
