@@ -391,6 +391,16 @@ jv gradle-wrapper 0 "1 hit(s), for a Gradle wrapper (by path)" w/kn/gradle/wrapp
   'v.tar.gz:./w/*/gradle/wrapper/gradle-wrapper.jar!* -- other-platform: the Gradle wrapper of the Android bindings'
 jv not-the-wrapper 3 "not v.tar.gz:./w/lib/gradle/wrapper/tool.jar!org/gradle/wrapper/GradleWrapperMain.class (Java class)" \
   w/lib/gradle/wrapper/tool.jar 'v.tar.gz:./w/* -- other-platform: the Gradle wrapper of the Android bindings'
+# A .. segment names a directory the member leaves: never a platform's.
+d=$(pkg jv-dotdot)
+python3 - "$d/v.tar.gz" "$work/t/jv/w/android/lib/A.class" "$work/t/jv/w/kn/gradle/wrapper/gradle-wrapper.jar" <<'PY'
+import sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as t:
+    t.add(sys.argv[2], arcname="./w/android/../java/A.class")
+    t.add(sys.argv[3], arcname="./w/gradle/wrapper/../../x/gradle/wrapper/gradle-wrapper.jar")
+PY
+printf '# Source-Binary-Exception: %s\n' 'v.tar.gz:./w/* -- other-platform: the Gradle wrapper of the Android bindings' >> "$d/p.spec"
+case_ path-dotdot 3 "not v.tar.gz:./w/android/../java/A.class (Java class) and 1 more" "$d"
 mkdir -p "$work/t/jv/w/android/jni"; cp "$work/t/op/no/aarch64.so" "$work/t/jv/w/android/jni/libx.so"
 jv linux-elf 3 "not v.tar.gz:./w/android/jni/libx.so (ELF)" w/android/jni/libx.so "$ANDROID"
 

@@ -535,9 +535,9 @@ def by_path(path, k, why):
     """The platform a hit of a kind its bytes cannot place (NEUTRAL) is for by
     its path, as an other-platform line with this why claims: a Gradle
     wrapper's jar, or a directory of its archive member's path named for the
-    platform why names; "" otherwise."""
-    if not k.startswith(NEUTRAL):
-        return ""
+    platform why names; "" otherwise, and for a path with a .. segment."""
+    if not k.startswith(NEUTRAL) or ".." in re.split(r"[/:!]", path):
+        return ""  # a .. segment could name a directory it leaves
     if GRADLE_WRAPPER.search(path):
         return "a Gradle wrapper (by path)"
     outer = path.split("!", 1)[0]
