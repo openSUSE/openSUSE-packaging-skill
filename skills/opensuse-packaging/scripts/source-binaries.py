@@ -48,7 +48,12 @@ import library; symbol and name tables only first, holding no binary), a
 Mach-O (a fat one's every slice), a wasm relocatable object (a module, which
 node or wasmtime run, is refused), or an ELF whose e_machine is a CPU
 openSUSE does not build (EI_OSABI proves nothing). Anything but zeros past
-the format's own extent, or a zip end record, refuses it too. A Linux-target
+the format's own extent, or a zip end record, refuses it too. Java bytecode,
+which runs anywhere, holds by its path instead: inside a Gradle wrapper
+(gradle/wrapper/gradle-wrapper.jar), or under a directory named for the
+platform the why names (android/, ios/, macos/, osx/, darwin/, windows/,
+win32/, win64/, wince/, uwp/), in the archive member's path; the change review
+then checks the build never enters it. A Linux-target
 ELF (x86, Arm, POWER, s390, RISC-V, LoongArch, BPF, GPU code), an EFI image,
 a .NET assembly or a file that cannot be read is refused. Every line that
 matches a hit is tried in turn, so a later test-data line still covers a
@@ -86,7 +91,7 @@ import tarfile
 import zipfile
 import zlib
 
-VERSION = 9  # bump when detection changes, so cached results are rescanned
+VERSION = 10  # bump when detection changes, so cached results are rescanned
 HEAD = 4096
 PRINT = 1024  # shortest hit whose bytes are searched for inside the payload
 FP_CAP = 8 << 20  # how much of a hit its fingerprint is chosen from
@@ -112,11 +117,33 @@ TEST_PATH = re.compile(
 BOOTSTRAP_WORDS = 8
 OTHER_WORDS = 3
 PLATFORM = re.compile(
-    r"\b(?:windows|win(?:32|64)|mingw\w*|msvc|macos|darwin|apple|ios|mach-o|wasm\w*|webassembly"
-    r"|\w*bsd|solaris|illumos|aix|hp-ux|irix|sparc\w*|mips\w*|m68k|alpha|pa-risc|hppa|superh"
-    r"|ia-?64|itanium)\b",
+    r"\b(?:windows|win(?:32|64|ce)|uwp|mingw\w*|msvc|macos|osx|darwin|apple|ios|android|mach-o"
+    r"|wasm\w*|webassembly|\w*bsd|solaris|illumos|aix|hp-ux|irix|sparc\w*|mips\w*|m68k|alpha"
+    r"|pa-risc|hppa|superh|ia-?64|itanium)\b",
     re.I,
 )
+# bytes that run on any platform: other-platform holds for them by path alone
+NEUTRAL = ("Java class",)
+# a directory named for one platform, and the words that name it in a why
+PLATFORM_DIR = {
+    "android": "Android",
+    "ios": "iOS",
+    "macos": "macOS",
+    "osx": "macOS",
+    "darwin": "macOS",
+    "windows": "Windows",
+    "win32": "Windows",
+    "win64": "Windows",
+    "wince": "Windows",
+    "uwp": "Windows",
+}
+PLATFORM_WHY = {
+    "Android": re.compile(r"\bandroid\b", re.I),
+    "iOS": re.compile(r"\bios\b", re.I),
+    "macOS": re.compile(r"\b(?:macos|osx|os x|darwin|apple)\b", re.I),
+    "Windows": re.compile(r"\b(?:windows|win(?:32|64|ce)|uwp)\b", re.I),
+}
+GRADLE_WRAPPER = re.compile(r"(?:^|[:/])gradle/wrapper/gradle-wrapper\.jar!")
 # e_machine of CPUs openSUSE does not build; any other may be one it builds, or
 # code Linux loads (BPF, GPU)
 ELF_CPU = {
@@ -502,6 +529,23 @@ def platform(b, k):
     if k.startswith("ELF"):
         return elf_platform(b)
     return None
+
+
+def by_path(path, k, why):
+    """The platform a hit of a kind its bytes cannot place (NEUTRAL) is for by
+    its path, as an other-platform line with this why claims: a Gradle
+    wrapper's jar, or a directory of its archive member's path named for the
+    platform why names; "" otherwise."""
+    if not k.startswith(NEUTRAL):
+        return ""
+    if GRADLE_WRAPPER.search(path):
+        return "a Gradle wrapper (by path)"
+    outer = path.split("!", 1)[0]
+    for part in outer.partition(":")[2].split("/")[:-1]:
+        name = PLATFORM_DIR.get(part.lower())
+        if name and PLATFORM_WHY[name].search(why):
+            return f"{name} (by path)"
+    return ""
 
 
 def extent(b, k):
@@ -1338,24 +1382,24 @@ def main():
     # an other-platform glob: the platforms it covered; its line: what it does not hold for
     plats, refused = collections.defaultdict(set), collections.defaultdict(list)
 
-    def exception(path, plat):
+    def exception(path, plat, k):
         """The first line matching path whose kind holds for it, and the
         other-platform lines before it that matched but do not."""
         passed = []
         for e in excs:
             if fnmatch.fnmatchcase(path, e[0]):
                 matched.add(e[0])
-                if e[1] != "other-platform" or plat:
+                if e[1] != "other-platform" or plat or by_path(path, k, e[2]):
                     return e, passed
                 passed.append(e)
         return None, passed
 
     def excepted(path, what, plat):
-        e, passed = exception(path, plat)
+        e, passed = exception(path, plat, what)
         if e:
             covered[e[0]] += 1
-            if plat and e[1] == "other-platform":
-                plats[e[0]].add(plat)
+            if e[1] == "other-platform":
+                plats[e[0]].add(plat or by_path(path, what, e[2]))
         else:
             for x in passed:
                 refused[x].append(f"{path} ({what})")
@@ -1366,7 +1410,7 @@ def main():
     if a.rpms is not None:
         prebuilt, prints = {}, {}
         for p, k, h, fp, pl in hits:
-            e = exception(p, pl)[0]
+            e = exception(p, pl, k)[0]
             if not (e and e[1] == "firmware"):
                 prebuilt.setdefault(h, p)
                 if fp:
@@ -1380,7 +1424,7 @@ def main():
             p
             for p, k, _, _, pl in hits
             if k.startswith(LINKABLE)
-            and (exception(p, pl)[0] or ("", ""))[1] == "bootstrap"
+            and (exception(p, pl, k)[0] or ("", ""))[1] == "bootstrap"
         }
         review = [x for x in shipped if x[1] == "embeds" and x[2] in static]
         shipped = [x for x in shipped if x not in review]
@@ -1396,6 +1440,12 @@ def main():
             f"{e[3]}: other-platform holds only for a file whose bytes show another OS or "
             f"CPU, not {what[0]}{more}: build it from source or unbundle it, or except "
             "it as bootstrap or test-data when it is one"
+            + (
+                "; Java bytecode holds by path: in a Gradle wrapper, or under a directory "
+                "named for the platform the why names"
+                if any(n in w for w in what for n in NEUTRAL)
+                else ""
+            )
         )
     print(f"source-binaries: {scanned} files, {members} archive members scanned")
     for line in bad:
