@@ -30,13 +30,37 @@ case $1 in
 esac
 EOF
 chmod +x "$work/bin/osc"
+# git-obs answers the project git's files from $FIX/gitea/<path, / as _>.
+cat > "$work/bin/git-obs" <<'EOF'
+#!/bin/bash
+echo "git-obs $*" >> "$FIX/calls"
+[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
+f="$FIX/gitea/$(printf %s "${5#/}" | tr / _)"
+[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
+[ "$(cat "$f")" = @ERR ] && { echo "ERROR: 500 Internal Server Error" >&2; exit 1; }
+cat "$f"
+EOF
+chmod +x "$work/bin/git-obs"
 
 B="$work/base"
-mkdir -p "$B/obs" "$B/devel"
+mkdir -p "$B/obs" "$B/devel" "$B/gitea"
 obs() { printf '%s\n' "$2" > "$B/obs/$(printf %s "$1" | tr '/?&=' '____')"; }
+gitea() { printf '%s\n' "$2" > "$B/gitea/$(printf %s "$1" | tr / _)"; }
 obs /source/devel:a/foo/_meta '<package name="foo"><person userid="tester" role="maintainer"/></package>'
 obs /source/devel:a/_meta '<project name="devel:a"><person userid="boss" role="maintainer"/></project>'
 echo devel:a/foo > "$B/devel/foo"
+# devel:g is kept in git (hwdata in devel:openSUSE:Factory): its package _meta
+# is a stub, its roles are in gorg/_ObsPrj; tester maintains hw there.
+obs /source/devel:g/hw/_meta '<package name="hw" project="devel:g"><scmsync>https://src.opensuse.org/gorg/hw?trackingbranch=main#ab12</scmsync><url>https://src.opensuse.org/gorg/_ObsPrj.git</url></package>'
+obs /source/devel:g/_meta '<project name="devel:g"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><person userid="tester" role="maintainer"/></project>'
+echo devel:g/hw > "$B/devel/hw"
+gitea repos/gorg/_ObsPrj/raw/_maintainership.json '{"": ["boss"], "hw": ["tester"], "other": ["boss"]}'
+# JWCC, as autogits reads it: a comment and trailing commas
+gitea repos/gorg/_ObsPrj/raw/workflow.config '{
+  // no reviewers
+  "Workflows": ["direct", "pr",],
+  "Organization": "gorg",
+}'
 
 # case_ <name> <expected rc> <expected text> <mutation> [args]
 case_() {
@@ -94,6 +118,36 @@ case_ no-devel-set      0 "ELIGIBLE" \
   "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta '<package name=\"foo\"/>'" devel:a foo
 case_ devel-lookup-fails 5 "or its Factory devel project" \
   "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta @ERR" devel:a foo
+
+echo "--- a project kept in git: its project git names the maintainers and reviewers"
+M=repos/gorg/_ObsPrj/raw/_maintainership.json W=repos/gorg/_ObsPrj/raw/workflow.config
+case_ git-eligible        0 "ELIGIBLE — package maintainer in gorg/_ObsPrj/_maintainership.json" : devel:g hw
+case_ git-not-listed      4 "NOT_YOURS — not a maintainer in gorg/_ObsPrj/_maintainership.json (maintainers: other)" \
+  "gitea $M '{\"\": [\"tester\"], \"hw\": [\"other\"]}'" devel:g hw
+case_ git-project-list    0 "ELIGIBLE — project maintainer in gorg/_ObsPrj/_maintainership.json" \
+  "gitea $M '{\"\": [\"tester\"]}'" devel:g hw
+case_ git-not-in-project  4 "NOT_YOURS — not a maintainer in gorg/_ObsPrj/_maintainership.json (maintainers: boss)" \
+  "gitea $M '{\"\": [\"boss\"]}'" devel:g hw
+case_ git-reviewer        3 "BLOCKED — explicit reviewer role: qa-bot" \
+  "gitea $W '{\"Workflows\": [\"pr\"], \"Reviewers\": [\"+qa-bot\",],}'" devel:g hw
+case_ git-reviewer-object 3 "BLOCKED — explicit reviewer role: legal" \
+  "gitea $W '{\"Reviewers\": {\"~legal\": {\"IgnoreSubmoduleChanges\": true}}}'" devel:g hw
+case_ git-no-workflow     0 "ELIGIBLE" "rm gitea/repos_gorg__ObsPrj_raw_workflow.config" devel:g hw
+case_ git-json-broken     5 "UNREADABLE — gorg/_ObsPrj's _maintainership.json did not parse" "gitea $M '{\"hw\": [\"tester\"'" devel:g hw
+case_ git-json-absent     5 "UNREADABLE — gorg/_ObsPrj has no _maintainership.json" \
+  "rm gitea/repos_gorg__ObsPrj_raw__maintainership.json" devel:g hw
+case_ git-json-fails      5 "UNREADABLE — cannot read gorg/_ObsPrj/_maintainership.json" "gitea $M @ERR" devel:g hw
+case_ git-workflow-broken 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
+  "gitea $W '{\"Reviewers\": \"qa-bot\"}'" devel:g hw
+case_ git-other-host      5 "UNREADABLE — devel:g is kept in https://example.org/gorg/_ObsPrj.git, whose maintainers this cannot read" \
+  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://example.org/gorg/_ObsPrj.git</scmsync></project>'" devel:g hw
+# An OBS reviewer role still counts.
+case_ git-obs-reviewer    3 "BLOCKED — explicit reviewer role: qa" \
+  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><group groupid=\"qa\" role=\"reviewer\"/></project>'" devel:g hw
+case_ git-batch           4 $'devel:g/other\tNOT_YOURS' \
+  "obs /source/devel:g/other/_meta '<package name=\"other\" project=\"devel:g\"/>'; echo devel:g/other > devel/other; printf 'devel:g\thw\ndevel:g\tother\n' > rows" --batch rows
+grep -qF $'devel:g/hw\tELIGIBLE' <<<"$LAST" && [ "$(grep -c 'raw/_maintainership.json$' "$work/git-batch/calls")" = 1 ] \
+  && pass "--batch reads a project git's _maintainership.json once" || fail "git-batch: $(grep git-obs "$work/git-batch/calls")"
 
 echo "--- --batch exits with the worst row"
 # Packages Factory lacks by name: one package list for the whole --batch run.

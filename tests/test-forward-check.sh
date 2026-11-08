@@ -68,9 +68,17 @@ else:
     sys.exit(f"fake osc: unexpected {args}")
 EOF
 chmod +x "$work/bin/osc"
+# git-obs answers a project git's files from $FIX/gitea/<path, / as _>.
+cat > "$work/bin/git-obs" <<'EOF'
+#!/bin/bash
+f="$FIX/gitea/$(printf %s "${5#/}" | tr / _)"
+[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
+cat "$f"
+EOF
+chmod +x "$work/bin/git-obs"
 
 B="$work/base"
-mkdir -p "$B/search" "$B/obs" "$B/devel"
+mkdir -p "$B/search" "$B/obs" "$B/devel" "$B/gitea"
 obs() { printf '%s\n' "$2" > "$B/obs/$(printf %s "$1" | tr '/?&=' '____')"; }
 # req <id> <creator> <state> <created> [<src> [<rev> [<comment> [<who> [<tgt> [<pkg>]]]]]]
 # A request to openSUSE:Factory for PKG from devel:a carrying bbb by default.
@@ -127,6 +135,15 @@ put newmaint maint -
 obs /source/devel:a/newpkg/_history \
   '<revisionlist><revision rev="1"><requestid>2000</requestid></revision><revision rev="2"><requestid>2100</requestid></revision></revisionlist>'
 put maintdue maint
+# devel:g is kept in git: hw's _meta is a stub, gorg/_ObsPrj names tester its
+# maintainer (hwdata in devel:openSUSE:Factory, merged by PR, never an OBS request).
+obs /source/devel:g/_meta '<project name="devel:g"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync></project>'
+obs /source/devel:g/hw/_meta '<package name="hw" project="devel:g"><scmsync>https://src.opensuse.org/gorg/hw#ab12</scmsync></package>'
+obs "/source/devel:g/hw?expand=1" "$(srcdir bbb bbb)"
+obs "/source/devel:g/hw/_history?limit=1" '<revisionlist><revision rev="9"><time>1791806400</time></revision></revisionlist>'
+obs "/source/openSUSE:Factory/hw?expand=1" "$(srcdir aaa aaa)"
+printf 'devel:g/hw\n' > "$B/devel/hw"
+printf '{"": ["boss"], "hw": ["tester"]}\n' > "$B/gitea/repos_gorg__ObsPrj_raw__maintainership.json"
 put wrong tester;     printf 'devel:b/wrong\n' > "$B/devel/wrong"
 # Not in Factory by this name, but under another spelling (devel-of.sh exit 6).
 put near tester -;    rm "$B/devel/near"
@@ -226,6 +243,11 @@ grep -qF "target/@project='openSUSE:Factory'" "$LASTDIR/calls" && fail "wrong-de
 case_ wrong-forwarded 4 "devel:a/fwd  WRONG-DEVEL" "echo devel:b/fwd > devel/fwd" devel:a fwd
 case_ link-into-here 4 "devel:a/due  DUE" \
   "echo devel:b/due > devel/due; obs /source/devel:b/due/_link '<link project=\"devel:a\"/>'" devel:a due
+case_ git-due        4 "devel:g/hw  DUE" : devel:g hw
+case_ git-maintainers 0 "devel:g/hw  MAINTAINERS" \
+  "printf '{\"hw\": [\"other\"]}\n' > gitea/repos_gorg__ObsPrj_raw__maintainership.json" devel:g hw
+case_ git-unreadable 3 "devel:g/hw  UNKNOWN autoforward-gate.sh: UNREADABLE" \
+  "rm gitea/repos_gorg__ObsPrj_raw__maintainership.json" devel:g hw
 case_ gate-fails     3 "devel:a/due  UNKNOWN autoforward-gate.sh: UNREADABLE" \
   "echo @ERR > obs/_source_devel:a_due__meta" devel:a due
 

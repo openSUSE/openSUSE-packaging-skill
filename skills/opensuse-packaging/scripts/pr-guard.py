@@ -56,7 +56,9 @@ and a literal owner/name repository); an osc request (rq, review) accept or
 approve, or the API's changestate to accepted, or a submit to openSUSE:Factory
 from a devel project, unless autoforward-gate.sh would call the package
 ELIGIBLE (no reviewer, the user's package or an unowned one in a project
-they maintain, Factory's devel project; whoever filed the request), and every
+they maintain, Factory's devel project; for a project kept in git, its
+project git's _maintainership.json and workflow.config Reviewers; whoever
+filed the request), and every
 decline and approvenew; an osc commit of a checkout whose files match no GREEN
 gate.sh run (or of a whole project checkout); a submit request whose source
 files match no GREEN gate.sh run with the change review's PASS and a GREEN
