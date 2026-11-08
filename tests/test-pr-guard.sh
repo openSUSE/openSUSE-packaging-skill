@@ -148,6 +148,9 @@ osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$wo
 osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
   && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
 osc_co_ "$work/osc/fresh/y" devel:tools; osc_co_ "$work/osc/edited/z" devel:tools
+# A scmsync checkout (osc co of a package OBS syncs from git) takes no osc commit.
+osc_co_ "$work/osc/scm/s" devel:tools && printf 's\n' > "$work/osc/scm/s/.osc/_package" \
+  && printf 'https://src.opensuse.org/tools/s#main\n' > "$work/osc/scm/s/.osc/_scm"
 osc_co_ "$work/osc/obs/obsbare" devel:tools
 osc_co_ "$work/osc/prjco" devel:tools
 # osc co PRJ PKG: a project checkout around its one package, and one around three.
@@ -1651,6 +1654,7 @@ case_ review-gate-run-main      0 - ""
 case_ review-reviewer-array     0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
 ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
+case_ ci-scmsync                 2 scm-commit "osc commit of devel:tools/s: a scmsync checkout"
 # The skill's scripts by their absolute path: told "Run scripts/gate.sh in the checkout",
 # agents wrote a gate of their own into the package checkout.
 ask_ ci-unstamped               gate-stamp "Run $S/scripts/gate.sh in the checkout" PR_GUARD_SKILL_DIR="$S"

@@ -27,8 +27,9 @@ is every line but a "- " list item; a list line over 100; over 1000 in all),
 carries a work note for the user (build, sweep, gate or review status, the
 session's tools), only says it forwards, or cannot be read, open a PR with tea or
 git-obs, on any repository, whose title or description breaks the same rules
-(the title one headline), or write into a *:Update or *:Maintenance:* project outside
-home: (commit, api, and osc's other writes) or one it cannot place. A -h/--help
+(the title one headline), write into a *:Update or *:Maintenance:* project outside
+home: (commit, api, and osc's other writes) or one it cannot place, or osc commit
+in a scmsync checkout (its sources come from git, by pull request). A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.

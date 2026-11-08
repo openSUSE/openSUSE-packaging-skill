@@ -1185,6 +1185,96 @@ else
   echo "SKIP: --no-entry on a GREEN run (no OBS source_validator/download_files)"
 fi
 
+# A scmsync checkout (osc co of a package OBS syncs from git: .osc/_scm, no
+# .osc/_files) has no osc ci. Its tree is the files OBS lists, the ones a
+# forward's osc sr carries and pr-guard compares, OBS's own _scmsync.obsinfo
+# and build.specials.obscpio included; it stamps only while the checkout holds
+# each of the rest with OBS's md5 and no other. The fake osc lists $O/<prj>/<pkg>.
+printf 'Name:           scmpkg\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
+  | put devel:example/scmpkg scmpkg.spec
+e "Thu Oct 22" "Build with the system zlib" | put devel:example/scmpkg scmpkg.changes
+printf 'mtime: 1\ncommit: ab12\n' | put devel:example/scmpkg _scmsync.obsinfo
+printf 'cpio\n' | put devel:example/scmpkg build.specials.obscpio
+echo devel:example/scmpkg > "$O/devel/scmpkg"
+scmco() {   # scmco <dir>: osc co of devel:example/scmpkg, a git tree with .osc/_scm
+  rm -rf "$1"; mkdir -p "$1/.osc"; printf 'scmpkg\n' > "$1/.osc/_package"; printf 'devel:example\n' > "$1/.osc/_project"
+  printf '2.0\n' > "$1/.osc/_osclib_version"; printf 'https://src.opensuse.org/example/scmpkg#ab12\n' > "$1/.osc/_scm"
+  cp "$O/devel:example/scmpkg/scmpkg.spec" "$O/devel:example/scmpkg/scmpkg.changes" "$1/"; printf 'x.tar.gz\n' > "$1/.gitignore"
+}
+pys() { out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" python3 -I "$work/gate-py.py" "$@" 2>&1)"; rc=$?; }
+SC="$work/home/.local/state/opensuse-packaging/gate/obs/scmpkg/devel:example.json"
+scmco "$work/t-scm"
+pys tracked "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists; a change goes by git PR, never osc ci" <<<"$out" \
+  && pass "scmsync checkout: tracked green, the files OBS lists" || { fail "scmsync tracked: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+pys stamp "$SC" "$work/t-scm" devel:example scmpkg devel:example/scmpkg "" "$work/bl-ok.log"
+TS=$(sv "$SC" tree)
+[ "$rc" = 0 ] && python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1]))
+sys.exit(sorted(d["files"]) != ["_scmsync.obsinfo", "build.specials.obscpio", "scmpkg.changes", "scmpkg.spec"])' "$SC" \
+  && pass "scmsync checkout: the stamp holds the files OBS lists" || { fail "scmsync stamp: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+echo "PASS — tree ${TS:0:12} — clean" > "$work/rv-scm.txt"
+rvs() { out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$1" "$REV" "$work/rv-scm.txt" 2>&1)"; rc=$?; }
+rvs "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "review PASS recorded for tree ${TS:0:12} of devel:example/scmpkg" <<<"$out" \
+  && pass "scmsync checkout: --review records the PASS" || { fail "scmsync --review: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# pr-guard on the forward of those files: no [gate-stamp] (nor any other) ask.
+# The project is kept in git and its project git names tester the maintainer.
+GM="$work/scm-meta"; mkdir -p "$GM/api" "$GM/gitea"
+python3 -I - "$O/devel:example/scmpkg" "$GM" <<'PY'
+import hashlib, os, sys
+src, gm = sys.argv[1:]
+def stub(path, text):
+    open(os.path.join(gm, "api", path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
+entries = "".join('<entry name="%s" md5="%s"/>' % (n, hashlib.md5(open(os.path.join(src, n), "rb").read()).hexdigest())
+                  for n in sorted(os.listdir(src)))
+stub("/source/devel:example/scmpkg?expand=1", '<directory name="scmpkg" srcmd5="ab">%s</directory>' % entries)
+stub("/source/devel:example/scmpkg/_meta", '<package name="scmpkg" project="devel:example"><scmsync>https://src.opensuse.org/example/scmpkg#ab12</scmsync></package>')
+stub("/source/devel:example/_meta", '<project name="devel:example"><scmsync>https://src.opensuse.org/example/_ObsPrj.git</scmsync></project>')
+open(os.path.join(gm, "scmpkg.xml"), "w").write('<package name="scmpkg"><devel project="devel:example" package="scmpkg"/></package>')
+open(os.path.join(gm, "gitea", "repos_example__ObsPrj_raw__maintainership.json"), "w").write('{"scmpkg": ["tester"]}')
+PY
+GUARD="$HERE/../skills/opensuse-packaging/scripts/pr-guard.py"
+fwd() { python3 -I -c 'import json, sys
+print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": " ".join(["osc", "sr"] + sys.argv[2:])}}))' \
+  "$work" devel:example scmpkg openSUSE:Factory -m "'Update scmpkg to 1.0'" \
+  | HOME="$work/home" PR_GUARD_META_DIR="$GM" PR_GUARD_GITEA_DIR="$GM/gitea" PR_GUARD_OBS_USER=tester python3 "$GUARD" 2>&1; }
+out=$(fwd); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] && pass "scmsync forward over the stamped files: pr-guard lets it through" \
+  || { fail "scmsync forward: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mv "$SC" "$SC.off"; out=$(fwd)
+grep -qF "ASK [gate-stamp] osc sr of devel:example/scmpkg" <<<"$out" && pass "scmsync forward without the stamp: [gate-stamp] asks" \
+  || { fail "scmsync forward unstamped"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mv "$SC.off" "$SC"
+# What the checkout holds but OBS does not list, or holds otherwise, leaves no tree.
+echo "Group: x" >> "$work/t-scm/scmpkg.spec"
+pys tracked "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "note: no tree to stamp: OBS lists other files for devel:example/scmpkg than this checkout holds (scmpkg.spec)" <<<"$out" \
+  && pass "scmsync checkout, an edited file: no tree, not red" || { fail "scmsync edited: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rvs "$work/t-scm"
+[ "$rc" = 3 ] && grep -qF "VERDICT: NO GATE" <<<"$out" && grep -qF "note: no tree to stamp" <<<"$out" \
+  && pass "scmsync checkout, an edited file: --review refuses, saying why" || { fail "scmsync edited --review: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+scmco "$work/t-scm"; echo extra > "$work/t-scm/notes.txt"
+pys tracked "$work/t-scm"
+grep -qF "than this checkout holds (notes.txt)" <<<"$out" && pass "scmsync checkout, an untracked file: no tree" \
+  || { fail "scmsync untracked file"; printf '%s\n' "$out" | sed 's/^/    /'; }
+scmco "$work/t-scm"; : > "$O/fail-list"
+pys tracked "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the files OBS lists for devel:example/scmpkg" <<<"$out" \
+  && pass "scmsync checkout, a failed listing: UNKNOWN, red" || { fail "scmsync listing failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm "$O/fail-list"
+# The whole gate GREEN in a scmsync checkout stamps the same tree (the services needed).
+if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
+  rm -f "$SC"; scmco "$work/t-scm"
+  ( cd "$work/t-scm" && g init -q -b main && g add -A && g commit -qm sync && git branch -q base && git branch -q -u base ) \
+    || fail "scmsync git fixture"
+  out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-scm" 2>&1)"
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  [ -n "$t12" ] && [ "$t12" = "${TS:0:12}" ] && grep -qF "OK: devel:example is the target, by git PR" <<<"$out" \
+    && pass "scmsync checkout: a GREEN gate run stamps the tree OBS lists" || { fail "scmsync GREEN run"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  echo "SKIP: GREEN gate run in a scmsync checkout (no OBS source_validator/download_files)"
+fi
+
 # A fresh `osc mkpac` whose files were never `osc add`ed tracks nothing: its
 # tree is the sha256 of nothing, e3b0c44298fc for any content, so a review
 # bound to it binds nothing. Red, nothing stamped, and --review refuses it.
