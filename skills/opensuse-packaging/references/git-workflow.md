@@ -133,6 +133,15 @@ The description follows the SR message rule: `references/request-text.md` "SR an
 
 If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `git-obs -G src.opensuse.org pr create`. Never fall back to curl with a token taken from the tea config; `git-obs -G src.opensuse.org api -X POST /repos/<devel-project>/<pkg>/pulls --data "$(python3 -c 'import json; print(json.dumps({"head": "<you>:<branch>", "base": "main", "title": "<title>", "body": open("body.txt").read()}))')"` covers what the CLIs lack. **Build that JSON with `json.dumps`, as here, never by pasting the text into a quoted string** — a literal `"`, a backtick or a newline breaks it after the branch is already pushed, and you get `invalid character '…'` and *no PR*.
 
+## Forwarding to Factory
+
+Once the PR merged and OBS synced it into the devel project, the Factory step is an `osc sr` from that project, gated like any other.
+
+- **Who may forward it unattended** (`scripts/autoforward-gate.sh`, and pr-guard's accept-forward ask). A project whose `_meta` has `<scmsync>https://src.opensuse.org/<owner>/<repo>…` keeps its roles in that repository, read through `git-obs` (pr-guard: anonymously), on its default branch:
+  - maintainers: `_maintainership.json`, the package's list, else the project's `""` list. Only the legacy `{"<name>": ["<login>", …]}` form is read: the versioned form, a `_maintainership/` directory, a 404 or a failed read is not eligible, with the reason;
+  - reviewers: every name in `workflow.config`'s `Reviewers`, autogits' key for the reviewers it adds to each PR (a list or an object; a `+`, `-`, `*` or `~` prefix only says where and how firmly), blocks like an OBS `reviewer` role. autogits parses the file as JSON with comments and trailing commas (hujson), and so do these scripts. `ReviewGroups` only name groups `Reviewers` uses; `ReviewRequired` is not read (it asks a second maintainer to review the PR, which the merge already had). No `workflow.config` means no reviewer;
+  - a reviewer role in the OBS package or project `_meta` still counts, and `<scmsync>` on another host is not eligible.
+
 ## Verify a push/PR actually landed — don't trust a piped push
 
 **Never confirm `git push` through a pipe** (`git push -q 2>&1 | tail -1 && echo pushed`): the pipeline's exit status is the *last* stage's (`tail`, always 0), so a failed push reports success and the remote silently stays stale. Push **unpiped** and read the result: a real push prints `   <old>..<new>  <branch> -> <branch>` (or `* [new branch] …`); check `echo "exit=$?"`. (Real case: an entire session's commits to a GitHub skill repo *looked* pushed every time but never left the laptop — the remote sat on the pre-session commit. See [[verify-git-push-exit-code]].) For an important push, compare `git ls-remote <remote> refs/heads/<branch>` against `git rev-parse HEAD` afterwards.

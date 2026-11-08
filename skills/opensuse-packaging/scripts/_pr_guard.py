@@ -1707,7 +1707,9 @@ def maintains(prj, pkg, ctx):
 def eligible(prj, pkg, ctx):
     """(True, "") when this account may move prj/pkg unattended, decided as
     autoforward-gate.sh decides ELIGIBLE (the suite runs both on the same
-    fixtures); else (False, why)."""
+    fixtures); else (False, why). A project whose _meta has <scmsync> takes
+    its maintainers from its project git's _maintainership.json and adds the
+    Reviewers of its workflow.config."""
     user = obs_user(ctx)
     if not user:
         return False, "the account is unknown (osc whois failed)"
@@ -1744,8 +1746,25 @@ def eligible(prj, pkg, ctx):
     if meta is None or pmeta is None:
         return False, f"{prj}/{pkg}'s or {prj}'s _meta did not parse"
     revs = holders(meta, "reviewer") | holders(pmeta, "reviewer")
+    # A project kept in git: its OBS _meta are stubs, its roles are in the project git.
+    git = project_git(pmeta)
+    if git and not git[0]:
+        return False, f"{prj} is kept in {git[1]}, whose maintainers this cannot read"
+    if git:
+        ok, more = git_reviewers(*git, ctx)
+        if not ok:
+            return False, more
+        revs |= more
     if revs:
         return False, f"a reviewer role is set ({', '.join(sorted(revs))})"
+    if git:
+        ok, maints = git_maintainers(*git, pkg, ctx)
+        if not ok:
+            return False, maints
+        if user in maints:
+            return True, ""
+        who = ", ".join(sorted(maints)) or "nobody"
+        return False, f"{prj}/{pkg} is maintained by {who} ({'/'.join(git)})"
     maints = holders(meta, "maintainer")
     if user in maints or not maints and user in holders(pmeta, "maintainer"):
         return True, ""
@@ -2023,16 +2042,17 @@ TEA_API_OPTS = {"X": "method", "method": "method", "f": "field", "field": "field
 TEA_API_OPTS |= {"F": "field", "Field": "field", "d": "data", "data": "data"}
 
 
-def gitea_get(path, ctx):
-    """(True, data) for an anonymous src.opensuse.org API GET of path, (True,
-    None) for a 404, (False, what failed) otherwise. Offline,
-    PR_GUARD_GITEA_DIR/<path, with / as _> answers ("@ERR" fails)."""
+def gitea_get(path, ctx, raw=False):
+    """(True, data) for an anonymous src.opensuse.org API GET of path (raw: its
+    text, not parsed as JSON), (True, None) for a 404, (False, what failed)
+    otherwise. Offline, PR_GUARD_GITEA_DIR/<path, with / as _> answers ("@ERR"
+    fails)."""
     import json
     import time
     import urllib.error
     import urllib.request
 
-    key = ("gitea", path)
+    key = ("gitea", path, raw)
     if key in ctx.devel:
         return ctx.devel[key]
     stub = os.environ.get("PR_GUARD_GITEA_DIR")
@@ -2055,7 +2075,7 @@ def gitea_get(path, ctx):
                 if e.code != 404:
                     raise
                 text = None
-        got = (True, None if text is None else json.loads(text))
+        got = (True, text if raw or text is None else json.loads(text))
     except Exception as e:  # any failure asks
         got = (False, f"{path} ({type(e).__name__}: {e})")
     ctx.devel[key] = got
@@ -2091,17 +2111,91 @@ def tea_item(owner, repo, n, ctx):
             return f"pool/{repo} has no Factory devel project to read"
         ok, why = maintains(dev.get("project"), dev.get("package") or repo, ctx)
         return "" if ok else f"pool/{repo}: {why}"
-    ok, m = gitea_get(f"repos/{owner}/_ObsPrj/raw/_maintainership.json", ctx)
+    ok, maints = git_maintainers(owner, "_ObsPrj", repo, ctx)
     if not ok:
-        return f"cannot read {m}"
-    if not isinstance(m, dict):
-        return f"{owner} has no _maintainership.json"
-    pkg, prj = m.get(repo) or [], m.get("") or []
-    if not isinstance(pkg, list) or not isinstance(prj, list):
-        return f"{owner}'s _maintainership.json did not parse"
-    if user in pkg or not pkg and user in prj:
+        return maints
+    if user in maints:
         return ""
-    return f"{owner}/{repo} is maintained by {', '.join(sorted(set(pkg or prj))) or 'nobody'}"
+    return f"{owner}/{repo} is maintained by {', '.join(sorted(maints)) or 'nobody'}"
+
+
+def git_maintainers(owner, prjgit, pkg, ctx):
+    """(True, maintainers) of pkg in src.opensuse.org's owner/prjgit
+    _maintainership.json, the project git autogits reads: the package's list,
+    else the project's (""); (False, why) when it cannot be read. Only the
+    legacy form ({name: [login, ...]}) is read."""
+    ok, m = gitea_get(f"repos/{owner}/{prjgit}/raw/_maintainership.json", ctx)
+    if not ok:
+        return False, f"cannot read {m}"
+    if not isinstance(m, dict):
+        return False, f"{owner} has no _maintainership.json"
+    pkgs, prj = m.get(pkg) or [], m.get("") or []
+    if not isinstance(pkgs, list) or not isinstance(prj, list):
+        return False, f"{owner}'s _maintainership.json did not parse"
+    return True, set(pkgs or prj)
+
+
+def jwcc(text):
+    """JSON with comments and trailing commas, parsed as autogits parses
+    workflow.config (hujson.Standardize); ValueError when it does not parse."""
+
+    def strip(code):
+        return re.sub(r",(\s*[\]}])", r"\1", "".join(code))
+
+    out, code, i = [], [], 0
+    while i < len(text):
+        if text[i] == '"':
+            j = i + 1
+            while j < len(text) and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out += [strip(code), text[i : j + 1]]
+            code, i = [], j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = len(text) if j < 0 else j
+        elif text.startswith("/*", i):
+            i = text.index("*/", i + 2) + 2
+        else:
+            code.append(text[i])
+            i += 1
+    return json.loads("".join(out) + strip(code))
+
+
+def git_reviewers(owner, prjgit, ctx):
+    """(True, reviewers) that owner/prjgit's workflow.config makes autogits
+    request on every pull request: its Reviewers, a list or an object of
+    names, each without its +-*~ prefix (none without the file); (False, why)
+    when it cannot be read."""
+    path = f"repos/{owner}/{prjgit}/raw/workflow.config"
+    ok, text = gitea_get(path, ctx, raw=True)
+    if not ok:
+        return False, f"cannot read {text}"
+    try:
+        conf = jwcc(text) if text is not None else {}
+    except ValueError:
+        return False, f"{owner}/{prjgit}'s workflow.config did not parse"
+    revs = (conf.get("Reviewers") or []) if isinstance(conf, dict) else None
+    if not isinstance(revs, (list, dict)) or not all(isinstance(r, str) for r in revs):
+        return False, f"{owner}/{prjgit}'s workflow.config did not parse"
+    return True, {r.lstrip("+-*~") for r in revs} - {""}
+
+
+# A project kept in git: its _meta's <scmsync> names the project git.
+PROJECT_GIT = Rx(
+    r"https://src\.opensuse\.org/([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*?)(?:\.git)?(?:[?#]\S*)?"
+)
+
+
+def project_git(pmeta):
+    """(owner, repo) of the src.opensuse.org project git a project _meta's
+    <scmsync> names, None for a project OBS keeps, ("", url) for one kept
+    elsewhere."""
+    el = pmeta.find("scmsync")
+    url = (el.text or "").strip() if el is not None else ""
+    if not url:
+        return None
+    m = PROJECT_GIT.fullmatch(url)
+    return m.groups() if m else ("", url)
 
 
 def lone_tea(text):

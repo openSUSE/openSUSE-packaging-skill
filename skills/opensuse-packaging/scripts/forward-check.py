@@ -61,7 +61,8 @@ DECLINED, FOREIGN-DECLINED, DEVEL-DECLINED, WRONG-DEVEL, NEW-IN-FACTORY or
 DUE); 3 a lookup failed or was cut by --deadline (wins over 4); 2 usage
 
 Requests to an scmsync devel project's Gitea repository are not OBS requests
-and are not covered.
+and are not covered; once one merged, its package is decided as any other,
+autoforward-gate.sh reading the project git's maintainers.
 """
 
 import argparse

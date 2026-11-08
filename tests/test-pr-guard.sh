@@ -1527,6 +1527,14 @@ case $1 in
 esac
 OSC
 chmod +x "$work/afg/bin/osc"
+# git-obs reads the project git's files from $FIX/gitea, named as pr-guard's stubs are.
+cat > "$work/afg/bin/git-obs" <<'GITOBS'
+#!/bin/bash
+f="$FIX/gitea/$(printf %s "${5#/}" | tr / _)"
+[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
+cat "$f"
+GITOBS
+chmod +x "$work/afg/bin/git-obs"
 agree="$(python3 - "$work/afg" "$REPO/skills/opensuse-packaging/scripts" "$GUARD" <<'PY'
 import json, os, subprocess, sys
 root, scripts, guard = sys.argv[1:]
@@ -1547,12 +1555,20 @@ variants = {
     "not-in-factory": {"devel": None},
     "unreadable": {"pkg": "@ERR"},
     "project-unreadable": {"prjmeta": "@ERR"},
+    # a project kept in git (hwdata in devel:openSUSE:Factory): a stub _meta,
+    # the roles in its project git; want: the verdict both must reach
+    "git-eligible": {"git": {"foo": ["tester"], "": ["boss"]}, "want": 0},
+    "git-not-listed": {"git": {"foo": ["other"], "": ["tester"]}, "want": 4},
+    "git-project-list": {"git": {"": ["tester"]}, "want": 0},
+    "git-reviewer": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": ["-qa",],}', "want": 3},
+    "git-unreadable": {"git": '{"foo": ["tester"', "want": 5},
+    "git-absent": {"git": None, "want": 5},
 }
 out = []
 for name, v in variants.items():
     d = os.path.join(root, name)
     obs, api = os.path.join(d, "obs"), os.path.join(d, "meta", "api")
-    for x in (obs, api, os.path.join(d, "devel")):
+    for x in (obs, api, os.path.join(d, "devel"), os.path.join(d, "gitea")):
         os.makedirs(x)
     def both(path, text):
         for base in (obs, api):
@@ -1560,6 +1576,16 @@ for name, v in variants.items():
     pkg = v.get("pkg", me)
     both("/source/devel:a/foo/_meta", pkg if pkg == "@ERR" else '<package name="foo">%s</package>' % pkg)
     both("/source/devel:a/_meta", v.get("prjmeta") or '<project name="devel:a">%s</project>' % v.get("prj", ""))
+    if "git" in v:
+        both("/source/devel:a/foo/_meta",
+             '<package name="foo"><scmsync>https://src.opensuse.org/g/foo#1</scmsync></package>')
+        both("/source/devel:a/_meta",
+             '<project name="devel:a"><scmsync>https://src.opensuse.org/g/_ObsPrj.git</scmsync>%s</project>' % me)
+        git = v["git"] if isinstance(v["git"], str) else json.dumps(v["git"])
+        if v["git"] is not None:
+            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json"), "w").write(git)
+        open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw_workflow.config"), "w").write(
+            v.get("wf", '{"Workflows": ["pr"],}'))
     devel = v.get("devel", "devel:a")
     if devel:
         open(os.path.join(d, "devel", "foo"), "w").write(devel + "/foo\n")
@@ -1574,9 +1600,10 @@ for name, v in variants.items():
           "osc sr devel:a foo openSUSE:Factory -m 'Update foo to 1.1: fixes.'"}}
     g = subprocess.run(["python3", guard], input=json.dumps(ev), text=True, capture_output=True,
                        env=dict(os.environ, PR_GUARD_META_DIR=os.path.join(d, "meta"),
+                                PR_GUARD_GITEA_DIR=os.path.join(d, "gitea"),
                                 PR_GUARD_OBS_USER="tester"))
     asked = "ASK [accept-forward]" in g.stdout
-    if g.returncode != 0 or (rc == 0) == asked:
+    if g.returncode != 0 or (rc == 0) == asked or rc != v.get("want", rc):
         out.append("%s(gate=%d guard=%s)" % (name, rc, "ask" if asked else g.returncode))
 print(len(variants), " ".join(out))
 PY
