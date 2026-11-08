@@ -1295,6 +1295,20 @@ for x in "mkdir extra && : > extra/x" ": > .hidden.patch" "ln -s /etc/hostname f
   [ "$rc" = 0 ] && grep -qF "note: no tree to stamp: git sees what the commit lacks" <<<"$out" \
     && pass "scmsync git checkout, case $n: no tree" || { fail "scmsync git stray $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 done
+# An index flag hides an edit from git status: assume-unchanged (a lowercase tag)
+# on a tracked dotfile, skip-worktree (S) on a tracked symlink.
+n=0
+for x in "printf 'y\n' >> .gitignore && git update-index --assume-unchanged .gitignore" \
+  "ln -sf /etc/hostname link && git update-index --skip-worktree link"; do
+  n=$((n+1)); scmgit "$work/t-scm"
+  ( cd "$work/t-scm" && ln -s scmpkg.spec link && git add link && g commit -qm link ) || fail "index flag fixture $n"
+  printf 'mtime: 1\ncommit: %s\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "$O/devel:example/scmpkg/_scmsync.obsinfo"
+  ( cd "$work/t-scm" && eval "$x" ) || fail "index flag fixture $n"
+  [ -z "$(git -C "$work/t-scm" status --porcelain -- . ':(exclude).osc')" ] || fail "index flag fixture $n: git status sees it"
+  pys tracked "$work/t-scm"
+  [ "$rc" = 0 ] && grep -qF "note: no tree to stamp: git's index hides changes to $( [ $n = 1 ] && echo .gitignore || echo link ) (assume-unchanged or skip-worktree)" <<<"$out" \
+    && pass "scmsync git checkout, an index flag hides an edit (case $n): no tree" || { fail "scmsync index flag $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done
 scmgit "$work/t-scm"; : > "$O/fail-obsinfo"
 pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the commit OBS synced for devel:example/scmpkg" <<<"$out" \
