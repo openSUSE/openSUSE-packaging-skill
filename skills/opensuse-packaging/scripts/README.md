@@ -398,7 +398,9 @@ nothing, and --review refuses it. A scmsync checkout (osc co of a package OBS
 syncs from git, .osc/_scm) takes no osc ci: a change goes by git PR. Its tree
 is the files OBS lists, the ones a forward's osc sr sends, stamped only while
 the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
-build.specials.obscpio, which OBS makes) and no other; --review and
+build.specials.obscpio, which OBS makes) and no other, its git HEAD is the
+commit OBS synced, and git sees nothing untracked, ignored or changed (with
+no .git: no directory, symlink or dotfile but .osc and .git*); --review and
 --obs-build then work as in any osc checkout.
 Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
       red (VERDICT names them; --review: the verdict file is not a PASS of this
