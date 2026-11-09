@@ -1553,6 +1553,8 @@ me = '<person userid="tester" role="maintainer"/>'
 other = '<person userid="other" role="maintainer"/>'
 factory = '<package name="foo"><devel project="%s" package="foo"/></package>'
 GIT = "https://src.opensuse.org/g/_ObsPrj.git"
+CMT = "<!-- <scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync> -->"
+EVIL = {"repos_evil__ObsPrj_raw__maintainership.json": '{"foo": ["tester"]}'}
 variants = {
     "eligible": {},
     "project-maintainer": {"pkg": "", "prj": me},
@@ -1593,6 +1595,29 @@ variants = {
                       "why": "a <scmsync> that is not plain text"},
     "git-url-comment": {"git": {"foo": ["tester"]}, "url": GIT + "<!-- x -->", "want": 5,
                         "why": "a <scmsync> that is not plain text"},
+    # sed reads the last plain <scmsync>, a commented one too: never one beside a comment
+    "git-url-commented": {"git": {"foo": ["other"]}, "gitea": EVIL, "want": 5, "why": "or not alone",
+                          "gmeta": '<project name="devel:a"><scmsync>%s</scmsync>%s%s</project>' % (GIT, CMT, me)},
+    "obs-url-commented": {"pkg": other, "gitea": EVIL, "want": 5, "why": "or not alone",
+                          "prjmeta": '<project name="devel:a">%s<person userid="boss" role="maintainer"/></project>' % CMT},
+    "git-url-twice": {"git": {"foo": ["other"]}, "gitea": EVIL, "want": 5, "why": "or not alone",
+                      "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><scmsync>%s</scmsync>%s</project>'
+                               % (GIT, "https://src.opensuse.org/evil/_ObsPrj", me)},
+    "git-url-doubled": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
+                        "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><scmsync>%s</scmsync></project>'
+                                 % (GIT, GIT)},
+    "git-url-repeated": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
+                         "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><!-- <scmsync>%s</scmsync> --></project>'
+                                  % (GIT, GIT)},
+    # a CDATA section can hold a <scmsync> sed reads; any comment or CDATA is never read beside one
+    "obs-url-cdata": {"pkg": other, "gitea": EVIL, "want": 5, "why": "or not alone",
+                      "prjmeta": '<project name="devel:a"><description><![CDATA[<scmsync>https://src.opensuse.org/evil/_ObsPrj'
+                                 '</scmsync>]]></description><person userid="boss" role="maintainer"/></project>'},
+    "git-url-comment-beside": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
+                               "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><!-- note --></project>' % GIT},
+    "git-url-cdata-beside": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
+                             "gmeta": '<project name="devel:a"><scmsync>%s</scmsync>'
+                                      '<description><![CDATA[x]]></description></project>' % GIT},
     "git-reviewers-false": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": false}', "want": 5,
                             "why": "workflow.config did not parse"},
     "git-entry-false": {"git": {"": ["tester"], "foo": False}, "want": 5},
@@ -1623,6 +1648,10 @@ for name, v in variants.items():
                 json.dumps(v["default"]))
         open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw_workflow.config" + q), "w").write(
             v.get("wf", '{"Workflows": ["pr"],}'))
+    if "gmeta" in v:
+        both("/source/devel:a/_meta", v["gmeta"])
+    for f, text in v.get("gitea", {}).items():
+        open(os.path.join(d, "gitea", f), "w").write(text)
     devel = v.get("devel", "devel:a")
     if devel:
         open(os.path.join(d, "devel", "foo"), "w").write(devel + "/foo\n")

@@ -173,9 +173,26 @@ case_ git-url-space       5 "UNREADABLE — devel:g is kept in https://src.opens
 # A CDATA section or a comment in <scmsync> leaves sed no URL: UNREADABLE, never the OBS persons.
 n=0
 for u in '<![CDATA[https://src.opensuse.org/gorg/_ObsPrj]]>' 'https://src.opensuse.org/gorg/_ObsPrj<!-- x -->'; do
-  n=$((n+1)); case_ "git-url-markup-$n" 5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text, whose maintainers this cannot read" \
+  n=$((n+1)); case_ "git-url-markup-$n" 5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone, whose maintainers this cannot read" \
     "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>$u</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
 done
+# sed takes the last plain <scmsync>, one inside a comment too: a commented one after
+# the real one, alone in a project OBS keeps (or in its CDATA), a second one (the same URL
+# too), or one repeating the real URL is never read.
+EVIL="gitea repos/evil/_ObsPrj/raw/_maintainership.json '{\"hw\": [\"tester\"], \"foo\": [\"tester\"]}'"
+CMT='<!-- <scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync> -->'
+case_ git-url-commented   5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
+  "$EVIL; gitea $M '{\"hw\": [\"other\"]}'; obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync>$CMT<person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
+case_ obs-url-commented   5 "UNREADABLE — devel:a is kept in a <scmsync> that is not plain text or not alone" \
+  "$EVIL; obs /source/devel:a/foo/_meta '<package name=\"foo\"><person userid=\"other\" role=\"maintainer\"/></package>'; obs /source/devel:a/_meta '<project name=\"devel:a\">$CMT<person userid=\"boss\" role=\"maintainer\"/></project>'" devel:a foo
+case_ obs-url-cdata       5 "UNREADABLE — devel:a is kept in a <scmsync> that is not plain text or not alone" \
+  "$EVIL; obs /source/devel:a/foo/_meta '<package name=\"foo\"><person userid=\"other\" role=\"maintainer\"/></package>'; obs /source/devel:a/_meta '<project name=\"devel:a\"><description><![CDATA[<scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync>]]></description><person userid=\"boss\" role=\"maintainer\"/></project>'" devel:a foo
+case_ git-url-twice       5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
+  "$EVIL; gitea $M '{\"hw\": [\"other\"]}'; obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync></project>'" devel:g hw
+case_ git-url-doubled     5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
+  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync></project>'" devel:g hw
+case_ git-url-repeated    5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
+  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><!-- <scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync> --></project>'" devel:g hw
 # Absent means none; present, Reviewers is a list or an object, and an entry a list.
 for v in false 0 '""' null; do
   case_ "git-reviewers-$v" 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
