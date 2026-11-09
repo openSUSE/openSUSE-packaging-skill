@@ -179,6 +179,7 @@ def md5(path):
 # what OBS adds to the files of a package it syncs from git
 SCM_MADE = {"_scmsync.obsinfo", "build.specials.obscpio"}
 SCM_WHY = []
+SCM_TREE = []  # the synced commit's git tree, once scm_stray() found nothing past it
 
 
 def scm_stray(d, prj, pkg, local, remote):
@@ -208,14 +209,20 @@ def scm_stray(d, prj, pkg, local, remote):
                 " the listing changed, rerun" % (prj, pkg))
     synced = [ln.split(":", 1)[1].strip() for ln in p.stdout.decode("utf-8", "replace").splitlines()
               if ln.startswith("commit:")]
-    g = subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True)
+    # git replace would let the synced commit read as another commit's tree
+    env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
+    g = subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True, env=env)
     head = g.stdout.strip() if g.returncode == 0 else ""
     if not synced or not head or synced[0].lower() != head.lower():
         return note("the checkout is at %s, OBS synced %s/%s at %s"
                     % (head[:12] or "no commit", prj, pkg, (synced or ["no commit"])[0][:12]))
+    tree = subprocess.run(["git", "rev-parse", "--verify", "-q", head + "^{tree}"],
+                          cwd=d, capture_output=True, text=True, env=env)
+    if tree.returncode != 0:
+        return "UNKNOWN: git cannot read the tree of %s in %s" % (head[:12], d)
     # assume-unchanged (a lowercase tag) and skip-worktree (S) hide an edit from git status
     ls = subprocess.run(["git", "ls-files", "-v", "--", ".", ":(exclude).osc"],
-                        cwd=d, capture_output=True, text=True)
+                        cwd=d, capture_output=True, text=True, env=env)
     if ls.returncode != 0:
         return "UNKNOWN: git ls-files failed in %s" % d
     odd = [ln[2:] for ln in ls.stdout.splitlines() if not ln.startswith("H ")]
@@ -223,11 +230,14 @@ def scm_stray(d, prj, pkg, local, remote):
         return note("git's index hides changes to %s (assume-unchanged or skip-worktree)"
                     % ", ".join(odd[:4]))
     st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored",
-                         "--", ".", ":(exclude).osc"], cwd=d, capture_output=True, text=True)
+                         "--", ".", ":(exclude).osc"], cwd=d, capture_output=True, text=True, env=env)
     if st.returncode != 0:
         return "UNKNOWN: git status failed in %s" % d
     odd = [ln[3:] for ln in st.stdout.splitlines() if not (ln[:3] == "!! " and ln[3:] in local)]
-    return note("git sees what the commit lacks: %s" % ", ".join(odd[:4])) if odd else ""
+    if odd:
+        return note("git sees what the commit lacks: %s" % ", ".join(odd[:4]))
+    SCM_TREE.append(tree.stdout.strip())
+    return ""
 
 
 def scm(d):
@@ -543,12 +553,8 @@ def review(path, d, fpath):
     elif not trees:
         bad = "the PASS line names no 'tree <key12>'"
     else:
-        # scm() held a scmsync checkout to the commit OBS synced, so git's tree is the same tree
-        gt = ""
-        if fm is not None and os.path.exists(os.path.join(d, ".osc/_scm")) \
-                and os.path.lexists(os.path.join(d, ".git")):
-            g = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=d, capture_output=True, text=True)
-            gt = g.stdout.strip() if g.returncode == 0 else ""
+        # a scmsync checkout held to the commit OBS synced: its git tree is the same tree
+        gt = SCM_TREE[-1] if fm is not None and SCM_TREE else ""
         wrong = sorted({x for x in trees if not t.startswith(x) and not (gt and gt.startswith(x))})
         if wrong:
             bad = "review names tree %s, the checkout is tree %s" % (wrong[0][:12], t[:12])
