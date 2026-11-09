@@ -1344,6 +1344,38 @@ echo "PASS — tree ${OT:0:12} — clean" > "$work/rv-scm.txt"; rvs "$work/t-scm
 [ "$rc" = 1 ] && grep -qF "review names tree ${OT:0:12}, the checkout is tree ${TS:0:12}" <<<"$out" && [ -z "$(sv "$SC" review)" ] \
   && pass "scmsync git checkout: a PASS naming another commit's tree is red" \
   || { fail "scmsync --review other git tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# git replace leaves HEAD the synced commit but has it read as another commit's
+# tree: git status and the tree --review takes ignore replacements.
+evil() {   # evil <reset mode>: commit an edited .gitignore, reset to the synced commit, replace it by that one
+  scmgit "$work/t-scm" && ( cd "$work/t-scm" && s=$(git rev-parse HEAD) && printf 'evil\n' >> .gitignore \
+    && g commit -qam evil && e=$(git rev-parse HEAD) && git reset -q "$1" "$s" && git replace "$s" "$e" && git rev-parse "$e^{tree}" )
+}
+ET=$(evil --soft) || fail "git replace fixture"
+[ -z "$(git -C "$work/t-scm" status --porcelain -- . ':(exclude).osc')" ] || fail "git replace fixture: git status sees it"
+pys tracked "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "note: no tree to stamp: git sees what the commit lacks: .gitignore" <<<"$out" \
+  && pass "scmsync git checkout, the synced commit replaced by an edited one: no tree" \
+  || { fail "scmsync git replace: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+ET=$(evil --hard) || fail "git replace fixture"
+rm -f "$SC"; pys stamp "$SC" "$work/t-scm" devel:example scmpkg devel:example/scmpkg "" "$work/bl-ok.log"
+TS=$(sv "$SC" tree); echo "PASS — tree ${ET:0:12} — clean" > "$work/rv-scm.txt"; rvs "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "review names tree ${ET:0:12}, the checkout is tree ${TS:0:12}" <<<"$out" \
+  && pass "scmsync git checkout: a PASS naming the replacement's tree is red" \
+  || { fail "scmsync --review replaced tree: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+GT=$(GIT_NO_REPLACE_OBJECTS=1 git -C "$work/t-scm" rev-parse 'HEAD^{tree}')
+echo "PASS — tree ${GT:0:12} — clean" > "$work/rv-scm.txt"; rvs "$work/t-scm"
+[ "$rc" = 0 ] && grep -qF "review PASS recorded for tree ${TS:0:12}" <<<"$out" \
+  && pass "scmsync git checkout: a PASS naming the synced commit's own tree is recorded" \
+  || { fail "scmsync --review synced tree under a replace: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A failed git read is UNKNOWN, never a clean tree.
+scmgit "$work/t-scm"; printf 'junk' > "$work/t-scm/.git/index"
+pys tracked "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "UNKNOWN: git ls-files failed in $work/t-scm" <<<"$out" \
+  && pass "scmsync git checkout, an unreadable index: UNKNOWN, red" || { fail "scmsync ls-files failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+scmgit "$work/t-scm"; h=$(git -C "$work/t-scm" rev-parse HEAD); rm -f "$work/t-scm/.git/objects/${h:0:2}/${h:2}"
+pys tracked "$work/t-scm"
+[ "$rc" = 1 ] && grep -qF "UNKNOWN: git cannot read the tree of ${h:0:12} in $work/t-scm" <<<"$out" \
+  && pass "scmsync git checkout, the synced commit's object missing: UNKNOWN, red" || { fail "scmsync tree unreadable: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 scmgit "$work/t-scm"; : > "$O/fail-obsinfo"
 pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: cannot read the commit OBS synced for devel:example/scmpkg" <<<"$out" \
