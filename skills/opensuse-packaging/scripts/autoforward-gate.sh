@@ -236,9 +236,11 @@ check_one() {
   # a project kept in git: the OBS _meta are stubs, its roles are in the project
   # git <scmsync> names, at the branch or commit its #fragment names
   url="$(_scm "$prjmeta")"
-  # a CDATA section or a comment in it leaves sed no URL, never an OBS-kept project
-  if [ -z "$url" ] && grep -q '<scmsync' <<<"$prjmeta"; then
-    printf 'UNREADABLE\t-\t-\t%s is kept in a <scmsync> that is not plain text, whose maintainers this cannot read\n' "$p"
+  # sed reads the last plain <scmsync>: a CDATA section, a comment or a second
+  # <scmsync> can hide the real one or forge it, never an OBS-kept project
+  if grep -q '<scmsync' <<<"$prjmeta" && { [ -z "$url" ] || grep -qE '<!--|<!\[CDATA\[' <<<"$prjmeta" \
+       || [ "$(grep -o '<scmsync' <<<"$prjmeta" | wc -l)" -ne 1 ]; }; then
+    printf 'UNREADABLE\t-\t-\t%s is kept in a <scmsync> that is not plain text or not alone, whose maintainers this cannot read\n' "$p"
     return 5
   fi
   if [ -n "$url" ]; then

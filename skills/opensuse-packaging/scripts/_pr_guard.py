@@ -2227,18 +2227,24 @@ def project_git(pmeta, text):
     """(owner, repo, ref) of the src.opensuse.org project git a project
     _meta's <scmsync> names (ref "" without a fragment), None for a project
     OBS keeps, ("", url, what) for one this cannot read: kept elsewhere, a
-    ref that is no plain branch or commit, or a <scmsync> that is not plain
-    text in the _meta's text (a CDATA section, a comment), as
-    autoforward-gate.sh cannot read it."""
+    ref that is no plain branch or commit, or a <scmsync> autoforward-gate.sh
+    cannot read for certain in the _meta's text: not plain text (a CDATA
+    section, a comment), or not alone (a second one, a comment that could
+    hold one)."""
     import html
 
     el = pmeta.find("scmsync")
     url = (el.text or "").strip() if el is not None else ""
     plain = re.findall(r"<scmsync>([^<]*)</scmsync>", text)
     if "<scmsync" in text and (
-        not url or not plain or html.unescape(plain[-1]).strip() != url
+        not url
+        or text.count("<scmsync") != 1
+        or "<!--" in text
+        or "<![CDATA[" in text
+        or not plain
+        or html.unescape(plain[-1]).strip() != url
     ):
-        return "", "a <scmsync> that is not plain text", "maintainers"
+        return "", "a <scmsync> that is not plain text or not alone", "maintainers"
     if not url:
         return None
     m = PROJECT_GIT.fullmatch(url)
