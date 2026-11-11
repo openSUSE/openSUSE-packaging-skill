@@ -23,7 +23,13 @@ assume it's installed** (not in a base openSUSE install). If missing:
 `quilt setup -v <package>.spec` extracts sources into
 `<package>-<version>-build/` and rebuilds the `series` index from existing
 `PatchN:` tags. Safe to rerun (extraction only) — if the build dir gets
-confusing, `rm -rf` and rerun rather than hand-repairing it.
+confusing, `rm -rf` and rerun rather than hand-repairing it — but look
+first: a build dir that was edited and not yet refreshed holds the only copy of
+that work. `scripts/quilt-prep.sh <pkg>.spec` wraps this and refuses to replace
+an existing build dir without `--force`.
+
+`quilt setup` puts the source tree in the directory inside the build dir that
+contains `.pc`, not the first one listed (`SPECPARTS/` sits beside it).
 
 ## Applying & editing patches
 
@@ -38,9 +44,12 @@ first. Mandatory sequence per edit:
 4. **Commit** — `quilt refresh` right after each edit; don't batch sessions —
    small diffs catch mistakes.
 
-**Header standard.** `a/`/`b/` prefixes (quilt's default) for `%autosetup -p1`
-compatibility — never hand-edit to `-p0` form; failure modes:
-`references/patches.md` "Patches".
+**Header standard.** `a/`/`b/` prefixes for `%autosetup -p1` compatibility —
+never hand-edit to `-p0` form; failure modes: `references/patches.md`
+"Patches". A bare `quilt refresh` does *not* give them: it writes
+`<dir>.orig/`/`<dir>/` prefixes plus `Index:` lines. Refresh with
+`quilt refresh -p ab --no-timestamps --no-index` (an exported
+`QUILT_REFRESH_ARGS` was tried and not honored).
 
 **Inspect without breaking the series.** `quilt pop`/`quilt push` to view the
 base or an intermediate state — never hand-edit to simulate a pop, it desyncs
@@ -69,12 +78,19 @@ classic-osc/maintenance flow, once `references/leap-slfo.md` §6 has decided
    - `quilt setup -v <pkg>.spec` — regenerate build dir + series. Safe to
      rerun.
    - `quilt push` the next patch.
-   - Clean apply, or offset-only success → `quilt refresh`, continue.
+   - Clean apply, or offset-only success → refresh (flags above), continue.
+     Fuzz (`with fuzz N`) is not offset-only: don't refresh, flag it for a
+     human look.
    - Reject / `does not apply` / `can't find file to patch` → **don't
      hand-fix it.** Comment out that `PatchN:` line, `rm -rf` the build dir,
      `quilt setup`, restart from the top of the series (real fix: step 8).
+     A failed `quilt push` rolls back and discards the `.rej` files; to read
+     them run `quilt push -f` in a build dir you are about to delete.
+   - `scripts/quilt-test-series.sh [--after PATCH] <pkg>.spec` runs this whole
+     loop and prints REFRESHED / FUZZ / COMMENTED OUT with the failing hunks.
 6. **Clean up**: delete the build dir and the `*.patch~` backups `quilt
-   refresh` leaves — don't commit them.
+   refresh` leaves — don't commit them. Delete only the backups this run
+   created; one already there may be the maintainer's.
 7. **No `.changes` entry unless asked** — that's a separate, explicit step
    (`references/changelog-rules.md` "Changelog (`*.changes`)").
 8. **Report CVEs left commented out** as needing a manual rebase — but first
