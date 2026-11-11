@@ -90,6 +90,7 @@ Call these instead of hand-writing osc-API / Repology / Gitea queries. **osc its
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks); **prefer it over hand-editing**.
 - `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); with `--author`, your entries carry exactly the name and address `osc vc` writes.
 - `vc-identity.sh` — the `Name <email>` a bare `osc vc` writes; the only author for your entries, never git's identity.
+- `quilt-test-series.sh` / `quilt-prep.sh` — CVE-backport test loop: push patches one by one, refresh offset-only applies, comment out rejects; `references/quilt-patches.md` "CVE patch backporting (quilt + spec)".
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
 - `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline. Every `references/<file>.md "<Section>"` pointer here is its argument.
 - `gate.sh` — the Block-2 gate above in one call, one VERDICT line.
