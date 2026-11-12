@@ -1,0 +1,180 @@
+#!/bin/bash
+# Fails when the image is not fit to publish. It is the last build step, so a
+# failure leaves no image; it also runs on a built image started without mounts.
+set -euo pipefail
+
+fail() {
+	echo "image-check: $*" >&2
+	exit 1
+}
+
+hooks=/home/agent/.claude/hooks
+skill=/etc/opencode/skills/opensuse-packaging
+scratch=$(mktemp -d)
+# opencode and its runtime leave files in the temporary directory.
+export TMPDIR=$scratch
+server=
+cleanup() {
+	if [ -n "$server" ]; then
+		kill "$server" 2>/dev/null || true
+		wait "$server" 2>/dev/null || true
+	fi
+	rm -rf "$scratch"
+}
+trap cleanup EXIT
+cd "$scratch"
+
+[ "$HOME" = /home/agent ] || fail "HOME is $HOME"
+[ "${OPENCODE_DISABLE_PROJECT_CONFIG:-}" = 1 ] || fail "project config is not disabled"
+[ "${OPENCODE_DISABLE_AUTOUPDATE:-}" = 1 ] || fail "self-update is not disabled"
+# shellcheck disable=SC2016  # the inner shell expands it
+[ "$(OPENCODE_PASSWORD=x bash -c 'echo "${OPENCODE_PASSWORD-unset}"')" = unset ] ||
+	fail "the shell of a command starts with the server password"
+
+while read -r tool; do
+	HOME=$scratch bash -c "$tool" >/dev/null 2>&1 || fail "does not run: $tool"
+done <<'EOF'
+opencode --version
+osc --help
+git-obs --help
+tea --version
+gh --version
+bugwarden --version
+spec-cleaner --version
+rpmlint --version
+git --version
+ssh -V
+jq --version
+python3 -c 'import ruamel.yaml'
+rpmcrab --version
+rpmdev-vercmp 1 2 || [ $? = 12 ]
+wget --version
+EOF
+
+for svc in source_validator download_files obs_scm obs_scm_bridge tar recompress \
+	set_version format_spec_file node_modules cargo_vendor go_modules; do
+	[ -x "/usr/lib/obs/service/$svc" ] || fail "missing source service: $svc"
+done
+
+for f in /etc/opencode/opencode.jsonc /etc/opencode/opencode.json \
+	/etc/opencode/plugins/pool-pr-guard.ts /etc/opencode/plugins/bug-guard.ts \
+	"$skill/SKILL.md"; do
+	[ -s "$f" ] || fail "missing: $f"
+done
+jq -e '.mcp.servers.bugzilla.command | length > 0' /etc/opencode/opencode.json >/dev/null ||
+	fail "no bugzilla server in /etc/opencode/opencode.json"
+# The launcher names another graph through this variable: no config pins one.
+[[ ${MEMORY_FILE_PATH:-} == /home/agent/.local/share/mcp-memory/* ]] || fail "MEMORY_FILE_PATH is ${MEMORY_FILE_PATH:-unset}"
+jq -e '.mcp.servers.memory | has("environment") | not' /etc/opencode/opencode.json >/dev/null ||
+	fail "the memory server's config pins its environment"
+[ -s /home/agent/.config/gh/config.yml ] || fail "gh has no config.yml beside the mounted login"
+# osc creates this directory before its first request; at run time it cannot.
+[ -d /home/agent/.config/osc/trusted-certs ] || fail "osc has no trusted-certs directory"
+# No key is mounted here: the server must stop at the key, not at its own options.
+mapfile -t mcp < <(jq -r '.mcp.servers.bugzilla.command[]' /etc/opencode/opencode.json)
+out=$("${mcp[@]}" </dev/null 2>&1 || true)
+[[ $out == *"failed to read the API key file"* ]] || fail "bugzilla server does not start: $out"
+# The other two need no login: each must answer the opening request.
+init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"image-check","version":"0"}}}'
+for s in memory sequentialthinking; do
+	mapfile -t mcp < <(jq -r --arg s "$s" '.mcp.servers[$s].command[]' /etc/opencode/opencode.json)
+	out=$(MEMORY_FILE_PATH=$scratch/memory.jsonl timeout 30 "${mcp[@]}" <<<"$init" 2>&1 || true)
+	[[ $out == *'"serverInfo"'* ]] || fail "MCP server $s does not answer: $out"
+done
+
+# The plugins run the guards from the hooks directory: the skill's own copies.
+for f in pr-guard.py _pr_guard.py bug-guard.py; do
+	cmp -s "$skill/scripts/$f" "$hooks/$f" || fail "$hooks/$f is not the skill's $f"
+done
+
+loose=$(find /etc/opencode /home/agent \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)
+[ -z "$loose" ] || fail "not root-owned, or writable by others: $loose"
+
+# The verdict of pr-guard.py on one shell command, as the plugin asks for it.
+guard() {
+	jq -n --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}, cwd: "/work"}' |
+		python3 "$hooks/pr-guard.py" >/dev/null 2>&1
+}
+guard 'osc results' || fail "pr-guard refuses a harmless command"
+! guard 'cat /home/agent/.config/osc/oscrc' || fail "pr-guard lets a credential file be read"
+! guard 'cat /home/agent/.config/tea/config.yml' || fail "pr-guard lets a credential file be read"
+! guard 'cat /home/agent/.config/gh/hosts.yml' || fail "pr-guard lets a credential file be read"
+! guard 'gh auth token' || fail "pr-guard lets gh print its token"
+
+# A server on the baked config must load both guard plugins. They load in the
+# background after the first request; one that failed is listed without its id.
+export XDG_DATA_HOME=$scratch/data XDG_STATE_HOME=$scratch/state XDG_CACHE_HOME=$scratch/cache
+OPENCODE_PASSWORD=$(head -c 18 /dev/urandom | base64)
+export OPENCODE_PASSWORD
+opencode serve --hostname 127.0.0.1 --port 4097 >"$scratch/serve.log" 2>&1 &
+server=$!
+cd /work
+loaded() { [[ $out == *opensuse-packaging.bug-guard* && $out == *opensuse-packaging.pool-pr-guard* ]]; }
+while ((SECONDS < 90)); do
+	out=$(opencode plugin list --server http://127.0.0.1:4097 2>&1 || true)
+	if loaded || [[ $out == *$'\n'"- "* ]]; then break; fi
+	sleep 0.3
+done
+loaded || fail "the server did not load both guard plugins: $out $(cat "$scratch/serve.log")"
+# The agent's commands reach the port: without the password the server must refuse.
+# The full path: a build service puts its own curl first on PATH.
+code=$(/usr/bin/curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4097/api/plugin || true)
+[ "$code" = 401 ] || fail "the server answers $code without its password"
+
+# Read from a file: the listing is cut short when it goes to a pipe.
+opencode debug agents --server http://127.0.0.1:4097 >"$scratch/agents.json" 2>&1 ||
+	fail "no agent listing: $(head -c 300 "$scratch/agents.json")"
+for f in "$skill"/agents/*.md; do
+	name=$(sed -n '2,/^---$/s/^name: //p' "$f")
+	jq -e --arg n "$name" 'any(.[]; .id == $n and .mode == "subagent")' "$scratch/agents.json" >/dev/null ||
+		fail "$f is not registered as the sub-agent $name"
+done
+# Both config files are in effect: a deny of the harness's, and each of those
+# that keep a command away from the server, its password and its logins.
+denied() {
+	jq -e --arg a "$1" --arg r "$2" '.[] | select(.id == "build") | .permissions
+		| any(.action == $a and .effect == "deny" and ($r == "" or .resource == $r))' \
+		"$scratch/agents.json" >/dev/null
+}
+denied execute "" || fail "the build agent lacks the denies of opencode.jsonc"
+while read -r action resource; do
+	denied "$action" "$resource" || fail "the build agent lacks the deny of $action $resource"
+done <<'EOF'
+opencode_* *
+shell *opencode auth*
+shell *opencode.db*
+read *opencode.db*
+shell *opencode api*
+shell *opencode run*
+shell *opencode serve*
+shell *opencode acp*
+shell *opencode mini*
+shell *opencode session*
+shell *opencode service*
+shell *opencode pair*
+shell *opencode*--standalone*
+shell *opencode*--server*
+shell *OPENCODE_PASSWORD*
+shell *oauth_token*
+shell */proc/*environ*
+read */proc/*environ*
+EOF
+
+# A command the server runs starts without the server's password. The call
+# returns before the command has run.
+# shellcheck disable=SC2016  # the server's shell expands it
+cmd='echo "${OPENCODE_PASSWORD-unset}" > '$scratch/shell-password
+opencode api shell.create --server http://127.0.0.1:4097 -d "$(jq -n --arg c "$cmd" '{command: $c}')" \
+	>/dev/null 2>&1 || fail "the server runs no command"
+for _ in $(seq 100); do
+	[ ! -s "$scratch/shell-password" ] || break
+	sleep 0.3
+done
+[ "$(cat "$scratch/shell-password" 2>/dev/null)" = unset ] ||
+	fail "a command the server runs starts with the server password"
+
+# A container starts with a copy of the image's /tmp, owned by root.
+left=$(find /tmp -mindepth 1 -maxdepth 1 ! -path "$scratch" -print -quit)
+[ -z "$left" ] || fail "left in /tmp: $left"
+
+echo "image-check: ok"

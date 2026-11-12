@@ -163,10 +163,11 @@ def check_frontmatter(findings):
 PUBLIC_PATTERNS = [
     # A real e-mail address. Placeholders and role addresses are allowed below.
     (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "e-mail address"),
-    # A personal home directory. /home/abuild is the RPM build root, and
-    # test/user/... are documentation placeholders -- none of them is a person.
+    # A personal home directory. /home/abuild is the RPM build root, /home/agent
+    # the account of contrib/container, and test/user/... are documentation
+    # placeholders -- none of them is a person.
     (
-        r"/home/(?!(?:abuild|test|user|username|youruser|builder|packager)\b)[a-z][a-z0-9_-]*",
+        r"/home/(?!(?:abuild|agent|test|user|username|youruser|builder|packager)\b)[a-z][a-z0-9_-]*",
         "home directory path",
     ),
     (r"/Users/[A-Za-z][A-Za-z0-9_-]*", "home directory path"),
