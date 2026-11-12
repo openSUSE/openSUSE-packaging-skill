@@ -35,6 +35,9 @@ contrib/harness/             per-harness drafts: credential and merge deny rules
                              Codex and Kimi Code, and scripts/pr-guard.py as a pinned
                              hook for Claude Code and opencode — repo-only, installed
                              by hand
+contrib/container/           a draft container image with opencode, this skill, its
+                             guards and its tools, and the launcher that runs it
+                             under podman — repo-only
 evals/                       behaviour evals (JSON; no runner) — repo-only
 ```
 
