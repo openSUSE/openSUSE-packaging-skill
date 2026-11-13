@@ -18,7 +18,7 @@ RUN zypper -n in --no-recommends \
         obs-service-tar obs-service-recompress obs-service-set_version \
         obs-service-format_spec_file obs-service-node_modules obs-service-cargo \
         obs-service-go_modules rpmcrab rpmdevtools wget \
-        git-core openssh-clients python3-base jq curl hostname procps \
+        git-core openssh-clients python3-base jq curl hostname procps socat \
         mcp-server-memory mcp-server-sequential-thinking \
     && zypper clean -a
 
