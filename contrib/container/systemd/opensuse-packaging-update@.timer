@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly update of the openSUSE packaging agent (%i)
+
+[Timer]
+OnCalendar=*-*-* 03:17
+Persistent=true
+RandomizedDelaySec=1200
+Unit=opensuse-packaging-update@%i.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Socket relay to the openSUSE packaging agent (%i)
+BindsTo=opensuse-packaging-agent@%i.service
+After=opensuse-packaging-agent@%i.service
+
+[Service]
+ExecStart=/usr/bin/socat UNIX-LISTEN:%t/opensuse-packaging-%i.sock,mode=0600,fork 'EXEC:"/usr/bin/podman exec -i opensuse-packaging-%i-agent socat - TCP:127.0.0.1:4096"'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

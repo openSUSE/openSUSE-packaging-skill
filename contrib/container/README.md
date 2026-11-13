@@ -10,6 +10,7 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
 | `opencode.json` | what the container adds to `../harness/opencode-v2/opencode.jsonc`: the MCP servers and the denies around opencode's own server and credentials |
 | `image-check` | the last build step: a failure leaves no image |
 | `skill-container` | the launcher you run on the host |
+| `systemd/` | the user units the launcher installs: the agent, its socket relay, and the nightly update |
 
 ## What the image holds
 
@@ -23,6 +24,8 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
   `go_modules`, with the cargo and go those two call, and `obs_scm_bridge`, which osc
   needs to check out a package kept in git.
 - Three MCP servers: bugzilla (bugwarden), memory, sequentialthinking.
+- socat, for the socket relay the units run: the only way into the server from
+  outside its container.
 
 What the image holds under `/etc/opencode` and `/home/agent` is owned by root, and the
 agent runs as your user on a read-only root file system: the files that hold its rules are
@@ -51,12 +54,24 @@ launcher in.
 
 ```
 skill-container secrets --model-auth <integration>
-skill-container up --workdir ~/obs/work [--memory FILE] [--image IMAGE]
-                   [--model provider/model]
-skill-container attach [--continue | --session ID]
-skill-container run [--continue | --session ID] <message>
-skill-container down
+skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
+skill-container up <instance> [--model provider/model]
+skill-container attach <instance> [--continue | --session ID]
+skill-container run <instance> [--continue | --session ID] <message>
+skill-container down <instance>
+skill-container password <instance>
+skill-container import <instance> --from DIR [--memory FILE]
+skill-container update <instance>
+skill-container idle <instance>
 ```
+
+One instance is one user unit, `opensuse-packaging-agent@<instance>`: start it
+at boot with `systemctl --user enable opensuse-packaging-agent@<instance>`.
+`install` writes its drop-in (the work directory, where it is mounted, the
+image), the state the launcher reads, and seeds the memory volume; it refuses
+until `~/.local/bin/skill-container` is an identical copy of the launcher you
+run, so the update timer and your shell run the code you reviewed. Copy it
+and its `systemd/` directory there yourself.
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the
@@ -84,11 +99,10 @@ skill-container down
   starts in. `secrets` does not know the work directory: run it with the `PATH` you use
   for `up`, which `up` checks, and with no `OPENCODE` that names a file the agent could
   have written.
-- **`up`** starts the container on the work directory `--workdir` names, mounted at the
-  same path, and waits until the server has loaded both guard plugins; if it does not, the
-  container is removed. The first start takes about a minute. The server listens inside
-  the container only, with no port on the host, behind a password `up` makes anew for
-  each container and keeps as a sixth secret. `up` refuses a work directory that is not
+- **`up`** starts `<instance>` behind a server password of its own and waits
+  until the server has loaded both guard plugins; if it does not, the unit is
+  stopped. The first start takes about a minute. The server listens inside
+  the container only, with no port on the host. `up` refuses a work directory that is not
   yours, your home directory, one above it, a dot-directory in it, or one that holds or
   lies in your configuration directory, your runtime directory, podman's storage or its
   volumes. It refuses one with no directory above it that is yours and closed to
@@ -98,17 +112,18 @@ skill-container down
   closed; a directory under `/var/tmp` passes below one you made with mode 0700. From `/`
   down to that closed directory each one must be root's or yours and take no entry from
   group or others, unless it is sticky like `/var/tmp`: whoever writes one can swap what
-  lies below it. The same is asked of podman's volumes. It refuses while the container
-  runs.
-- **`up --memory FILE`** gives the container that memory graph to read, in place of its
-  volume: the agent reads what the sessions on your host wrote there and keeps no memory
-  of its own, because the mount is read-only and its writes fail. Podman mounts the
-  file's directory and relabels it for containers, so `up` takes a file only when it is
+  lies below it. The same is asked of podman's volumes. It refuses while the instance
+  runs. It ignores what the instance's own container writes: every other running
+  container still counts.
+- **`install --memory FILE`** seeds the instance's memory volume once, from a
+  graph with entities and relations only: the agent keeps its own memory from
+  there on, and the host graph is never mounted. Podman copies the file's
+  directory with it, so `install` takes a file only when it is
   alone in its directory, outside the work directory and podman's storage and volumes,
   and holds nothing but entities and relations, and when no directory above it, as far up
   as a closed one of yours, is
   another user's or takes entries from group or others without being sticky.
-- `up` refuses a work directory or a graph that a symlink leads to: name each by its real
+- `install` refuses a work directory or a graph that a symlink leads to: name each by its real
   path. It refuses either while a running container that your `podman ps` lists, whatever
   started it, has a directory or a volume above or below it mounted for writing with
   `--volume` or `--mount`. It does not see every way a container writes the host: see
@@ -146,19 +161,40 @@ skill-container down
   key bindings) are the image's and last for one `attach`: those of an opencode on your
   host do not reach it. Ctrl-Z stops the client inside its container: the interface
   leaves the screen, `attach` does not return and no key detaches it. Close that
-  terminal; a client's container that outlives its `attach` stays until `down`.
-- **`down`** removes the container, and a client still on it.
+  terminal; a client's container that outlives its `attach` stays until the next `down`, which removes it with `--depend`.
+ - **`down`** stops the instance. Volumes and secrets stay.
+ - **`password`** prints the server password of a running instance: for a client
+   of your own, on another machine. Run it yourself, never from an agent.
+ - **`import`** copies a project into the instance's work directory, with the
+   memory graph and the project's sessions, and tells you to carry on in the
+   container. The server keeps running; its volumes must be empty. Run it
+   yourself. The transcripts come over unredacted: whatever those sessions
+   read is sent to the container's model provider.
+ - **`update`** pulls the image and restarts the instance when no session is
+   busy and no client is on it; `idle` answers whether that is the case now.
+   Its timer is not enabled by `install`: enable it after one watched run.
+ - A client of your own reaches the server through the relay: a socket unit
+   per instance forwards to the server's loopback through `podman exec`. From
+   another machine, forward the socket over ssh and point `opencode --server`
+   at the local port with `OPENCODE_PASSWORD` from `password`. The client's
+   directory must exist on the server: sessions belong to their directory, and
+   the server resolves it in its own filesystem. Keeping the password still
+   matters: without one the server answers any local process, the agent's
+   included.
+   The server logs to the user journal: `journalctl --user -u
+   opensuse-packaging-agent@<instance>`.
 
-Sessions, the memory graph, gate stamps and `/var/tmp` live in the volumes
-`opensuse-packaging-state`, `-memory`, `-toolstate` and `-scratch`: a new container, or a
-newer image, continues where the last one stopped. With `--memory` the graph is your
-file, read-only, and the `-memory` volume is not used. `podman volume rm` and
+Sessions, the memory graph, gate stamps and `/var/tmp` live in the per-instance
+volumes `opensuse-packaging-<instance>-state`, `-memory`, `-toolstate` and
+`-scratch`: a newer image continues where the last one stopped. The logins
+stay one set per skill and are shared by its instances. `podman volume rm` and
 `podman secret rm` remove them. Your own opencode settings for the container (a default
 model, an `AGENTS.md`) go into `~/.config/skill-container/opensuse-packaging/`, mounted
 read-only. `SKILL_CONTAINER_NAME` (default `opensuse-packaging`) is the name all of these
-start with: the container, its secrets and volumes, the default image
-`localhost/NAME-agent:latest` and that directory. Another name is another set of them,
-with secrets of its own.
+start with: the login secrets and the default image
+`localhost/NAME-agent:latest`; the instance selects the container, its server
+password and its volumes. Another name is another skill, with secrets of its
+own.
 
 ## Limits
 
@@ -189,7 +225,8 @@ boundary between the agent and what is inside the container.
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.
 - **The server has no port on the host.** It listens on the loopback of the container's
-  own network, behind a password `up` makes anew for each container; `podman port` lists
+  own network, behind a password made at the first start of an instance and kept until
+  you remove its secret (`podman secret rm`, then `up`); `podman port` lists
   nothing for it. A client reaches it from a container that joins that network, which
   the launcher starts through your podman.
 - **A client runs what its server names, so the client runs in a container.** opencode's
@@ -259,11 +296,11 @@ boundary between the agent and what is inside the container.
   to you and open the directory to everyone: only the closed directory above, which `up`
   asks for, keeps another local user from running that file as you. Keep that directory
   closed while the work directory exists, and do not move the work directory out of it.
-- **`up` checks a path and podman mounts it a moment later.** Whoever writes a directory
+- **`install` checks a path and podman mounts it a moment later.** Whoever writes a directory
   above the work directory or the graph can put a link there in between, and podman
-  mounts where the link leads. `up` refuses when another user can write such a directory
-  or a running container that your `podman ps` lists writes it through a bind mount or a
-  volume. It does not know your other processes, a container kept elsewhere (root's
+  mounts where the link leads. `install` and `up` refuse when another user can write such
+  a directory or a running container that your `podman ps` lists writes it through a bind mount or a
+  volume, other than the instance's own container. It does not know your other processes, a container kept elsewhere (root's
   podman, another storage root, docker), what a container mounts with `--volumes-from`
   from one that is not running, the upper directory of an overlay mount
   (`:O,upperdir=`), a root file system given with `--rootfs`, or where a volume's data
@@ -285,9 +322,15 @@ boundary between the agent and what is inside the container.
   `gh auth status`, one that names `oauth_token`); like the other logins, one set on
   reading it can. No rule looks at what `gh` does with it: the agent can do on GitHub
   what the token allows, with your host login's a push, a merge or a release included.
-- **A graph given with `--memory` is read whole**: the agent sees what every project of
-  yours wrote there. Nothing the agent writes reaches it. Podman's relabel of its
-  directory (`container_file_t`) stays after `down`.
+- **A graph given with `--memory` is read whole and seeded whole**: the agent sees
+  what every project of yours wrote there, in a copy on its memory volume. Nothing
+  the agent writes reaches your file, and a later `install` keeps what the volume
+  holds. Podman's relabel of the graph's directory (`container_file_t`) stays after
+  `down`.
+- **The server logs to your journal, and the agent can write to it.** What the
+  server prints, and what the agent's commands print, lands in
+  `journalctl --user -u opensuse-packaging-agent@<instance>`: the agent knows
+  where you read it.
 - **The launcher checks `PATH` and the loader's lists, nothing else of your environment.**
   A variable that names a path in the work directory can make the launcher, or a command
   it runs, load what the agent wrote there: `BASH_ENV`, `CONTAINERS_CONF`, `GCONV_PATH`,
