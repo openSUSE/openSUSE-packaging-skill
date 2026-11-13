@@ -1,0 +1,6 @@
+[Unit]
+Description=Update the openSUSE packaging agent (%i)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/skill-container update %i

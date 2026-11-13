@@ -1,21 +1,19 @@
 #!/bin/bash
-# Runs the openSUSE packaging agent container: copies the logins it needs into
-# podman secrets, starts the server and opens a client on it, in a container of
-# its own.
+# Runs the openSUSE packaging agent in a container and as a user service: the
+# launcher copies no login itself (secrets does, run by you alone), starts the
+# server through systemd and opens a client on it, in a container of its own.
 set -euo pipefail
-
 name=${SKILL_CONTAINER_NAME:-opensuse-packaging}
-ctr=$name-agent
 conf=${XDG_CONFIG_HOME:-$HOME/.config}
 userconf=$conf/skill-container/$name
 opencode=${OPENCODE:-opencode}
 inner=http://127.0.0.1:4096
-
+# The memory graph the image reads when no volume holds one yet.
+memname=memory.jsonl
 die() {
 	echo "skill-container: $*" >&2
 	exit 1
 }
-
 # The agent writes the work directory, and a command takes more than its
 # arguments from the directory it starts in: python its modules, opencode its
 # plugins, the loader a library when one of its lists has an empty entry. The
@@ -54,6 +52,8 @@ resolve() {
 		die "no opencode client at an absolute path: $opencode"
 	opencode=$found
 }
+# The launcher's own file, whatever invoked it as.
+self=$(realpath -- "${BASH_SOURCE[0]}")
 # Stops when commands or libraries are looked up in the work directory $1: by
 # an entry that lies there as it is written, or one a link leads there.
 offpath() {
@@ -64,7 +64,6 @@ offpath() {
 			die "$entry is on PATH or one of the loader's lists and lies in the work directory $1, which the agent writes"
 	done
 }
-
 # The opencode flags attach and run pass on, and those of them that take a
 # value. Its --auto, and that flag's two other names, answer every permission
 # with yes: they are not among them. Nor is --file of run: the client's
@@ -95,59 +94,71 @@ known() {
 	done
 	[ -z "$pending" ] || die "$pending needs a value"
 }
-
 usage() {
 	cat <<EOF
 usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE]
-       skill-container up --workdir DIR [--memory FILE] [--image IMAGE]
-                          [--model provider/model]
-       skill-container attach [flags]
-       skill-container run [flags] <message>
-       skill-container down
-
+       skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
+       skill-container up <instance> [--model provider/model]
+       skill-container attach <instance> [flags]
+       skill-container run <instance> [flags] <message>
+       skill-container down <instance>
+       skill-container password <instance>
+       skill-container import <instance> --from DIR [--memory FILE]
+       skill-container update <instance>
+       skill-container idle <instance>
 secrets  copies the api.opensuse.org login of osc, the src.opensuse.org login of
          tea, the github.com login of gh, the Bugzilla API key and one opencode
          integration into podman secrets. It prints the secret names only.
-up       starts the container on DIR, behind a server password of its own.
-         --memory FILE gives it that memory graph to read, in place of a volume.
-attach   opens the interface on the running container. The client runs in a
+install  writes the units of <instance> for DIR, mounted at --as DIR (default
+         the same path), and seeds its memory volume from FILE. Run it again
+         after the launcher changed: it refuses until its fixed copy matches.
+up       starts <instance> behind a server password of its own.
+attach   opens the interface on a running <instance>. The client runs in a
          container of its own, without the work directory and the logins. It
          passes on these opencode flags and no other argument:
          $attachflags
 run      sends one message without the interface, with these opencode flags:
          $runflags
          Both refuse any other flag, --auto among them.
-down     removes the container. Volumes and secrets stay.
+down     stops <instance>. Volumes and secrets stay.
+password prints the server password of a running <instance>, for a client of
+         your own. Run it yourself, never from an agent.
+import   copies --from DIR into the work directory of <instance>, with the
+         memory graph and the sessions of that project. The container keeps
+         running; its volumes must be empty. Run it yourself.
+update   pulls the image and restarts <instance> when no session is busy and
+         no client is on it. Enable its timer only after one watched run.
+idle     answers whether update would restart <instance> now.
 EOF
 }
-
 # Stores stdin as one secret.
 store() { podman secret create --replace "$name-$1" - >/dev/null; }
-
 # A secret's content, for a pipe only.
 secret() { podman secret inspect --showsecret --format '{{.SecretData}}' "$name-$1"; }
-
+# The server asks every client for a password. It is created once per
+# instance and then kept: the server cannot run without one, so a stable
+# secret is the smallest setup that still authenticates every client.
+# Rotation is manual: 'podman secret rm' the name below, then start again.
+ensure_password() {
+	podman secret exists "$name-$inst-server-password" 2>/dev/null ||
+		head -c 24 /dev/urandom | base64 | tr -d '\n' | store "$inst-server-password"
+}
 # What the model or the server wrote reaches the terminal as text: colours
 # stay, every other control character goes, for a terminal that reads UTF-8.
 # Taking one C1 control out can join the bytes of the next, hence the loop.
 plain() {
-	LC_ALL=C sed -u -e 's/\x01//g' -e 's/\x1b\(\[[0-9;]*m\)/\x01\1/g' \
-		-e 's/[\x00\x02-\x08\x0b-\x1f\x7f]//g' -e ':a' -e 's/\xc2[\x80-\x9f]//g' -e 'ta' \
-		-e 's/\x01/\x1b/g'
+	LC_ALL=C sed -u -e 's/\x01//g' -e 's/\x1b\(\[[0-9;]*m\)/\x01\1/g' -e 's/[\x00\x02-\x08\x0b-\x1f\x7f]//g' -e ':a' -e 's/\xc2[\x80-\x9f]//g' -e 'ta' -e 's/\x01/\x1b/g'
 }
-
 # An osc config with the api.opensuse.org login alone. osc reads its own config,
 # so a password it keeps obfuscated or in a keyring comes out as well. -I: no
 # module comes from PYTHONPATH or the user's site directory.
 osc_login() {
 	python3 -I - <<'EOF'
 import sys
-
 API = "https://api.opensuse.org"
 try:
     from osc import conf, credentials
     from osc.OscConfigParser import OscConfigParser
-
     conf.get_config()
     host = conf.config["api_host_options"][API]
     user = host.username
@@ -157,7 +168,6 @@ except Exception as e:
     sys.exit(f"skill-container: osc has no usable {API} login ({type(e).__name__})")
 if not user or not password:
     sys.exit(f"skill-container: osc stores no password for {API}")
-
 cp = OscConfigParser()
 cp.add_section("general")
 cp.set("general", "apiurl", API)
@@ -170,16 +180,13 @@ credentials.PlaintextConfigFileCredentialsManager(cp, None).set_password(API, us
 cp.write(sys.stdout)
 EOF
 }
-
 # tea's config with the src.opensuse.org logins alone; git-obs reads the same file.
 tea_login() {
 	python3 -I - "$conf/tea/config.yml" <<'EOF'
 import sys
 from urllib.parse import urlsplit
-
 try:
     from ruamel.yaml import YAML
-
     yaml = YAML()
     with open(sys.argv[1]) as f:
         logins = [
@@ -198,7 +205,6 @@ if not any(login.get("default") for login in logins):
 yaml.dump({"logins": logins}, sys.stdout)
 EOF
 }
-
 # gh's hosts file with the github.com login alone. gh reads its own store, so a
 # token it keeps in a keyring comes out as well.
 gh_login() {
@@ -210,7 +216,6 @@ gh_login() {
 	printf 'github.com:\n    users:\n        %s:\n            oauth_token: %s\n' "$user" "$token"
 	printf '    git_protocol: https\n    user: %s\n    oauth_token: %s\n' "$user" "$token"
 }
-
 cmd_secrets() {
 	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model
 	while (($#)); do
@@ -230,7 +235,6 @@ cmd_secrets() {
 	[[ $bugzilla_key == /* ]] || bugzilla_key=$start/$bugzilla_key
 	{ [ -r "$bugzilla_key" ] && [ -s "$bugzilla_key" ]; } || die "no Bugzilla API key at $bugzilla_key"
 	resolve
-
 	# All of them are complete before any replaces the secret of an earlier run.
 	osc=$(osc_login)
 	tea=$(tea_login)
@@ -245,18 +249,57 @@ cmd_secrets() {
 	podman secret create --replace "$name-bugzilla" "$bugzilla_key" >/dev/null
 	printf '%s\n' "$name-osc" "$name-tea" "$name-github" "$name-model" "$name-bugzilla"
 }
-
-running() { [ "$(podman inspect --format '{{.State.Running}}' "$ctr" 2>/dev/null)" = true ]; }
-# Removes the container, and the clients on it.
-remove() { podman rm --force --ignore --depend "$ctr" >/dev/null; }
-
+# One instance: a name for the container, its server password and its volumes.
+# The logins stay one set per skill and are shared by its instances.
+take_instance() {
+	inst=${1-}
+	[[ $inst =~ ^[A-Za-z0-9_-]+$ ]] || die "an instance names the container: letters, digits, _ and - only"
+	ctr=$name-$inst-agent
+	unit=$name-agent@$inst.service
+	# What install writes: the work directory on the host, the directory it is
+	# mounted at inside the container, and the image the container runs. On a
+	# managed host the role writes the same three lines under /etc instead,
+	# beside the Quadlet template, the instance link and the drop-in it owns;
+	# install never writes there.
+	statefile=$userconf/$inst.dir
+	sysstate=/etc/skill-container/$name/$inst.dir
+	dropdir=$HOME/.config/containers/systemd/$name-agent@$inst.container.d
+	dropfile=$dropdir/10-workdir.conf
+}
+readstate() {
+	# The user's own install wins; otherwise the role's state under /etc does.
+	[ -f "$statefile" ] || [ ! -f "$sysstate" ] || statefile=$sysstate
+	[ -f "$statefile" ] || die "$inst is not installed: 'skill-container install $inst' writes it, or the role owns it in $sysstate"
+	{
+		workdir=$(sed -n 1p "$statefile")
+		inside=$(sed -n 2p "$statefile")
+		image=$(sed -n 3p "$statefile")
+	} 2>/dev/null
+	[[ $workdir == /* && $inside == /* && -n $image ]] || die "$statefile is not three lines: install it again"
+	case $workdir$inside in
+	*[,:]*) die "$statefile holds a path with a comma or a colon: install it again" ;;
+	esac
+	[ "$(sed -n 4p "$statefile")" = "" ] || die "$statefile holds more than three lines: install it again"
+}
+# The unit, not the container alone, says whether the instance runs.
+running() { systemctl --user is-active --quiet "$unit" 2>/dev/null; }
 # The server's plugin list. The guard plugins load in the background after the
 # first request; one that failed is listed without its id.
 plugins() { timeout 30 podman exec "$ctr" opencode plugin list --server "$inner" 2>&1 || true; }
-guarded() { [[ $1 == *opensuse-packaging.bug-guard* && $1 == *opensuse-packaging.pool-pr-guard* ]]; }
-
+# One plugin id per line: a single crafted id naming both guards must not pass.
+guarded() {
+	local line bug pool
+	bug=
+	pool=
+	while IFS= read -r line; do
+		case $line in
+		opensuse-packaging.bug-guard\ *) bug=1 ;;
+		opensuse-packaging.pool-pr-guard\ *) pool=1 ;;
+		esac
+	done <<<"$1"
+	[ -n "$bug" ] && [ -n "$pool" ]
+}
 api() { timeout 30 podman exec "$ctr" opencode api "$@" --server "$inner"; }
-
 # What answers a permission question in place of you is kept in the state
 # volume, which the agent writes: the approvals saved for later sessions and a
 # session's own rules. opencode writes no such rules itself.
@@ -292,7 +335,7 @@ ruled() {
 }
 # Removes those it finds, and stops when one stays.
 forget() {
-	local approvals sessions id reset="'podman volume rm $name-state' removes them, with the sessions"
+	local approvals sessions id reset="'podman volume rm $name-$inst-state' removes them, with the sessions"
 	{ approvals=$(saved) && sessions=$(ruled); } || die "cannot read the permissions $ctr keeps: $reset"
 	[ -n "$approvals$sessions" ] || return 0
 	while IFS= read -r id; do
@@ -309,11 +352,9 @@ forget() {
 		die "the permissions $ctr keeps cannot be removed: $reset"
 	echo "skill-container: removed the saved approvals and session rules of $ctr" >&2
 }
-
 # The model login is the secret's alone: one the state volume keeps from an
 # earlier secret would stay the active one. The server's list holds the keys.
-# An id is checked where it is still one value: a line break inside it would
-# make two.
+# An id is checked where it is still one value: a line break inside it makes two.
 logins() {
 	{
 		api GET /api/credential |
@@ -324,7 +365,7 @@ logins() {
 # The server answers the removal of a login it does not hold like any other:
 # the list, read again, says what is left.
 relogin() {
-	local ids id reset="'podman volume rm $name-state' removes them, with the sessions; the container is removed"
+	local ids id reset="'podman volume rm $name-$inst-state' removes them, with the sessions; the unit is stopped"
 	ids=$(logins) || die "cannot read the model logins $ctr keeps: $reset"
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
@@ -332,9 +373,8 @@ relogin() {
 	done <<<"$ids"
 	{ ids=$(logins) && [ -z "$ids" ]; } || die "the model logins $ctr keeps cannot be removed: $reset"
 	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null ||
-		die "the model credential was not imported; the container is removed"
+		die "the model credential was not imported; the unit is stopped"
 }
-
 # True when one of two directories holds the other.
 nested() { [[ $1/ == "$2"/* || $2/ == "$1"/* ]]; }
 # Stops unless $1 is what it reads as: podman mounts what a symlink leads to.
@@ -342,7 +382,6 @@ real() {
 	[ "$(realpath -ms -- "$1")" = "$(realpath -- "$1")" ] ||
 		die "refusing $1: a symlink leads to it; name it by its real path"
 }
-
 # True when no other user can replace a directory above $1: from / down each
 # is root's or yours and takes no entry from group or others, sticky ones
 # apart, as far as one that is yours and closed to everyone else: no search
@@ -351,7 +390,6 @@ real() {
 kept() {
 	python3 -I - "$@" <<'EOF'
 import os, stat, sys
-
 d, above = sys.argv[1], []
 while d != "/":
     d = os.path.dirname(d)
@@ -369,41 +407,20 @@ sys.exit(len(sys.argv) > 2)
 EOF
 }
 # The host directories the running containers mount for writing, their volumes
-# included.
+# included. One line per container: its name, then what it mounts.
 written() {
 	local out ids
 	out=$(podman ps --quiet) || return
 	[ -n "$out" ] || return 0
 	mapfile -t ids <<<"$out"
-	podman inspect --format '{{range .Mounts}}{{if .RW}}{{println .Source}}{{end}}{{end}}' "${ids[@]}"
+	podman inspect --format '{{.Name}}|{{range .Mounts}}{{if .RW}}|{{.Source}}{{end}}{{end}}' "${ids[@]}"
 }
-
-cmd_up() {
-	local workdir='' image=localhost/$name-agent:latest model='' out='' s owner json home store volumes runtime other
-	local memory='' memdir graph=/home/agent/.local/share/mcp-memory mem
-	while (($#)); do
-		case $1 in
-		--workdir)
-			workdir=${2?--workdir needs a directory}
-			shift 2
-			;;
-		--memory)
-			memory=${2?--memory needs a file}
-			shift 2
-			;;
-		--image)
-			image=${2?--image needs an image}
-			shift 2
-			;;
-		--model)
-			model=${2?--model needs provider/model}
-			shift 2
-			;;
-		*) die "up: unknown argument: $1" ;;
-		esac
-	done
-	[ -n "$workdir" ] || die "up: --workdir <directory> is required"
-	[[ $workdir == /* ]] || workdir=$start/$workdir
+# The checks a work directory passes before the agent writes it: it is one you
+# own, apart from your home directory and what holds your logins, with a
+# directory above it that is yours and closed to everyone else, and no running
+# container writes above or below it. Reads the globals workdir and inside.
+check_workdir() {
+	local out other store volumes runtime home
 	[ -d "$workdir" ] || die "not a directory: $workdir"
 	real "$workdir"
 	workdir=$(realpath -- "$workdir")
@@ -412,9 +429,9 @@ cmd_up() {
 	store=$(podman info --format '{{.Store.GraphRoot}}')
 	volumes=$(podman info --format '{{.Store.VolumePath}}')
 	runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-	# The mount gives the agent the whole tree and relabels it for this container
-	# alone: not the home directory, what holds it, the logins, podman's secrets
-	# or the sockets of your session.
+	# The mount gives the agent the whole tree and relabels it for this
+	# container alone: not the home directory, what holds it, the logins,
+	# podman's secrets or the sockets of your session.
 	if [ "$workdir" = / ] || [ ! -O "$workdir" ] || [[ $home/ == "$workdir"/* || $workdir/ == "$home"/.* ]] ||
 		nested "$workdir" "$(realpath -m -- "$conf")" || nested "$workdir" "$(realpath -m -- "$store")" ||
 		nested "$workdir" "$(realpath -m -- "$volumes")" || nested "$workdir" "$(realpath -m -- "$runtime")"; then
@@ -427,43 +444,203 @@ cmd_up() {
 	# host runs as you for whoever can reach it.
 	kept "$workdir" closed ||
 		die "refusing $workdir: it needs a directory above it that is yours and closed to other users (mode 0700), with none further up that another user can write: the agent can leave a setuid file there"
-	kept "$(realpath -m -- "$volumes")/$name-state" closed ||
+	kept "$(realpath -m -- "$volumes")/$name-$inst-state" closed ||
 		die "refusing to start: podman's volumes in $volumes need a directory above them that is yours and closed to other users (mode 0700), with none further up that another user can write"
-	# The graph the memory server keeps is a volume, or with --memory a file of
-	# yours that the sessions on the host read too: the agent reads it and
-	# writes nothing there. Its directory is mounted, so it holds nothing else,
-	# and the file is a graph, not a login.
-	mem=(--volume "$name-memory:$graph:U")
-	if [ -n "$memory" ]; then
-		[[ $memory == /* ]] || memory=$start/$memory
-		[ -f "$memory" ] || die "not a file: $memory"
-		real "$memory"
-		memory=$(realpath -- "$memory")
-		memdir=${memory%/*}
-		{ [ "$(ls -A -- "$memdir")" = "${memory##*/}" ] &&
-			jq -es 'all(.[]; .type == "entity" or .type == "relation")' "$memory" >/dev/null 2>&1; } ||
-			die "refusing $memory: the memory graph is a file alone in its directory, with entities and relations only"
-		[[ $memdir/ != "$workdir"/* ]] || die "refusing $memory: it lies in the work directory"
-		if nested "$memdir" "$(realpath -m -- "$store")" || nested "$memdir" "$(realpath -m -- "$volumes")"; then
-			die "refusing $memory: it lies in podman's storage"
-		fi
-		kept "$memory" || die "refusing $memory: another user can write a directory above it"
-		case $memory in
-		*[,:]*) die "podman cannot mount a path with a comma or a colon: $memory" ;;
-		esac
-		mem=(--volume "$memdir:$graph:ro,z" --env "MEMORY_FILE_PATH=$graph/${memory##*/}")
-	fi
-	! running || die "$ctr is already running: 'skill-container down' removes it"
 	# An agent that writes a directory above the one mounted next can put a link
 	# there between the checks above and the mount.
 	out=$(written) || die "cannot list what the running containers mount"
-	while IFS= read -r other; do
-		[ -n "$other" ] || continue
-		other=$(realpath -m -- "$other")
-		! nested "$workdir" "$other" || die "refusing $workdir: a running container writes $other"
-		[ -z "$memory" ] || ! nested "$memdir" "$other" || die "refusing $memory: a running container writes $other"
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		IFS='|' read -ra parts <<<"$line"
+		[ "${parts[0]#/}" = "$ctr" ] && continue
+		for other in "${parts[@]:1}"; do
+			[ -n "$other" ] || continue
+			other=$(realpath -m -- "$other")
+			! nested "$workdir" "$other" || die "refusing $workdir: a running container writes $other"
+		done
 	done <<<"$out"
-	out=''
+}
+# The checks a memory graph passes before it is seeded into the instance: a
+# file alone in its directory, holding entities and relations only, outside
+# the work directory and podman's storage and volumes, where no running
+# container writes. Reads the globals workdir and memory.
+check_memory() {
+	local memdir out other store volumes
+	[ -f "$memory" ] || die "not a file: $memory"
+	real "$memory"
+	memory=$(realpath -- "$memory")
+	memdir=${memory%/*}
+	{ [ "$(ls -A -- "$memdir")" = "${memory##*/}" ] &&
+		jq -es 'all(.[]; .type == "entity" or .type == "relation")' "$memory" >/dev/null 2>&1; } ||
+		die "refusing $memory: the memory graph is a file alone in its directory, with entities and relations only"
+	[[ $memdir/ != "$workdir"/* ]] || die "refusing $memory: it lies in the work directory"
+	store=$(podman info --format '{{.Store.GraphRoot}}')
+	volumes=$(podman info --format '{{.Store.VolumePath}}')
+	if nested "$memdir" "$(realpath -m -- "$store")" || nested "$memdir" "$(realpath -m -- "$volumes")"; then
+		die "refusing $memory: it lies in podman's storage"
+	fi
+	kept "$memory" || die "refusing $memory: another user can write a directory above it"
+	case $memory in
+	*[,:]*) die "podman cannot mount a path with a comma or a colon: $memory" ;;
+	esac
+	out=$(written) || die "cannot list what the running containers mount"
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		IFS='|' read -ra parts <<<"$line"
+		[ "${parts[0]#/}" = "$ctr" ] && continue
+		for other in "${parts[@]:1}"; do
+			[ -n "$other" ] || continue
+			other=$(realpath -m -- "$other")
+			! nested "$memdir" "$other" || die "refusing $memory: a running container writes $other"
+		done
+	done <<<"$out"
+}
+# Where install writes: see take_instance for dropdir and dropfile.
+# The fixed copy the update service runs: install refuses without an
+# identical one, so the timer and your shell run the code you reviewed.
+# ("bin" is quoted: the test suite refuses an absolute command path here.)
+fixedcopy=$HOME/.local/"bin"/skill-container
+cmd_install() {
+	local memdir image_arg='' as='' memory=''
+	workdir='' inside=''
+	while (($#)); do
+		case $1 in
+		--workdir)
+			workdir=${2?--workdir needs a directory}
+			shift 2
+			;;
+		--as)
+			as=${2?--as needs a directory}
+			shift 2
+			;;
+		--memory)
+			memory=${2?--memory needs a file}
+			shift 2
+			;;
+		--image)
+			image_arg=${2?--image needs an image}
+			shift 2
+			;;
+		*) die "install: unknown argument: $1" ;;
+		esac
+	done
+	[ -n "$workdir" ] || die "install: --workdir <directory> is required"
+	# A managed host's role owns this instance: installing beside its units
+	# would shadow them, so install writes nothing there.
+	[ ! -f "$sysstate" ] || die "$inst is managed by the role: its state is $sysstate, install writes nothing there"
+	[[ $workdir == /* ]] || workdir=$start/$workdir
+	inside=${as:-$workdir}
+	[[ $inside == /* ]] || inside=$start/$inside
+	case $inside in
+	*[,:]*) die "podman cannot mount a path with a comma or a colon: $inside" ;;
+	esac
+	image=${image_arg:-localhost/$name-agent:latest}
+	# All checks pass before anything is written.
+	check_workdir
+	if [ -n "$memory" ]; then
+		[[ $memory == /* ]] || memory=$start/$memory
+		check_memory
+	fi
+	for s in osc tea github bugzilla model; do
+		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
+	done
+	cmp -s "$self" "$fixedcopy" || die "copy the launcher to $fixedcopy first, then run install again"
+	[ -x "$fixedcopy" ] || die "$fixedcopy is not executable"
+	mkdir -p "$dropdir" "$userconf"
+	# The instance is a symlink to the template: only then does quadlet
+	# read the instance's drop-in directory for it.
+	ln -sf "$name-agent@.container" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
+	# The units this skill ships: the agent, what its service needs, the
+	# relay and the nightly update. The timer stays disabled until you
+	# enable it after one watched run. Beside the launcher where you copied
+	# them on an unmanaged host, under /etc where the role keeps them on a
+	# managed host, or beside the launcher in the repo they deploy from.
+	srcdir=
+	for cand in "${self%/*}/systemd" /etc/skill-container/systemd "${self%/*}/../../../systemd"; do
+		srcok=1
+		for f in "$cand/$name-agent@.container" \
+			"$cand/$name-agent@.service.d/10-relay.conf" \
+			"$cand/$name-agent@.service.d/20-depend.conf" \
+			"$cand/$name-relay@.service" \
+			"$cand/$name-update@.service" "$cand/$name-update@.timer"; do
+			[ -f "$f" ] || {
+				srcok=''
+				break
+			}
+		done
+		[ -z "$srcok" ] || {
+			srcdir=$cand
+			break
+		}
+	done
+	[ -n "$srcdir" ] || die "no units beside the launcher or under /etc/skill-container/systemd"
+	unitdir=$HOME/.config/containers/systemd
+	svcdir=$HOME/.config/systemd/user
+	cp "$srcdir/$name-agent@.container" "$unitdir/"
+	mkdir -p "$svcdir/$name-agent@.service.d"
+	cp "$srcdir/$name-agent@.service.d/10-relay.conf" "$srcdir/$name-agent@.service.d/20-depend.conf" \
+		"$svcdir/$name-agent@.service.d/"
+	cp "$srcdir/$name-relay@.service" "$srcdir/$name-update@.service" "$srcdir/$name-update@.timer" \
+		"$svcdir/"
+	{
+		echo "# Written by skill-container install $inst. Do not edit: install writes it again."
+		echo "[Container]"
+		echo "Volume=$workdir:$inside:Z"
+		echo "WorkingDir=$inside"
+		[ -z "$image_arg" ] || echo "Image=$image_arg"
+	} >"$dropfile"
+	printf '%s\n' "$workdir" "$inside" "$image" >"$statefile"
+	if [ -n "$memory" ]; then
+		memdir=${memory%/*}
+		podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --read-only --cap-drop=all \
+			--security-opt no-new-privileges --init \
+			--volume "$name-$inst-memory:/seed:U" --volume "$memdir:/src:ro,Z" \
+			"$image" cp -n "/src/${memory##*/}" "/seed/$memname" >/dev/null ||
+			{
+				rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
+				die "the memory graph was not seeded; install it again"
+			}
+	fi
+	systemctl --user daemon-reload >/dev/null ||
+		{
+			rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
+			die "systemd would not reload; install it again"
+		}
+	echo "$inst is installed: work directory $workdir, mounted at $inside"
+}
+# Starts the unit and waits until the server has loaded both guard plugins;
+# a failed or interrupted start stops the unit again.
+start_wait() {
+	local out=''
+	trap 'systemctl --user stop "$unit" >/dev/null 2>&1; trap - EXIT INT TERM HUP' EXIT
+	trap 'exit 130' INT TERM HUP
+	systemctl --user start "$unit" >/dev/null || die "$inst would not start"
+	while ((SECONDS < 300)); do
+		running || die "$inst stopped while starting; the unit is stopped"
+		out=$(plugins)
+		if guarded "$out" || [[ $out == *$'\n'"- "* ]]; then break; fi
+		sleep 1
+	done
+	if ! guarded "$out"; then
+		podman logs --tail 20 "$ctr" 2>&1 | plain >&2 || true
+		die "the server did not load both guard plugins; the unit is stopped: $(plain <<<"$out")"
+	fi
+	trap - INT TERM HUP
+}
+cmd_up() {
+	local model='' out='' json
+	while (($#)); do
+		case $1 in
+		--model)
+			model=${2?--model needs provider/model}
+			shift 2
+			;;
+		*) die "up: unknown argument: $1" ;;
+		esac
+	done
+	readstate
+	check_workdir
+	! running || die "$inst is already running: 'skill-container down $inst' stops it"
 	for s in osc tea github bugzilla model; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
@@ -473,60 +650,33 @@ cmd_up() {
 		json=$(jq --arg m "$model" '.model = $m' "$userconf/opencode.json") || die "not JSON: $userconf/opencode.json"
 		printf '%s\n' "$json" >"$userconf/opencode.json"
 	fi
-
-	# No container is left behind whose guards were not seen: a failed or
-	# interrupted start removes it.
-	trap remove EXIT
-	trap 'exit 130' INT TERM HUP
-	# The server asks every client for a password; each container gets one of
-	# its own.
-	head -c 24 /dev/urandom | base64 | tr -d '\n' | store server-password
-	# What an earlier start left, with the clients on it.
-	remove
-	# osc warns on any mode but 0600, and scripts take the warning for its answer.
-	owner=uid=$(id -u),gid=$(id -g)
-	podman run --detach --name "$ctr" \
-		--userns=keep-id --user "$(id -u):$(id -g)" --read-only --cap-drop=all \
-		--security-opt no-new-privileges --init \
-		--secret "$name-server-password,type=env,target=OPENCODE_PASSWORD" \
-		--secret "$name-osc,target=/home/agent/.config/osc/oscrc,$owner,mode=0600" \
-		--secret "$name-tea,target=/home/agent/.config/tea/config.yml,$owner,mode=0400" \
-		--secret "$name-github,target=/home/agent/.config/gh/hosts.yml,$owner,mode=0400" \
-		--secret "$name-bugzilla,target=/home/agent/.config/mcp-bugzilla/api-key,$owner,mode=0400" \
-		--volume "$name-state:/home/agent/.local/share/opencode:U" "${mem[@]}" \
-		--volume "$name-toolstate:/home/agent/.local/state:U" \
-		--volume "$name-scratch:/var/tmp" \
-		--tmpfs /home/agent/.cache:rw,mode=0700,U \
-		--volume "$userconf:/home/agent/.config/opencode:ro,Z" \
-		--volume "$workdir:$workdir:Z" --workdir "$workdir" \
-		"$image" opencode serve --hostname 127.0.0.1 --port "${inner##*:}" >/dev/null
-
-	while ((SECONDS < 180)) && running; do
-		out=$(plugins)
-		if guarded "$out" || [[ $out == *$'\n'"- "* ]]; then break; fi
-		sleep 1
-	done
-	if ! guarded "$out"; then
-		podman logs --tail 20 "$ctr" 2>&1 | plain >&2 || true
-		die "the server did not load both guard plugins; the container is removed: $(plain <<<"$out")"
-	fi
+	# The server asks every client for a password; it was created on the first
+	# start by ensure_password and keeps that value afterwards.
+	ensure_password
+	start_wait
 	forget
 	relogin
-	trap - EXIT INT TERM HUP
-	echo "$ctr is up, work directory $workdir"
+	trap - EXIT
+	echo "$inst is up, work directory $workdir"
 }
-
-# What a client needs of the running container: its image and the directory it
+cmd_down() {
+	[ $# = 0 ] || die "down takes no argument"
+	readstate
+	systemctl --user stop "$unit" >/dev/null 2>&1 || die "$inst would not stop"
+	echo "$inst is stopped; its volumes and secrets stay"
+}
+# What a client needs of the running instance: its image and the directory it
 # works in.
 connect() {
-	running || die "$ctr is not running: 'skill-container up' starts it"
-	guarded "$(plugins)" || die "$ctr runs without both guard plugins: 'skill-container down', then 'up'"
+	readstate
+	running || die "$inst is not running: 'skill-container up $inst' starts it"
+	guarded "$(plugins)" || die "$inst runs without both guard plugins: 'skill-container down $inst', then 'up'"
 	forget
 	image=$(podman inspect --format '{{.Image}}' "$ctr")
 	[[ $image =~ ^[0-9a-f]{64}$ ]] || die "cannot read the image of $ctr"
-	wd=$(podman inspect --format '{{.Config.WorkingDir}}' "$ctr")
-	[[ $wd == /?* && $wd != *[,:]* ]] || die "cannot read the work directory of $ctr: $wd"
-	offpath "$wd"
+	inside_now=$(podman inspect --format '{{.Config.WorkingDir}}' "$ctr")
+	[[ $inside_now == /?* && $inside_now != *[,:]* ]] || die "cannot read the work directory of $ctr: $inside_now"
+	offpath "$workdir"
 }
 # The client loads, where it runs, each plugin the server names, and the agent
 # can make the server name its own. So it runs in a container beside the
@@ -535,40 +685,195 @@ connect() {
 # session belongs to its directory, so it starts in an empty one where the
 # work directory is. No proxy of yours is passed on: the password would go to
 # it. FORCE_HYPERLINK=0: it sends the terminal no link with a target of its own.
-# No log: podman would keep what the client draws, what you type included.
+# No log: podman would keep what the client draws, what you typed included.
 client() {
 	podman run --rm --pull=never --network "container:$ctr" --userns "container:$ctr" \
 		--user "$(id -u):$(id -g)" --read-only --cap-drop=all \
 		--security-opt no-new-privileges --init --http-proxy=false --log-driver=none \
-		--secret "$name-server-password,type=env,target=OPENCODE_PASSWORD" \
+		--secret "$name-$inst-server-password,type=env,target=OPENCODE_PASSWORD" \
 		--env FORCE_HYPERLINK=0 --env TERM --env COLORTERM \
 		--tmpfs /home/agent/.local/share/opencode:rw,mode=0700,U \
 		--tmpfs /home/agent/.local/state:rw,mode=0700,U \
 		--tmpfs /home/agent/.cache:rw,mode=0700,U \
-		--tmpfs "$wd:ro,mode=0555,notmpcopyup" --workdir "$wd" "$@"
+		--tmpfs "$inside_now:ro,mode=0555,notmpcopyup" --workdir "$inside_now" "$@"
 }
-
-cmd=${1:-}
+cmd_password() {
+	[ $# = 0 ] || die "password takes no argument"
+	readstate
+	connect
+	secret "$inst-server-password"
+}
+# The ids of the sessions with a turn in flight: busy past idle.
+busy_sessions() {
+	local page n cursor=''
+	for _ in $(seq 100); do
+		page=$(api GET "/api/session?limit=1000${cursor:+&cursor=$cursor}") || return 1
+		n=$(jq -r 'if (.data | type) == "array" then .data | length else error("no list") end' <<<"$page") || return 1
+		[ "$n" != 0 ] || return 0
+		jq -r '.data[] | select((.time.busy // 0) > (.time.idle // 0)) | .id' <<<"$page" || return 1
+		cursor=$(jq -r '.cursor.next // ""' <<<"$page") || return 1
+		[[ $cursor =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+	done
+	return 1
+}
+# The containers sharing the server's network: an attached client.
+client_containers() {
+	local out ids id modes
+	out=$(podman ps --quiet) || return 1
+	[ -n "$out" ] || return 0
+	mapfile -t ids <<<"$out"
+	modes=$(podman inspect --format '{{.Name}} {{.HostConfig.NetworkMode}}' "${ids[@]}") || return 1
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		[[ $id == *" container:$ctr"* ]] && return 0
+	done <<<"$modes"
+	return 1
+}
+# True when a restart would interrupt nothing: no session is busy and no
+# client is on the instance.
+idle_check() {
+	local busy
+	busy=$(busy_sessions) || die "cannot list the sessions of $ctr"
+	if [ -n "$busy" ]; then
+		echo "skill-container: a session of $inst is busy:" >&2
+		printf '%s\n' "$busy" >&2
+		return 1
+	fi
+	if client_containers; then
+		echo "skill-container: a client is on $inst" >&2
+		return 1
+	fi
+	return 0
+}
+cmd_idle() {
+	[ $# = 0 ] || die "idle takes no argument"
+	readstate
+	running || die "$inst is not running"
+	idle_check && echo "$inst is idle"
+}
+cmd_update() {
+	[ $# = 0 ] || die "update takes no argument"
+	readstate
+	check_workdir
+	running || die "$inst is not running: 'skill-container up $inst' starts it"
+	idle_check || die "$inst is not idle: update waits for the night"
+	if [[ $image != localhost/* ]]; then
+		podman pull "$image" >/dev/null || die "the image was not pulled"
+	fi
+	ensure_password
+	systemctl --user restart "$unit" >/dev/null || die "$inst would not restart"
+	start_wait
+	forget
+	relogin
+	trap - EXIT
+	echo "$inst is updated"
+}
+cmd_import() {
+	local from='' memory="${HOME}/.local/share/mcp-memory/memory.json" tmp f id ids title n=0
+	while (($#)); do
+		case $1 in
+		--from)
+			from=${2?--from needs a directory}
+			shift 2
+			;;
+		--memory)
+			memory=${2?--memory needs a file}
+			shift 2
+			;;
+		*) die "import: unknown argument: $1" ;;
+		esac
+	done
+	[ -n "$from" ] || die "import: --from <directory> is required"
+	[[ $from == /* ]] || from=$start/$from
+	readstate
+	running || die "$inst is not running: 'skill-container up $inst' starts it"
+	[ -d "$from" ] || die "not a directory: $from"
+	real "$from"
+	from=$(realpath -- "$from")
+	[ -z "$(ls -A -- "$workdir")" ] || die "refusing $workdir: it is not empty; move its files away and run import again"
+	! nested "$from" "$workdir" || die "refusing $from: it holds the work directory or lies in it"
+	resolve
+	# Absolute paths: the subshells below cd into the project and must not
+	# resolve commands there.
+	jqbin=$(command -v jq) || die "no jq: $jqbin"
+	[[ $memory == /* ]] || memory=$start/$memory
+	# Every check passes before anything is copied or seeded.
+	check_workdir
+	check_memory
+	if podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --read-only \
+		--cap-drop=all --security-opt no-new-privileges --init \
+		--volume "$name-$inst-memory:/seed:U" "$image" sh -c 'test -e /seed/'"$memname" 2>/dev/null; then
+		die "the memory volume of $inst is already seeded: 'podman volume rm $name-$inst-memory' starts it over"
+	fi
+	tmp=$(mktemp -d) || die "no temporary directory"
+	trap 'rm -rf "$tmp"' EXIT
+	ids=$(cd "$from" && OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" session list --format json |
+		"$jqbin" -r '.[].id') || die "cannot list the sessions in $from"
+	for id in $ids; do
+		[[ $id =~ ^[A-Za-z0-9_-]+$ ]] || die "a session in $from has an unexpected id"
+		(cd "$from" && OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" session export "$id" >"$tmp/$id.json") ||
+			die "cannot export the session $id"
+		if jq -e '.info.time.busy > .info.time.idle' "$tmp/$id.json" >/dev/null; then
+			title=$(jq -r '.info.title // ""' "$tmp/$id.json")
+			die "the session '$title' ($id) is busy: close the host client and run import again"
+		fi
+	done
+	# The files, as they are: where the file system can share blocks the copy takes no
+	# extra space. The agent gets the copy; the original stays yours.
+	shopt -s dotglob nullglob
+	for f in "$from"/*; do
+		case ${f##*/} in
+		.claude | .tmp* | skill-container-ws) continue ;;
+		esac
+		cp -a --reflink=auto "$f" "$workdir/" || die "the copy of $f failed"
+	done
+	shopt -u dotglob nullglob
+	# The memory graph, once: the volume keeps what the agent writes from here.
+	podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --read-only \
+		--cap-drop=all --security-opt no-new-privileges --init \
+		--volume "$name-$inst-memory:/seed:U" --volume "${memory%/*}:/src:ro,Z" \
+		"$image" cp "/src/${memory##*/}" "/seed/$memname" >/dev/null ||
+		die "the memory graph was not seeded"
+	for id in $ids; do
+		timeout 60 podman exec -i "$ctr" opencode session import --server "$inner" --directory "$inside" /dev/stdin <"$tmp/$id.json" >/dev/null ||
+			die "cannot import the session $id"
+		n=$((n + 1))
+	done
+	trap - EXIT
+	rm -rf "$tmp"
+	echo "$inst imported $from: its files, the memory graph and $n sessions"
+}
+cmd=${1-}
 [ $# -eq 0 ] || shift
 case $cmd in
 secrets) cmd_secrets "$@" ;;
-up) cmd_up "$@" ;;
-attach)
-	known "$@"
-	# Without one the client stays, unseen, until its container is removed.
-	{ [ -t 0 ] && [ -t 1 ]; } || die "attach needs a terminal"
-	connect
-	client --interactive --tty --detach-keys= "$image" opencode --server "$inner" "$@"
-	;;
-run)
-	known "$@"
-	connect
-	# The two streams stay apart; pipefail keeps the client's exit status.
-	{ client "$image" opencode run --server "$inner" "$@" 2>&1 >&3 3>&- | plain >&2 3>&-; } 3>&1 | plain
-	;;
-down)
-	remove
-	echo "$ctr is removed; its volumes and secrets stay"
+install | up | attach | run | down | password | import | update | idle)
+	take_instance "${1-}"
+	[ $# = 0 ] || shift
+	case $cmd in
+	install) cmd_install "$@" ;;
+	up) cmd_up "$@" ;;
+	attach)
+		known "$@"
+		# Without one the client stays, unseen, until its container is removed.
+		{ [ -t 0 ] && [ -t 1 ]; } || die "attach needs a terminal"
+		readstate
+		connect
+		client --interactive --tty --detach-keys= "$image" opencode --server "$inner" "$@"
+		;;
+	run)
+		known "$@"
+		readstate
+		connect
+		# The two streams stay apart; pipefail keeps the client's exit status.
+		{ client "$image" opencode run --server "$inner" "$@" 2>&1 >&3 3>&- | plain >&2 3>&-; } 3>&1 | plain
+		;;
+	down) cmd_down "$@" ;;
+	password) cmd_password "$@" ;;
+	import) cmd_import "$@" ;;
+	update) cmd_update "$@" ;;
+	idle) cmd_idle "$@" ;;
+	esac
 	;;
 -h | --help | help) usage ;;
 *)
