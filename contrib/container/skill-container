@@ -537,7 +537,7 @@ check_memory() {
 # ("bin" is quoted: the test suite refuses an absolute command path here.)
 fixedcopy=$HOME/.local/"bin"/skill-container
 cmd_install() {
-	local memdir image_arg='' as='' memory='' gitname gitmail v
+	local memdir image_arg='' as='' memory='' gitname gitmail v over top
 	workdir='' inside=''
 	while (($#)); do
 		case $1 in
@@ -570,6 +570,15 @@ cmd_install() {
 	case $inside in
 	*[,:]*) die "podman cannot mount a path with a comma or a colon: $inside" ;;
 	esac
+	# The work directory is the agent's: mounted over what the image holds, it
+	# would put the guards, their rules or the tools into the agent's hands.
+	# /bin, /sbin, /lib and /lib64 are links into /usr there.
+	over=$(realpath -ms -- "$inside")
+	for top in /etc /usr /bin /sbin /lib /lib64 /home/agent; do
+		if [ "$over" = / ] || nested "$over" "$top"; then
+			die "refusing to mount the work directory at $inside: it would cover what the image holds in /etc, /usr (also as /bin, /sbin, /lib, /lib64) or /home/agent; name another place with --as"
+		fi
+	done
 	image=${image_arg:-localhost/$name-agent:latest}
 	# All checks pass before anything is written.
 	check_workdir
