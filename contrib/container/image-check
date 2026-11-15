@@ -113,6 +113,17 @@ guard 'osc results' || fail "pr-guard refuses a harmless command"
 ! guard 'cat /home/agent/.ssh/id_ed25519' || fail "pr-guard lets the SSH key be read"
 guard 'cat /home/agent/.ssh/known_hosts' || fail "pr-guard refuses a file beside the SSH key"
 ! guard 'gh auth token' || fail "pr-guard lets gh print its token"
+# git pushes to github.com with the gh login and offers it to no other host; the
+# guard keeps the helper's answer off the agent's command line.
+mkdir "$scratch/gh"
+printf 'github.com:\n    oauth_token: made-up-for-the-check\n    user: nobody\n' >"$scratch/gh/hosts.yml"
+ask() { printf 'protocol=https\nhost=%s\n\n' "$1" | GH_CONFIG_DIR=$scratch/gh GIT_TERMINAL_PROMPT=0 git credential fill 2>&1 || true; }
+[[ $(ask github.com) == *password=made-up-for-the-check* ]] || fail "git does not get the gh login for github.com: $(ask github.com)"
+[[ $(ask example.org) != *made-up-for-the-check* ]] || fail "git offers the gh login to another host"
+# gh answers for its own hosts alone, so the scope is read from the config too.
+! git config --system --get-regexp '^credential\.' | grep -qv '^credential\.https://github\.com\.helper ' ||
+	fail "the system git config names a credential helper beyond https://github.com"
+! guard 'git credential fill' || fail "pr-guard lets git print a stored credential"
 # The image's skill is the pinned one for pr-guard, also for a user who does not
 # own it: only then may its target-gate.sh record a review and pool-pr.sh open a PR.
 [ "${PR_GUARD_SKILL_DIR:-}" = "$skill" ] || fail "PR_GUARD_SKILL_DIR is ${PR_GUARD_SKILL_DIR:-unset}"
@@ -185,6 +196,8 @@ shell */proc/*environ*
 read */proc/*environ*
 shell *.ssh/id_*
 read *.ssh/id_*
+shell *git credential*
+shell *git-credential*
 EOF
 
 # The server takes the container's instructions from the baked config.

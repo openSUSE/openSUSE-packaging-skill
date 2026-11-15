@@ -356,6 +356,8 @@ boundary between the agent and what is inside the container.
   `gh auth status`, one that names `oauth_token`); like the other logins, one set on
   reading it can. No rule looks at what `gh` does with it: the agent can do on GitHub
   what the token allows, with your host login's a push, a merge or a release included.
+  git has it too: for `https://github.com`, and for no other host, the image names gh as
+  git's credential helper, so a push there needs no key.
 - **A start by systemd is not `up`.** At boot, and when the unit restarts after a
   failure, nothing removes the saved approvals and session rules, nothing imports the
   model login again, and nothing checks that both guard plugins loaded. The next `up`,
