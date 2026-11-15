@@ -58,11 +58,22 @@ done
 
 for f in /etc/opencode/opencode.jsonc /etc/opencode/opencode.json \
 	/etc/opencode/plugins/pool-pr-guard.ts /etc/opencode/plugins/bug-guard.ts \
-	"$skill/SKILL.md"; do
+	/etc/opencode/CONTAINER.md "$skill/SKILL.md"; do
 	[ -s "$f" ] || fail "missing: $f"
 done
 jq -e '.mcp.servers.bugzilla.command | length > 0' /etc/opencode/opencode.json >/dev/null ||
 	fail "no bugzilla server in /etc/opencode/opencode.json"
+jq -e '.instructions | index("/etc/opencode/CONTAINER.md")' /etc/opencode/opencode.json >/dev/null ||
+	fail "/etc/opencode/opencode.json does not name CONTAINER.md as instructions"
+# A push to src.opensuse.org: its git user, the mounted key alone, the baked host key.
+ssh=$(HOME=$scratch ssh -G src.opensuse.org 2>&1) || fail "ssh cannot read its config: $ssh"
+for line in "user gitea" "identityfile /home/agent/.ssh/id_ed25519" "identitiesonly yes" \
+	"stricthostkeychecking true"; do
+	grep -qxF "$line" <<<"$ssh" || fail "ssh for src.opensuse.org lacks: $line"
+done
+ssh-keygen -F src.opensuse.org -f /etc/ssh/ssh_known_hosts >/dev/null ||
+	fail "no host key of src.opensuse.org in /etc/ssh/ssh_known_hosts"
+{ [ -d /home/agent/.ssh ] && [ -d /home/agent/.config/git ]; } || fail "no mount point for the SSH key or the git identity"
 # The launcher names another graph through this variable: no config pins one.
 [[ ${MEMORY_FILE_PATH:-} == /home/agent/.local/share/mcp-memory/* ]] || fail "MEMORY_FILE_PATH is ${MEMORY_FILE_PATH:-unset}"
 jq -e '.mcp.servers.memory | has("environment") | not' /etc/opencode/opencode.json >/dev/null ||
@@ -99,6 +110,8 @@ guard 'osc results' || fail "pr-guard refuses a harmless command"
 ! guard 'cat /home/agent/.config/osc/oscrc' || fail "pr-guard lets a credential file be read"
 ! guard 'cat /home/agent/.config/tea/config.yml' || fail "pr-guard lets a credential file be read"
 ! guard 'cat /home/agent/.config/gh/hosts.yml' || fail "pr-guard lets a credential file be read"
+! guard 'cat /home/agent/.ssh/id_ed25519' || fail "pr-guard lets the SSH key be read"
+guard 'cat /home/agent/.ssh/known_hosts' || fail "pr-guard refuses a file beside the SSH key"
 ! guard 'gh auth token' || fail "pr-guard lets gh print its token"
 
 # A server on the baked config must load both guard plugins. They load in the
@@ -158,7 +171,14 @@ shell *OPENCODE_PASSWORD*
 shell *oauth_token*
 shell */proc/*environ*
 read */proc/*environ*
+shell *.ssh/id_*
+read *.ssh/id_*
 EOF
+
+# The server takes the container's instructions from the baked config.
+opencode api GET /api/config --server http://127.0.0.1:4097 2>/dev/null |
+	jq -e 'any(.[]; (.info.instructions? // []) | index("/etc/opencode/CONTAINER.md"))' >/dev/null ||
+	fail "the server does not load CONTAINER.md as instructions"
 
 # A command the server runs starts without the server's password. The call
 # returns before the command has run.
