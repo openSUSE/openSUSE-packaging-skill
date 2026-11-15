@@ -133,6 +133,8 @@ case "$1 $2" in
 "exec "*)
   # Every call into the container is one the launcher bounds in time.
   [ -n "${FAKE_TIMEOUT-}" ] || printf '%s\n' "$*" >> "$FIX/untimed"
+  # With $FIX/exec-escape whatever runs in the container tries the terminal on its error stream.
+  [ ! -e "$FIX/exec-escape" ] || printf 'inside says\033]52;c;QUFB\007\033[2J\n' >&2
   case "$*" in
   *"plugin list"*) cat "$FIX/plugins" ;;
   *"auth import"*) cat > "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
@@ -352,6 +354,7 @@ printf '%s\n' '{"info":{"id":"ses_h1","title":"host one","location":{"directory"
 # The fixed copy install asks for: the launcher itself.
 mkdir -p "$work/home/.local/bin"
 cp "$SC" "$work/home/.local/bin/skill-container"
+cp -r "$HERE/../contrib/container/systemd" "$work/home/.local/bin/systemd"
 allow='[{"action":"*","resource":"*","effect":"allow"}]'
 # The sessions of the state volume, as the agent could have written them.
 sessions() { printf '%s\n' "$1" > "$FIX/sessions"; : > "$FIX/client-calls"; }
@@ -1436,10 +1439,21 @@ printf %s "$work/ws" > "$FIX/workdir"
 out="$(sc idle nol 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qxF "nol is idle" <<<"$out" \
   && pass "idle answers for a quiet instance" || fail "idle: rc=$rc $out"
+# What a call into the container writes to its error stream is the agent's text.
+touch "$FIX/exec-escape"
+out="$(sc idle nol 2>&1)"; rc=$?
+rm "$FIX/exec-escape"
+[ "$rc" = 0 ] && grep -qF "inside says" <<<"$out" && ! grep -q $'\033' <<<"$out" \
+  && pass "idle filters the error stream of a call into the container" || fail "idle printed a control sequence: rc=$rc"
 sessions '[{"id":"ses_b","permissions":null,"time":{"busy":5,"idle":2}}]'
 out="$(sc idle nol 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF ses_b <<<"$out" \
   && pass "idle names a busy session" || fail "idle with a busy session: rc=$rc $out"
+# The state volume is the agent's: an id that is more than an id is not printed.
+sessions '[{"id":"ses_\u001b]52;c;eA==\u0007\u001b[2J","permissions":null,"time":{"busy":5,"idle":2}}]'
+out="$(sc idle nol 2>&1)"; rc=$?
+[ "$rc" != 0 ] && ! grep -q $'\033' <<<"$out" && grep -qF "cannot list the sessions" <<<"$out" \
+  && pass "idle prints no control sequence from a session id" || fail "idle with a crafted id: rc=$rc"
 sessions '[]'
 printf '%s\n' /srv/elsewhere > "$FIX/others"
 printf '%s\n' "spike-y container:$N-nol-agent" > "$FIX/netmode"
@@ -1458,7 +1472,12 @@ out="$(sc update nol 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qF "runs the newest" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
   && pass "update leaves an instance on the newest image running" || fail "update without a new image: rc=$rc $out"
 echo 0123abcd > "$FIX/image-new"
-out="$(sc update nol 2>&1)"; rc=$?
+# The clock of a launcher that pulled for ten minutes: the wait starts at the restart.
+touch "$FIX/exec-escape"
+out="$("${scenv[@]}" SECONDS=600 HOME="$work/home" bash "$SC" update nol 2>&1)"; rc=$?
+rm "$FIX/exec-escape"
+! grep -q $'\033' <<<"$out" && pass "update shows no control sequence from inside the container" \
+  || fail "update printed a control sequence"
 [ "$rc" = 0 ] && grep -qxF "nol is updated" <<<"$out" && [ "$(secret nol-server-password)" = "$pw3" ] \
   && grep -qx "restart $N-agent@nol.service" "$FIX/systemctl-calls" && [ ! -e "$FIX/pull-calls" ] \
   && pass "update restarts a quiet instance on a new image, keeps its password, no pull for a local image" \
@@ -1501,6 +1520,29 @@ out="$(sc up pub 2>&1)"; rc=$?
 out="$(sc uninstall ghost 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qx "stop $N-agent@ghost.service" "$FIX/systemctl-calls" \
   && pass "uninstall stops an instance that was never installed" || fail "uninstall of a stray unit: rc=$rc $out"
+# What goes into the drop-in is one value a line: systemd would read more.
+for bad in "--image=img:1"$'\n'"PodmanArgs=--privileged" "--as=$work/ws%t" "--as=$work/ws\\"; do
+  out="$(sc install inj --workdir "$work/ws" "${bad%%=*}" "${bad#*=}" 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "a line break, a % or a backslash" <<<"$out" && [ ! -e "$pubdir/$N-agent@inj.container.d" ] \
+    && pass "install refuses ${bad%%=*} with a line break, a % or a backslash" \
+    || fail "install ${bad%%=*} injection: rc=$rc $out"
+done
+# The units come from beside the fixed copy: those beside the launcher that
+# runs may lie where an agent writes, its own or another instance's.
+mkdir -p "$work/elsewhere/tool"
+cp "$SC" "$work/elsewhere/tool/skill-container"
+cp -r "$HERE/../contrib/container/systemd" "$work/elsewhere/tool/systemd"
+echo "# AGENT-WRITTEN" >> "$work/elsewhere/tool/systemd/$N-relay@.service"
+out="$("${scenv[@]}" HOME="$work/home" bash "$work/elsewhere/tool/skill-container" install inw --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ! grep -q AGENT-WRITTEN "$work/home/.config/systemd/user/$N-relay@.service" \
+  && pass "install takes no units from beside the launcher that runs" || fail "units beside the launcher: rc=$rc $out"
+sc uninstall inw > /dev/null
+rm -r "$work/elsewhere/tool"
+mv "$work/home/.local/bin/systemd" "$FIX/units.kept"
+out="$(sc install inw --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF "no units in" <<<"$out" && [ ! -L "$pubdir/$N-agent@inw.container" ] \
+  && pass "install without units beside the fixed copy writes nothing" || fail "install without units: rc=$rc $out"
+mv "$FIX/units.kept" "$work/home/.local/bin/systemd"
 # install names the image in the instance's own lines, and the host's git identity.
 grep -qxF "Image=localhost/$N-agent:latest" "$pubdir/$N-agent@nol.container.d/10-workdir.conf" \
   && pass "install pins the default image for the instance" || fail "no Image= line for nol"
@@ -1529,7 +1571,11 @@ out="$(sc install imp --workdir "$work/impws" 2>&1)"; rc=$?
 out="$(sc up imp 2>&1)"; rc=$?
 [ "$rc" = 0 ] || fail "up for the import test: rc=$rc $out"
 : > "$FIX/opencode-calls"; rm -f "$FIX/imported-session"
+touch "$FIX/exec-escape"
 out="$(sc import imp --from "$work/from" 2>&1)"; rc=$?
+rm "$FIX/exec-escape"
+! grep -q $'\033' <<<"$out" && pass "import shows no control sequence from inside the container" \
+  || fail "import printed a control sequence"
 [ "$rc" = 0 ] && [ "$(cat "$work/impws/proj/file.txt")" = work ] \
   && grep -q "cp /src/memory.json /seed/memory.jsonl" "$FIX/seed-calls" \
   && [ "$(cat "$FIX/imported-session")" = "$(cat "$FIX/host-export")" ] \
