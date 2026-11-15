@@ -53,11 +53,13 @@ On the host: rootless podman, osc, gh, jq, git, ssh-keygen, a `python3` that imp
 `ruamel.yaml` without `PYTHONPATH` and your user site directory (the launcher starts it
 with `-I`), and working logins for osc (api.opensuse.org), tea (src.opensuse.org), gh
 (github.com), the bugzilla MCP server and one opencode model integration. opencode 2.x is
-needed there by `secrets` alone, which asks it for that login. The launcher runs its own
+needed there by `secrets`, which asks it for that login, and by `import`, which asks it
+for the project's sessions. The launcher runs its own
 commands in `/` and takes them from `/usr/local/bin:/usr/bin:/bin`, whatever your `PATH`
-holds; `SKILL_CONTAINER_PATH` names other directories. The rest of your environment
-reaches them as it is: see "Limits". Only that opencode is looked up on your `PATH` and
-runs with it, in `/`; `OPENCODE` names another by its absolute path. A relative
+holds, and in the `C` locale; `SKILL_CONTAINER_PATH` names other directories. The rest of
+your environment reaches them as it is: see "Limits". Only that opencode is looked up on
+your `PATH`: `secrets` runs it with that `PATH`, in `/`, `import` with the launcher's, in
+the project's directory; `OPENCODE` names another by its absolute path. A relative
 `--workdir`, `--memory` or `--bugzilla-key` is read against the directory you started the
 launcher in.
 
@@ -76,10 +78,12 @@ skill-container update <instance>
 skill-container idle <instance>
 ```
 
-One instance is one user unit, `opensuse-packaging-agent@<instance>`: start it
-at boot with `systemctl --user enable opensuse-packaging-agent@<instance>`, after
-one `up`, which makes the server password the unit needs. A start by systemd is
-not `up`: see "Limits".
+One instance is one user unit, `opensuse-packaging-agent@<instance>`. Once
+installed it starts with your systemd user session: at boot when your account
+lingers (`loginctl enable-linger`), at your first login otherwise.
+`systemctl --user enable` changes nothing, the unit is a generated one. It
+starts only after one `up`, which makes the server password the unit needs. A
+start by systemd is not `up`: see "Limits".
 `install` writes its drop-in (the work directory, where it is mounted, the
 image, and the name and e-mail address of your git configuration, without which git
 commits nothing in the container), the state the launcher reads, and seeds the memory
@@ -90,8 +94,11 @@ and its `systemd/` directory there yourself: `install` takes the units from
 beside that copy alone, never from beside the launcher you start, which may
 lie where an agent writes. `--as` names where the work directory appears in the
 container, by default at its own path: `install` refuses `/` and a place in or
-over `/etc`, `/usr` (also as `/bin`, `/sbin`, `/lib`, `/lib64`) or `/home/agent`,
-where the agent's files would cover the image's guards and tools.
+over `/etc`, `/usr` (also as `/bin`, `/sbin`, `/lib`, `/lib64`), `/boot`, `/dev`,
+`/proc`, `/sys`, `/run`, `/root` or `/home/agent`, and all of `/var` and `/tmp`
+but for a place below `/var/tmp` or `/tmp`: there the agent's files would cover
+the image's guards and tools, or what they read through a link (`/var/lib/rpm`,
+the certificates).
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the

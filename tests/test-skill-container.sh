@@ -38,6 +38,7 @@ esac
 case "$(/usr/bin/env) $*" in
 *SECRET[-_][0-9]*) printf '%s\n' "${0##*/}" >> "$FIX/secret-leak" ;;
 esac
+[ ! -e "$FIX/want-locale" ] || printf '%s %s\n' "${0##*/}" "${LC_ALL-unset}" >> "$FIX/locale-seen"
 for _f in "$FIX"/secrets/*-server-password; do
   [ -s "$_f" ] || continue
   _pw=$(< "$_f")
@@ -1528,7 +1529,9 @@ for bad in "--image=img:1"$'\n'"PodmanArgs=--privileged" "--as=$work/ws%t" "--as
     || fail "install ${bad%%=*} injection: rc=$rc $out"
 done
 # The work directory is mounted where --as says: not over the image's own files.
-for at in /etc/opencode/x /etc /usr/local /home/agent / /srv/../usr/bin //home/agent/.claude /bin /sbin/x /lib /lib64 /usr/../bin; do
+for at in /etc/opencode/x /etc /usr/local /home/agent / /srv/../usr/bin //home/agent/.claude /bin /sbin/x /lib /lib64 /usr/../bin \
+  /var/lib/rpm /var/lib/ca-certificates /var/run /var/lock/x /var /var/tmp /var/tmp/../lib/x /tmp /tmp/../run/x \
+  /run/x /root /boot /dev/shm /proc/1 /sys /home; do
   out="$(sc install inj --workdir "$work/ws" --as "$at" 2>&1)"; rc=$?
   [ "$rc" != 0 ] && grep -qF "it would cover what the image holds" <<<"$out" && [ ! -e "$pubdir/$N-agent@inj.container.d" ] \
     && pass "install refuses --as $at" || fail "install --as $at: rc=$rc $out"
@@ -1537,6 +1540,12 @@ out="$(sc install inj --workdir "$work/ws" --as /srv/etcetera 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qxF "Volume=$work/ws:/srv/etcetera:Z" "$pubdir/$N-agent@inj.container.d/10-workdir.conf" \
   && pass "install takes --as beside, not in, the image's directories" || fail "install --as /srv/etcetera: rc=$rc $out"
 sc uninstall inj > /dev/null
+for at in /var/tmp/ws /tmp/ws /variable/x /rootless /tmpx; do
+  out="$(sc install inj --workdir "$work/ws" --as "$at" 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && grep -qxF "Volume=$work/ws:$at:Z" "$pubdir/$N-agent@inj.container.d/10-workdir.conf" \
+    && pass "install takes --as $at" || fail "install --as $at: rc=$rc $out"
+  sc uninstall inj > /dev/null
+done
 # The units come from beside the fixed copy: those beside the launcher that
 # runs may lie where an agent writes, its own or another instance's.
 mkdir -p "$work/elsewhere/tool"
@@ -1628,6 +1637,25 @@ out="$(sc import valg --from "$work/from" --memory "$work/mem-mixed/memory.json"
   && pass "import refuses a bad graph before copying" || fail "import with a bad graph: rc=$rc $out"
 sc down valg > /dev/null
 : > "$FIX/opencode-calls"; oc0=0
+# A locale widens a-z to accented letters: the launcher checks, and runs its
+# commands, in C whatever the caller's is.
+acc=$'\xc3\xa9'; loc=
+for l in $(locale -a 2>/dev/null | grep -iE '\.utf-?8$'); do
+  LC_ALL=$l bash -c '[[ $1 =~ ^[a-z]+$ ]]' _ "$acc" 2>/dev/null && { loc=$l; break; }
+done
+if [ -n "$loc" ]; then
+  out="$(LC_ALL=$loc sc up "inst$acc" 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "letters, digits, _ and - only" <<<"$out" \
+    && pass "an instance name with an accented letter is refused in $loc" || fail "instance name in $loc: rc=$rc $out"
+else
+  echo "SKIP: an accented instance name (no locale here widens a-z)"
+fi
+touch "$FIX/want-locale"
+out="$(LC_ALL=${loc:-en_US.UTF-8} sc down valg 2>&1)"; rc=$?
+rm "$FIX/want-locale"
+[ "$rc" = 0 ] && [ -s "$FIX/locale-seen" ] && ! grep -qv ' C$' "$FIX/locale-seen" \
+  && pass "the launcher's commands run in the C locale" \
+  || fail "commands outside the C locale: rc=$rc $(sort -u "$FIX/locale-seen" 2>/dev/null | tr '\n' ' ')"
 [ ! -s "$FIX/untimed" ] && pass "every command in the container is bounded in time" \
   || fail "commands in the container without a timeout: $(sort -u "$FIX/untimed")"
 [ ! -e "$FIX/planted-host" ] && [ ! -e "$FIX/planted-client" ] && [ ! -e "$FIX/launcher-path-client" ] \
