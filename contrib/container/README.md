@@ -74,14 +74,18 @@ skill-container idle <instance>
 ```
 
 One instance is one user unit, `opensuse-packaging-agent@<instance>`: start it
-at boot with `systemctl --user enable opensuse-packaging-agent@<instance>`.
+at boot with `systemctl --user enable opensuse-packaging-agent@<instance>`, after
+one `up`, which makes the server password the unit needs. A start by systemd is
+not `up`: see "Limits".
 `install` writes its drop-in (the work directory, where it is mounted, the
 image, and the name and e-mail address of your git configuration, without which git
 commits nothing in the container), the state the launcher reads, and seeds the memory
 volume; it refuses
 until `~/.local/bin/skill-container` is an identical copy of the launcher you
 run, so the update timer and your shell run the code you reviewed. Copy it
-and its `systemd/` directory there yourself.
+and its `systemd/` directory there yourself: `install` takes the units from
+beside that copy alone, never from beside the launcher you start, which may
+lie where an agent writes.
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the
@@ -89,8 +93,9 @@ and its `systemd/` directory there yourself.
   the Bugzilla API key file and what `opencode auth export <integration>` prints. Its
   first run also makes an SSH key of the container's own, for pushes to src.opensuse.org:
   `ssh-key` prints the public half, which you add to your account there once. A later
-  run keeps that key; `--new-ssh-key` replaces it, and the old public half then opens
-  nothing. It prints the six secret names. No other server's login is copied. Which GitHub token
+  run keeps that key; `--new-ssh-key` makes another. The container gets the new one at
+  its next start, and the old one keeps pushing, from any copy of it, until you remove
+  its public half from your account. It prints the six secret names. No other server's login is copied. Which GitHub token
   the agent gets is yours to choose: `secrets` copies the one gh uses where you run it.
   That is your host login's, with all its scopes, unless `GH_CONFIG_DIR` names another
   gh config directory, whose login is then the one copied, or `GH_TOKEN` or
@@ -186,9 +191,11 @@ and its `systemd/` directory there yourself.
    container. The server keeps running; its volumes must be empty. Run it
    yourself. The transcripts come over unredacted: whatever those sessions
    read is sent to the container's model provider.
- - **`update`** pulls the image and, when that brought a new one, restarts the
-   instance if no session is busy and no client is on it; `idle` answers
-   whether that is the case now. An instance on the newest image keeps running.
+ - **`update`** pulls the image, unless its name starts with `localhost/`: such
+   an image changes only when you build or load it. When the name then stands
+   for a new image, it restarts the instance if no session is busy and no
+   client is on it; `idle` answers whether that is the case now. An instance on
+   the newest image keeps running.
    Its timer is not enabled by `install`: enable it after one watched run.
  - A client of your own reaches the server through the relay: a socket unit
    per instance forwards to the server's loopback through `podman exec`. From
@@ -197,7 +204,8 @@ and its `systemd/` directory there yourself.
    directory must exist on the server: sessions belong to their directory, and
    the server resolves it in its own filesystem. Keeping the password still
    matters: without one the server answers any local process, the agent's
-   included.
+   included. Such a client does not pass the launcher: the approvals and
+   session rules the launcher removes before `attach` and `run` stay for it.
    The server logs to the user journal: `journalctl --user -u
    opensuse-packaging-agent@<instance>`. The agent can write to that log: read
    a line there as its text. A start that cannot work, a missing secret for
@@ -341,6 +349,11 @@ boundary between the agent and what is inside the container.
   `gh auth status`, one that names `oauth_token`); like the other logins, one set on
   reading it can. No rule looks at what `gh` does with it: the agent can do on GitHub
   what the token allows, with your host login's a push, a merge or a release included.
+- **A start by systemd is not `up`.** At boot, and when the unit restarts after a
+  failure, nothing removes the saved approvals and session rules, nothing imports the
+  model login again, and nothing checks that both guard plugins loaded. The next `up`,
+  or an `update` that restarts, does all three; `attach` and `run` check the plugins and
+  remove the approvals and rules.
 - **The SSH key pushes wherever your src.opensuse.org account may write.** It is the
   container's own, not one of yours, so the account's key settings revoke it alone. The
   guard refuses a command that reads it and the rules deny one that names it; like the

@@ -134,9 +134,10 @@ password prints the server password of a running <instance>, for a client of
 import   copies --from DIR into the work directory of <instance>, with the
          memory graph and the sessions of that project. The container keeps
          running; its volumes must be empty. Run it yourself.
-update   pulls the image and, when it is a new one, restarts <instance> if no
-         session is busy and no client is on it. Enable its timer only after
-         one watched run.
+update   pulls the image, unless its name starts with localhost/, and when
+         the name then stands for a new one restarts <instance> if no session
+         is busy and no client is on it. Enable its timer only after one
+         watched run.
 idle     answers whether update would restart <instance> now.
 EOF
 }
@@ -330,7 +331,10 @@ guarded() {
 	done <<<"$1"
 	[ -n "$bug" ] && [ -n "$pool" ]
 }
-api() { timeout 30 podman exec "$ctr" opencode api "$@" --server "$inner"; }
+# What a call into the container writes to its error stream may quote the
+# server, whose text is the agent's: it passes the filter.
+filtered() { { "$@" 2>&1 >&3 3>&- | plain >&2 3>&-; } 3>&1; }
+api() { filtered timeout 30 podman exec "$ctr" opencode api "$@" --server "$inner"; }
 # What answers a permission question in place of you is kept in the state
 # volume, which the agent writes: the approvals saved for later sessions and a
 # session's own rules. opencode writes no such rules itself.
@@ -403,7 +407,8 @@ relogin() {
 		api DELETE "/api/credential/$id" >/dev/null || true
 	done <<<"$ids"
 	{ ids=$(logins) && [ -z "$ids" ]; } || die "the model logins $ctr keeps cannot be removed: $reset"
-	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null ||
+	# Its input is the login: what it says about a failure is not shown.
+	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null 2>&1 ||
 		die "the model credential was not imported; the unit is stopped"
 }
 # True when one of two directories holds the other.
@@ -532,7 +537,7 @@ check_memory() {
 # ("bin" is quoted: the test suite refuses an absolute command path here.)
 fixedcopy=$HOME/.local/"bin"/skill-container
 cmd_install() {
-	local memdir image_arg='' as='' memory='' gitname gitmail
+	local memdir image_arg='' as='' memory='' gitname gitmail v
 	workdir='' inside=''
 	while (($#)); do
 		case $1 in
@@ -572,38 +577,26 @@ cmd_install() {
 		[[ $memory == /* ]] || memory=$start/$memory
 		check_memory
 	fi
+	# The drop-in is a unit file: systemd expands a %, reads a new line as a
+	# setting of its own and joins the next line after a backslash.
+	for v in "$workdir" "$inside" "$image" "$userconf"; do
+		case $v in
+		*$'\n'* | *%* | *\\*) die "install refuses a path or an image name with a line break, a % or a backslash" ;;
+		esac
+	done
 	for s in osc tea github bugzilla model ssh; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
 	cmp -s "$self" "$fixedcopy" || die "copy the launcher to $fixedcopy first, then run install again"
 	[ -x "$fixedcopy" ] || die "$fixedcopy is not executable"
-	mkdir -p "$dropdir" "$userconf"
-	# git refuses to commit without a name, and the container's home is read-only:
-	# the host's own identity goes in as a file of its own.
-	gitname=$(git config --global --get user.name 2>/dev/null) || gitname=
-	gitmail=$(git config --global --get user.email 2>/dev/null) || gitmail=
-	rm -f "$userconf/gitconfig"
-	case $userconf in
-	*[,:]*) ;;
-	*)
-		if [ -n "$gitname" ] && [ -n "$gitmail" ]; then
-			{
-				git config --file "$userconf/gitconfig" user.name "$gitname" &&
-					git config --file "$userconf/gitconfig" user.email "$gitmail"
-			} || die "cannot write $userconf/gitconfig"
-		fi
-		;;
-	esac
-	# The instance is a symlink to the template: only then does quadlet
-	# read the instance's drop-in directory for it.
-	ln -sf "$name-agent@.container" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
 	# The units this skill ships: the agent, what its service needs, the
 	# relay and the nightly update. The timer stays disabled until you
-	# enable it after one watched run. Beside the launcher where you copied
-	# them on an unmanaged host, under /etc where the role keeps them on a
-	# managed host, or beside the launcher in the repo they deploy from.
+	# enable it after one watched run. Beside the fixed copy of the launcher,
+	# where you put them, or under /etc, where the role keeps them on a managed
+	# host: never beside the launcher that runs, which may lie where an agent
+	# writes.
 	srcdir=
-	for cand in "${self%/*}/systemd" /etc/skill-container/systemd "${self%/*}/../../../systemd"; do
+	for cand in "${fixedcopy%/*}/systemd" /etc/skill-container/systemd; do
 		srcok=1
 		for f in "$cand/$name-agent@.container" \
 			"$cand/$name-agent@.service.d/10-relay.conf" \
@@ -620,7 +613,30 @@ cmd_install() {
 			break
 		}
 	done
-	[ -n "$srcdir" ] || die "no units beside the launcher or under /etc/skill-container/systemd"
+	[ -n "$srcdir" ] || die "no units in ${fixedcopy%/*}/systemd or /etc/skill-container/systemd: copy the launcher's systemd directory there"
+	# A unit is a command line systemd runs as you.
+	srcdir=$(realpath -- "$srcdir")
+	kept "$srcdir/unit" || die "refusing the units in $srcdir: another user can replace them"
+	mkdir -p "$dropdir" "$userconf"
+	# git refuses to commit without a name, and the container's home is read-only:
+	# the host's own identity goes in as a file of its own.
+	gitname=$(git config --global --includes --get user.name 2>/dev/null) || gitname=
+	gitmail=$(git config --global --includes --get user.email 2>/dev/null) || gitmail=
+	rm -f "$userconf/gitconfig"
+	case $userconf in
+	*[,:]*) ;;
+	*)
+		if [ -n "$gitname" ] && [ -n "$gitmail" ]; then
+			{
+				git config --file "$userconf/gitconfig" user.name "$gitname" &&
+					git config --file "$userconf/gitconfig" user.email "$gitmail"
+			} || die "cannot write $userconf/gitconfig"
+		fi
+		;;
+	esac
+	# The instance is a symlink to the template: only then does quadlet
+	# read the instance's drop-in directory for it.
+	ln -sf "$name-agent@.container" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
 	unitdir=$HOME/.config/containers/systemd
 	svcdir=$HOME/.config/systemd/user
 	cp "$srcdir/$name-agent@.container" "$unitdir/"
@@ -660,11 +676,13 @@ cmd_install() {
 # Starts the unit and waits until the server has loaded both guard plugins;
 # a failed or interrupted start stops the unit again.
 start_wait() {
-	local out=''
+	local out='' deadline=$((SECONDS + 300))
 	trap 'systemctl --user stop "$unit" >/dev/null 2>&1; trap - EXIT INT TERM HUP' EXIT
 	trap 'exit 130' INT TERM HUP
+	# Earlier failed starts count against the unit's start limit.
+	systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
 	systemctl --user start "$unit" >/dev/null || die "$inst would not start"
-	while ((SECONDS < 300)); do
+	while ((SECONDS < deadline)); do
 		running || die "$inst stopped while starting; the unit is stopped"
 		out=$(plugins)
 		if guarded "$out" || [[ $out == *$'\n'"- "* ]]; then break; fi
@@ -775,7 +793,9 @@ busy_sessions() {
 		page=$(api GET "/api/session?limit=1000${cursor:+&cursor=$cursor}") || return 1
 		n=$(jq -r 'if (.data | type) == "array" then .data | length else error("no list") end' <<<"$page") || return 1
 		[ "$n" != 0 ] || return 0
-		jq -r '.data[] | select((.time.busy // 0) > (.time.idle // 0)) | .id' <<<"$page" || return 1
+		# The ids are printed: one that is more than an id is an agent's text.
+		jq -r '.data[] | select((.time.busy // 0) > (.time.idle // 0)) | .id |
+			if type == "string" and (test("[^A-Za-z0-9_]") | not) then . else error("id") end' <<<"$page" 2>/dev/null || return 1
 		cursor=$(jq -r '.cursor.next // ""' <<<"$page") || return 1
 		[[ $cursor =~ ^[A-Za-z0-9_-]+$ ]] || return 1
 	done
@@ -833,6 +853,7 @@ cmd_update() {
 		return 0
 	fi
 	ensure_password
+	systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
 	systemctl --user restart "$unit" >/dev/null || die "$inst would not restart"
 	start_wait
 	forget
@@ -886,7 +907,7 @@ cmd_import() {
 		(cd "$from" && OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" session export "$id" >"$tmp/$id.json") ||
 			die "cannot export the session $id"
 		if jq -e '.info.time.busy > .info.time.idle' "$tmp/$id.json" >/dev/null; then
-			title=$(jq -r '.info.title // ""' "$tmp/$id.json")
+			title=$(jq -r '.info.title // ""' "$tmp/$id.json" | plain)
 			die "the session '$title' ($id) is busy: close the host client and run import again"
 		fi
 	done
@@ -907,7 +928,7 @@ cmd_import() {
 		"$image" cp "/src/${memory##*/}" "/seed/$memname" >/dev/null ||
 		die "the memory graph was not seeded"
 	for id in $ids; do
-		timeout 60 podman exec -i "$ctr" opencode session import --server "$inner" --directory "$inside" /dev/stdin <"$tmp/$id.json" >/dev/null ||
+		filtered timeout 60 podman exec -i "$ctr" opencode session import --server "$inner" --directory "$inside" /dev/stdin <"$tmp/$id.json" >/dev/null ||
 			die "cannot import the session $id"
 		n=$((n + 1))
 	done
