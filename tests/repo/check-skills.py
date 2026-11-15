@@ -187,6 +187,7 @@ PUBLIC_ALLOW = re.compile(
       | (?:security-team|screening-team-bugs|maintenance)@suse\.de  # role addresses
       | gitea@src\.opensuse\.org                                 # service account
       | you@|jane@|[\w.+-]+@distro\.example
+      | [\w.+-]+@[\w.-]+\.(?:service|container|timer)$    # a systemd unit instance
     )
     """,
     re.VERBOSE | re.IGNORECASE,
