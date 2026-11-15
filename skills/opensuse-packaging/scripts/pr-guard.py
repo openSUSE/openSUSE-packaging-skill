@@ -144,7 +144,7 @@ PREFILTER = re.compile(
 # A call run inside a directory of credential files, or in one above them, is
 # judged whatever it says: a bare `.` or a relative name reaches them from there.
 CRED_DIR = re.compile(
-    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc)(?:/|$)"
+    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc|ssh)(?:/|$)"
 )
 CRED_HOMES = (
     "/.config/tea",
@@ -152,6 +152,7 @@ CRED_HOMES = (
     "/.config/gh",
     "/.local/state/osc",
     "/.config/mcp-",
+    "/.ssh",
 )
 ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 ESCAPE = re.compile(

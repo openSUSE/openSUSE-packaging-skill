@@ -5141,6 +5141,41 @@
     },
     "cwd": "@PLAIN@"
   },
+  "cred-ssh-key": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/id_ed25519"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ssh-key-abs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "base64 -w0 /home/agent/.ssh/id_rsa"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ssh-key-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar czf /tmp/k.tgz ~/.ssh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ssh-pub": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/id_ed25519.pub"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-ssh-known-hosts": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.ssh/known_hosts"
+    },
+    "cwd": "@PLAIN@"
+  },
   "cred-git-credentials": {
     "tool_name": "Bash",
     "tool_input": {

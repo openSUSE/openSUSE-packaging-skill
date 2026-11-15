@@ -582,7 +582,7 @@ and program code that runs osc itself (`python3 -c`) is not asked.
 
 On the agent's own commands (not the scripts or program code they run) it also refuses
 reading a credential file — tea's, osc's, gh's, netrc, git's credential stores, osc's
-cookie jar, an MCP server's `api-key` — other than by `ls`, `stat` or `test` or a grep for
+cookie jar, an MCP server's `api-key`, an SSH private key (`~/.ssh/id_*`, not its `.pub`) — other than by `ls`, `stat` or `test` or a grep for
 one `build-*` setting; setting or running an askpass program; the tools' own secret
 printers (`gh auth` token/status/git-credential, `tea login` helper/edit, `git-obs login
 list`, git's credential `fill`/`get`, `secret-tool` lookup/search, osc's `--dump-full`,
