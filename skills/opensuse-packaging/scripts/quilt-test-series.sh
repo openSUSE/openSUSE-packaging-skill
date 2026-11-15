@@ -15,7 +15,10 @@ Run from the package checkout. For each patch in the series (only those after PA
 Never edits patch content by hand. Deletes the build dir and any *.patch~ it created at the
 end unless --keep. Final report: REFRESHED / FUZZ / COMMENTED OUT (with failing hunks).
 Uses quilt-prep.sh from its own directory. Refuses to start if a build dir already exists (it may hold unrefreshed edits).
-Exit: 0 everything applied; 1 at least one patch commented out or fuzzy; 2 setup error.
+A patch is found in the spec by its file name, with %{name} and %{version} expanded; with
+it goes the %patch line that applies its number. A rejecting patch whose line it cannot
+find, or one a %patch line applies without a number, stops the run: STUCK names it.
+Exit: 0 everything applied; 1 at least one patch commented out or fuzzy; 2 setup error or stuck.
 U
 }
 after=""; keep=0
@@ -32,7 +35,30 @@ done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 root=$PWD
 before=$(ls -- *.patch~ 2>/dev/null | sort)
-refreshed=(); fuzzy=(); failed=()
+refreshed=(); fuzzy=(); failed=(); stuck=""
+pname=$(rpmspec -q --srpm --qf '%{name}' "$spec" 2>/dev/null) || pname=""
+pver=$(rpmspec -q --srpm --qf '%{version}' "$spec" 2>/dev/null) || pver=""
+
+# comment_out <patch file>: comments out the spec's Patch line naming it and, where the spec
+# applies patches one by one, the %patch line with that number. 1 when it cannot, and then
+# the spec is as it was.
+comment_out() {
+  local n=0 line val num at=""
+  while IFS= read -r line; do
+    n=$((n+1))
+    [[ $line =~ ^Patch([0-9]*):[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]] || continue
+    num=${BASH_REMATCH[1]}; val=${BASH_REMATCH[2]}
+    case $val in *%*) val=$(rpm --define "name $pname" --define "version $pver" --eval "$val" 2>/dev/null) ;; esac
+    [ "${val##*/}" = "$1" ] && { at=$n; break; }
+  done < "$spec"
+  [ -n "$at" ] || return 1
+  if ! grep -qE '^%auto(setup|patch)' "$spec"; then
+    [ -n "$num" ] || return 1
+    grep -qE "^%patch($num|[[:space:]]+(.*[[:space:]])?-P[[:space:]]*$num|[[:space:]]+$num)([[:space:]]|\$)" "$spec" || return 1
+    sed -i -E "s/^%patch($num|[[:space:]]+(.*[[:space:]])?-P[[:space:]]*$num|[[:space:]]+$num)([[:space:]]|\$)/#&/" "$spec"
+  fi
+  sed -i "${at}s/^/#/" "$spec"
+}
 
 setup() { bash "$HERE/quilt-prep.sh" "$@" "$spec" | sed -n 's/^BUILDDIR=//p'; }
 # first run without --force: an existing build dir may hold unrefreshed edits
@@ -51,8 +77,10 @@ while true; do
     hunks=$(grep -E "FAILED|rejects in|can't find|does not apply" <<<"$out" | paste -sd';')
     failed+=("$name :: $hunks")
     cd "$root" || exit 2
-    # comment out the PatchN: line for this file
-    sed -i -E "s|^(Patch[0-9]+:[[:space:]]+${name//./\\.})[[:space:]]*\$|#\1|" "$spec"
+    # Without its line gone the same patch would reject again, for ever.
+    comment_out "$name" || { stuck=$name; unset 'failed[-1]'; break; }
+    # It was the last one: quilt sets up no series for a spec without patches.
+    grep -qE '^Patch[0-9]*:' "$spec" || break
     bd=$(setup --force); [ -n "$bd" ] || exit 2; cd "$bd" || exit 2
     for g in $good; do quilt push "patches/$g" >/dev/null 2>&1 || { echo "re-push of $g failed" >&2; exit 2; }; done
     continue
@@ -74,4 +102,8 @@ fi
 echo "== REFRESHED (offset only): ${#refreshed[@]}"; printf '   %s\n' "${refreshed[@]}"
 echo "== FUZZ (not refreshed): ${#fuzzy[@]}"; printf '   %s\n' "${fuzzy[@]}"
 echo "== COMMENTED OUT: ${#failed[@]}"; printf '   %s\n' "${failed[@]}"
+if [ -n "$stuck" ]; then
+  echo "== STUCK: $stuck rejects and its Patch line (or the %patch line applying it) was not found in $spec: comment it out by hand and run again" >&2
+  exit 2
+fi
 [ ${#failed[@]} -eq 0 ] && [ ${#fuzzy[@]} -eq 0 ]

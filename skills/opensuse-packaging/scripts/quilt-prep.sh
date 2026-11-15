@@ -28,6 +28,8 @@ command -v quilt >/dev/null || { echo "quilt not installed" >&2; exit 2; }
 pkg=$(rpmspec -q --srpm --qf '%{name}-%{version}' "$spec" 2>/dev/null) || pkg=""
 [ -n "$pkg" ] || pkg=$(sed -n 's/^Name:[[:space:]]*//p;s/^Version:[[:space:]]*//p' "$spec" | paste -sd- )
 [ -n "$pkg" ] || { echo "cannot read name-version from $spec" >&2; exit 2; }
+# The build dir is removed by this name: it stays inside the checkout.
+case $pkg in */* | .*) echo "refusing the name-version '$pkg' of $spec" >&2; exit 2;; esac
 build="$pkg-build"
 if [ -d "$build" ]; then
   if [ $force -eq 0 ]; then

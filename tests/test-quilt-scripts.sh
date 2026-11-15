@@ -66,4 +66,34 @@ grep -q '^--- a/f.txt' offset.patch && ! grep -q '^Index:' offset.patch && pass 
 mkdir hello-1.0-build
 bash "$S/quilt-test-series.sh" hello.spec >/dev/null 2>&1; [ $? = 2 ] && [ -d hello-1.0-build ] \
   && pass "existing build dir is refused, not deleted" || fail "existing build dir must exit 2 and survive"
+
+# One rejecting patch, in each way a spec can name and apply it. A run that cannot comment
+# the patch out must stop: before, it pushed the same patch for ever, hence the time limit.
+one() { # one <dir> <patch file> <Patch line> [<%prep line>...]: run the series there
+  local d="$work/$1" file=$2 tag=$3; shift 3
+  mkdir -p "$d"; cp "$pkg/hello-1.0.tar.gz" "$d/"
+  printf -- '--- a/f.txt\n+++ b/f.txt\n@@ -9,3 +9,3 @@\n line 9\n-line X\n+TEN\n line 11\n' > "$d/$file"
+  { printf '%s\n' "Name:           hello" "Version:        1.0" "Release:        0" "Summary:        t" \
+      "License:        MIT" "Source0:        hello-1.0.tar.gz" "%global stem reject" "$tag" "%description" "t" "%prep"
+    printf '%s\n' "${@:-%autosetup -p1}" "%build" "%install" "%files"; } > "$d/hello.spec"
+  cd "$d" || exit 2
+  out="$(timeout 120 bash "$S/quilt-test-series.sh" hello.spec 2>&1)"; rc=$?
+}
+one macro hello-reject.patch 'Patch1:         %{name}-reject.patch'
+[ $rc = 1 ] && grep -q '^#Patch1:' hello.spec && pass "a patch named with %{name} is commented out" || fail "macro name: rc=$rc"
+one plus c++-reject.patch 'Patch1:         c++-reject.patch'
+[ $rc = 1 ] && grep -q '^#Patch1:' hello.spec && pass "a patch with + in its name is commented out" || fail "plus name: rc=$rc"
+one bare reject.patch 'Patch:          reject.patch'
+[ $rc = 1 ] && grep -q '^#Patch:' hello.spec && pass "an unnumbered Patch: line is commented out" || fail "unnumbered tag: rc=$rc"
+one explicit reject.patch 'Patch1:         reject.patch' '%setup -q' '%patch -P 1 -p1'
+[ $rc = 1 ] && grep -q '^#Patch1:' hello.spec && grep -q '^#%patch -P 1 -p1' hello.spec \
+  && pass "the %patch line that applies the patch goes with it" || fail "explicit %patch: rc=$rc $(grep 'atch' hello.spec | tr '\n' ' ')"
+one stuck reject.patch 'Patch1:         %{stem}.patch'
+[ $rc = 2 ] && grep -q 'STUCK: reject.patch' <<<"$out" && grep -q '^Patch1:' hello.spec && [ ! -d hello-1.0-build ] \
+  && pass "a patch line it cannot find stops the run and leaves the spec" || fail "unfindable line: rc=$rc"
+# The build dir is removed by its name: one that leaves the checkout is refused.
+mkdir -p "$work/evil"; cd "$work/evil" || exit 2
+sed 's|^Name:.*|Name:           ../evil|' "$pkg/hello.spec" > hello.spec
+out="$(bash "$S/quilt-prep.sh" --force hello.spec 2>&1)"; rc=$?
+[ $rc = 2 ] && grep -q "refusing the name-version" <<<"$out" && pass "a name-version with a slash is refused" || fail "slash in name: rc=$rc $out"
 [ "$fails" = 0 ]
