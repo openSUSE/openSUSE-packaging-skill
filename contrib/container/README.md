@@ -88,7 +88,10 @@ until `~/.local/bin/skill-container` is an identical copy of the launcher you
 run, so the update timer and your shell run the code you reviewed. Copy it
 and its `systemd/` directory there yourself: `install` takes the units from
 beside that copy alone, never from beside the launcher you start, which may
-lie where an agent writes.
+lie where an agent writes. `--as` names where the work directory appears in the
+container, by default at its own path: `install` refuses `/` and a place in or
+over `/etc`, `/usr` (also as `/bin`, `/sbin`, `/lib`, `/lib64`) or `/home/agent`,
+where the agent's files would cover the image's guards and tools.
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the
