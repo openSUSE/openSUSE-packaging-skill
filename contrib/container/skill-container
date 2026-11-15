@@ -619,18 +619,18 @@ cmd_install() {
 	kept "$srcdir/unit" || die "refusing the units in $srcdir: another user can replace them"
 	mkdir -p "$dropdir" "$userconf"
 	# git refuses to commit without a name, and the container's home is read-only:
-	# the host's own identity goes in as a file of its own.
+	# the host's own identity goes in as a file of the instance's own.
 	gitname=$(git config --global --includes --get user.name 2>/dev/null) || gitname=
 	gitmail=$(git config --global --includes --get user.email 2>/dev/null) || gitmail=
-	rm -f "$userconf/gitconfig"
+	rm -f "$userconf/$inst.gitconfig"
 	case $userconf in
 	*[,:]*) ;;
 	*)
 		if [ -n "$gitname" ] && [ -n "$gitmail" ]; then
 			{
-				git config --file "$userconf/gitconfig" user.name "$gitname" &&
-					git config --file "$userconf/gitconfig" user.email "$gitmail"
-			} || die "cannot write $userconf/gitconfig"
+				git config --file "$userconf/$inst.gitconfig" user.name "$gitname" &&
+					git config --file "$userconf/$inst.gitconfig" user.email "$gitmail"
+			} || die "cannot write $userconf/$inst.gitconfig"
 		fi
 		;;
 	esac
@@ -652,7 +652,7 @@ cmd_install() {
 		echo "WorkingDir=$inside"
 		# The image update pulls is the one the unit runs, whatever the template names.
 		echo "Image=$image"
-		[ ! -s "$userconf/gitconfig" ] || echo "Volume=$userconf/gitconfig:/home/agent/.config/git/config:ro,Z"
+		[ ! -s "$userconf/$inst.gitconfig" ] || echo "Volume=$userconf/$inst.gitconfig:/home/agent/.config/git/config:ro,Z"
 	} >"$dropfile"
 	printf '%s\n' "$workdir" "$inside" "$image" >"$statefile"
 	if [ -n "$memory" ]; then
@@ -742,7 +742,7 @@ cmd_uninstall() {
 		systemctl --user stop "$u" >/dev/null 2>&1 || true
 	done
 	! running || die "$inst would not stop"
-	rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
+	rm -f "$dropfile" "$statefile" "$userconf/$inst.gitconfig" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
 	[ ! -d "$dropdir" ] || rmdir "$dropdir" 2>/dev/null || true
 	systemctl --user daemon-reload >/dev/null || die "systemd would not reload"
 	systemctl --user reset-failed "$unit" "$name-relay@$inst.service" >/dev/null 2>&1 || true
