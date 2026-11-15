@@ -12,7 +12,7 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
 | `CONTAINER.md` | what the agent is told about the container: no local builds, what a refused command means, where reports go |
 | `ssh_config`, `ssh_known_hosts` | how ssh reaches src.opensuse.org: its git user, the container's key, the host key |
 | `skill-container` | the launcher you run on the host |
-| `systemd/` | the user units the launcher installs: the agent, its socket relay, and the nightly update |
+| `systemd/` | the user units the launcher installs: the agent, its socket relay, and the nightly update; `systemd/examples/` shows the drop-in `install` writes for one instance |
 
 ## What the image holds
 
