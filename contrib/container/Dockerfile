@@ -48,6 +48,17 @@ RUN set -eu; skill=/etc/opencode/skills/opensuse-packaging; mkdir /etc/opencode/
         } > "/etc/opencode/agent/$name.md"; \
     done
 
+# pr-guard takes the skill's scripts for the real ones only as a git checkout at
+# its pinned ref, and only those may write a gate stamp or open a pool PR. The
+# copy becomes such a checkout, which the agent cannot write; git reads a
+# repository of another owner only when the system config names it.
+RUN set -eu; skill=/etc/opencode/skills/opensuse-packaging; \
+    git -C "$skill" init -q -b main; \
+    git -C "$skill" add -A; \
+    git -C "$skill" -c user.name=image -c user.email=image@localhost commit -q -m image; \
+    git -C "$skill" update-ref refs/remotes/origin/main HEAD; \
+    printf '[safe]\n\tdirectory = %s\n' "$skill" > /etc/gitconfig
+
 # The agent runs as the caller's user: nothing baked here may be writable by it.
 # osc creates trusted-certs before its first request and fails when it cannot.
 RUN mkdir -p /work /home/agent/.config/osc/trusted-certs /home/agent/.config/tea \
@@ -68,7 +79,8 @@ ENV HOME=/home/agent \
     MEMORY_FILE_PATH=/home/agent/.local/share/mcp-memory/memory.jsonl \
     OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_DISABLE_PROJECT_CONFIG=1 \
-    OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1
+    OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 \
+    PR_GUARD_SKILL_DIR=/etc/opencode/skills/opensuse-packaging
 WORKDIR /work
 
 RUN image-check
