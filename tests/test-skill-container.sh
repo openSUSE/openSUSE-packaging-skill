@@ -17,7 +17,9 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 [ -x "$SC" ] && pass "the launcher is executable" || fail "the launcher is not executable"
 # The commands live outside $work: a work directory that holds one is refused.
-work="$(mktemp -d)"; tools="$(mktemp -d)"; open="$(mktemp -d)"; trap 'rm -rf "$work" "$tools" "$open"' EXIT
+# $work and $open lie in /tmp whatever TMPDIR says: install mounts a work directory at
+# its own path and refuses one under /var.
+work="$(mktemp -d -p /tmp)"; tools="$(mktemp -d)"; open="$(mktemp -d -p /tmp)"; trap 'rm -rf "$work" "$tools" "$open"' EXIT
 FIX="$work/fix"; export FIX
 N=opensuse-packaging
 

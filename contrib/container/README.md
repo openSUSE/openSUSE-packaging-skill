@@ -142,7 +142,8 @@ directory that lies under `/var` on the host therefore needs `--as`.
   everyone else (mode 0700): the
   agent runs as you and can make a file there setuid to you, which then runs as you for
   every local user who can reach it. `~/obs/work` passes when your home directory is
-  closed; a directory under `/var/tmp` passes below one you made with mode 0700. From `/`
+  closed; a directory under `/var/tmp` passes below one you made with mode 0700, and is
+  mounted elsewhere with `--as`. From `/`
   down to that closed directory each one must be root's or yours and take no entry from
   group or others, unless it is sticky like `/var/tmp`: whoever writes one can swap what
   lies below it. The same is asked of podman's volumes. It refuses while the instance
