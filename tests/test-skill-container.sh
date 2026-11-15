@@ -1530,7 +1530,7 @@ for bad in "--image=img:1"$'\n'"PodmanArgs=--privileged" "--as=$work/ws%t" "--as
 done
 # The work directory is mounted where --as says: not over the image's own files.
 for at in /etc/opencode/x /etc /usr/local /home/agent / /srv/../usr/bin //home/agent/.claude /bin /sbin/x /lib /lib64 /usr/../bin \
-  /var/lib/rpm /var/lib/ca-certificates /var/run /var/lock/x /var /var/tmp /var/tmp/../lib/x /tmp /tmp/../run/x \
+  /var/lib/rpm /var/lib/ca-certificates /var/run /var/lock/x /var /var/tmp /var/tmp/ws /var/tmp/../lib/x /tmp /tmp/../run/x \
   /run/x /root /boot /dev/shm /proc/1 /sys /home; do
   out="$(sc install inj --workdir "$work/ws" --as "$at" 2>&1)"; rc=$?
   [ "$rc" != 0 ] && grep -qF "it would cover what the image holds" <<<"$out" && [ ! -e "$pubdir/$N-agent@inj.container.d" ] \
@@ -1540,7 +1540,7 @@ out="$(sc install inj --workdir "$work/ws" --as /srv/etcetera 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qxF "Volume=$work/ws:/srv/etcetera:Z" "$pubdir/$N-agent@inj.container.d/10-workdir.conf" \
   && pass "install takes --as beside, not in, the image's directories" || fail "install --as /srv/etcetera: rc=$rc $out"
 sc uninstall inj > /dev/null
-for at in /var/tmp/ws /tmp/ws /variable/x /rootless /tmpx; do
+for at in /tmp/ws /variable/x /rootless /tmpx; do
   out="$(sc install inj --workdir "$work/ws" --as "$at" 2>&1)"; rc=$?
   [ "$rc" = 0 ] && grep -qxF "Volume=$work/ws:$at:Z" "$pubdir/$N-agent@inj.container.d/10-workdir.conf" \
     && pass "install takes --as $at" || fail "install --as $at: rc=$rc $out"
