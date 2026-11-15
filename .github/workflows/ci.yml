@@ -85,6 +85,13 @@ jobs:
     timeout-minutes: 10
     container: registry.opensuse.org/opensuse/tumbleweed:latest
     steps:
-      - run: zypper -n install --no-recommends quilt rpm-build tar gzip git-core
+      # The mirrors answer 403 now and then, and zypper then finds no package:
+      # a failed refresh is tried again, not taken for the suite's verdict.
+      - run: |
+          for try in 1 2 3; do
+            zypper -n refresh --force && zypper -n install --no-recommends quilt rpm-build tar gzip git-core && exit 0
+            sleep 30
+          done
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: QUILT_TESTS=require bash tests/test-quilt-scripts.sh
