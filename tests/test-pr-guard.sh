@@ -801,6 +801,9 @@ case_ canonical-env-clean 0 - ""                          PR_GUARD_SKILL_DIR="$S
 # changes-prepend.sh documents CHANGES_AUTHOR as the way to name the entry's author.
 case_ canonical-env-changes-author 0 - ""                 PR_GUARD_SKILL_DIR="$S"
 case_ canonical-env-changes-author-export 0 - ""          PR_GUARD_SKILL_DIR="$S"
+# The two settings distro-survey.sh documents; the script takes numbers alone.
+case_ canonical-env-survey 0 - ""                         PR_GUARD_SKILL_DIR="$S"
+case_ canonical-env-survey-export 0 - ""                  PR_GUARD_SKILL_DIR="$S"
 case_ canonical-shell-variable 0 - ""                     PR_GUARD_SKILL_DIR="$S"
 # A commit that is not merged is not trusted: the pin is origin/main, not HEAD.
 echo 'echo edited' >> "$S/scripts/pool-pr.sh"; git -C "$S" commit -qam 'local edit'

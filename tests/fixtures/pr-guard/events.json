@@ -2747,6 +2747,20 @@
     },
     "cwd": "@CLONE@"
   },
+  "canonical-env-survey": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "DISTRO_SURVEY_TIMEOUT=60 DISTRO_SURVEY_BUDGET=120 @SKILL@/scripts/pool-pr.sh @CLONE@"
+    },
+    "cwd": "@CLONE@"
+  },
+  "canonical-env-survey-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export DISTRO_SURVEY_BUDGET=120; bash @SKILL@/scripts/pool-pr.sh @CLONE@"
+    },
+    "cwd": "@CLONE@"
+  },
   "help-tea-create": {
     "tool_name": "Bash",
     "tool_input": {
