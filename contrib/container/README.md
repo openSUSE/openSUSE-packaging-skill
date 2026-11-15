@@ -214,15 +214,17 @@ directory that lies under `/var` on the host therefore needs `--as`.
    `import` refuses what a work directory may not be either, your home
    directory, what holds it, a dot-directory in it, and what holds or lies in
    your configuration directory, podman's storage or your runtime directory.
-   The agent would get your logins with the copy.
+   The agent would get your logins with the copy. What the project itself
+   holds comes over as it is, a token in a `.git/config` remote included.
  - **`update`** pulls the image, unless its name starts with `localhost/`: such
    an image changes only when you build or load it. When the name then stands
    for a new image, it restarts the instance if no session is busy and no
    client is on it, which it asks after the pull, right before the restart;
    `idle` answers whether that is the case now. A client is a container in the
    server's network namespace, and when podman does not say which those are,
-   `update` and `idle` stop: that is not idle. An instance on the newest image
-   keeps running.
+   `update` and `idle` stop: that is not idle. A client of your own on the
+   relay is no container and is not seen; a session it keeps busy is. An
+   instance on the newest image keeps running.
    Its timer is not enabled by `install`: enable it after one watched run.
  - A client of your own reaches the server through the relay: a socket unit
    per instance forwards to the server's loopback through `podman exec`. From
