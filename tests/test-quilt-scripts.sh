@@ -2,7 +2,8 @@
 # test-quilt-scripts.sh — quilt-prep.sh and quilt-test-series.sh on a package built at run
 # time: patch 1 applies at an offset (must be refreshed), patch 2 rejects (must be
 # commented out, later patches must still be tested), patch 3 applies cleanly. The
-# functional cases need quilt and rpmbuild and print SKIP without them; -h and usage
+# functional cases need quilt and rpmbuild (rpm 4.20's build directory layout, as on
+# Tumbleweed) and print SKIP without them, or fail with QUILT_TESTS=require; -h and usage
 # errors always run. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -22,6 +23,8 @@ for s in quilt-prep.sh quilt-test-series.sh; do
 done
 
 if ! command -v quilt >/dev/null || ! command -v rpmbuild >/dev/null || ! command -v rpmspec >/dev/null; then
+  # Where the cases are meant to run, a missing tool is a failure, not a skip.
+  [ "${QUILT_TESTS:-}" = require ] && fail "QUILT_TESTS=require, but quilt, rpmbuild or rpmspec is missing"
   printf 'SKIP: functional cases need quilt, rpmbuild and rpmspec\n'
   [ "$fails" = 0 ]; exit
 fi
