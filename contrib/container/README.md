@@ -95,10 +95,12 @@ beside that copy alone, never from beside the launcher you start, which may
 lie where an agent writes. `--as` names where the work directory appears in the
 container, by default at its own path: `install` refuses `/` and a place in or
 over `/etc`, `/usr` (also as `/bin`, `/sbin`, `/lib`, `/lib64`), `/boot`, `/dev`,
-`/proc`, `/sys`, `/run`, `/root` or `/home/agent`, and all of `/var` and `/tmp`
-but for a place below `/var/tmp` or `/tmp`: there the agent's files would cover
-the image's guards and tools, or what they read through a link (`/var/lib/rpm`,
-the certificates).
+`/proc`, `/sys`, `/run`, `/root`, `/var` or `/home/agent`, and `/tmp` itself:
+there the agent's files would cover the image's guards and tools, or what they
+read through a link (`/var/lib/rpm`, the certificates). `/var/tmp` is a volume
+the agent writes and that outlives a restart: a link it puts there in place of
+the mount point would lead the next start's mount onto the guards. A work
+directory that lies under `/var` on the host therefore needs `--as`.
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the

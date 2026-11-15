@@ -575,19 +575,16 @@ cmd_install() {
 	# The work directory is the agent's: mounted over what the image holds, it
 	# would put the guards, their rules or the tools into the agent's hands.
 	# /bin, /sbin, /lib and /lib64 are links into /usr there, and /var holds
-	# links into /usr and /run and the certificates /etc names: of /var and
-	# /tmp only a place below /var/tmp or /tmp is free.
+	# links into /usr and /run and the certificates /etc names. /var/tmp is a
+	# volume the agent writes: a link it leaves there for the mount point
+	# leads the next start's mount wherever it points. /tmp is new at each start.
 	over=$(realpath -ms -- "$inside")
 	covers=
-	[ "$over" != / ] || covers=1
-	for top in /etc /usr /bin /sbin /lib /lib64 /boot /dev /proc /sys /run /root /home/agent; do
+	[ "$over" != / ] && [ "$over" != /tmp ] || covers=1
+	for top in /etc /usr /bin /sbin /lib /lib64 /boot /dev /proc /sys /run /root /var /home/agent; do
 		! nested "$over" "$top" || covers=1
 	done
-	case $over in
-	/var/tmp/* | /tmp/*) ;;
-	/var | /var/* | /tmp) covers=1 ;;
-	esac
-	[ -z "$covers" ] || die "refusing to mount the work directory at $inside: it would cover what the image holds or the system keeps there (/etc, /usr and the links into it, /boot, /dev, /proc, /sys, /run, /root, /home/agent, and /var and /tmp but for places below /var/tmp and /tmp); name another place with --as"
+	[ -z "$covers" ] || die "refusing to mount the work directory at $inside: it would cover what the image holds or the system keeps there (/etc, /usr and the links into it, /boot, /dev, /proc, /sys, /run, /root, /var, /home/agent), or be /tmp itself; name another place with --as"
 	image=${image_arg:-localhost/$name-agent:latest}
 	# All checks pass before anything is written.
 	check_workdir
