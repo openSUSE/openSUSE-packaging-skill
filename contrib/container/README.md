@@ -429,7 +429,19 @@ The package holds one `_service`, pinned to a commit of this repository:
 </services>
 ```
 
-A new skill release reaches the image by moving `revision`; a changed package in
-Tumbleweed rebuilds it without anyone asking.
+A changed package in Tumbleweed rebuilds the image without anyone asking. The skill
+changes only with `revision`, and there are two ways to set it:
+
+- **A commit**, as above. Nothing moves until you commit another one to the package: what
+  the container runs is what you chose.
+- **The latest release tag**: `<param name="revision">@PARENT_TAG@</param>`. The service
+  then checks out the nearest tag the default branch reaches. That is a tag of any name:
+  `match-tag` is not applied on this path (read in obs-service-tar_scm 0.10.46), so it
+  fits a repository whose tags are all releases. A tag can be moved and a commit cannot:
+  whoever may push tags decides what an unattended container runs, so make the releases
+  immutable or protect the tags. OBS does not watch the repository: after a release the
+  service runs again only on a commit to the package or on a trigger (`osc api -X POST
+  '/source/PROJECT/PACKAGE?cmd=runservice'`, or a token called from a release webhook).
+  Switch to it only once a release tag holds `contrib/container/`, or `extract` fails.
 
 `podman run --rm --network=none IMAGE image-check` repeats the check on a built image.
