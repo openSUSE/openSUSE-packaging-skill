@@ -1548,18 +1548,30 @@ grep -qxF "Image=localhost/$N-agent:latest" "$pubdir/$N-agent@nol.container.d/10
   && pass "install pins the default image for the instance" || fail "no Image= line for nol"
 git config --file "$work/home/.gitconfig" user.name "Pat Packager"
 git config --file "$work/home/.gitconfig" user.email pat@example.org
+gidconf="$work/config/skill-container/$N/gid.gitconfig"
 out="$(sc install gid --workdir "$work/ws" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ "$(git config --file "$work/config/skill-container/$N/gitconfig" user.email)" = pat@example.org ] \
-  && [ "$(git config --file "$work/config/skill-container/$N/gitconfig" user.name)" = "Pat Packager" ] \
-  && grep -qxF "Volume=$work/config/skill-container/$N/gitconfig:/home/agent/.config/git/config:ro,Z" \
-    "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
+[ "$rc" = 0 ] && [ "$(git config --file "$gidconf" user.email)" = pat@example.org ] \
+  && [ "$(git config --file "$gidconf" user.name)" = "Pat Packager" ] \
+  && grep -qxF "Volume=$gidconf:/home/agent/.config/git/config:ro,Z" "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
   && pass "install passes the host's git identity on" || fail "the git identity: rc=$rc $out"
+# The file is the instance's: an install of another one leaves it.
 rm "$work/home/.gitconfig"
+out="$(sc install gi2 --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -s "$gidconf" ] && [ ! -e "$work/config/skill-container/$N/gi2.gitconfig" ] \
+  && ! grep -q gitconfig "$pubdir/$N-agent@gi2.container.d/10-workdir.conf" \
+  && pass "install without a git identity mounts none and leaves another instance's" \
+  || fail "install without a git identity: rc=$rc $out"
 out="$(sc install gid --workdir "$work/ws" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ ! -e "$work/config/skill-container/$N/gitconfig" ] \
-  && ! grep -q gitconfig "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
-  && pass "install without a git identity mounts none" || fail "install without a git identity: rc=$rc $out"
+[ "$rc" = 0 ] && [ ! -e "$gidconf" ] && ! grep -q gitconfig "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
+  && pass "a later install without a git identity removes the instance's own" \
+  || fail "a stale git identity: rc=$rc $out"
+git config --file "$work/home/.gitconfig" user.name "Pat Packager"
+git config --file "$work/home/.gitconfig" user.email pat@example.org
+sc install gid --workdir "$work/ws" > /dev/null 2>&1
 sc uninstall gid > /dev/null
+[ ! -e "$gidconf" ] && pass "uninstall removes the instance's git identity" || fail "uninstall leaves the git identity"
+rm "$work/home/.gitconfig"
+sc uninstall gi2 > /dev/null
 # import copies the project, its graph and its sessions into the instance.
 # From here on the host's opencode runs again: the count starts over after.
 mkdir -p "$work/from/proj" "$work/impws" "$work/impws2" "$work/home/.local/share/mcp-memory"
