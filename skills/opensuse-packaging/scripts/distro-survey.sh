@@ -22,7 +22,8 @@
 #         always Repology's project slug — 'thrift' is 'apache-thrift' there).
 #         Debian reports its sid version (versions[0] is experimental); a suite
 #         in parentheses means the package is NOT in sid under that name.
-# Exit: 0 = survey printed (unanswered rows show '?'), 2 = usage.
+# Exit: 0 = survey printed (unanswered rows show '?'), 2 = usage, or a setting
+#       that is not a whole number.
 set -u
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0"; exit 0;;
@@ -39,6 +40,11 @@ UA='openSUSE-distro-survey/1.0'
 # is not a "not packaged".
 BUDGET=${DISTRO_SURVEY_BUDGET:-90}
 PERCALL=${DISTRO_SURVEY_TIMEOUT:-10}
+# Both reach shell arithmetic, which would evaluate more than a number and
+# reads a leading 0 as octal.
+for n in "$BUDGET" "$PERCALL"; do
+  case $n in '' | 0* | *[!0-9]* | ???????*) echo "distro-survey.sh: DISTRO_SURVEY_BUDGET and DISTRO_SURVEY_TIMEOUT are whole seconds, 1 to 999999" >&2; exit 2;; esac
+done
 DEADLINE=$((SECONDS + BUDGET))
 BUDGETNOTE=''
 

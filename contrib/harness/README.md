@@ -663,7 +663,7 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
    checkout (not `HEAD`). The scripts run their siblings, so one edited, added or dropped
    file untrusts them all, and so does a call that writes into `scripts/`. A script must
    also be run by its path and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`,
-   `NO_COLOR` and `CHANGES_AUTHOR`. A local edit or an unmerged commit is read like any
+   `NO_COLOR`, `CHANGES_AUTHOR`, `DISTRO_SURVEY_BUDGET` and `DISTRO_SURVEY_TIMEOUT`. A local edit or an unmerged commit is read like any
    other script, which for `pool-pr.sh` means refused, until it is merged and fetched
    (`git -C <checkout> fetch origin`). Sourcing one, or feeding it on stdin, is refused:
    the scripts find their siblings from their own path. The guard finds the checkout at

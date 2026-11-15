@@ -10,6 +10,8 @@ import urllib.parse
 GITEA = "https://src.opensuse.org/api/v1"
 PIN_REF = "refs/remotes/origin/main"
 CLEAN_ENV = {"TMPDIR", "LC_ALL", "LANG", "NO_COLOR", "CHANGES_AUTHOR"}
+# distro-survey.sh documents these two and takes whole numbers alone.
+CLEAN_ENV |= {"DISTRO_SURVEY_BUDGET", "DISTRO_SURVEY_TIMEOUT"}
 MAX_DEPTH = 4
 MAX_BYTES = 8 << 20
 EXPANDED = 64 << 10  # characters a variable's expansions may reach
@@ -546,7 +548,8 @@ MESSAGES = {
     "the script by a literal path.",
     "canonical-env": "{0}: the skill's scripts run unread only in the environment "
     "they were given. Drop the change (allowed: TMPDIR, LC_ALL, LANG, NO_COLOR, "
-    "CHANGES_AUTHOR) and pass values as arguments.",
+    "CHANGES_AUTHOR, DISTRO_SURVEY_BUDGET, DISTRO_SURVEY_TIMEOUT) and pass values "
+    "as arguments.",
     "canonical-read": "{0}: the skill's scripts find their siblings from their own "
     "path, so they are run by path ({s}/NAME ...), never sourced or fed on stdin.",
     "credential": "{0}: a login is read only by the tool that owns it (osc, tea, "
