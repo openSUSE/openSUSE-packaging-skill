@@ -76,6 +76,12 @@ case "$1 $2" in
 "info --format") case $3 in *VolumePath*) cat "$FIX/volpath" ;; *) cat "$FIX/storepath" ;; esac ;;
 # Two other containers run when $FIX/others names what they write on the host.
 "ps --quiet") [ ! -e "$FIX/ps-fails" ] || exit 1; [ ! -s "$FIX/others" ] || printf '%s\n' beef01 beef02 ;;
+# Each running container and its network namespace, as podman prints them for
+# this format alone: a client shares the server's.
+"ps --namespace")
+  [ ! -e "$FIX/netns-fails" ] || exit 1
+  [ "$3 $4" = '--format {{.Names}} {{.Namespaces.NET}}' ] && [ $# = 4 ] || exit 97
+  cat "$FIX/netns" ;;
 "run --detach")
   while [ $# -gt 1 ]; do
     [ "$1" = --workdir ] && printf %s "$2" > "$FIX/workdir"
@@ -125,13 +131,14 @@ case "$1 $2" in
     srcs=$(tr '\n' '|' < "$FIX/others")
     if [ -e "$FIX/own-name" ]; then printf '/%s|%s\n' "$(cat "$FIX/own-name")" "$srcs"
     else printf '/beef01|%s\n/beef02|%s\n' "$srcs" "$srcs"; fi ;;
-  # The networks the running containers share the server with.
-  *HostConfig.NetworkMode*) cat "$FIX/netmode" ;;
   esac ;;
 # The image a name stands for now: the running one unless a newer was pulled.
 "image inspect") if [ -e "$FIX/image-new" ]; then cat "$FIX/image-new"; else cat "$FIX/image"; fi ;;
 "pull"*)
   printf '%s\n' "$*" >> "$FIX/pull-calls"
+  # With $FIX/pull-busies a session begins while the image comes.
+  [ ! -e "$FIX/pull-busies" ] \
+    || echo '[{"id":"ses_p","permissions":null,"time":{"busy":5,"idle":2}}]' > "$FIX/sessions"
   [ ! -e "$FIX/pull-fails" ] ;;
 "exec "*)
   # Every call into the container is one the launcher bounds in time.
@@ -260,7 +267,8 @@ PATH=/usr/bin:/bin
 [ "$1" = --user ] && shift
 printf '%s\n' "$*" >> "$FIX/systemctl-calls"
 case "$1" in
-daemon-reload | disable | reset-failed) ;;
+daemon-reload) [ ! -e "$FIX/reload-fails" ] || exit 1 ;;
+disable | reset-failed) ;;
 start) [ ! -e "$FIX/start-fails" ] || exit 1; [ ! -e "$FIX/run-fails" ] || exit 125
   [ -e "$FIX/stops" ] || echo true > "$FIX/running" ;;
 stop) echo false > "$FIX/running" ;;
@@ -348,7 +356,11 @@ echo '{"data":[]}' > "$FIX/logins"
 kept_login() { printf '{"data":[{"id":"%s","integrationID":"prov","active":true,"value":{"type":"key","key":"KEPT-SECRET-8"}}]}\n' "$1" > "$FIX/logins"; }
 echo '[{"id":"prj_main"}]' > "$FIX/projects"
 echo '[]' > "$FIX/sessions"
-printf 'bridge\n' > "$FIX/netmode"
+# The servers of the instances that idle and update ask about, each in a
+# network namespace of its own, and a container that shares none; with
+# arguments, further containers.
+netns() { printf '%s\n' "$N-nol-agent 4026530001" "$N-pub-agent 4026530002" "spike-x 4026530099" "$@" > "$FIX/netns"; }
+netns
 # The sessions of the host project, as `session list` answers them.
 printf '%s\n' '[{"id":"ses_h1","title":"host one"},{"id":"ses_h2","title":"host two"}]' > "$FIX/host-sessions"
 # And their export: idle, with the transcript the container keeps.
@@ -561,10 +573,11 @@ printf '%s\n' "[general]" "apiurl = https://api.opensuse.org" "[https://api.open
 out="$("${scenv[@]}" OSC_CONFIG="$work/osc-broken.conf" HOME="$work/home" bash "$SC" secrets --model-auth prov 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "no usable" <<<"$out" && [ -z "$(leaks <<<"$out")" ] && [ "$(stored)" = "$before" ] \
   && pass "a broken osc config: no line of it is quoted" || fail "broken osc config: rc=$rc $out"
-: > "$work/empty-key"
-for key in "$work/no-key" "$work/empty-key"; do
+: > "$work/empty-key"; mkdir "$work/key-dir"
+for key in "$work/no-key" "$work/empty-key" "$work/key-dir"; do
   out="$(sc secrets --model-auth prov --bugzilla-key "$key" 2>&1)"; rc=$?
-  [ "$rc" != 0 ] && [ "$(stored)" = "$before" ] && pass "no Bugzilla key in ${key##*/}: nothing replaced" \
+  [ "$rc" != 0 ] && grep -qF "no Bugzilla API key" <<<"$out" && [ "$(stored)" = "$before" ] \
+    && pass "no Bugzilla key in ${key##*/}: nothing replaced" \
     || fail "Bugzilla key $key: rc=$rc $out"
 done
 
@@ -1390,7 +1403,23 @@ out="$(cd "$work" && sc install seed2 --workdir ws3 --memory mem/memory.json 2>&
   && [ ! -L "$work/home/.config/containers/systemd/$N-agent@seed2.container" ] \
   && [ ! -e "$work/config/skill-container/$N/seed2.dir" ] \
   && pass "a failed seed writes no unit" || fail "install with a failed seed: rc=$rc $out"
+# On a second install the first one stays as it was.
+seeddir="$work/home/.config/containers/systemd"
+out="$(cd "$work" && sc install seed --workdir ws3 --memory mem/memory.json --image img:2 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qxF "Image=img:1" "$seeddir/$N-agent@seed.container.d/10-workdir.conf" \
+  && [ -L "$seeddir/$N-agent@seed.container" ] \
+  && [ "$(sed -n 3p "$work/config/skill-container/$N/seed.dir")" = img:1 ] \
+  && pass "a failed seed keeps an earlier install" || fail "install again with a failed seed: rc=$rc $out"
 rm "$FIX/seed-fails"
+# systemd not reloading: what install wrote stays, and it says so.
+touch "$FIX/reload-fails"
+out="$(cd "$work" && sc install seed --workdir ws3 --image img:3 2>&1)"; rc=$?
+rm "$FIX/reload-fails"
+[ "$rc" != 0 ] && grep -qF "would not reload" <<<"$out" \
+  && grep -qxF "Image=img:3" "$seeddir/$N-agent@seed.container.d/10-workdir.conf" \
+  && [ -L "$seeddir/$N-agent@seed.container" ] \
+  && [ "$(sed -n 3p "$work/config/skill-container/$N/seed.dir")" = img:3 ] \
+  && pass "install keeps its files when systemd does not reload" || fail "install without a reload: rc=$rc $out"
 
 : > "$FIX/client-calls"
 out="$(sc run obs hello 2>&1)"; rc=$?
@@ -1459,14 +1488,30 @@ out="$(sc idle nol 2>&1)"; rc=$?
   && pass "idle prints no control sequence from a session id" || fail "idle with a crafted id: rc=$rc"
 sessions '[]'
 printf '%s\n' /srv/elsewhere > "$FIX/others"
-printf '%s\n' "spike-y container:$N-nol-agent" > "$FIX/netmode"
+# podman names a shared network by the server's id, not its name: the client
+# is the container in the server's network namespace.
+netns "spike-y 4026530001"
 out="$(sc idle nol 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "a client is on" <<<"$out" \
   && pass "idle sees an attached client" || fail "idle with a client: rc=$rc $out"
+echo 0123abcd > "$FIX/image-new"; : > "$FIX/systemctl-calls"
 out="$(sc update nol 2>&1)"; rc=$?
-[ "$rc" != 0 ] && grep -qF "is not idle" <<<"$out" \
+[ "$rc" != 0 ] && grep -qF "is not idle" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
   && pass "update waits while a client is on" || fail "update with a client: rc=$rc $out"
-printf 'bridge\n' > "$FIX/netmode"
+# What podman does not answer is not idle.
+for how in fails empty; do
+  if [ "$how" = fails ]; then netns; touch "$FIX/netns-fails"; else : > "$FIX/netns"; fi
+  out="$(sc idle nol 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "cannot tell whether a client is on" <<<"$out" \
+    && pass "idle stops when podman names no namespaces ($how)" || fail "idle, namespaces $how: rc=$rc $out"
+  out="$(sc update nol 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "cannot tell whether a client is on" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
+    && pass "update restarts nothing when podman names no namespaces ($how)" \
+    || fail "update, namespaces $how: rc=$rc $out"
+  rm -f "$FIX/netns-fails"
+done
+rm "$FIX/image-new"
+netns
 printf '%s\n' /srv/elsewhere "$work/ws2" "$work/mem2" > "$FIX/others"
 pw3="$(secret nol-server-password)"
 # The image it runs is still the newest: nothing ends the sessions.
@@ -1474,6 +1519,13 @@ pw3="$(secret nol-server-password)"
 out="$(sc update nol 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qF "runs the newest" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
   && pass "update leaves an instance on the newest image running" || fail "update without a new image: rc=$rc $out"
+# It asks whether the instance is idle last, and only before a restart.
+sessions '[{"id":"ses_b","permissions":null,"time":{"busy":5,"idle":2}}]'
+out="$(sc update nol 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qF "runs the newest" <<<"$out" \
+  && pass "update on the newest image does not ask whether the instance is idle" \
+  || fail "update, busy on the newest image: rc=$rc $out"
+sessions '[]'
 echo 0123abcd > "$FIX/image-new"
 # The clock of a launcher that pulled for ten minutes: the wait starts at the restart.
 touch "$FIX/exec-escape"
@@ -1495,6 +1547,12 @@ out="$(sc up pub 2>&1)"; rc=$?
 out="$(sc update pub 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qx "pull registry.example/agent:latest" "$FIX/pull-calls" \
   && pass "update pulls a published image" || fail "update with a custom image: rc=$rc $out"
+# A session that begins while the image is pulled is not interrupted.
+echo 0123abcd > "$FIX/image-new"; touch "$FIX/pull-busies"; : > "$FIX/systemctl-calls"
+out="$(sc update pub 2>&1)"; rc=$?
+rm "$FIX/pull-busies" "$FIX/image-new"; sessions '[]'
+[ "$rc" != 0 ] && grep -qF "is not idle" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
+  && pass "update asks whether the instance is idle after the pull" || fail "update, busy after the pull: rc=$rc $out"
 sc down pub > /dev/null
 touch "$FIX/pull-fails"
 out="$(sc up pub 2>&1)" && out="$(sc update pub 2>&1)"; rc=$?
@@ -1603,6 +1661,13 @@ out="$(sc install imp --workdir "$work/impws" 2>&1)"; rc=$?
 [ "$rc" = 0 ] || fail "install for the import test: rc=$rc $out"
 out="$(sc up imp 2>&1)"; rc=$?
 [ "$rc" = 0 ] || fail "up for the import test: rc=$rc $out"
+# --from names a project: the copy would hand the agent what holds the logins.
+mkdir -p "$work/home/.dotdir/p"
+for from in / "$work/home" "$work" "$work/home/.dotdir/p" "$work/config" "$work/config/tea" "$work/run"; do
+  out="$(sc import imp --from "$from" 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "import copies a project" <<<"$out" && [ -z "$(ls -A "$work/impws")" ] \
+    && pass "import refuses --from ${from/#"$work"/WORK}" || fail "import --from $from: rc=$rc $out"
+done
 : > "$FIX/opencode-calls"; rm -f "$FIX/imported-session"
 touch "$FIX/exec-escape"
 out="$(sc import imp --from "$work/from" 2>&1)"; rc=$?
@@ -1652,6 +1717,15 @@ if [ -n "$loc" ]; then
 else
   echo "SKIP: an accented instance name (no locale here widens a-z)"
 fi
+# An instance name is short and no option.
+long=$(printf 'a%.0s' {1..33})
+for bad in --help -x "$long"; do
+  out="$(sc down "$bad" 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "an instance names the container" <<<"$out" \
+    && pass "an instance named ${bad:0:8} is refused" || fail "instance $bad: rc=$rc $out"
+done
+out="$(sc uninstall "${long:0:32}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && pass "an instance name of 32 characters is taken" || fail "a 32-character instance: rc=$rc $out"
 touch "$FIX/want-locale"
 out="$(LC_ALL=${loc:-en_US.UTF-8} sc down valg 2>&1)"; rc=$?
 rm "$FIX/want-locale"

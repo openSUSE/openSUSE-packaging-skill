@@ -249,7 +249,8 @@ cmd_secrets() {
 	done
 	[ -n "$model_auth" ] || die "secrets: --model-auth <integration> is required"
 	[[ $bugzilla_key == /* ]] || bugzilla_key=$start/$bugzilla_key
-	{ [ -r "$bugzilla_key" ] && [ -s "$bugzilla_key" ]; } || die "no Bugzilla API key at $bugzilla_key"
+	{ [ -f "$bugzilla_key" ] && [ -r "$bugzilla_key" ] && [ -s "$bugzilla_key" ]; } ||
+		die "no Bugzilla API key at $bugzilla_key"
 	resolve
 	# All of them are complete before any replaces the secret of an earlier run.
 	osc=$(osc_login)
@@ -287,7 +288,10 @@ cmd_ssh_key() {
 # The logins stay one set per skill and are shared by its instances.
 take_instance() {
 	inst=${1-}
-	[[ $inst =~ ^[A-Za-z0-9_-]+$ ]] || die "an instance names the container: letters, digits, _ and - only"
+	# The name goes into a socket path, which is short, and behind a command,
+	# where a leading - reads as an option.
+	[[ $inst =~ ^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$ ]] ||
+		die "an instance names the container: letters, digits, _ and - only, at most 32 and not - first"
 	ctr=$name-$inst-agent
 	unit=$name-agent@$inst.service
 	# What install writes: the work directory on the host, the directory it is
@@ -632,6 +636,16 @@ cmd_install() {
 	# A unit is a command line systemd runs as you.
 	srcdir=$(realpath -- "$srcdir")
 	kept "$srcdir/unit" || die "refusing the units in $srcdir: another user can replace them"
+	# The memory graph first: a copy that fails leaves an earlier install of
+	# the instance as it was.
+	if [ -n "$memory" ]; then
+		memdir=${memory%/*}
+		podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --read-only --cap-drop=all \
+			--security-opt no-new-privileges --init \
+			--volume "$name-$inst-memory:/seed:U" --volume "$memdir:/src:ro,Z" \
+			"$image" cp -n "/src/${memory##*/}" "/seed/$memname" >/dev/null ||
+			die "the memory graph was not seeded: nothing of $inst was written"
+	fi
 	mkdir -p "$dropdir" "$userconf"
 	# git refuses to commit without a name, and the container's home is read-only:
 	# the host's own identity goes in as a file of the instance's own.
@@ -670,22 +684,8 @@ cmd_install() {
 		[ ! -s "$userconf/$inst.gitconfig" ] || echo "Volume=$userconf/$inst.gitconfig:/home/agent/.config/git/config:ro,Z"
 	} >"$dropfile"
 	printf '%s\n' "$workdir" "$inside" "$image" >"$statefile"
-	if [ -n "$memory" ]; then
-		memdir=${memory%/*}
-		podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" --read-only --cap-drop=all \
-			--security-opt no-new-privileges --init \
-			--volume "$name-$inst-memory:/seed:U" --volume "$memdir:/src:ro,Z" \
-			"$image" cp -n "/src/${memory##*/}" "/seed/$memname" >/dev/null ||
-			{
-				rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
-				die "the memory graph was not seeded; install it again"
-			}
-	fi
 	systemctl --user daemon-reload >/dev/null ||
-		{
-			rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
-			die "systemd would not reload; install it again"
-		}
+		die "systemd would not reload: the files of $inst are written and not loaded yet; run install again"
 	echo "$inst is installed: work directory $workdir, mounted at $inside"
 }
 # Starts the unit and waits until the server has loaded both guard plugins;
@@ -816,34 +816,40 @@ busy_sessions() {
 	done
 	return 1
 }
-# The containers sharing the server's network: an attached client.
+# The containers in the server's network namespace: an attached client. podman
+# names a shared network by the server's id, not by the name it was given, so
+# the namespaces are compared. 0: one is there, 1: none, 2: it cannot be told.
 client_containers() {
-	local out ids id modes
-	out=$(podman ps --quiet) || return 1
-	[ -n "$out" ] || return 0
-	mapfile -t ids <<<"$out"
-	modes=$(podman inspect --format '{{.Name}} {{.HostConfig.NetworkMode}}' "${ids[@]}") || return 1
-	while IFS= read -r id; do
-		[ -n "$id" ] || continue
-		[[ $id == *" container:$ctr"* ]] && return 0
-	done <<<"$modes"
+	local out n ns net=''
+	out=$(podman ps --namespace --format '{{.Names}} {{.Namespaces.NET}}') || return 2
+	while read -r n ns; do
+		[ "$n" != "$ctr" ] || net=$ns
+	done <<<"$out"
+	[[ $net =~ ^[0-9]+$ ]] || return 2
+	while read -r n ns; do
+		[ "$n" = "$ctr" ] || [ "$ns" != "$net" ] || return 0
+	done <<<"$out"
 	return 1
 }
 # True when a restart would interrupt nothing: no session is busy and no
 # client is on the instance.
 idle_check() {
-	local busy
+	local busy clients
 	busy=$(busy_sessions) || die "cannot list the sessions of $ctr"
 	if [ -n "$busy" ]; then
 		echo "skill-container: a session of $inst is busy:" >&2
 		printf '%s\n' "$busy" >&2
 		return 1
 	fi
-	if client_containers; then
+	client_containers && clients=0 || clients=$?
+	case $clients in
+	0)
 		echo "skill-container: a client is on $inst" >&2
 		return 1
-	fi
-	return 0
+		;;
+	1) return 0 ;;
+	*) die "cannot tell whether a client is on $ctr" ;;
+	esac
 }
 cmd_idle() {
 	[ $# = 0 ] || die "idle takes no argument"
@@ -857,7 +863,6 @@ cmd_update() {
 	readstate
 	check_workdir
 	running || die "$inst is not running: 'skill-container up $inst' starts it"
-	idle_check || die "$inst is not idle: update waits for the night"
 	if [[ $image != localhost/* ]]; then
 		podman pull "$image" >/dev/null || die "the image was not pulled"
 	fi
@@ -867,6 +872,8 @@ cmd_update() {
 		echo "$inst runs the newest $image already"
 		return 0
 	fi
+	# Asked last: a session may have begun while the image was pulled.
+	idle_check || die "$inst is not idle: update waits for the night"
 	ensure_password
 	systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
 	systemctl --user restart "$unit" >/dev/null || die "$inst would not restart"
@@ -878,6 +885,7 @@ cmd_update() {
 }
 cmd_import() {
 	local from='' memory="${HOME}/.local/share/mcp-memory/memory.json" tmp f id ids title n=0
+	local home store volumes runtime
 	while (($#)); do
 		case $1 in
 		--from)
@@ -898,6 +906,17 @@ cmd_import() {
 	[ -d "$from" ] || die "not a directory: $from"
 	real "$from"
 	from=$(realpath -- "$from")
+	# The copy hands the agent the whole tree: a project, not what the work
+	# directory itself may not be.
+	home=$(realpath -- "$HOME")
+	store=$(podman info --format '{{.Store.GraphRoot}}')
+	volumes=$(podman info --format '{{.Store.VolumePath}}')
+	runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+	if [ "$from" = / ] || [[ $home/ == "$from"/* || $from/ == "$home"/.* ]] ||
+		nested "$from" "$(realpath -m -- "$conf")" || nested "$from" "$(realpath -m -- "$store")" ||
+		nested "$from" "$(realpath -m -- "$volumes")" || nested "$from" "$(realpath -m -- "$runtime")"; then
+		die "refusing $from: import copies a project, not your home directory, what holds it, a dot-directory in it, or what holds your logins, podman's storage or your runtime directory"
+	fi
 	[ -z "$(ls -A -- "$workdir")" ] || die "refusing $workdir: it is not empty; move its files away and run import again"
 	! nested "$from" "$workdir" || die "refusing $from: it holds the work directory or lies in it"
 	resolve
