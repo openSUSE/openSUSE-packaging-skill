@@ -184,6 +184,7 @@ python3 tests/repo/check-osc.py
 ruff check . && ruff format --check .
 shellcheck tests/test-*.sh
 shellcheck skills/opensuse-packaging/scripts/{leap-sync,pool-pr,target-gate}.sh
+QUILT_TESTS=require bash tests/test-quilt-scripts.sh   # in a Tumbleweed container, with quilt and rpm-build
 ```
 
 The suites are offline — network lookups are stubbed and the subprocess cases run with

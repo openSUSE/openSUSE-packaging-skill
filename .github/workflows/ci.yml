@@ -76,3 +76,15 @@ jobs:
       # helper definitions into multi-line blocks -- ~530 lines of churn that
       # makes the assertions harder to read and finds no defects. shellcheck,
       # which finds real ones, is blocking above.
+
+  # quilt-prep.sh and quilt-test-series.sh need quilt and an rpm that lays the
+  # build directory out as rpm 4.20 does: the runner's own (4.18) does not, and
+  # the suite's functional cases print SKIP in the job above.
+  quilt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: registry.opensuse.org/opensuse/tumbleweed:latest
+    steps:
+      - run: zypper -n install --no-recommends quilt rpm-build tar gzip git-core
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: QUILT_TESTS=require bash tests/test-quilt-scripts.sh

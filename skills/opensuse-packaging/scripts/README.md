@@ -127,7 +127,7 @@ Limits: moving the pinned ref by hand (`update-ref`, a fetch from another remote
 
 ## `quilt-prep.sh`
 
-Regenerates the quilt build dir (`quilt setup -v`) and optionally pushes up to a named patch (`--to`), leaving the tree there for hand edits. It refuses to delete an existing `*-build/` without `--force`, because that dir may hold edits not yet refreshed. The source tree is the directory holding `.pc`, not the first directory in the build dir (`SPECPARTS/` sits beside it). Exit 2 when setup produced no tree: never an empty "ready". `quilt setup` runs the spec's `%prep` on your machine, as you: your own packages only, never a spec from someone else's request (`references/untrusted-content.md` "The two sharp local-execution vectors"). A name-version with a slash is refused, since the build dir is removed by that name.
+Regenerates the quilt build dir (`quilt setup -v`) and optionally pushes up to a named patch (`--to`), leaving the tree there for hand edits. It refuses to delete an existing `*-build/` without `--force`, because that dir may hold edits not yet refreshed. The source tree is the directory holding `.pc`, not the first directory in the build dir (`SPECPARTS/` sits beside it). Exit 2 when setup produced no tree: never an empty "ready". It expects the `<name>-<version>-build/` directory rpm 4.20 makes (Tumbleweed, Leap 16); with rpm 4.18 (tried on Ubuntu 24.04) `quilt setup` leaves another layout and the script exits 2. `quilt setup` runs the spec's `%prep` on your machine, as you: your own packages only, never a spec from someone else's request (`references/untrusted-content.md` "The two sharp local-execution vectors"). A name-version with a slash is refused, since the build dir is removed by that name.
 
 ## `quilt-test-series.sh`
 
