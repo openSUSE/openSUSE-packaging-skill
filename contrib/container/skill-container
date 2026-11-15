@@ -3,6 +3,8 @@
 # launcher copies no login itself (secrets does, run by you alone), starts the
 # server through systemd and opens a client on it, in a container of its own.
 set -euo pipefail
+# A range such as a-z takes in accented letters in most locales.
+export LC_ALL=C
 name=${SKILL_CONTAINER_NAME:-opensuse-packaging}
 conf=${XDG_CONFIG_HOME:-$HOME/.config}
 userconf=$conf/skill-container/$name
@@ -537,7 +539,7 @@ check_memory() {
 # ("bin" is quoted: the test suite refuses an absolute command path here.)
 fixedcopy=$HOME/.local/"bin"/skill-container
 cmd_install() {
-	local memdir image_arg='' as='' memory='' gitname gitmail v over top
+	local memdir image_arg='' as='' memory='' gitname gitmail v over top covers
 	workdir='' inside=''
 	while (($#)); do
 		case $1 in
@@ -572,13 +574,20 @@ cmd_install() {
 	esac
 	# The work directory is the agent's: mounted over what the image holds, it
 	# would put the guards, their rules or the tools into the agent's hands.
-	# /bin, /sbin, /lib and /lib64 are links into /usr there.
+	# /bin, /sbin, /lib and /lib64 are links into /usr there, and /var holds
+	# links into /usr and /run and the certificates /etc names: of /var and
+	# /tmp only a place below /var/tmp or /tmp is free.
 	over=$(realpath -ms -- "$inside")
-	for top in /etc /usr /bin /sbin /lib /lib64 /home/agent; do
-		if [ "$over" = / ] || nested "$over" "$top"; then
-			die "refusing to mount the work directory at $inside: it would cover what the image holds in /etc, /usr (also as /bin, /sbin, /lib, /lib64) or /home/agent; name another place with --as"
-		fi
+	covers=
+	[ "$over" != / ] || covers=1
+	for top in /etc /usr /bin /sbin /lib /lib64 /boot /dev /proc /sys /run /root /home/agent; do
+		! nested "$over" "$top" || covers=1
 	done
+	case $over in
+	/var/tmp/* | /tmp/*) ;;
+	/var | /var/* | /tmp) covers=1 ;;
+	esac
+	[ -z "$covers" ] || die "refusing to mount the work directory at $inside: it would cover what the image holds or the system keeps there (/etc, /usr and the links into it, /boot, /dev, /proc, /sys, /run, /root, /home/agent, and /var and /tmp but for places below /var/tmp and /tmp); name another place with --as"
 	image=${image_arg:-localhost/$name-agent:latest}
 	# All checks pass before anything is written.
 	check_workdir
