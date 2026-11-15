@@ -2003,6 +2003,13 @@ case_ cred-oscrc-sed             2 credential-read "sed reads ~/.config/osc/oscr
 case_ cred-source-oscrc          2 credential-read "source reads ~/.config/osc/oscrc"
 case_ cred-cookiejar-cp          2 credential-read "cp reads ~/.local/state/osc/cookiejar"
 case_ cred-gh-hosts              2 credential-read "yq reads ~/.config/gh/hosts.yml"
+# An SSH private key is a login too; its public half and known_hosts are not.
+mkdir -p "$HOME/.ssh"
+case_ cred-ssh-key               2 credential-read "cat reads ~/.ssh/id_ed25519"
+case_ cred-ssh-key-abs           2 credential-read "base64 reads /home/agent/.ssh/id_rsa"
+case_ cred-ssh-key-recursive     2 credential-read "tar reaches the credential files under ~/.ssh"
+case_ cred-ssh-pub               0 - ""
+case_ cred-ssh-known-hosts       0 - ""
 case_ cred-git-credentials       2 credential-read "cut reads ~/.git-credentials"
 case_ cred-xdg-git-credentials   2 credential-read "cut reads ~/.config/git/credentials"
 case_ cred-xdg-config-home       2 credential-read "head reads \$XDG_CONFIG_HOME/git/credentials"
