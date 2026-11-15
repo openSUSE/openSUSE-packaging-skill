@@ -136,6 +136,16 @@
       "action": "read",
       "resource": "*.ssh/id_*",
       "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*git credential*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*git-credential*",
+      "effect": "deny"
     }
   ]
 }

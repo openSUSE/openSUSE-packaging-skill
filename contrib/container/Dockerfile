@@ -59,6 +59,11 @@ RUN set -eu; skill=/etc/opencode/skills/opensuse-packaging; \
     git -C "$skill" update-ref refs/remotes/origin/main HEAD; \
     printf '[safe]\n\tdirectory = %s\n' "$skill" > /etc/gitconfig
 
+# A push to github.com over https takes the gh login the container was given, and
+# no other host gets it. `gh auth setup-git` would write this into a home that is
+# read-only here.
+RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !/usr/bin/gh auth git-credential\n' >> /etc/gitconfig
+
 # The agent runs as the caller's user: nothing baked here may be writable by it.
 # osc creates trusted-certs before its first request and fails when it cannot.
 RUN mkdir -p /work /home/agent/.config/osc/trusted-certs /home/agent/.config/tea \
