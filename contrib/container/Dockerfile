@@ -29,6 +29,9 @@ COPY --from=src /src/skill/skills/opensuse-packaging/ /etc/opencode/skills/opens
 COPY --from=src /src/skill/skills/opensuse-packaging/scripts/pr-guard.py \
                 /src/skill/skills/opensuse-packaging/scripts/_pr_guard.py \
                 /src/skill/skills/opensuse-packaging/scripts/bug-guard.py /home/agent/.claude/hooks/
+COPY --from=src /src/skill/contrib/container/CONTAINER.md /etc/opencode/
+COPY --from=src /src/skill/contrib/container/ssh_known_hosts /etc/ssh/ssh_known_hosts
+COPY --from=src /src/skill/contrib/container/ssh_config /etc/ssh/ssh_config.d/50-src-opensuse.conf
 COPY opencode.json /etc/opencode/
 COPY image-check /usr/local/bin/
 
@@ -50,10 +53,12 @@ RUN set -eu; skill=/etc/opencode/skills/opensuse-packaging; mkdir /etc/opencode/
 RUN mkdir -p /work /home/agent/.config/osc/trusted-certs /home/agent/.config/tea \
         /home/agent/.config/mcp-bugzilla /home/agent/.config/opencode \
         /home/agent/.local/share/mcp-memory /home/agent/.config/gh \
+        /home/agent/.config/git /home/agent/.ssh \
     && echo 'version: "1"' > /home/agent/.config/gh/config.yml \
     && echo 'unset OPENCODE_PASSWORD' > /etc/opencode/shell-env \
     && chown -R root:root /etc/opencode /home/agent /usr/local/bin/image-check \
     && chmod -R a+rX,go-w /etc/opencode /home/agent \
+    && chmod 0644 /etc/ssh/ssh_known_hosts /etc/ssh/ssh_config.d/50-src-opensuse.conf \
     && chmod 0755 /home/agent /usr/local/bin/image-check
 
 # BASH_ENV: the server runs each command in a bash, which reads that file first

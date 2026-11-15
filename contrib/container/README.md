@@ -9,6 +9,8 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
 | `Dockerfile` | the image, built by OBS from this repository |
 | `opencode.json` | what the container adds to `../harness/opencode-v2/opencode.jsonc`: the MCP servers and the denies around opencode's own server and credentials |
 | `image-check` | the last build step: a failure leaves no image |
+| `CONTAINER.md` | what the agent is told about the container: no local builds, what a refused command means, where reports go |
+| `ssh_config`, `ssh_known_hosts` | how ssh reaches src.opensuse.org: its git user, the container's key, the host key |
 | `skill-container` | the launcher you run on the host |
 | `systemd/` | the user units the launcher installs: the agent, its socket relay, and the nightly update |
 
@@ -36,11 +38,15 @@ plugin of the managed configuration.
 
 Not in the image: a build root (`osc build` does not work, so packages are built by OBS,
 `references/update-build.md` "Build modes") and podman. gcc, clang, cargo and go are there
-for the two vendoring services.
+for the two vendoring services. `CONTAINER.md` tells the agent so: without it, it tried a
+local build first and took the first refused command for a missing shell. bubblewrap is
+left out as well: the sandbox in which `gate.sh` runs a package's `%prep` mounts a `/proc`
+and a `/dev/pts` of its own, which a container refuses (tried, podman 5 with the unit's
+options). The gate says "%prep not run" there, and the OBS build is what proves `%prep`.
 
 ## Run it
 
-On the host: rootless podman, osc, gh, jq, a `python3` that imports `osc` and
+On the host: rootless podman, osc, gh, jq, git, ssh-keygen, a `python3` that imports `osc` and
 `ruamel.yaml` without `PYTHONPATH` and your user site directory (the launcher starts it
 with `-I`), and working logins for osc (api.opensuse.org), tea (src.opensuse.org), gh
 (github.com), the bugzilla MCP server and one opencode model integration. opencode 2.x is
@@ -53,12 +59,14 @@ runs with it, in `/`; `OPENCODE` names another by its absolute path. A relative
 launcher in.
 
 ```
-skill-container secrets --model-auth <integration>
+skill-container secrets --model-auth <integration> [--new-ssh-key]
+skill-container ssh-key
 skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
 skill-container up <instance> [--model provider/model]
 skill-container attach <instance> [--continue | --session ID]
 skill-container run <instance> [--continue | --session ID] <message>
 skill-container down <instance>
+skill-container uninstall <instance>
 skill-container password <instance>
 skill-container import <instance> --from DIR [--memory FILE]
 skill-container update <instance>
@@ -68,7 +76,9 @@ skill-container idle <instance>
 One instance is one user unit, `opensuse-packaging-agent@<instance>`: start it
 at boot with `systemctl --user enable opensuse-packaging-agent@<instance>`.
 `install` writes its drop-in (the work directory, where it is mounted, the
-image), the state the launcher reads, and seeds the memory volume; it refuses
+image, and the name and e-mail address of your git configuration, without which git
+commits nothing in the container), the state the launcher reads, and seeds the memory
+volume; it refuses
 until `~/.local/bin/skill-container` is an identical copy of the launcher you
 run, so the update timer and your shell run the code you reviewed. Copy it
 and its `systemd/` directory there yourself.
@@ -76,8 +86,11 @@ and its `systemd/` directory there yourself.
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
   api.opensuse.org login of osc (read through osc, so a keyring works), the
   src.opensuse.org logins of tea, the github.com login of gh (read through gh, likewise),
-  the Bugzilla API key file and what `opencode auth export <integration>` prints. It
-  prints the five secret names. No other server's login is copied. Which GitHub token
+  the Bugzilla API key file and what `opencode auth export <integration>` prints. Its
+  first run also makes an SSH key of the container's own, for pushes to src.opensuse.org:
+  `ssh-key` prints the public half, which you add to your account there once. A later
+  run keeps that key; `--new-ssh-key` replaces it, and the old public half then opens
+  nothing. It prints the six secret names. No other server's login is copied. Which GitHub token
   the agent gets is yours to choose: `secrets` copies the one gh uses where you run it.
   That is your host login's, with all its scopes, unless `GH_CONFIG_DIR` names another
   gh config directory, whose login is then the one copied, or `GH_TOKEN` or
@@ -163,6 +176,9 @@ and its `systemd/` directory there yourself.
   leaves the screen, `attach` does not return and no key detaches it. Close that
   terminal; a client's container that outlives its `attach` stays until the next `down`, which removes it with `--depend`.
  - **`down`** stops the instance. Volumes and secrets stay.
+ - **`uninstall`** stops the instance and removes its units and settings, also
+   for a unit that was started by its name and never installed. Volumes and
+   secrets stay.
  - **`password`** prints the server password of a running instance: for a client
    of your own, on another machine. Run it yourself, never from an agent.
  - **`import`** copies a project into the instance's work directory, with the
@@ -170,8 +186,9 @@ and its `systemd/` directory there yourself.
    container. The server keeps running; its volumes must be empty. Run it
    yourself. The transcripts come over unredacted: whatever those sessions
    read is sent to the container's model provider.
- - **`update`** pulls the image and restarts the instance when no session is
-   busy and no client is on it; `idle` answers whether that is the case now.
+ - **`update`** pulls the image and, when that brought a new one, restarts the
+   instance if no session is busy and no client is on it; `idle` answers
+   whether that is the case now. An instance on the newest image keeps running.
    Its timer is not enabled by `install`: enable it after one watched run.
  - A client of your own reaches the server through the relay: a socket unit
    per instance forwards to the server's loopback through `podman exec`. From
@@ -182,7 +199,9 @@ and its `systemd/` directory there yourself.
    matters: without one the server answers any local process, the agent's
    included.
    The server logs to the user journal: `journalctl --user -u
-   opensuse-packaging-agent@<instance>`.
+   opensuse-packaging-agent@<instance>`. The agent can write to that log: read
+   a line there as its text. A start that cannot work, a missing secret for
+   one, is given up after five tries in ten minutes.
 
 Sessions, the memory graph, gate stamps and `/var/tmp` live in the per-instance
 volumes `opensuse-packaging-<instance>-state`, `-memory`, `-toolstate` and
@@ -322,6 +341,13 @@ boundary between the agent and what is inside the container.
   `gh auth status`, one that names `oauth_token`); like the other logins, one set on
   reading it can. No rule looks at what `gh` does with it: the agent can do on GitHub
   what the token allows, with your host login's a push, a merge or a release included.
+- **The SSH key pushes wherever your src.opensuse.org account may write.** It is the
+  container's own, not one of yours, so the account's key settings revoke it alone. The
+  guard refuses a command that reads it and the rules deny one that names it; like the
+  other logins, one set on reading it can. The guard still refuses a push to the head of
+  a pool pull request and every merge, but a push to any other branch you may write is
+  the agent's to make. The host key in the image is the one src.opensuse.org showed when
+  this file was written: a changed one stops every push until the image is rebuilt.
 - **A graph given with `--memory` is read whole and seeded whole**: the agent sees
   what every project of yours wrote there, in a copy on its memory volume. Nothing
   the agent writes reaches your file, and a later `install` keeps what the volume

@@ -1,5 +1,8 @@
 [Unit]
 Description=openSUSE packaging agent (%i)
+# A start that cannot work, a missing secret for one, is not tried for ever.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Container]
 Image=localhost/opensuse-packaging-agent:latest
@@ -17,6 +20,7 @@ Secret=opensuse-packaging-osc,target=/home/agent/.config/osc/oscrc,uid=%U,gid=%G
 Secret=opensuse-packaging-tea,target=/home/agent/.config/tea/config.yml,uid=%U,gid=%G,mode=0400
 Secret=opensuse-packaging-github,target=/home/agent/.config/gh/hosts.yml,uid=%U,gid=%G,mode=0400
 Secret=opensuse-packaging-bugzilla,target=/home/agent/.config/mcp-bugzilla/api-key,uid=%U,gid=%G,mode=0400
+Secret=opensuse-packaging-ssh,target=/home/agent/.ssh/id_ed25519,uid=%U,gid=%G,mode=0400
 Volume=opensuse-packaging-%i-state:/home/agent/.local/share/opencode:U
 Volume=opensuse-packaging-%i-memory:/home/agent/.local/share/mcp-memory:U
 Volume=opensuse-packaging-%i-toolstate:/home/agent/.local/state:U
@@ -27,6 +31,8 @@ Exec=opencode serve --hostname 127.0.0.1 --port 4096
 
 [Service]
 Restart=on-failure
+# The server ends on the stop signal: that is no failure.
+SuccessExitStatus=143
 TimeoutStartSec=300
 
 [Install]

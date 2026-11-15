@@ -1,5 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "/etc/opencode/CONTAINER.md"
+  ],
   "mcp": {
     "servers": {
       "bugzilla": {
@@ -122,6 +125,16 @@
     {
       "action": "read",
       "resource": "*/proc/*environ*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*.ssh/id_*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.ssh/id_*",
       "effect": "deny"
     }
   ]

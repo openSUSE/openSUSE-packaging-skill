@@ -125,6 +125,8 @@ case "$1 $2" in
   # The networks the running containers share the server with.
   *HostConfig.NetworkMode*) cat "$FIX/netmode" ;;
   esac ;;
+# The image a name stands for now: the running one unless a newer was pulled.
+"image inspect") if [ -e "$FIX/image-new" ]; then cat "$FIX/image-new"; else cat "$FIX/image"; fi ;;
 "pull"*)
   printf '%s\n' "$*" >> "$FIX/pull-calls"
   [ ! -e "$FIX/pull-fails" ] ;;
@@ -253,7 +255,7 @@ PATH=/usr/bin:/bin
 [ "$1" = --user ] && shift
 printf '%s\n' "$*" >> "$FIX/systemctl-calls"
 case "$1" in
-daemon-reload) ;;
+daemon-reload | disable | reset-failed) ;;
 start) [ ! -e "$FIX/start-fails" ] || exit 1; [ ! -e "$FIX/run-fails" ] || exit 125
   [ -e "$FIX/stops" ] || echo true > "$FIX/running" ;;
 stop) echo false > "$FIX/running" ;;
@@ -264,13 +266,13 @@ is-active) grep -qx true "$FIX/running" ;;
 esac
 EOF
 # The real commands of the launcher, each behind the same check.
-for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln; do
+for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir; do
   printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $(command -v "$f") \"\$@\"" > "$tools/bin/$f"
 done
 # A client among the launcher's own commands is not the caller's.
 printf '%s\n' '#!/bin/bash' ': > "$FIX/launcher-path-client"; exit 1' > "$tools/bin/opencode"
 # First on the caller's PATH: what the launcher must take from its own.
-for f in podman python3 jq realpath sed timeout head base64 tr id mkdir seq sleep cat ls gh cp cmp mktemp rm systemctl ln; do
+for f in podman python3 jq realpath sed timeout head base64 tr id mkdir seq sleep cat ls gh cp cmp mktemp rm systemctl ln ssh-keygen git rmdir; do
   printf '%s\n' '#!/bin/bash' ': > "$FIX/planted-host"; exit 1' > "$tools/evilbin/$f"
 done
 chmod +x "$tools/bin/"* "$tools/userbin/"* "$tools/evilbin/"*
@@ -419,6 +421,9 @@ out="$(sc install obs --workdir "$work/ws" 2>&1)"; rc=$?
 out="$(sc secrets 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ -z "$(ls "$FIX/secrets")" ] && pass "secrets needs --model-auth" \
   || fail "secrets without --model-auth: rc=$rc $out"
+out="$(sc ssh-key 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF "no secret $N-ssh" <<<"$out" && pass "ssh-key before secrets says so" \
+  || fail "ssh-key without the secret: rc=$rc $out"
 
 # From a directory the agent wrote: none of its modules is imported, opencode
 # exports elsewhere and without project config, a key file named from it is found.
@@ -453,8 +458,21 @@ out="$(GH_CONFIG_DIR="$FIX/ghalt" sc secrets --model-auth prov 2>&1)"; rc=$?
   || fail "secrets with GH_CONFIG_DIR: rc=$rc $(leaks <<<"$out" | wc -l) $(secret github | sed 's/token:.*/token: …/')"
 
 out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ "$out" = "$(printf '%s\n' $N-osc $N-tea $N-github $N-model $N-bugzilla)" ] \
-  && pass "secrets prints the five names only" || fail "secrets: rc=$rc $out"
+[ "$rc" = 0 ] && [ "$out" = "$(printf '%s\n' $N-osc $N-tea $N-github $N-model $N-bugzilla $N-ssh)" ] \
+  && pass "secrets prints the six names only" || fail "secrets: rc=$rc $out"
+# The SSH key: made by the first run, with no file of it left behind.
+key1="$(secret ssh)"
+grep -q 'BEGIN OPENSSH PRIVATE KEY' <<<"$key1" && [ -z "$(find "$work/run" -name 'tmp.*')" ] \
+  && pass "secrets makes an SSH key and leaves no copy" || fail "the SSH key: $(find "$work/run" -name 'tmp.*')"
+out="$(sc ssh-key 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [[ $out == "ssh-ed25519 "*" $N" ]] && [ "$(wc -l <<<"$out")" = 1 ] \
+  && pass "ssh-key prints the public half alone" || fail "ssh-key: rc=$rc $(wc -l <<<"$out") lines"
+out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(secret ssh)" = "$key1" ] && pass "a later secrets run keeps the SSH key" \
+  || fail "the SSH key after a second run: rc=$rc"
+out="$(sc secrets --model-auth prov --new-ssh-key 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(secret ssh)" != "$key1" ] && secret ssh | grep -q 'BEGIN OPENSSH PRIVATE KEY' \
+  && pass "--new-ssh-key replaces the SSH key" || fail "--new-ssh-key: rc=$rc"
 [ -z "$(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")" ] && pass "no secret on a command line" \
   || fail "a secret on a command line: $(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")"
 
@@ -595,6 +613,11 @@ out="$(SC_HOME="$work/homelink" sc install obs --workdir "$work/home" 2>&1)"; rc
   || fail "install --workdir on a linked home: rc=$rc $out"
 
 # Every login is there before a container starts.
+mv "$FIX/secrets/$N-ssh" "$FIX/ssh.kept"
+out="$(sc install obs --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF "no secret $N-ssh" <<<"$out" && ! grep -q '^run ' "$FIX/podman-calls" \
+  && pass "install without the SSH key starts nothing" || fail "install without the SSH key: rc=$rc $out"
+mv "$FIX/ssh.kept" "$FIX/secrets/$N-ssh"
 mv "$FIX/secrets/$N-github" "$FIX/github.kept"
 out="$(sc install obs --workdir "$work/ws" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "no secret $N-github" <<<"$out" && ! grep -q '^run ' "$FIX/podman-calls" \
@@ -916,6 +939,8 @@ for line in "UserNS=keep-id" "ReadOnly=true" "DropCapability=all" "NoNewPrivileg
   "Secret=opensuse-packaging-tea,target=/home/agent/.config/tea/config.yml,uid=%U,gid=%G,mode=0400" \
   "Secret=opensuse-packaging-github,target=/home/agent/.config/gh/hosts.yml,uid=%U,gid=%G,mode=0400" \
   "Secret=opensuse-packaging-bugzilla,target=/home/agent/.config/mcp-bugzilla/api-key,uid=%U,gid=%G,mode=0400" \
+  "Secret=opensuse-packaging-ssh,target=/home/agent/.ssh/id_ed25519,uid=%U,gid=%G,mode=0400" \
+  "StartLimitIntervalSec=600" "StartLimitBurst=5" "SuccessExitStatus=143" \
   "Volume=opensuse-packaging-%i-state:/home/agent/.local/share/opencode:U" \
   "Volume=opensuse-packaging-%i-memory:/home/agent/.local/share/mcp-memory:U" \
   "Volume=opensuse-packaging-%i-toolstate:/home/agent/.local/state:U" \
@@ -1427,11 +1452,18 @@ out="$(sc update nol 2>&1)"; rc=$?
 printf 'bridge\n' > "$FIX/netmode"
 printf '%s\n' /srv/elsewhere "$work/ws2" "$work/mem2" > "$FIX/others"
 pw3="$(secret nol-server-password)"
+# The image it runs is still the newest: nothing ends the sessions.
+: > "$FIX/systemctl-calls"
+out="$(sc update nol 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qF "runs the newest" <<<"$out" && ! grep -q '^restart' "$FIX/systemctl-calls" \
+  && pass "update leaves an instance on the newest image running" || fail "update without a new image: rc=$rc $out"
+echo 0123abcd > "$FIX/image-new"
 out="$(sc update nol 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qxF "nol is updated" <<<"$out" && [ "$(secret nol-server-password)" = "$pw3" ] \
-  && [ ! -e "$FIX/pull-calls" ] \
-  && pass "update restarts a quiet instance, keeps its password, no pull for a local image" \
+  && grep -qx "restart $N-agent@nol.service" "$FIX/systemctl-calls" && [ ! -e "$FIX/pull-calls" ] \
+  && pass "update restarts a quiet instance on a new image, keeps its password, no pull for a local image" \
   || fail "update: rc=$rc $out"
+rm "$FIX/image-new"
 # A published image is pulled first.
 sc down nol > /dev/null
 out="$(sc install pub --workdir "$work/ws" --image registry.example/agent:latest 2>&1)"; rc=$?
@@ -1449,6 +1481,43 @@ out="$(sc up pub 2>&1)" && out="$(sc update pub 2>&1)"; rc=$?
 rm "$FIX/pull-fails"
 sc down pub > /dev/null
 sc down nol > /dev/null
+# uninstall takes the units and settings of one instance; what holds its work stays.
+pubdir="$work/home/.config/containers/systemd"
+: > "$FIX/systemctl-calls"
+out="$(sc uninstall pub 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$pubdir/$N-agent@pub.container.d" ] && [ ! -L "$pubdir/$N-agent@pub.container" ] \
+  && [ ! -e "$work/config/skill-container/$N/pub.dir" ] && [ -f "$pubdir/$N-agent@.container" ] \
+  && grep -qx "stop $N-agent@pub.service" "$FIX/systemctl-calls" \
+  && grep -qx "stop $N-relay@pub.service" "$FIX/systemctl-calls" \
+  && grep -qx "disable --now $N-update@pub.timer" "$FIX/systemctl-calls" \
+  && grep -qx daemon-reload "$FIX/systemctl-calls" && [ -f "$FIX/secrets/$N-pub-server-password" ] \
+  && [ -f "$work/config/skill-container/$N/nol.dir" ] \
+  && pass "uninstall removes one instance's units and keeps its secret" || fail "uninstall: rc=$rc $out"
+out="$(sc up pub 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF "is not installed" <<<"$out" && pass "an uninstalled instance does not start" \
+  || fail "up after uninstall: rc=$rc $out"
+# A unit started by its name alone has no settings: it is stopped all the same.
+: > "$FIX/systemctl-calls"
+out="$(sc uninstall ghost 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qx "stop $N-agent@ghost.service" "$FIX/systemctl-calls" \
+  && pass "uninstall stops an instance that was never installed" || fail "uninstall of a stray unit: rc=$rc $out"
+# install names the image in the instance's own lines, and the host's git identity.
+grep -qxF "Image=localhost/$N-agent:latest" "$pubdir/$N-agent@nol.container.d/10-workdir.conf" \
+  && pass "install pins the default image for the instance" || fail "no Image= line for nol"
+git config --file "$work/home/.gitconfig" user.name "Pat Packager"
+git config --file "$work/home/.gitconfig" user.email pat@example.org
+out="$(sc install gid --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(git config --file "$work/config/skill-container/$N/gitconfig" user.email)" = pat@example.org ] \
+  && [ "$(git config --file "$work/config/skill-container/$N/gitconfig" user.name)" = "Pat Packager" ] \
+  && grep -qxF "Volume=$work/config/skill-container/$N/gitconfig:/home/agent/.config/git/config:ro,Z" \
+    "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
+  && pass "install passes the host's git identity on" || fail "the git identity: rc=$rc $out"
+rm "$work/home/.gitconfig"
+out="$(sc install gid --workdir "$work/ws" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$work/config/skill-container/$N/gitconfig" ] \
+  && ! grep -q gitconfig "$pubdir/$N-agent@gid.container.d/10-workdir.conf" \
+  && pass "install without a git identity mounts none" || fail "install without a git identity: rc=$rc $out"
+sc uninstall gid > /dev/null
 # import copies the project, its graph and its sessions into the instance.
 # From here on the host's opencode runs again: the count starts over after.
 mkdir -p "$work/from/proj" "$work/impws" "$work/impws2" "$work/home/.local/share/mcp-memory"

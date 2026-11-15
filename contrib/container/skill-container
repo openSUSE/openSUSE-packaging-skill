@@ -96,19 +96,25 @@ known() {
 }
 usage() {
 	cat <<EOF
-usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE]
+usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE] [--new-ssh-key]
+       skill-container ssh-key
        skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
        skill-container up <instance> [--model provider/model]
        skill-container attach <instance> [flags]
        skill-container run <instance> [flags] <message>
        skill-container down <instance>
+       skill-container uninstall <instance>
        skill-container password <instance>
        skill-container import <instance> --from DIR [--memory FILE]
        skill-container update <instance>
        skill-container idle <instance>
 secrets  copies the api.opensuse.org login of osc, the src.opensuse.org login of
          tea, the github.com login of gh, the Bugzilla API key and one opencode
-         integration into podman secrets. It prints the secret names only.
+         integration into podman secrets, and makes an SSH key for pushes to
+         src.opensuse.org on its first run; --new-ssh-key replaces that key.
+         It prints the secret names only.
+ssh-key  prints the public half of that key: add it to your src.opensuse.org
+         account once.
 install  writes the units of <instance> for DIR, mounted at --as DIR (default
          the same path), and seeds its memory volume from FILE. Run it again
          after the launcher changed: it refuses until its fixed copy matches.
@@ -121,13 +127,16 @@ run      sends one message without the interface, with these opencode flags:
          $runflags
          Both refuse any other flag, --auto among them.
 down     stops <instance>. Volumes and secrets stay.
+uninstall stops <instance> and removes its units and settings. Volumes and
+         secrets stay.
 password prints the server password of a running <instance>, for a client of
          your own. Run it yourself, never from an agent.
 import   copies --from DIR into the work directory of <instance>, with the
          memory graph and the sessions of that project. The container keeps
          running; its volumes must be empty. Run it yourself.
-update   pulls the image and restarts <instance> when no session is busy and
-         no client is on it. Enable its timer only after one watched run.
+update   pulls the image and, when it is a new one, restarts <instance> if no
+         session is busy and no client is on it. Enable its timer only after
+         one watched run.
 idle     answers whether update would restart <instance> now.
 EOF
 }
@@ -217,7 +226,7 @@ gh_login() {
 	printf '    git_protocol: https\n    user: %s\n    oauth_token: %s\n' "$user" "$token"
 }
 cmd_secrets() {
-	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model
+	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model newkey='' keydir=''
 	while (($#)); do
 		case $1 in
 		--model-auth)
@@ -227,6 +236,10 @@ cmd_secrets() {
 		--bugzilla-key)
 			bugzilla_key=${2?--bugzilla-key needs a file}
 			shift 2
+			;;
+		--new-ssh-key)
+			newkey=1
+			shift
 			;;
 		*) die "secrets: unknown argument: $1" ;;
 		esac
@@ -242,12 +255,30 @@ cmd_secrets() {
 	model=$(PATH=$userpath OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" auth export "$model_auth")
 	printf '%s' "$model" | jq -e 'length > 0' >/dev/null 2>&1 ||
 		die "opencode exported no credential for $model_auth"
+	# The key is the container's own: the account's key settings can revoke it
+	# alone. A later run keeps it, or the key you registered would stop working.
+	if [ -n "$newkey" ] || ! podman secret exists "$name-ssh" 2>/dev/null; then
+		keydir=$(mktemp -d -p "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}") || die "no private directory for the SSH key"
+		trap 'rm -rf "$keydir"' EXIT
+		ssh-keygen -q -t ed25519 -N '' -C "$name" -f "$keydir/key" >/dev/null || die "no SSH key was made"
+	fi
 	printf '%s\n' "$osc" | store osc
 	printf '%s\n' "$tea" | store tea
 	printf '%s\n' "$github" | store github
 	printf '%s\n' "$model" | store model
 	podman secret create --replace "$name-bugzilla" "$bugzilla_key" >/dev/null
-	printf '%s\n' "$name-osc" "$name-tea" "$name-github" "$name-model" "$name-bugzilla"
+	if [ -n "$keydir" ]; then
+		store ssh <"$keydir/key"
+		rm -rf "$keydir"
+		trap - EXIT
+	fi
+	printf '%s\n' "$name-osc" "$name-tea" "$name-github" "$name-model" "$name-bugzilla" "$name-ssh"
+}
+# The public half is no secret; the private one goes to ssh-keygen through a pipe.
+cmd_ssh_key() {
+	[ $# = 0 ] || die "ssh-key takes no argument"
+	podman secret exists "$name-ssh" 2>/dev/null || die "no secret $name-ssh: run 'skill-container secrets' first"
+	secret ssh | ssh-keygen -y -f /dev/stdin || die "cannot read the key in $name-ssh"
 }
 # One instance: a name for the container, its server password and its volumes.
 # The logins stay one set per skill and are shared by its instances.
@@ -501,7 +532,7 @@ check_memory() {
 # ("bin" is quoted: the test suite refuses an absolute command path here.)
 fixedcopy=$HOME/.local/"bin"/skill-container
 cmd_install() {
-	local memdir image_arg='' as='' memory=''
+	local memdir image_arg='' as='' memory='' gitname gitmail
 	workdir='' inside=''
 	while (($#)); do
 		case $1 in
@@ -541,12 +572,28 @@ cmd_install() {
 		[[ $memory == /* ]] || memory=$start/$memory
 		check_memory
 	fi
-	for s in osc tea github bugzilla model; do
+	for s in osc tea github bugzilla model ssh; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
 	cmp -s "$self" "$fixedcopy" || die "copy the launcher to $fixedcopy first, then run install again"
 	[ -x "$fixedcopy" ] || die "$fixedcopy is not executable"
 	mkdir -p "$dropdir" "$userconf"
+	# git refuses to commit without a name, and the container's home is read-only:
+	# the host's own identity goes in as a file of its own.
+	gitname=$(git config --global --get user.name 2>/dev/null) || gitname=
+	gitmail=$(git config --global --get user.email 2>/dev/null) || gitmail=
+	rm -f "$userconf/gitconfig"
+	case $userconf in
+	*[,:]*) ;;
+	*)
+		if [ -n "$gitname" ] && [ -n "$gitmail" ]; then
+			{
+				git config --file "$userconf/gitconfig" user.name "$gitname" &&
+					git config --file "$userconf/gitconfig" user.email "$gitmail"
+			} || die "cannot write $userconf/gitconfig"
+		fi
+		;;
+	esac
 	# The instance is a symlink to the template: only then does quadlet
 	# read the instance's drop-in directory for it.
 	ln -sf "$name-agent@.container" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
@@ -587,7 +634,9 @@ cmd_install() {
 		echo "[Container]"
 		echo "Volume=$workdir:$inside:Z"
 		echo "WorkingDir=$inside"
-		[ -z "$image_arg" ] || echo "Image=$image_arg"
+		# The image update pulls is the one the unit runs, whatever the template names.
+		echo "Image=$image"
+		[ ! -s "$userconf/gitconfig" ] || echo "Volume=$userconf/gitconfig:/home/agent/.config/git/config:ro,Z"
 	} >"$dropfile"
 	printf '%s\n' "$workdir" "$inside" "$image" >"$statefile"
 	if [ -n "$memory" ]; then
@@ -641,7 +690,7 @@ cmd_up() {
 	readstate
 	check_workdir
 	! running || die "$inst is already running: 'skill-container down $inst' stops it"
-	for s in osc tea github bugzilla model; do
+	for s in osc tea github bugzilla model ssh; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
 	mkdir -p "$userconf"
@@ -664,6 +713,22 @@ cmd_down() {
 	readstate
 	systemctl --user stop "$unit" >/dev/null 2>&1 || die "$inst would not stop"
 	echo "$inst is stopped; its volumes and secrets stay"
+}
+# Works without a state file: a unit started by its name alone is stopped too.
+cmd_uninstall() {
+	local u
+	[ $# = 0 ] || die "uninstall takes no argument"
+	[ ! -f "$sysstate" ] || die "$inst is managed by the role: its state is $sysstate, uninstall removes nothing there"
+	systemctl --user disable --now "$name-update@$inst.timer" >/dev/null 2>&1 || true
+	for u in "$name-relay@$inst.service" "$unit"; do
+		systemctl --user stop "$u" >/dev/null 2>&1 || true
+	done
+	! running || die "$inst would not stop"
+	rm -f "$dropfile" "$statefile" "$HOME/.config/containers/systemd/$name-agent@$inst.container"
+	[ ! -d "$dropdir" ] || rmdir "$dropdir" 2>/dev/null || true
+	systemctl --user daemon-reload >/dev/null || die "systemd would not reload"
+	systemctl --user reset-failed "$unit" "$name-relay@$inst.service" >/dev/null 2>&1 || true
+	echo "$inst is uninstalled; its volumes $name-$inst-{state,memory,toolstate,scratch} and the secret $name-$inst-server-password stay"
 }
 # What a client needs of the running instance: its image and the directory it
 # works in.
@@ -752,6 +817,7 @@ cmd_idle() {
 	idle_check && echo "$inst is idle"
 }
 cmd_update() {
+	local want have
 	[ $# = 0 ] || die "update takes no argument"
 	readstate
 	check_workdir
@@ -759,6 +825,12 @@ cmd_update() {
 	idle_check || die "$inst is not idle: update waits for the night"
 	if [[ $image != localhost/* ]]; then
 		podman pull "$image" >/dev/null || die "the image was not pulled"
+	fi
+	want=$(podman image inspect --format '{{.Id}}' "$image" 2>/dev/null) || die "no image $image"
+	have=$(podman inspect --format '{{.Image}}' "$ctr") || die "cannot read the image of $ctr"
+	if [ "$want" = "$have" ]; then
+		echo "$inst runs the newest $image already"
+		return 0
 	fi
 	ensure_password
 	systemctl --user restart "$unit" >/dev/null || die "$inst would not restart"
@@ -847,7 +919,8 @@ cmd=${1-}
 [ $# -eq 0 ] || shift
 case $cmd in
 secrets) cmd_secrets "$@" ;;
-install | up | attach | run | down | password | import | update | idle)
+ssh-key) cmd_ssh_key "$@" ;;
+install | up | attach | run | down | uninstall | password | import | update | idle)
 	take_instance "${1-}"
 	[ $# = 0 ] || shift
 	case $cmd in
@@ -869,6 +942,7 @@ install | up | attach | run | down | password | import | update | idle)
 		{ client "$image" opencode run --server "$inner" "$@" 2>&1 >&3 3>&- | plain >&2 3>&-; } 3>&1 | plain
 		;;
 	down) cmd_down "$@" ;;
+	uninstall) cmd_uninstall "$@" ;;
 	password) cmd_password "$@" ;;
 	import) cmd_import "$@" ;;
 	update) cmd_update "$@" ;;

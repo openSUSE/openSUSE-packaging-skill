@@ -1,0 +1,7 @@
+# Pushes to src.opensuse.org go out as its git user with the container's own key,
+# to the host key the image was built with.
+Host src.opensuse.org
+    User gitea
+    IdentityFile /home/agent/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
