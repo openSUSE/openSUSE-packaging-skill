@@ -113,6 +113,18 @@ guard 'osc results' || fail "pr-guard refuses a harmless command"
 ! guard 'cat /home/agent/.ssh/id_ed25519' || fail "pr-guard lets the SSH key be read"
 guard 'cat /home/agent/.ssh/known_hosts' || fail "pr-guard refuses a file beside the SSH key"
 ! guard 'gh auth token' || fail "pr-guard lets gh print its token"
+# The image's skill is the pinned one for pr-guard, also for a user who does not
+# own it: only then may its target-gate.sh record a review and pool-pr.sh open a PR.
+[ "${PR_GUARD_SKILL_DIR:-}" = "$skill" ] || fail "PR_GUARD_SKILL_DIR is ${PR_GUARD_SKILL_DIR:-unset}"
+record() {
+	jq -n --arg c "$1 /work/x --review /work/verdict" \
+		'{tool_name: "Bash", tool_input: {command: $c}, cwd: "/work", agent_type: "changes-review"}' |
+		setpriv --reuid=65534 --regid=65534 --clear-groups python3 "$hooks/pr-guard.py" >/dev/null 2>&1
+}
+record "$skill/scripts/target-gate.sh" || fail "pr-guard does not take the image's target-gate.sh for the pinned one"
+cp "$skill/scripts/target-gate.sh" "$scratch/target-gate.sh"
+chmod 755 "$scratch" "$scratch/target-gate.sh"
+! record "$scratch/target-gate.sh" || fail "pr-guard takes a copy of target-gate.sh for the pinned one"
 
 # A server on the baked config must load both guard plugins. They load in the
 # background after the first request; one that failed is listed without its id.

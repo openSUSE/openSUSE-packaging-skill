@@ -20,6 +20,9 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
   rules, both guard plugins, the skill, one sub-agent per playbook in `agents/`.
 - `pr-guard.py` and `bug-guard.py` where the plugins look for them, byte-identical to the
   skill's copies.
+- The skill as a git repository of root's, with the ref pr-guard pins: the guard lets
+  only the pinned `target-gate.sh` and `pool-pr.sh` record a review or open a Leap pool
+  PR, and without that the container could do neither.
 - osc, git-obs, tea, gh, spec-cleaner, rpmlint, rpmcrab, rpmdevtools, git, ssh, jq, curl,
   wget and the source services `source_validator`, `download_files`, `obs_scm`, `tar`,
   `recompress`, `set_version`, `format_spec_file`, `node_modules`, `cargo_vendor`,
@@ -342,8 +345,9 @@ boundary between the agent and what is inside the container.
   `secrets` and `up`. The database in the volume is the agent's to write: one set on it
   can keep a model login of its own there as the one in use, for one with a trigger that
   puts it back when the secret's is imported.
-- Leap pool PRs do not work yet: the guard lets `pool-pr.sh` through only from a git
-  checkout of the skill under `~/.claude/skills`, and the image has neither.
+- A Leap pool PR was not made from the container end to end. The build checks that the
+  guard takes the image's `target-gate.sh --review` for the skill's own; `pool-pr.sh` was
+  not run there.
 - **The GitHub token is your host login's, with all its scopes, unless you gave `secrets`
   another.** The rules deny by their text the commands that print it (`gh auth token`,
   `gh auth status`, one that names `oauth_token`); like the other logins, one set on
