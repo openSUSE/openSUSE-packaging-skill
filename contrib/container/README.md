@@ -78,6 +78,8 @@ skill-container update <instance>
 skill-container idle <instance>
 ```
 
+An instance name is up to 32 letters, digits, `_` and `-`, and does not start
+with `-`: it goes into a socket path and behind commands.
 One instance is one user unit, `opensuse-packaging-agent@<instance>`. Once
 installed it starts with your systemd user session: at boot when your account
 lingers (`loginctl enable-linger`), at your first login otherwise.
@@ -151,7 +153,9 @@ directory that lies under `/var` on the host therefore needs `--as`.
   container still counts.
 - **`install --memory FILE`** seeds the instance's memory volume once, from a
   graph with entities and relations only: the agent keeps its own memory from
-  there on, and the host graph is never mounted. Podman copies the file's
+  there on, and the host graph is never mounted. The graph is copied before
+  `install` writes anything else: a copy that fails leaves an earlier install
+  of the instance as it was. Podman copies the file's
   directory with it, so `install` takes a file only when it is
   alone in its directory, outside the work directory and podman's storage and volumes,
   and holds nothing but entities and relations, and when no directory above it, as far up
@@ -206,12 +210,19 @@ directory that lies under `/var` on the host therefore needs `--as`.
    memory graph and the project's sessions, and tells you to carry on in the
    container. The server keeps running; its volumes must be empty. Run it
    yourself. The transcripts come over unredacted: whatever those sessions
-   read is sent to the container's model provider.
+   read is sent to the container's model provider. `--from` names a project:
+   `import` refuses what a work directory may not be either, your home
+   directory, what holds it, a dot-directory in it, and what holds or lies in
+   your configuration directory, podman's storage or your runtime directory.
+   The agent would get your logins with the copy.
  - **`update`** pulls the image, unless its name starts with `localhost/`: such
    an image changes only when you build or load it. When the name then stands
    for a new image, it restarts the instance if no session is busy and no
-   client is on it; `idle` answers whether that is the case now. An instance on
-   the newest image keeps running.
+   client is on it, which it asks after the pull, right before the restart;
+   `idle` answers whether that is the case now. A client is a container in the
+   server's network namespace, and when podman does not say which those are,
+   `update` and `idle` stop: that is not idle. An instance on the newest image
+   keeps running.
    Its timer is not enabled by `install`: enable it after one watched run.
  - A client of your own reaches the server through the relay: a socket unit
    per instance forwards to the server's loopback through `podman exec`. From
@@ -261,7 +272,8 @@ boundary between the agent and what is inside the container.
   database. An approval saved there answers a question in every later session. Rules
   written onto a session answer every question of that session and switch off the denies
   of the configuration from its next prompt on; the guard plugins still refuse. A
-  session's history can be rewritten before `--continue` loads it. `up`, `attach` and `run`
+  session's history can be rewritten before `--continue` loads it. `up`, `attach`, `run`
+  and `password`, and `update` after its restart,
   remove the session rules they find and the saved approvals of every project the server
   lists, and stop when a list cannot be read or a rule stays. An approval of a project
   the server does not list is found only by a query opencode does not document. That
