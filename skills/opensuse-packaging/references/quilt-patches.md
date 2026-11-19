@@ -99,3 +99,40 @@ classic-osc/maintenance flow, once `references/leap-slfo.md` §6 has decided
    fixed/absent", not "needs rebase" (hunk-by-hunk procedure:
    `references/patches.md` "Patches", "When a distro patch stops
    applying after a version bump").
+
+## Prove the backport fixes the CVE (%check regression test)
+
+A patch that applies cleanly and builds proves the code compiles, not that
+the hole is closed. For each backported CVE fix, add a `%check` test that
+exercises the CVE behaviour — the upstream regression test for it where one
+exists, otherwise a minimal reproducer of your own.
+
+**HARD RULE — the test must FAIL on the unpatched code and PASS with the
+backport applied.** Verify both directions: with the CVE patch popped
+(`quilt pop`, rebuild, `%check` goes red), then pushed (`quilt push`,
+rebuild, `%check` goes green). A test that passes either way proves nothing
+— it is not a regression test for this CVE.
+
+- **Prefer the upstream regression test** where the fix ships one — it is
+  already the reproducer and stays maintained upstream. Where upstream has
+  none, add a minimal reproducer (the CVE's proof-of-concept input, or a
+  small program that triggers the vulnerable path) under `%check`. Keep it
+  offline: a test that needs network, root or special hardware does not gate
+  the OBS build (`references/specfile-guidelines.md` "`%prep` / `%build` /
+  `%install` / `%check`").
+- **The test is what hardens the old release.** A backport lives in Leap and
+  other maintained streams where there is no version bump to lean on — the
+  fix is a patch file that can be dropped, or code that can drift, and
+  nothing else notices. With the test in `%check`, dropping the patch or
+  regressing the fix turns the build red instead of silently reopening the
+  vulnerability.
+- **Where no practical reproducer exists, say so — don't skip silently.**
+  Timing/race conditions, or ones needing a specific environment the build
+  cannot provide, may have no test that can run in `%check`. Record the
+  reason in the `.changes` entry or a spec comment, so the next maintainer
+  knows the gap was considered, not missed.
+
+The `.changes` entry naming the CVE is the tracking layer — the trackers read
+any `CVE-*` there as "fixed here" (`references/changelog-rules.md` "CVEs and
+security bullets"). The `%check` test is the correctness layer: the entry
+claims the fix, the test proves it.
