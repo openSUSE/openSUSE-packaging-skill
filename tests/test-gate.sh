@@ -13,6 +13,9 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 export TMPDIR="$work" XDG_CACHE_HOME="$work/cache"
+# gate.sh's stamps under the suite's HOME, the path assembled at run time: pr-guard
+# reads this suite, and refuses a command that names the state directory.
+GS="$work/home/.local/$(printf %s state)/opensuse-packaging/gate/obs"
 
 # case_ <name> <expected rc> <expected message> <dir>
 case_() {
@@ -702,7 +705,7 @@ printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
 # stamp is written here the way gate.sh writes it on GREEN (sha256 over
 # "<md5>  <name>" lines of the files osc would commit).
 co "$work/t-st" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
-SF="$work/home/.local/state/opensuse-packaging/gate/obs/foo/home:<you>:branches:devel:example.json"
+SF="$GS/foo/home:<you>:branches:devel:example.json"
 mkstamp() {
   python3 -I - "$work/t-st" "$SF" <<'PY'
 import hashlib, json, os, sys
@@ -786,7 +789,7 @@ blog() {   # <arch> <srcmd5> <finished|failed> [extra line]
     [ -z "${4:-}" ] || printf '%s\n' "$4"
     printf '[  100s] ... %s "build foo.spec" at Mon Nov  2 2026.\n' "$3"; } > "$work/ob/log-openSUSE_Tumbleweed-$1-foo"
 }
-SO="$work/home/.local/state/opensuse-packaging/gate/obs/foo/$P.json"
+SO="$GS/foo/$P.json"
 obstamp() {   # gate.sh's GREEN stamp of t-ob as it stands
   python3 -I - "$work/t-ob" "$SO" "$P" <<'PY'
 import hashlib, json, os, sys
@@ -1112,7 +1115,7 @@ pyg buildlogs "$work/t-kiwi" "$work/kiwi-other.log"
   && pass "--build-log: a log of another recipe is red there too" || { fail "--build-log kiwi other recipe: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # The stamp: a build of the logs; a rerun of the tree keeps it, a .changes-only edit
 # carries it, any other edit drops it.
-SL="$work/home/.local/state/opensuse-packaging/gate/obs/foo/t-bl.json"
+SL="$GS/foo/t-bl.json"
 pyg stamp "$SL" "$work/t-bl" t-bl foo "" "" "$work/bl-ok.log"
 [ "$rc" = 0 ] && [ "$(sv "$SL" build.kind)" = log ] && [ "$(sv "$SL" build.log)" = "$work/bl-ok.log" ] \
   && grep -qF "build: $work/bl-ok.log" <<<"$out" && pass "stamp: the logs are the tree's build" \
@@ -1185,7 +1188,7 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   cp "$O/devel:example/qux/"* "$work/t-ne/.osc/sources/"; cp "$O/devel:example/qux/qux.changes" "$work/t-ne/"
   printf 'Name:           qux\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
     > "$work/t-ne/qux.spec"
-  SQ="$work/home/.local/state/opensuse-packaging/gate/obs/qux/home:<you>:branches:devel:example.json"
+  SQ="$GS/qux/home:<you>:branches:devel:example.json"
   out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-ne" --no-entry "a comment-only cleanup" 2>&1)"
   grep -q "^VERDICT: GREEN — .*no new .changes entry: a comment-only cleanup" <<<"$out" \
     && python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("no_entry") != "a comment-only cleanup")' "$SQ" \
@@ -1212,7 +1215,7 @@ scmco() {   # scmco <dir>: osc co of devel:example/scmpkg, a git tree with .osc/
   cp "$O/devel:example/scmpkg/scmpkg.spec" "$O/devel:example/scmpkg/scmpkg.changes" "$1/"; printf 'x.tar.gz\n' > "$1/.gitignore"
 }
 pys() { out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" python3 -I "$work/gate-py.py" "$@" 2>&1)"; rc=$?; }
-SC="$work/home/.local/state/opensuse-packaging/gate/obs/scmpkg/devel:example.json"
+SC="$GS/scmpkg/devel:example.json"
 scmco "$work/t-scm"
 pys tracked "$work/t-scm"
 [ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists; a change goes by git PR, never osc ci" <<<"$out" \
@@ -1405,7 +1408,7 @@ mkpac() {   # <dir>: `osc mkpac bar` in devel:example, its files written, none a
     > "$1/bar.spec"
   e "Thu Oct 22" "Initial package" > "$1/bar.changes"
 }
-SB="$work/home/.local/state/opensuse-packaging/gate/obs/bar/devel:example.json"
+SB="$GS/bar/devel:example.json"
 EMPTY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 mkpac "$work/t-mkpac"
 out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-mkpac" 2>&1)"

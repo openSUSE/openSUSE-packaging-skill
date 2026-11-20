@@ -38,6 +38,23 @@ STAMP = Rx(r"(?<![\w.-])target-gate(?![\w.-])")
 STAMP_WORD = Rx(r"(?<![\w.-])target-gate(?=[/*?\[]|$)")
 # The path a component hangs from: the text back to a quote, space or operator.
 PARENT = Rx(r"(?:\$\{\w+\}|[^\s\"'=<>|;&(),`{}])*$")
+# The skill's state directory, ~/.local/state/opensuse-packaging (gate.sh's stamps
+# in gate/, the incoming reviews' in incoming/): in a placed path; as a word
+# spells it, for one the guard cannot place; in program text, which may join it
+# from pieces.
+STATE_PATH = Rx(r"/\.local/+state/+opensuse-packaging(?:/|$)")
+STATE_WORD = Rx(
+    r"(?<![\w.\\-])\.local/+state\}?/+opensuse-packaging(?![\w.-])"
+    r"|\$\{?XDG_STATE_HOME\}?/+opensuse-packaging(?![\w.-])"
+)
+STATE_TEXT = Rx(
+    r"(?<![A-Za-z])(?i:state(?:_home)?)\}?[\s\"',/+]*opensuse-packaging(?![\w.-])"
+    r"|opensuse-packaging[\s\"',/+]*(?:gate|incoming)(?![\w.-])"
+)
+# The skill's scripts that write there, run unread while they match the pin.
+STATE_WRITERS = ("gate.sh", "incoming-review.sh")
+# Where a cd the guard cannot place, but which names the state directory, leaves.
+STATE_CWD = "/unresolved/.local/state/opensuse-packaging"
 # Commands that write no file: they may look at the stamps.
 READ_ONLY = {"ls", "cat", "jq", "grep", "head", "tail", "less", "stat", "find"}
 READ_ONLY |= {"echo", "printf", "rg", "wc"}
@@ -474,6 +491,14 @@ MESSAGES = {
     "checks the key).",
     "stamp": "{0}: only target-gate.sh writes its stamps. Run {s}/target-gate.sh "
     "DIR --build (or --remote), then {s}/target-gate.sh DIR --review FILE.",
+    "state": "{0}: only the skill's own gate.sh, as merged, writes the stamps in "
+    "~/.local/state/opensuse-packaging, and one written any other way is forged. Run "
+    "{s}/gate.sh in the checkout (gate.sh --review FILE records the review).",
+    "bot-directive": '{0}: autogits merges a PR on a maintainer\'s "merge ok", and the '
+    'group-review bot reviews on an "@group : approve" line, so no comment, review or '
+    "request message carries one. Reword it.",
+    "bot-directive-unknown": "cannot read {0} now, so it is refused. Pass the text "
+    'inline, or write its file in one call and pass "$(cat FILE)" in the next.',
     "emulated-build": "{0}: that build is emulated, and builds are native only. "
     "For a foreign-arch proof run {s}/target-gate.sh DIR --remote.",
     "backports": "{0}: openSUSE:Backports:SLE-16.x is scmsync'd from pool and "
@@ -587,6 +612,9 @@ ASKS = {
     "--arches REGEX add the target's); then file.",
     "gate-args": "{0}, so the guard cannot see whether --review is among them. "
     "Write {s}/gate.sh's arguments out literally (no --review is involved).",
+    "others-request": "{0}: a revoke, supersede, reopen or wipe of a request someone "
+    "else filed acts on their work as a decline does, and --force skips its open "
+    "reviews; that is the user's call.",
     "review-self": "{0}: only the changes-review agent that ran the review records "
     "it (agents/changes-review.md runs {s}/gate.sh --review itself), and a PASS the "
     "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
@@ -1856,9 +1884,10 @@ def accept_forward(run, ctx, cwd):
     or the API's changestate), or a forward of a devel package to Factory,
     that autoforward-gate.sh would not call ELIGIBLE: a reviewer set, a
     package someone else (or a group) maintains. Who filed the request does not
-    matter here; the skill still wants the user's go for someone else's request
-    (core directive 10), and the guard leaves that go to the agent. A decline
-    is always the user's call."""
+    matter to an accept; the skill still wants the user's go for someone else's
+    request (core directive 10), and the guard leaves that go to the agent. A
+    decline is always the user's call, and so is closing, reopening or forcing
+    a request someone else filed (others_request())."""
     for one in osc_runs(run, ctx, cwd):
         if one is None:
             ask(
@@ -1874,17 +1903,80 @@ def accept_forward(run, ctx, cwd):
             api_changestate(args, ctx, cwd)
         else:
             forwards(one, ctx, cwd)
+            supersedes(one, ctx, cwd)
+
+
+# The osc request verbs that close or reopen a request; osc sr's and creq's long
+# options, which argparse takes by any unique prefix.
+CLOSING_VERBS = {"revoke", "supersede", "reopen", "wipe"}
+CREQ_LONG = ("--cleanup", "--help", "--message", "--no-cleanup", "--nodevelproject")
+CREQ_LONG += ("--no-update", "--revision", "--supersede", "--yes")
+SR_LONG = CREQ_LONG + ("--diff", "--file", "--separate-requests", "--update-link")
+CREQ_LONG += ("--action",)
+
+
+def others_request(rid, what, ctx):
+    """Ask when what closes, reopens or forces request rid and someone else
+    filed it, or when that cannot be told."""
+    if not rid.isdigit():
+        ask(ctx, "others-request", f"{what}: cannot tell which request it takes")
+        return
+    ok, text = obs_get(f"/request/{rid}", ctx)
+    req = xml_root(text) if ok and text else None
+    if req is None or req.tag != "request":
+        ask(ctx, "others-request", f"{what} {rid}: cannot read the request")
+        return
+    user, creator = obs_user(ctx), req.get("creator") or "no one named"
+    if not user:
+        why = "the account is unknown (osc whois failed)"
+    elif creator != user:
+        why = f"filed by {creator}"
+    else:
+        return
+    ask(ctx, "others-request", f"{what} {rid}: {why}")
+
+
+def supersedes(run, ctx, cwd):
+    """A submit request (osc sr, creq) that supersedes, with -s ID, a request
+    someone else filed."""
+    sub, args = osc_sub(run)
+    if sub in SUBMITS:
+        names = SR_LONG
+    elif sub in ("creq", "createrequest"):
+        names = CREQ_LONG
+    else:
+        return
+    args = [long_prefix(a, names) for a in args]
+    opts = parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
+    ids = [
+        r
+        for k, v in opts
+        if k in ("-s", "--supersede")
+        for r in spellings(v, ctx, cwd, False) or [""]
+    ]
+    obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+    for rid in ids:
+        others_request(rid, f"osc {sub} -s", ctx)
 
 
 def request_verbs(sub, args, ctx, cwd):
     """accept_forward's rules on osc request: accept and approve per request,
-    decline and approvenew always."""
-    pos = osc_args("request", args, OSC_OPTS_ASK)[1]
+    decline and approvenew always; a revoke, supersede, reopen or wipe, and an
+    accept with --force (or --or-revoke), of a request someone else filed."""
+    opts, pos = osc_args("request", args, OSC_OPTS_ASK)
+    forced = [k for k, _ in opts if k in ("-f", "--force", "--or-revoke")]
     verbs = spellings(pos[0], ctx, cwd, False) if pos else []
     if pos and not verbs:
         ask(ctx, "accept-forward", f"cannot tell what osc {sub} {shown(pos[0])} does")
     ids = [r for w in pos[1:] for r in spellings(w, ctx, cwd, False) or [""]]
     for verb in verbs:
+        closed = ids[:1] if verb == "supersede" else ids  # supersede ID BY_ID
+        if verb in CLOSING_VERBS or verb in ("accept", "approve") and forced:
+            flag = "" if verb in CLOSING_VERBS else f" {forced[0]}"
+            what = f"osc {sub} {verb}{flag}"
+            obs_batch([f"/request/{r}" for r in closed if r.isdigit()], ctx)
+            for rid in closed or [""]:
+                others_request(rid, what, ctx)
         if verb == "decline":
             ask(
                 ctx,
@@ -1904,8 +1996,9 @@ def request_verbs(sub, args, ctx, cwd):
 
 
 def api_changestate(args, ctx, cwd):
-    """An osc api POST that accepts or declines a request:
-    /request/N?cmd=changestate|changereviewstate&newstate=accepted|declined."""
+    """An osc api POST that accepts, declines, closes or reopens a request:
+    /request/N?cmd=changestate|changereviewstate&newstate=accepted|declined|
+    revoked|superseded|new (and force)."""
     opts, pos = osc_args("api", args)
     keys = {k for k, _ in opts}
     method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or [""])[-1]
@@ -1932,6 +2025,12 @@ def api_changestate(args, ctx, cwd):
             )
         if "accepted" in states:
             accept_one(m.group(1), ctx)
+        closing = sorted(states & {"revoked", "superseded", "new"})
+        forced = urllib.parse.parse_qs(m.group(2), keep_blank_values=True)
+        if "force" in forced and "accepted" in states:
+            closing.append("accepted with force")
+        for state in closing:
+            others_request(m.group(1), f"osc api newstate={state}", ctx)
 
 
 def forwards(run, ctx, cwd):
@@ -2458,6 +2557,196 @@ def comment_rules(name, run, ctx, cwd):
             )
             if why:
                 ask(ctx, "comment", f"{name} api: {why}")
+
+
+# A line a forge bot acts on: autogits merges a PR on a maintainer's "merge ok",
+# and the group-review bot reviews on "@group : approve" (or decline). Matched at
+# the start of a line, or of a sentence in one, past punctuation and markup.
+BOT_DIRECTIVE = Rx(
+    r"(?i)(?:[^\w@]|_)*(merge[\W_]*ok(?:ay)?|@[\w.+-]+\s*:?\s*(?:approved?|declined?))"
+    r"(?!\w)"
+)
+SENTENCE = Rx(r"(?<=[.!?;])\s+")
+# The options that take a value of tea's comment, pulls review verbs and api,
+# short and long; git-obs pr's long options, which argparse takes by prefix.
+TEA_BODY_SHORT = "lrRodXfFH"
+TEA_BODY_LONG = ("--login", "--repo", "--remote", "--output", "--description")
+TEA_BODY_LONG += ("--method", "--field", "--Field", "--header", "--data")
+GIT_OBS_PR_LONG = ("--message", "--commit", "--reviewer", "--help")
+
+
+def json_strings(value):
+    """The strings a parsed JSON body holds, at any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        value = list(value.values())
+    if not isinstance(value, list):
+        return []
+    return [s for v in value for s in json_strings(v)]
+
+
+def comment_fault(text):
+    """Why a comment, review or request message would command a forge bot, or
+    None: a line, or a sentence in one, that starts with a bot directive. A
+    JSON body is judged by its strings too."""
+    texts = [text]
+    try:
+        texts += json_strings(json.loads(text))
+    except (ValueError, RecursionError):
+        pass
+    for t in texts:
+        for ln in t.splitlines():
+            for part in [ln, *SENTENCE.split(ln)[1:]]:
+                m = BOT_DIRECTIVE.match(part)
+                if m:
+                    return f'with a bot directive ("{m.group(1)}")'
+    return None
+
+
+def split_args(args, largs, short, valued, names=()):
+    """(options as (flag, value), operands) of an argument list read
+    getopt-style, as parse_opts() reads it, each value and operand as
+    literal-aware text: largs is args as such (None: any $ or backtick is
+    unknown). names: the long options a unique prefix stands for."""
+    if not largs or len(largs) != len(args):
+        largs = [literal(a) if not VARIABLE.search(a) else a for a in args]
+    opts, pos, i = [], [], 0
+    while i < len(args):
+        a, la = args[i], largs[i]
+        i += 1
+        if a == "--":
+            pos += largs[i:]
+            break
+        if a.startswith("--"):
+            k, eq, _ = a.partition("=")
+            k = long_prefix(k, names) if names else k
+            if eq:
+                opts.append((k, la.partition("=")[2]))
+            elif k in valued and i < len(args):
+                opts.append((k, largs[i]))
+                i += 1
+            else:
+                opts.append((k, ""))
+        elif a.startswith("-") and len(a) > 1:
+            for j in range(1, len(a)):
+                if a[j] in short:
+                    v = la[j + 1 :]
+                    if not v and i < len(args):
+                        v, i = largs[i], i + 1
+                    opts.append(("-" + a[j], v))
+                    break
+                opts.append(("-" + a[j], ""))
+        else:
+            pos.append(la)
+    return opts, pos
+
+
+def comment_bodies(name, args, largs, ctx, cwd):
+    """(what, literal-aware word, whether it names a file) for each comment,
+    review or request message an osc, tea or git-obs command line carries.
+    largs: args as literal-aware text, or None."""
+    bodies = {"tea": tea_bodies, "git-obs": git_obs_bodies, "osc": osc_bodies}
+    return bodies[name](args, largs, ctx, cwd) if name in bodies else []
+
+
+def unlit(words):
+    """Literal-aware words as the shell passes them."""
+    return [w.translate(UNLITERAL) for w in words]
+
+
+def to_comments(words, ctx, cwd):
+    """Whether an API call's operands, as the call sets them, name a comments
+    or reviews endpoint."""
+    urls = unlit(words)
+    return any(COMMENT_API.search(u) for u in [*urls, *expansions(urls, ctx, cwd)])
+
+
+def tea_bodies(args, largs, ctx, cwd):
+    """comment_bodies() of tea: a comment's body (after its index, or -d), a
+    pulls review verb's comment, an api write's data and fields (@FILE read)."""
+    opts, pos = split_args(args, largs, TEA_BODY_SHORT, TEA_BODY_LONG)
+    words, out = unlit(pos), []
+    if words[:1] in (["comment"], ["comments"], ["c"]):
+        if words[1:2] in (["list"], ["ls"], ["delete"], ["rm"]):
+            return []
+        skip = 3 if words[1:2] in (["add"], ["a"], ["edit"], ["e"]) else 2
+        texts = pos[skip:] + [v for k, v in opts if k in ("-d", "--description")]
+        return [("the tea comment body", w, False) for w in texts]
+    if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] in (
+        [w] for w in ("approve", "a", "lgtm", "reject", "review", "reply")
+    ):
+        return [(f"the tea {words[0]} {words[1]} body", w, False) for w in pos[3:]]
+    if words[:1] != ["api"] or not to_comments(pos[1:], ctx, cwd):
+        return []
+    for k, v in opts:
+        field = k in ("-f", "--field", "-F", "--Field")
+        v = v.partition("=")[2] if field else v
+        is_file = k in ("-d", "--data", "-F", "--Field") and v[:1] == "@"
+        if field or k in ("-d", "--data"):
+            out.append(("the tea api body", v[1:] if is_file else v, is_file))
+    return out
+
+
+def git_obs_bodies(args, largs, ctx, cwd):
+    """comment_bodies() of git-obs: pr comment, review, close and reopen -m,
+    and an api write's --data."""
+    rest = git_obs_rest(args)
+    lrest = largs[len(args) - len(rest) :] if largs else None
+    words = [a for a in rest if a[:1] != "-"]
+    if words[:1] == ["pr"] and words[1:2] in (
+        [w] for w in ("comment", "review", "close", "reopen")
+    ):
+        opts = split_args(rest, lrest, "m", GIT_OBS_PR_LONG[:3], GIT_OBS_PR_LONG)[0]
+        what = f"the git-obs pr {words[1]} body"
+        return [(what, v, False) for k, v in opts if k in ("-m", "--message")]
+    if words[:1] != ["api"]:
+        return []
+    opts, pos = split_args(rest, lrest, "X", ("--method", "--data"), GIT_OBS_LONG)
+    if not to_comments(pos[1:], ctx, cwd):
+        return []
+    return [("the git-obs api body", v, False) for k, v in opts if k == "--data"]
+
+
+def osc_bodies(args, largs, ctx, cwd):
+    """comment_bodies() of osc: comment -c, a request verb's -m, and an api
+    write's -d (or the file -f names) to a comments endpoint."""
+    sub, rest = osc_sub(["osc", *args])
+    if sub not in ("comment", "rq", "request", "review", "api"):
+        return []
+    lrest = largs[len(args) - len(rest) :] if largs else None
+    table = OSC_OPTS if sub == "api" else OSC_OPTS_ASK
+    short, spec = table["request" if sub in ("rq", "review") else sub]
+    (valued, names), (gvalued, gnames) = long_names(spec), long_names(OSC_GLOBAL)
+    opts, pos = split_args(rest, lrest, short + "A", valued + gvalued, names + gnames)
+    if sub == "api":
+        if not to_comments(pos, ctx, cwd):
+            return []
+        files = ("-T", "-f", "--file")
+        data = ("-d", "--data", *files)
+        return [("the osc api body", v, k in files) for k, v in opts if k in data]
+    flags = ("-c", "--comment") if sub == "comment" else ("-m", "--message")
+    kind = "body" if sub == "comment" else "message"
+    what = " ".join(["the osc", sub, *unlit(pos[:1]), kind])
+    return [(what, v, False) for k, v in opts if k in flags]
+
+
+def bot_directives(name, run, lit, ctx, cwd):
+    """A comment, review or request message that carries a forge bot's
+    directive (comment_fault()), or one that cannot be read now. lit: the argv
+    and stdin as literal-aware text."""
+    largv, lstdin = lit
+    largs = largv[1:] if largv and len(largv) == len(run) else None
+    for what, word, is_file in comment_bodies(name, run[1:], largs, ctx, cwd):
+        if is_file:
+            texts = message_texts(word, ctx, cwd, True, lstdin)
+        else:
+            texts = lit_texts(word, ctx, cwd)
+        if texts is None:
+            what += f" ({unread(word, ctx, cwd, is_file)})"
+            block("bot-directive-unknown", what)
+        for fault in filter(None, map(comment_fault, texts)):
+            block("bot-directive", f"{what} {fault}")
 
 
 # What a call may run beside an osc commit or a submit the gate stamp lets
@@ -3520,6 +3809,8 @@ def run_text(text, kind, ctx, cwd, depth):
     api_rules(whole, ctx, cwd)
     if STAMP.search(whole):
         block("stamp", "program text touching the stamp directory")
+    if STATE_TEXT.search(whole):
+        block("stamp", "program text touching the state directory", "state")
     for m in CODE_PUSH.finditer(whole):
         if not other_forge(whole, m, ctx, cwd):
             unsure("a git push inside program text")
@@ -5098,13 +5389,39 @@ def stamp_word(word, ctx, cwd, path=False):
     return any(in_stamps(w, ctx, cwd) for w in words)
 
 
-def pinned_gate(name, run, ctx, cwd):
-    """Whether this runs the skill's target-gate.sh by path while it matches
-    the pinned ref."""
-    word = run[0] if name == "target-gate.sh" else ""
+def state_path(path):
+    """Whether a placed path lies in the state directory, as written or
+    through its symlinks."""
+    paths = [path] if "\0" in path else [path, os.path.realpath(path)]
+    return any(STATE_PATH.search(p) for p in paths)
+
+
+def state_cwd(cwd):
+    """Whether the working directory (each of a loop's) is in the state
+    directory."""
+    return any(state_path(d) for d in (cwd.dirs if isinstance(cwd, Dirs) else [cwd]))
+
+
+def state_word(word, ctx, cwd, path=False):
+    """Whether a word names the state directory -- as written, by what its
+    variables were given, once expanded, and (path) once placed in cwd (each
+    directory of a loop), through symlinks."""
+    words = [word, *held(word, ctx), *(substitute(word, ctx, cwd) or ())]
+    if any(STATE_WORD.search(w) for w in words):
+        return True
+    for d in (cwd.dirs if isinstance(cwd, Dirs) else [cwd]) if path else ():
+        if any(state_path(p) for p in locate(word, ctx, d)[0] or ()):
+            return True
+    return False
+
+
+def pinned_script(name, run, ctx, cwd, names):
+    """Whether this runs one of the skill's scripts in names by path while it
+    matches the pinned ref."""
+    word = run[0] if name in names else ""
     if name in SHELLS and len(run) > 1:
         word = run[1]
-    if "/" not in word or os.path.basename(word) != "target-gate.sh":
+    if "/" not in word or os.path.basename(word) not in names:
         return False
     paths = locate(word, ctx, cwd)[0] or []
     real = os.path.realpath(paths[0]) if len(paths) == 1 else ""
@@ -5114,8 +5431,8 @@ def pinned_gate(name, run, ctx, cwd):
 
 def reads_only(name, run, ctx, cwd):
     """A look that writes no file: a read-only tool; sed without -i, and awk,
-    whose program and options name no stamp; python -m json.tool without an
-    output file."""
+    whose program and options name no stamp or state directory; python -m
+    json.tool without an output file."""
     args = run[1:]
     if name in READ_ONLY:
         return not (name == "find" and FIND_ACTS.intersection(run))
@@ -5127,7 +5444,11 @@ def reads_only(name, run, ctx, cwd):
             return False
         given = flags & (SED_PROGRAM if name == "sed" else AWK_PROGRAM)
         files = set(pos[0 if given else 1 :])
-        return not any(stamp_word(a, ctx, cwd) for a in args if a not in files)
+        return not any(
+            stamp_word(a, ctx, cwd) or state_word(a, ctx, cwd)
+            for a in args
+            if a not in files
+        )
     if PYTHON.fullmatch(name) and args[:1] in (["-m"], ["-mjson.tool"]):
         rest = args[1:] if args[0] == "-mjson.tool" else args[2:]
         if args[0] == "-m" and args[1:2] != ["json.tool"]:
@@ -5154,8 +5475,8 @@ class Dirs(str):
 
 def enter(target, ctx, cwd):
     """The directory cd/pushd/env -C moves to -- expanded from what the call
-    set, Dirs for several -- or STAMP_CWD when only the shell can place it and
-    it names the stamp directory."""
+    set, Dirs for several -- or STAMP_CWD (STATE_CWD) when only the shell can
+    place it and it names the stamp (state) directory."""
     new = resolve(target, cwd)[0]
     if new is None and not isinstance(cwd, Dirs):
         places = []
@@ -5167,25 +5488,50 @@ def enter(target, ctx, cwd):
             new = places[0] if len(set(places)) == 1 else Dirs(sorted(set(places)))
     if new is None and stamp_word(target, ctx, cwd):
         return STAMP_CWD
+    if new is None and state_word(target, ctx, cwd):
+        return STATE_CWD
     return new
 
 
-def touches_stamp(name, run, outs, ctx, cwd):
-    """A command that names the stamp directory, or runs inside it -- but the
-    pinned target-gate.sh, a look that writes no file, and git's arguments,
-    which are text (branch names, messages, grep patterns)."""
-    if pinned_gate(name, run, ctx, cwd):
+def touches_stamp(name, run, outs, ctx, cwd, state=False):
+    """A command that names the stamp directory (state: the state directory,
+    placed in cwd), or runs inside it -- but the pinned script that writes
+    there, a look that writes no file, and git's arguments, which are text
+    (branch names, messages, grep patterns)."""
+    writers = STATE_WRITERS if state else ("target-gate.sh",)
+    if pinned_script(name, run, ctx, cwd, writers):
         return False
     if all(t == "/dev/null" for t in outs) and reads_only(name, run, ctx, cwd):
         return False
-    if cwd and in_stamps(cwd, ctx, cwd):
+    if cwd and (state_cwd(cwd) if state else in_stamps(cwd, ctx, cwd)):
         return True
     if name == "git":
         return False
     declared = name in DECLARE
-    return any(
-        stamp_word(a, ctx, cwd) for a in run if not (declared and ASSIGN.match(a))
-    )
+    words = [a for a in run if not (declared and ASSIGN.match(a))]
+    if not state:
+        return any(stamp_word(a, ctx, cwd) for a in words)
+    if name in TREE_WRITERS and any(state_parent(a, ctx, cwd) for a in words[1:]):
+        return True
+    return any(state_word(a, ctx, cwd, path=True) for a in words)
+
+
+# Commands that put a tree they name into a directory: aimed at the state
+# directory's parent, one named opensuse-packaging lands in its place.
+TREE_WRITERS = {"cp", "mv", "ln", "install", "rsync", "tar", "bsdtar", "unzip", "cpio"}
+STATE_PARENT = Rx(r"/\.local/+state/*$")
+
+
+def state_parent(word, ctx, cwd):
+    """Whether a word (or an option's value after its =) places the state
+    directory's parent, ~/.local/state, in cwd (each directory of a loop)."""
+    for w in filter(None, (word, word.partition("=")[2])):
+        for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
+            for p in locate(w, ctx, d)[0] or ():
+                real = p if "\0" in p else os.path.realpath(p)
+                if STATE_PARENT.search(p) or STATE_PARENT.search(real):
+                    return True
+    return False
 
 
 def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
@@ -5207,6 +5553,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     for t in outs:
         if stamp_word(t, ctx, cwd, path=True):
             block("stamp", "a redirection into the stamp directory")
+        if state_word(t, ctx, cwd, path=True):
+            block("stamp", "a redirection into the state directory", "state")
         note_written(t, ctx, cwd)
         if t != "/dev/null":
             where = target_path(t, cwd)
@@ -5287,6 +5635,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         credential_read(name, argv, run, ctx, here)
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
+    if touches_stamp(name, run, outs, ctx, here, state=True):
+        block("stamp", "a command touching the state directory", "state")
     note_writes(name, run[1:], ctx, here)
     wrapped = argv[: len(argv) - len(run)]
     via = (
@@ -5321,6 +5671,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         tool_rules(" ".join(["tea", *args]), ctx, here, argv=True)
         largs = lrun and [TEA_LONG.sub("--", a) for a in lrun[1:]]
         pr_message("tea", args, largs, ctx, here)
+        ltea = largs and ["tea", *largs]
+        bot_directives("tea", ["tea", *args], (ltea, lit[1]), ctx, here)
         if TEA_API.search(wide) and "pulls" in wide and not reads:
             if pool_or_unknown(wide, ctx, here, cmd=True):
                 block("create-tea-api", "a tea api write to pool pulls")
@@ -5328,6 +5680,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
         pr_message("git-obs", run[1:], lrun and lrun[1:], ctx, here)
+        bot_directives("git-obs", run, (lrun, lit[1]), ctx, here)
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here)
@@ -5341,6 +5694,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             block("request-api", "a request created through the API")
         request_args(run, ctx, here)
         request_message(run, (lrun, lit[1]), ctx, here)
+        bot_directives("osc", run, (lrun, lit[1]), ctx, here)
         osc_writes(run, ctx, here)
         request_target(run, ctx, here)
         request_link(run, ctx, here)
@@ -6025,6 +6379,9 @@ def credential_rules(name, argv, run, gparts, ctx, cwd):
 def check_write(path, content, ctx):
     if STAMP.search(path.replace(os.sep, "/")):
         block("stamp-write", f"a write to {path}", "stamp")
+    placed = os.path.join(ctx.cwd or "/", os.path.expanduser(path))
+    if STATE_WORD.search(path) or state_path(os.path.normpath(placed)):
+        block("stamp-write", f"a write to {path}", "state")
     # Docs quote the wrong forms on purpose; scripts are where a POST hides.
     if not path.lower().endswith(DOCS):
         lines = "\n".join(code_lines(content))

@@ -478,9 +478,11 @@ merging any other src.opensuse.org PR the same ways (`gh` is not judged; a merge
 pool or unnamed repository is refused however it is sent, and elsewhere counts unless the
 call provably only reads), pushing to a branch that heads an open pool PR or to
 src.opensuse.org over HTTPS (a token would carry it; SSH carries the login), writing a
-`target-gate.sh` stamp, running an emulated `osc build`, filing a request against the
-scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a submit request with
-`--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked,
+`target-gate.sh` stamp or into the state directory `~/.local/state/opensuse-packaging/`
+(`gate.sh`'s stamps), posting a comment, review or request message with a line that starts
+with a bot directive (`merge ok`, `@group : approve`), running an emulated `osc build`,
+filing a request against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a
+submit request with `--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked,
 superseded or wiped (or a review added) without `-m` (osc would open an editor and hang; `osc sr --diff` passes), a request through the API (`/request?cmd=create`) , a submit request to a project other
 than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
 of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branch whose
@@ -534,10 +536,14 @@ yourself. It asks before:
   guard's own copy of `autoforward-gate.sh`'s test (only submit actions; no reviewer on
   package or project; you maintain the package, or it has no maintainer and you maintain the
   project; Factory develops it there or links it there). Who filed the request does not
-  matter to the guard, and a package a group maintains is someone else's. The skill still
+  matter to an accept, and a package a group maintains is someone else's. The skill still
   wants the user's go for someone else's request (core directive 10); the guard no longer
   asks for it on your own packages, so that go is the agent's to hold.
   The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+- **closing or forcing a request someone else filed** (`[others-request]`): an `osc request`
+  `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`osc creq` with `-s ID`, an `accept`
+  with `--force` or `--or-revoke`, or the API's `newstate=revoked|superseded|new` (or
+  `force` on an accept). Each acts on their work as a decline does; your own requests run;
 - **a delete of several osc checkouts at once**: your own recursive `rm` or `find …
   -delete` (with no name test) that removes two or more package checkouts, as a project
   checkout of several packages or a scratch directory of them; one checkout per `rm`
@@ -577,8 +583,9 @@ A lookup there that fails or runs past the budget asks too; the lookups go to th
 instance `osc -A` names, in one process through osc's library (one `osc api` each where
 the hook's `python3` cannot import it), and the account comes from `osc whois`, once per
 call and in memory only. The stamp checks are a speed
-bump against committing past a red gate, not a lock: a hand-written stamp is not caught,
-and program code that runs osc itself (`python3 -c`) is not asked.
+bump against committing past a red gate, not a lock: a stamp written by hand is refused,
+but one written past the guard's parsing (program code that spells the path in other
+pieces) is not caught, and program code that runs osc itself (`python3 -c`) is not asked.
 
 On the agent's own commands (not the scripts or program code they run) it also refuses
 reading a credential file — tea's, osc's, gh's, netrc, git's credential stores, osc's
@@ -597,7 +604,7 @@ options. The Read tool stays with the snippets.
 | File | Goes to | Does |
 |---|---|---|
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
-| `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook and harness config |
+| `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook, the harness config and the state directory |
 | `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero or asks |
 | `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools), with the call's agent |
 | `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
@@ -682,9 +689,10 @@ rules `gh`, `credential`, `secret-tool`,
 also read with its quotes and backslashes dropped (`o''sc`): a file a command runs is where
 a POST hides. A command named by a variable is judged as the tool its value names; one
 only the shell knows as every guarded tool, and as osc only when the variable is named for
-it. A call whose working directory is inside a `target-gate` directory, a directory of
-credential files (tea's, osc's, gh's, an MCP server's, osc's state), or one above them (the
-home directory, `~/.config`, `/`), is judged too. The prefilter may only skip a call the
+it. A call whose working directory is inside a `target-gate` directory, the state
+directory `~/.local/state/opensuse-packaging`, a directory of credential files (tea's,
+osc's, gh's, an MCP server's, osc's state), or one above them (the home directory,
+`~/.config`, `/`), is judged too. The prefilter may only skip a call the
 rules would let through: the suite checks that over every fixture event. The
 rest of the command line decides nothing.
 
@@ -719,6 +727,16 @@ a stamp: `ls`, `cat`, `jq`, `grep`, `rg`, `head`, `tail`, `less`, `stat`, `wc`, 
 `python3 -m json.tool` without an output file. That holds only while they redirect no
 output to a file and their program or options (`sed w`, `awk print >`) name no stamp. The
 Write and Edit tools are refused for any path with a `target-gate` component.
+
+The state directory, `~/.local/state/opensuse-packaging` (`gate.sh`'s stamps in `gate/`,
+the incoming reviews' in `incoming/`), is judged the same way, as a path: each word placed
+in the working directory through the call's values and symlinks, and as written when the
+guard cannot place it (`$X/.local/state/opensuse-packaging`,
+`${XDG_STATE_HOME:-…}/opensuse-packaging`). A `cp`, `mv`, `ln`, `install`, `rsync`, `tar`,
+`unzip` or `cpio` aimed at its parent, `~/.local/state`, counts too, and program text
+counts when it joins `state` and `opensuse-packaging`, or `opensuse-packaging` and `gate`
+or `incoming`, in any pieces. Only the skill's own `gate.sh` (and `incoming-review.sh`),
+run by path while pinned, runs unread there; an edited one is read and refused.
 
 Measured on an aarch64 host with Python 3.13, `python3 pr-guard.py < EVENT`:
 - a call the prefilter lets through takes ~63 ms, about what python3 needs to import
@@ -825,8 +843,12 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A request body option (`--json`, `--data`, `--form`, `--upload-file`) counts only on
   a `curl`, `wget` or `tea api` line, or in the argument list that names the tool. One
   added to that list later (`cmd += ["--json", body]`) is not seen.
-- git's arguments are not judged for stamps, so git writing into a stamp directory
-  itself (`--work-tree`, `--output`) is not seen; a redirection is.
+- git's arguments are not judged for stamps, so git writing into a stamp or the state
+  directory itself (`--work-tree`, `--output`, `clone`) is not seen; a redirection is. Nor
+  is a copy into a directory above `~/.local/state` whose tree lands in the state
+  directory, or an archive extracted from inside `~/.local/state` without naming it.
+- A comment's bot directive counts at the start of a line, or of a sentence in one; a
+  sentence that only contains the words (`once the merge ok is given`) passes.
 - The opencode plugins do not send `patch`/`apply_patch` tool calls to the guard.
   opencode 2.x offers `patch` (one `patchText` argument) in place of `write` and `edit` to
   every model whose id contains `gpt-` but neither `gpt-4` nor `oss` (`gpt-5`,

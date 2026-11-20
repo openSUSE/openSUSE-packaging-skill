@@ -1,0 +1,1 @@
+<request id="1234567" creator="tester"><action type="submit"><source project="devel:tools" package="tesseract-ocr" rev="9"/><target project="openSUSE:Factory" package="tesseract-ocr"/></action><state name="new"/></request>

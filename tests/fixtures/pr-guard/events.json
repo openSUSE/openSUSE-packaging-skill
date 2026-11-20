@@ -9658,5 +9658,302 @@
       "command": "osc ci -m 'Update s to 1.1'"
     },
     "cwd": "@OSC@/scm/s"
+  },
+  "stamp-write-gate-dir": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "@HOME@/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json",
+      "content": "{\"verdict\": \"GREEN\"}"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-edit-incoming-dir": {
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "@HOME@/.local/state/opensuse-packaging/incoming/obs/1390002.json",
+      "old_string": "BLOCK",
+      "new_string": "PASS"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-write-incoming-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{\"verdict\": \"PASS\"}' > ~/.local/state/opensuse-packaging/incoming/obs/1390002.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-shell-cp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/forged.json ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-xdg-default": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/forged.json \"${XDG_STATE_HOME:-$HOME/.local/state}/opensuse-packaging/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-symlink-write": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/forged.json @LINKS@/state/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-ln-into-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ln -sf /var/tmp/forged.json ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-cd-relative": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state && printf '{}' > opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-cd-inside-cp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state/opensuse-packaging/gate/obs/foo && cp /var/tmp/forged.json devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-cd-unplaced-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd \"$X/.local/state/opensuse-packaging/gate\" && printf '{}' > obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-cwd-event-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '{}' > devel:x.json"
+    },
+    "cwd": "@HOME@/.local/state/opensuse-packaging/gate/obs/foo"
+  },
+  "stamp-cwd-above-mv": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv new opensuse-packaging"
+    },
+    "cwd": "@HOME@/.local/state"
+  },
+  "stamp-python-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "python3 -c \"import json, os; p = os.path.join(os.path.expanduser('~'), '.local', 'state', 'opensuse-packaging', 'gate', 'obs', 'foo', 'devel:x.json'); json.dump({'verdict': 'GREEN'}, open(p, 'w'))\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-cat-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la ~/.local/state/opensuse-packaging/gate/obs/ && cat ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json | jq .verdict"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-cwd-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat devel:x.json; grep -rn verdict ."
+    },
+    "cwd": "@HOME@/.local/state/opensuse-packaging/gate/obs/foo"
+  },
+  "stamp-text-state-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git commit -m 'docs: the stamps live in ~/.local/state/opensuse-packaging/gate'"
+    },
+    "cwd": "@CLONE@"
+  },
+  "gate-sh-pinned-writes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/state-skill/scripts/gate.sh @OSC@/devel/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gate-sh-pinned-in-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/state-skill/scripts/gate.sh @OSC@/devel/x"
+    },
+    "cwd": "@HOME@/.local/state/opensuse-packaging/gate"
+  },
+  "gate-sh-unpinned-writes": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/state-skill/scripts/gate.sh @OSC@/devel/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-tea": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe 'merge ok'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-sentence": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe 'Once a maintainer finds the merge ok, this lands.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-osc-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/comments/request/1390003' -f @MSGS@/merge-ok.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-osc-cat": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c \"$(cat @MSGS@/merge-ok.txt)\" request 1390003"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-group-approve": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 2 --login src.opensuse.org --repo perl/perl-Foo '@qa-team : approve'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-group-approve-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api -X POST /repos/perl/perl-Foo/issues/2/comments --data \"$(cat @MSGS@/group-approve.json)\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-body-unreadable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c \"$BODY\" request 1390003"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-message-merge-ok": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve -m 'Merge OK.' perl/perl-Foo#2"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-approve-merge-ok": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls approve 2 --login src.opensuse.org --repo perl/perl-Foo 'merge ok'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-message-merge-ok": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'merge ok' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "supersede-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq supersede -m 'Replaced by sr#1390001.' 1390002 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "supersede-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq supersede -m 'Replaced by sr#1390004.' 1390001 1390004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "revoke-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq revoke -m 'Superseded.' 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "revoke-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc request revoke -m 'Superseded.' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reopen-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq reopen -m 'Reopened.' 1390007"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-s-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:tools tesseract-ocr openSUSE:Factory -s 1390002 -m 'Update to 5.5.3'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-supersede-long-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr --supersede=1390007 devel:tools tesseract-ocr openSUSE:Factory -m 'Update to 5.5.3'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "revoke-api-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390002?cmd=changestate&newstate=revoked'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-force-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept --force -m 'ok' 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-force-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -f -m 'ok' 1390001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-or-revoke-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept --or-revoke -m 'ok' 1390002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-mv-into-parent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv /var/tmp/x/opensuse-packaging ~/.local/state/"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-cp-state-sibling": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/x.json ~/.local/state/osc-submission-watch/x.json"
+    },
+    "cwd": "@PLAIN@"
   }
 }

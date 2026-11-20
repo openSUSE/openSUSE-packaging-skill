@@ -22,9 +22,10 @@ const unquoted = (t: string) =>
       "xuU".includes(e[0]) && e.length > 1 ? String.fromCodePoint(Math.min(parseInt(e.slice(1), 16), 0x10ffff))
         : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : e))
     .replace(/["'\\]/g, "")
-// As in pr-guard.py: a call run inside the stamp directory, or a directory of
-// credential files, is judged whatever it says.
+// As in pr-guard.py: a call run inside the stamp or state directory, or a
+// directory of credential files, is judged whatever it says.
 const STAMP_DIR = "target-gate"
+const STATE_DIR = new RegExp(String.raw`/\.local/+state/+opensuse-packaging(?:/|$)`)
 const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc|ssh)(?:/|$)`)
 const CRED_HOMES = ["/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc", "/.config/mcp-", "/.ssh"]
 const real = (p: string) => {
@@ -42,7 +43,7 @@ const above = (dir: string) => {
 // As watched() in pr-guard.py: that directory or one above the credential
 // files, as written or resolved (a symlink, a leading //), is judged too.
 const watched = (dir: string) =>
-  dir !== "" && [dir, real(dir)].some((d) => d.includes(STAMP_DIR) || CRED_DIR.test(d) || above(d))
+  dir !== "" && [dir, real(dir)].some((d) => d.includes(STAMP_DIR) || STATE_DIR.test(d) || CRED_DIR.test(d) || above(d))
 
 // As opencode reads a path argument: "~" is the home directory.
 const home = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
