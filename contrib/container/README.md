@@ -64,7 +64,7 @@ the project's directory; `OPENCODE` names another by its absolute path. A relati
 launcher in.
 
 ```
-skill-container secrets --model-auth <integration> [--new-ssh-key]
+skill-container secrets --model-auth <integration> [--new-ssh-key | --ssh-key FILE]
 skill-container ssh-key
 skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
 skill-container up <instance> [--model provider/model]
@@ -112,7 +112,10 @@ directory that lies under `/var` on the host therefore needs `--as`.
   `ssh-key` prints the public half, which you add to your account there once. A later
   run keeps that key; `--new-ssh-key` makes another. The container gets the new one at
   its next start, and the old one keeps pushing, from any copy of it, until you remove
-  its public half from your account. It prints the six secret names. No other server's login is copied. Which GitHub token
+  its public half from your account. `--ssh-key FILE` copies a key of yours instead, one
+  your account already knows. It must have no passphrase and need no hardware token:
+  nobody types or touches one in the container. For a key with a passphrase, name a copy
+  without one and remove the copy afterwards. A later run keeps the key too. It prints the six secret names. No other server's login is copied. Which GitHub token
   the agent gets is yours to choose: `secrets` copies the one gh uses where you run it.
   That is your host login's, with all its scopes, unless `GH_CONFIG_DIR` names another
   gh config directory, whose login is then the one copied, or `GH_TOKEN` or
@@ -388,7 +391,12 @@ boundary between the agent and what is inside the container.
   or an `update` that restarts, does all three; `attach` and `run` check the plugins and
   remove the approvals and rules.
 - **The SSH key pushes wherever your src.opensuse.org account may write.** It is the
-  container's own, not one of yours, so the account's key settings revoke it alone. The
+  container's own, not one of yours, so the account's key settings revoke it alone.
+  With `--ssh-key` it is one of yours: it also opens every other host that accepts it,
+  the ssh setup in the image only says which host the agent's git talks to, and to
+  revoke it you replace it everywhere. If you also sign commits or tags with it, the
+  agent can sign as you, and replacing the key undoes no signature: use a key that does
+  nothing else. The
   guard refuses a command that reads it and the rules deny one that names it; like the
   other logins, one set on reading it can. The guard still refuses a push to the head of
   a pool pull request and every merge, but a push to any other branch you may write is

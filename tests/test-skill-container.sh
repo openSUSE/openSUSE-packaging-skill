@@ -497,6 +497,32 @@ out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
 out="$(sc secrets --model-auth prov --new-ssh-key 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ "$(secret ssh)" != "$key1" ] && secret ssh | grep -q 'BEGIN OPENSSH PRIVATE KEY' \
   && pass "--new-ssh-key replaces the SSH key" || fail "--new-ssh-key: rc=$rc"
+# A key of the caller's own instead: copied as it is, and judged before any
+# secret is replaced.
+ssh-keygen -q -t ed25519 -N '' -C own -f "$work/ownkey"
+ssh-keygen -q -t ed25519 -N locked -C own -f "$work/lockedkey"
+printf 'no key\n' > "$work/nokey"
+out="$(cd "$work" && sc secrets --model-auth prov --ssh-key ownkey 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(secret ssh)" = "$(cat "$work/ownkey")" ] && [ -z "$(find "$work/run" -name 'tmp.*')" ] \
+  && pass "--ssh-key stores the named key and leaves no copy" || fail "--ssh-key: rc=$rc $out"
+out="$(sc ssh-key 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$(cat "$work/ownkey.pub")" ] && pass "ssh-key prints the public half of the named key" \
+  || fail "ssh-key after --ssh-key: rc=$rc"
+out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(secret ssh)" = "$(cat "$work/ownkey")" ] && pass "a later secrets run keeps the named key" \
+  || fail "the named key after a second run: rc=$rc"
+before="$(stored)"
+for k in lockedkey nokey none run; do
+  out="$(GH_CONFIG_DIR="$FIX/ghalt" sc secrets --model-auth prov --ssh-key "$work/$k" 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && grep -qF "$work/$k" <<<"$out" && [ "$(stored)" = "$before" ] \
+    && [ -z "$(find "$work/run" -name 'tmp.*')" ] && ! grep -q 'PRIVATE KEY' <<<"$out" \
+    && pass "--ssh-key refuses what is no key without a passphrase: nothing replaced ($k)" \
+    || fail "--ssh-key $k: rc=$rc $out"
+done
+out="$(GH_CONFIG_DIR="$FIX/ghalt" sc secrets --model-auth prov --ssh-key "$work/ownkey" --new-ssh-key 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF -- "--new-ssh-key" <<<"$out" && [ "$(stored)" = "$before" ] \
+  && pass "--ssh-key and --new-ssh-key together are refused" \
+  || fail "--ssh-key with --new-ssh-key: rc=$rc $out"
 [ -z "$(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")" ] && pass "no secret on a command line" \
   || fail "a secret on a command line: $(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")"
 
