@@ -146,7 +146,10 @@ case "$1 $2" in
   # With $FIX/exec-escape whatever runs in the container tries the terminal on its error stream.
   [ ! -e "$FIX/exec-escape" ] || printf 'inside says\033]52;c;QUFB\007\033[2J\n' >&2
   case "$*" in
-  *"plugin list"*) cat "$FIX/plugins" ;;
+  # With $FIX/plugins-late holding N, the first N lists show no plugin yet.
+  *"plugin list"*)
+    n=$(cat "$FIX/plugins-late" 2>/dev/null || echo 0)
+    if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FIX/plugins-late"; echo "ID  VERSION"; else cat "$FIX/plugins"; fi ;;
   *"auth import"*) cat > "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
   # A session the container imports from a pipe: stdin is the export.
   *"session import"*)
@@ -282,6 +285,9 @@ EOF
 for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir; do
   printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $(command -v "$f") \"\$@\"" > "$tools/bin/$f"
 done
+# The launcher's pauses are recorded; with $FIX/sleep-fast they take no time.
+printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' 'printf "%s\n" "$*" >> "$FIX/sleep-calls"' \
+  '[ ! -e "$FIX/sleep-fast" ] || exit 0' "exec $(command -v sleep) \"\$@\"" > "$tools/bin/sleep"
 # A client among the launcher's own commands is not the caller's.
 printf '%s\n' '#!/bin/bash' ': > "$FIX/launcher-path-client"; exit 1' > "$tools/bin/opencode"
 # First on the caller's PATH: what the launcher must take from its own.
@@ -1371,6 +1377,15 @@ for sig in "${sigs[@]}"; do
     || fail "up interrupted by $sig: rc=$rc"
 done
 cp "$FIX/plugins.good" "$FIX/plugins"
+# Every probe of a start writes to the journal: half a minute of one a second,
+# then one every five seconds.
+restart; echo 35 > "$FIX/plugins-late"; : > "$FIX/sleep-calls"; touch "$FIX/sleep-fast"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(grep -cx 1 "$FIX/sleep-calls")" = 30 ] && [ "$(grep -cx 5 "$FIX/sleep-calls")" = 5 ] \
+  && [ "$(wc -l < "$FIX/sleep-calls")" = 35 ] && [ "$(head -n 30 "$FIX/sleep-calls" | sort -u)" = 1 ] \
+  && pass "a slow start probes each second for 30 probes, then every five seconds" \
+  || fail "the pace of a slow start: rc=$rc $(sort "$FIX/sleep-calls" | uniq -c | tr '\n' ' ') $out"
+rm -f "$FIX/sleep-fast" "$FIX/plugins-late"
 
 # Each instance keeps its server password across restarts: it is created
 # once, on the first start, and never rotated by up or update.
