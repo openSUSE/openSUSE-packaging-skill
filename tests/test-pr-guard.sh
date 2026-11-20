@@ -135,6 +135,10 @@ cp "$FX/fake-gate.sh" "$W/target-gate.sh"; chmod +x "$W/target-gate.sh"
 mkdir -p "$W/state-skill/scripts" && cp "$FX/state-gate.sh" "$W/state-skill/scripts/gate.sh"
 git init -q -b main "$W/state-skill" && git -C "$W/state-skill" add -A && git -C "$W/state-skill" commit -q -m init
 git -C "$W/state-skill" update-ref refs/remotes/origin/main HEAD
+# A link to that gate.sh from a directory an agent writes, which would run the
+# siblings planted beside the link; and a link to a skill's scripts/ itself.
+mkdir -p "$W/evil" && ln -s "$W/state-skill/scripts/gate.sh" "$W/evil/gate.sh"
+ln -s "$S/scripts" "$W/scripts-link"
 # A worktree named like the stamp directory, which is no git directory (spelled
 # in pieces: the guard reads this suite), and a git directory not named .git.
 g=gate; mkdir -p "$W/wt/target-$g"
@@ -792,7 +796,10 @@ echo "--- the skill's scripts: trusted only as merged, run by path, in the check
 case_ canonical-pool-pr   0 - ""                          PR_GUARD_SKILL_DIR="$S"
 case_ canonical-by-path   0 - ""                          PR_GUARD_SKILL_DIR="$S"
 case_ canonical-other-script 0 - ""                       PR_GUARD_SKILL_DIR="$S"
-case_ canonical-symlink   0 - ""                          PR_GUARD_SKILL_DIR="$S"
+# A link elsewhere to a pinned script runs the siblings beside the link, so it is
+# read; a link to the scripts/ directory itself runs the skill's own.
+case_ canonical-symlink   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+case_ canonical-dir-link  0 - ""                          PR_GUARD_SKILL_DIR="$S"
 case_ canonical-copy      2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
 case_ canonical-exact-copy 2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
 case_ canonical-untracked 2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
@@ -948,7 +955,7 @@ case_ stamp-cwd-event-state    2 stamp "a redirection into the state directory"
 case_ stamp-cwd-above-mv       2 stamp "a command touching the state directory"
 case_ stamp-mv-into-parent     2 stamp "a command touching the state directory"
 case_ stamp-cp-state-sibling   0 - ""
-case_ stamp-python-state       2 stamp "program text touching the state directory"
+case_ stamp-python-state       2 stamp "touching the state directory"
 # Looking is not writing, and a git argument is text.
 case_ stamp-read-cat-state     0 - ""
 case_ stamp-read-cwd-state     0 - ""
@@ -957,6 +964,32 @@ case_ stamp-text-state-commit  0 - ""
 case_ gate-sh-pinned-writes    0 - ""                     PR_GUARD_SKILL_DIR="$W/state-skill"
 case_ gate-sh-pinned-in-state  0 - ""                     PR_GUARD_SKILL_DIR="$W/state-skill"
 case_ gate-sh-unpinned-writes  2 stamp "a redirection into the state directory"
+case_ gate-sh-unpinned-writes  2 stamp "its scripts/ differ from the pinned ref" \
+  PR_GUARD_SKILL_DIR="$W/state-skill" PR_GUARD_PIN_REF=refs/remotes/origin/gone
+# Linked from elsewhere, it would run the siblings planted beside the link: read, and refused.
+case_ gate-sh-symlinked        2 stamp "run through a link from outside its scripts/" \
+  PR_GUARD_SKILL_DIR="$W/state-skill"
+case_ gate-sh-symlinked-path   2 stamp "run through a link from outside its scripts/" \
+  PR_GUARD_SKILL_DIR="$W/state-skill"
+# A write the guard cannot place, in a call that names the state directory in any
+# piece, is refused, whatever carries it: xargs, a shell, an interpreter, an array,
+# a substitution, a namespace, an fd, /proc, a link made in the call, CDPATH.
+for name in state-xargs-echo state-xargs-I state-env-bash-c state-export-py state-array \
+    state-param-subst state-brace-tee state-subst-echo state-pwd-subst state-proc-cwd \
+    state-dev-fd state-ln-same-call state-bwrap state-unshare state-cd-dirname state-cdpath \
+    state-redirect-unplaced; do
+  case_ "$name" 2 stamp "state directory"
+done
+# A destination given with an option is a destination.
+for name in state-cp-target-eq state-ln-target-eq state-dd-of state-sort-o-home \
+    state-sort-output-eq state-osc-output; do
+  case_ "$name" 2 stamp "state directory"
+done
+# Reads stay allowed, and so does a copy out of it.
+case_ stamp-read-diff-state    0 - ""
+case_ stamp-read-cat-out       0 - ""
+case_ stamp-read-cp-out        0 - ""
+case_ stamp-read-test          0 - ""
 
 echo "--- osc"
 case_ osc-build-x86_64    2 emulated-build "x86_64 on aarch64"
@@ -1518,6 +1551,14 @@ case_ comment-body-unreadable   2 bot-directive-unknown "the osc comment create 
 case_ approve-message-merge-ok  2 bot-directive 'the git-obs pr review body with a bot directive ("Merge OK")'
 case_ tea-approve-merge-ok      2 bot-directive 'the tea pulls approve body with a bot directive ("merge ok")'
 case_ accept-message-merge-ok   2 bot-directive 'the osc rq accept message with a bot directive ("merge ok")'
+# tea joins a body's words; a clause that starts with it counts; git obs is git-obs; a
+# sentence about someone's approval is no group directive.
+case_ comment-merge-ok-split    2 bot-directive 'with a bot directive ("merge ok")'
+case_ comment-group-split       2 bot-directive 'with a bot directive ("@qa-team : approve")'
+case_ tea-approve-split         2 bot-directive 'with a bot directive ("merge ok")'
+case_ comment-merge-ok-clause   2 bot-directive 'with a bot directive ("merge ok")'
+case_ comment-git-obs-space     2 bot-directive 'with a bot directive ("merge ok")'
+case_ comment-group-human       0 - ""
 # An ask never outweighs a refusal elsewhere in the call.
 case_ comment-deny-wins         2 osc-yes "an osc request with --yes"
 # osc's options, its slash-split operands, a held subcommand; git obs; a closing comment.
@@ -1531,7 +1572,8 @@ case_ comment-gh-pr-close        0 - ""
 case_ comment-gh-issue-close     0 - ""
 ask_ comment-git-obs-close      comment "git-obs pr close with a comment"
 case_ comment-gh-pr-close-plain 0 - ""
-case_ comment-git-obs-close-plain 0 - ""
+# A close without a comment is no comment; of a PR someone else opened, it is a close.
+ask_ comment-git-obs-close-plain others-request "git-obs pr close AI/mistral-vibe#3: opened by other"
 
 echo "--- an accept or a forward is unattended only where autoforward-gate.sh says ELIGIBLE"
 case_ accept-own-eligible       0 - ""
@@ -1583,6 +1625,19 @@ ask_ revoke-api-others          others-request "osc api newstate=revoked 1390002
 ask_ accept-force-others        others-request "osc rq accept --force 1390002: filed by other"
 case_ accept-force-own          0 - ""
 ask_ accept-or-revoke-others    others-request "osc rq accept --or-revoke 1390002: filed by other"
+ask_ mr-s-others                others-request "osc mr -s 1390002: filed by other"
+# The API takes its parameters from the body too, and a ; separates them.
+ask_ revoke-api-body            others-request "osc api newstate=revoked 1390002: filed by other"
+ask_ revoke-api-semicolon       others-request "osc api newstate=revoked 1390002: filed by other"
+ask_ accept-api-body            accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+ask_ decline-api-body           accept-forward "a decline through osc api"
+# Closing, or any API write to, a PR someone else opened; your own PRs run.
+ask_ pr-close-others-tea        others-request "tea pulls close perl/perl-Foo#2: opened by other"
+ask_ pr-close-others-git-obs    others-request "git-obs pr close perl/perl-Foo#2: opened by other"
+ask_ pr-close-others-api        others-request "git-obs api PATCH perl/perl-Foo#2: opened by other"
+ask_ pr-close-others-tea-api    others-request "tea api PATCH perl/perl-Foo#2: opened by other"
+case_ pr-close-own              0 - ""
+case_ pr-close-own-git-obs      0 - ""
 # Every lookup goes to the instance osc -A names: here, one with none of the stubs.
 ask_ forward-apiurl             accept-forward "cannot read"
 # The same fixtures for both: autoforward-gate.sh and the guard agree on each.

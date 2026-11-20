@@ -66,7 +66,8 @@ readable that way.
   (builds and stamps a pool tree), `pool-pr.sh` (the only route to a pool PR), `leap-sync.sh`
   (sync, then the gate), `pr-guard.py` and `_pr_guard.py` (the harness hook and its rules).
   No standing permission to maintain the skill's scripts covers them. The guard runs the
-  scripts in `scripts/` unread only while every file `scripts/` tracks matches its blob on
+  scripts in `scripts/` unread only by a path in that directory (not a link from
+  elsewhere), and only while every file `scripts/` tracks matches its blob on
   the checkout's `origin/main` (`PR_GUARD_PIN_REF`); a local edit to any of them, even
   `scripts/README.md`, has it read them all until the change is merged. So merging a change
   to *any* script changes what the guard lets through: no other script may push, write a

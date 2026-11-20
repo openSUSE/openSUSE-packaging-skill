@@ -540,10 +540,12 @@ yourself. It asks before:
   wants the user's go for someone else's request (core directive 10); the guard no longer
   asks for it on your own packages, so that go is the agent's to hold.
   The account is `PR_GUARD_OBS_USER`, else `osc whois`;
-- **closing or forcing a request someone else filed** (`[others-request]`): an `osc request`
-  `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`osc creq` with `-s ID`, an `accept`
-  with `--force` or `--or-revoke`, or the API's `newstate=revoked|superseded|new` (or
-  `force` on an accept). Each acts on their work as a decline does; your own requests run;
+- **closing or forcing a request or PR someone else filed** (`[others-request]`): an `osc
+  request` `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`creq`/`mr` with `-s ID`,
+  an `accept` with `--force` or `--or-revoke`, the API's `newstate=revoked|superseded|new|
+  review|deleted` (or `force` on an accept; in the query or a `-d` body, `&` or `;` between
+  the parameters); a `tea pulls close`, `git-obs pr close` or Gitea API write to a PR
+  someone else opened. Each acts on their work as a decline does; your own run;
 - **a delete of several osc checkouts at once**: your own recursive `rm` or `find …
   -delete` (with no name test) that removes two or more package checkouts, as a project
   checkout of several packages or a scratch directory of them; one checkout per `rm`
@@ -669,7 +671,8 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
    hash (`git hash-object --no-filters`) to its blob at `refs/remotes/origin/main` of that
    checkout (not `HEAD`). The scripts run their siblings, so one edited, added or dropped
    file untrusts them all, and so does a call that writes into `scripts/`. A script must
-   also be run by its path and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`,
+   also be run by a path whose directory is that `scripts/` (a link to it from elsewhere
+   would run the siblings beside the link) and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`,
    `NO_COLOR`, `CHANGES_AUTHOR`, `DISTRO_SURVEY_BUDGET` and `DISTRO_SURVEY_TIMEOUT`. A local edit or an unmerged commit is read like any
    other script, which for `pool-pr.sh` means refused, until it is merged and fetched
    (`git -C <checkout> fetch origin`). Sourcing one, or feeding it on stdin, is refused:
@@ -720,7 +723,8 @@ too: `"$(git rev-parse --git-common-dir)/target-gate"`, a variable set from one,
 `$UNSET/target-gate`. A bare `target-gate` names one only when the working directory is a
 git directory. A command touches a stamp when it names a stamp directory, runs inside
 one, or reads program text that names `target-gate` at all. Two exceptions: the skill's
-own `target-gate.sh`, run by path while pinned, and git's arguments, since a branch, commit
+own `target-gate.sh`, run by its path in the skill's `scripts/` while pinned, and git's
+arguments, since a branch, commit
 message or grep pattern is text (a redirection is still judged). Some commands may look at
 a stamp: `ls`, `cat`, `jq`, `grep`, `rg`, `head`, `tail`, `less`, `stat`, `wc`, `echo` and
 `printf`; `find` without `-exec`, `-delete` or `-fprint`; `sed` without `-i`; `awk`; and
@@ -729,14 +733,24 @@ output to a file and their program or options (`sed w`, `awk print >`) name no s
 Write and Edit tools are refused for any path with a `target-gate` component.
 
 The state directory, `~/.local/state/opensuse-packaging` (`gate.sh`'s stamps in `gate/`,
-the incoming reviews' in `incoming/`), is judged the same way, as a path: each word placed
-in the working directory through the call's values and symlinks, and as written when the
-guard cannot place it (`$X/.local/state/opensuse-packaging`,
-`${XDG_STATE_HOME:-…}/opensuse-packaging`). A `cp`, `mv`, `ln`, `install`, `rsync`, `tar`,
-`unzip` or `cpio` aimed at its parent, `~/.local/state`, counts too, and program text
-counts when it joins `state` and `opensuse-packaging`, or `opensuse-packaging` and `gate`
-or `incoming`, in any pieces. Only the skill's own `gate.sh` (and `incoming-review.sh`),
-run by path while pinned, runs unread there; an edited one is read and refused.
+the incoming reviews' in `incoming/`), is judged by what a command writes: each target
+placed in the working directory through the call's values, brace alternatives, readable
+substitutions and symlinks, an option's attached value (`--target-directory=`, `of=`,
+`-oFILE`) included, and as written when the guard cannot place it
+(`$X/.local/state/opensuse-packaging`, `${XDG_STATE_HOME:-…}/opensuse-packaging`, a leaf
+`…/state/opensuse-packaging` or `opensuse-packaging/gate` under any directory). A tree
+copied, moved, linked or unpacked into `~/.local` or `~/.local/state`, or, as an archive or
+a tree named `.local`, into `~`, counts too, and so does program text that joins `state`
+and `opensuse-packaging`, or `opensuse-packaging` and `gate` or `incoming`, in any pieces.
+It fails closed: in a call whose text names the directory by any piece (`.local/st…`,
+`XDG_STATE_HOME`, the leaf, `gate/obs/`), any write it cannot place is refused (`xargs`,
+`bash -c`, an interpreter, `bwrap`, `unshare`, an array or `${…}` operator, `/proc/self/cwd`,
+`/dev/fd`, a path through what the call made, a relative `cd` under `CDPATH`). Reads pass,
+copies out of it too (`cat STAMP > /var/tmp/x`, `cp STAMP /var/tmp/x`, `diff`, `test`).
+Only the skill's own `gate.sh` (and `incoming-review.sh`) runs unread there, by a path
+whose directory is the skill's `scripts/` while it matches the pinned ref: a link to it
+from elsewhere would run the siblings planted beside the link, so it is read, and refused
+like an edited one.
 
 Measured on an aarch64 host with Python 3.13, `python3 pr-guard.py < EVENT`:
 - a call the prefilter lets through takes ~63 ms, about what python3 needs to import
@@ -843,12 +857,15 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - A request body option (`--json`, `--data`, `--form`, `--upload-file`) counts only on
   a `curl`, `wget` or `tea api` line, or in the argument list that names the tool. One
   added to that list later (`cmd += ["--json", body]`) is not seen.
-- git's arguments are not judged for stamps, so git writing into a stamp or the state
-  directory itself (`--work-tree`, `--output`, `clone`) is not seen; a redirection is. Nor
-  is a copy into a directory above `~/.local/state` whose tree lands in the state
-  directory, or an archive extracted from inside `~/.local/state` without naming it.
-- A comment's bot directive counts at the start of a line, or of a sentence in one; a
-  sentence that only contains the words (`once the merge ok is given`) passes.
+- git's arguments are not judged for stamps, so git writing into a stamp directory
+  itself (`--work-tree`, `--output`) is not seen; a redirection is. For the state
+  directory git's `-C`, `--git-dir`, `--work-tree` and `clone`/`init` targets count.
+- A path to the state directory the call holds only in a file it reads at run time
+  (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
+  'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen.
+- A comment's `merge ok` counts at the start of a line, or of a clause in one; a sentence
+  that only contains the words (`once the merge ok is given`) passes, and so does an
+  `@group : approve` that does not start its line.
 - The opencode plugins do not send `patch`/`apply_patch` tool calls to the guard.
   opencode 2.x offers `patch` (one `patchText` argument) in place of `write` and `edit` to
   every model whose id contains `gpt-` but neither `gpt-4` nor `oss` (`gpt-5`,

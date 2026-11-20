@@ -51,6 +51,17 @@ STATE_TEXT = Rx(
     r"(?<![A-Za-z])(?i:state(?:_home)?)\}?[\s\"',/+]*opensuse-packaging(?![\w.-])"
     r"|opensuse-packaging[\s\"',/+]*(?:gate|incoming)(?![\w.-])"
 )
+# Its pieces in a call's text, however the shell assembles them (quotes, braces,
+# substitutions, variables): the leaf, which names it in any directory; and the
+# parent and $XDG_STATE_HOME, with which a write the guard cannot place is refused.
+LEAF = (
+    r"(?<![a-z])state\W{0,6}opensuse\W{0,4}packaging"
+    r"|opensuse\W{0,4}packaging\W{0,6}(?:gate|incoming)(?![\w.-])"
+)
+STATE_LEAF = Rx(rf"(?i){LEAF}")
+STATE_PIECE = Rx(
+    rf"(?i){LEAF}|\.local\W{{0,6}}st|XDG_STATE_HOME|(?:gate|incoming)/+(?:obs|gitea)/"
+)
 # The skill's scripts that write there, run unread while they match the pin.
 STATE_WRITERS = ("gate.sh", "incoming-review.sh")
 # Where a cd the guard cannot place, but which names the state directory, leaves.
@@ -494,6 +505,14 @@ MESSAGES = {
     "state": "{0}: only the skill's own gate.sh, as merged, writes the stamps in "
     "~/.local/state/opensuse-packaging, and one written any other way is forged. Run "
     "{s}/gate.sh in the checkout (gate.sh --review FILE records the review).",
+    "state-unread": "{0}. The skill's scripts write the stamps only run unread: by "
+    "their own path in its scripts/, every file there as merged at the pinned ref. "
+    "Run {s}/gate.sh by that path; if the skill checkout differs from the pinned ref, "
+    "bring it back first (git status there, then git merge --ff-only of the ref).",
+    "state-unplaced": "{0}: the guard cannot tell where it writes, and the call names "
+    "the skill's state directory (~/.local/state/opensuse-packaging), where only the "
+    "skill's own gate.sh writes. Write to a literal path outside it, and look at the "
+    "stamps in a call of their own.",
     "bot-directive": '{0}: autogits merges a PR on a maintainer\'s "merge ok", and the '
     'group-review bot reviews on an "@group : approve" line, so no comment, review or '
     "request message carries one. Reword it.",
@@ -612,9 +631,9 @@ ASKS = {
     "--arches REGEX add the target's); then file.",
     "gate-args": "{0}, so the guard cannot see whether --review is among them. "
     "Write {s}/gate.sh's arguments out literally (no --review is involved).",
-    "others-request": "{0}: a revoke, supersede, reopen or wipe of a request someone "
-    "else filed acts on their work as a decline does, and --force skips its open "
-    "reviews; that is the user's call.",
+    "others-request": "{0}: closing, superseding, reopening or wiping a request or PR "
+    "someone else filed acts on their work as a decline does, and --force skips its "
+    "open reviews; that is the user's call.",
     "review-self": "{0}: only the changes-review agent that ran the review records "
     "it (agents/changes-review.md runs {s}/gate.sh --review itself), and a PASS the "
     "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
@@ -727,6 +746,9 @@ class Ctx:
         self.any_bg = False  # the call sends something to the background
         self.gate_pending = []  # stamped commits and submits, for gate_writers
         self.agent = None  # the harness's agent type for the call (agent_type)
+        self.state_named = False  # the call's text names the state directory
+        self.unread = []  # the skill scripts being read that run unread as merged
+        self.made = set()  # what the call's writers made, which may lead anywhere
 
 
 def git(cwd, gargs, *args):
@@ -1913,6 +1935,9 @@ CREQ_LONG = ("--cleanup", "--help", "--message", "--no-cleanup", "--nodevelproje
 CREQ_LONG += ("--no-update", "--revision", "--supersede", "--yes")
 SR_LONG = CREQ_LONG + ("--diff", "--file", "--separate-requests", "--update-link")
 CREQ_LONG += ("--action",)
+MR_LONG = ("--attribute", "--cleanup", "--enforce-branching", "--help", "--incident")
+MR_LONG += ("--incident-project", "--message", "--no-cleanup", "--release-project")
+MR_LONG += ("--supersede",)
 
 
 def others_request(rid, what, ctx):
@@ -1937,13 +1962,15 @@ def others_request(rid, what, ctx):
 
 
 def supersedes(run, ctx, cwd):
-    """A submit request (osc sr, creq) that supersedes, with -s ID, a request
-    someone else filed."""
+    """A submit or maintenance request (osc sr, creq, mr) that supersedes,
+    with -s ID, a request someone else filed."""
     sub, args = osc_sub(run)
     if sub in SUBMITS:
         names = SR_LONG
     elif sub in ("creq", "createrequest"):
         names = CREQ_LONG
+    elif sub in ("mr", "maintenancerequest"):
+        names = MR_LONG
     else:
         return
     args = [long_prefix(a, names) for a in args]
@@ -1998,7 +2025,8 @@ def request_verbs(sub, args, ctx, cwd):
 def api_changestate(args, ctx, cwd):
     """An osc api POST that accepts, declines, closes or reopens a request:
     /request/N?cmd=changestate|changereviewstate&newstate=accepted|declined|
-    revoked|superseded|new (and force)."""
+    revoked|superseded|new (and force), its parameters in the query or in a -d
+    body, & or ; between them."""
     opts, pos = osc_args("api", args)
     keys = {k for k, _ in opts}
     method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or [""])[-1]
@@ -2007,11 +2035,14 @@ def api_changestate(args, ctx, cwd):
     )
     if method.upper() != "POST":
         return
+    bodies = [v for k, v in opts if k in ("-d", "--data")]
+    bodies = [b for v in bodies for b in substitute(v, ctx, cwd) or [v]]
     for url in (u for a in pos for u in substitute(a, ctx, cwd) or [a]):
-        m = re.search(r"/request/([^/?#]+)/*\?([^#]*)", url)
+        m = re.search(r"/request/([^/?#;]+)/*(?:\?([^#]*))?", url)
         if not m:
             continue
-        q = urllib.parse.parse_qs(m.group(2))
+        params = "&".join([m.group(2) or "", *bodies]).replace(";", "&")
+        q = urllib.parse.parse_qs(params, keep_blank_values=True)
         if "approve" in q.get("cmd", []):  # staged, then accepted by OBS
             accept_one(m.group(1), ctx)
         if not set(q.get("cmd", [])) & {"changestate", "changereviewstate"}:
@@ -2025,9 +2056,8 @@ def api_changestate(args, ctx, cwd):
             )
         if "accepted" in states:
             accept_one(m.group(1), ctx)
-        closing = sorted(states & {"revoked", "superseded", "new"})
-        forced = urllib.parse.parse_qs(m.group(2), keep_blank_values=True)
-        if "force" in forced and "accepted" in states:
+        closing = sorted(states & {"revoked", "superseded", "new", "review", "deleted"})
+        if "force" in q and "accepted" in states:
             closing.append("accepted with force")
         for state in closing:
             others_request(m.group(1), f"osc api newstate={state}", ctx)
@@ -2559,14 +2589,89 @@ def comment_rules(name, run, ctx, cwd):
                 ask(ctx, "comment", f"{name} api: {why}")
 
 
-# A line a forge bot acts on: autogits merges a PR on a maintainer's "merge ok",
-# and the group-review bot reviews on "@group : approve" (or decline). Matched at
-# the start of a line, or of a sentence in one, past punctuation and markup.
-BOT_DIRECTIVE = Rx(
-    r"(?i)(?:[^\w@]|_)*(merge[\W_]*ok(?:ay)?|@[\w.+-]+\s*:?\s*(?:approved?|declined?))"
-    r"(?!\w)"
+# An API path to one issue or PR itself, and a git-obs "owner/repo#N" id.
+PR_ITEM = Rx(
+    r"(?:^|/)repos/([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*)/(?:pulls|issues)/(\d+)"
+    r"/*(?:[?#]|$)"
 )
-SENTENCE = Rx(r"(?<=[.!?;])\s+")
+GIT_OBS_ID = Rx(r"([A-Za-z0-9][\w.-]*)/([A-Za-z0-9_][\w.+-]*)#(\d+)")
+
+
+def others_pr(owner, repo, n, ctx):
+    """Why acting on src.opensuse.org PR owner/repo#n needs the user's go:
+    someone else opened it, or that cannot be told; "" for the user's own. A
+    PR is an issue too, which the issues endpoint returns with its author."""
+    user = obs_user(ctx)
+    if not user:
+        return "the account is unknown (osc whois failed)"
+    ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
+    if not ok:
+        return f"cannot read {item}"
+    if not isinstance(item, dict):
+        return "it does not exist"
+    poster = item.get("user")
+    login = poster.get("login") if isinstance(poster, dict) else None
+    return "" if login == user else f"opened by {login or 'no one named'}"
+
+
+def close_rules(name, args, ctx, cwd):
+    """Closing, or any API write to, a src.opensuse.org PR someone else opened:
+    tea pulls close, git-obs pr close, a tea or git-obs api write to one issue
+    or PR item (PR_ITEM). Asked, like the closing of a request."""
+
+    def one(w):
+        vals = spellings(w, ctx, cwd, False)
+        return vals[0] if len(vals) == 1 else ""
+
+    def judge_item(what, o, r, n):
+        known = o and r and n.isdigit()
+        why = others_pr(o, r, n, ctx) if known else "cannot tell which PR"
+        if why:
+            ask(ctx, "others-request", f"{what} {o}/{r}#{n}: {why}")
+
+    if name == "tea":
+        opts, pos = split_args(args, None, TEA_BODY_SHORT, TEA_BODY_LONG)
+        words = unlit(pos)
+        if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] == ["close"]:
+            repos = [one(v) for k, v in opts if k in ("-r", "--repo")]
+            m = OWNER_REPO.fullmatch(repos[-1] if repos else "")
+            o, r = m.groups() if m else ("", "")
+            for w in words[2:] or [""]:
+                judge_item(f"tea {words[0]} close", o, r, one(w))
+            return
+        api, endpoints = words[:1] == ["api"], words[1:2]
+        body = {"-d", "--data", "-f", "--field", "-F", "--Field"}
+    elif name == "git-obs":
+        rest = git_obs_rest(args)
+        words = [a for a in rest if a[:1] != "-"]
+        if words[:2] == ["pr", "close"]:
+            for w in [a for a in words[2:] if "#" in a] or [""]:
+                m = GIT_OBS_ID.fullmatch(one(w))
+                judge_item("git-obs pr close", *(m.groups() if m else ("", "", "")))
+            return
+        opts, pos = split_args(rest, None, "X", ("--method", "--data"), GIT_OBS_LONG)
+        api, endpoints, body = words[:1] == ["api"], unlit(pos)[1:2], {"--data"}
+    else:
+        return
+    if not api:
+        return
+    verb = ([v for k, v in opts if k in ("-X", "--method")] or [""])[-1]
+    verb = (verb or ("POST" if body & {k for k, _ in opts} else "GET")).upper()
+    if verb in GET:
+        return
+    for e in endpoints:
+        for url in substitute(e, ctx, cwd) or [e]:
+            m = PR_ITEM.search(norm_urls(url))
+            if m:
+                judge_item(f"{name} api {verb}", *m.groups())
+
+
+# What a forge bot acts on: autogits merges a PR on a maintainer's "merge ok",
+# matched at the start of a line or of a clause in one, past punctuation and
+# markup; the group-review bot reviews on an "@group : approve" (or decline) line.
+MERGE_OK = Rx(r"(?i)(?:[^\w@]|_)*(merge[\W_]*ok(?:ay)?)(?!\w)")
+GROUP_REVIEW = Rx(r"(?i)(?:[^\w@]|_)*(@[\w.+-]+\s*:\s*(?:approve|decline))(?!\w)")
+CLAUSE = Rx(r"(?<=[.!?;:,])\s*|\s+[-\u2013\u2014]+\s+")
 # The options that take a value of tea's comment, pulls review verbs and api,
 # short and long; git-obs pr's long options, which argparse takes by prefix.
 TEA_BODY_SHORT = "lrRodXfFH"
@@ -2588,8 +2693,9 @@ def json_strings(value):
 
 def comment_fault(text):
     """Why a comment, review or request message would command a forge bot, or
-    None: a line, or a sentence in one, that starts with a bot directive. A
-    JSON body is judged by its strings too."""
+    None: a line, or a clause in one, that starts with "merge ok", or a line
+    that starts with "@group : approve". A JSON body is judged by its strings
+    too."""
     texts = [text]
     try:
         texts += json_strings(json.loads(text))
@@ -2597,10 +2703,11 @@ def comment_fault(text):
         pass
     for t in texts:
         for ln in t.splitlines():
-            for part in [ln, *SENTENCE.split(ln)[1:]]:
-                m = BOT_DIRECTIVE.match(part)
-                if m:
-                    return f'with a bot directive ("{m.group(1)}")'
+            m = GROUP_REVIEW.match(ln)
+            for part in CLAUSE.split(ln):
+                m = m or MERGE_OK.match(part)
+            if m:
+                return f'with a bot directive ("{m.group(1)}")'
     return None
 
 
@@ -2671,12 +2778,14 @@ def tea_bodies(args, largs, ctx, cwd):
         if words[1:2] in (["list"], ["ls"], ["delete"], ["rm"]):
             return []
         skip = 3 if words[1:2] in (["add"], ["a"], ["edit"], ["e"]) else 2
-        texts = pos[skip:] + [v for k, v in opts if k in ("-d", "--description")]
+        texts = [" ".join(pos[skip:])] if pos[skip:] else []  # tea joins them
+        texts += [v for k, v in opts if k in ("-d", "--description")]
         return [("the tea comment body", w, False) for w in texts]
     if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] in (
         [w] for w in ("approve", "a", "lgtm", "reject", "review", "reply")
     ):
-        return [(f"the tea {words[0]} {words[1]} body", w, False) for w in pos[3:]]
+        what = f"the tea {words[0]} {words[1]} body"
+        return [(what, " ".join(pos[3:]), False)] if pos[3:] else []
     if words[:1] != ["api"] or not to_comments(pos[1:], ctx, cwd):
         return []
     for k, v in opts:
@@ -3810,7 +3919,7 @@ def run_text(text, kind, ctx, cwd, depth):
     if STAMP.search(whole):
         block("stamp", "program text touching the stamp directory")
     if STATE_TEXT.search(whole):
-        block("stamp", "program text touching the state directory", "state")
+        state_block(ctx, "program text touching the state directory")
     for m in CODE_PUSH.finditer(whole):
         if not other_forge(whole, m, ctx, cwd):
             unsure("a git push inside program text")
@@ -4435,17 +4544,29 @@ def pinned(skill):
     return set(order)
 
 
-def canonical(real, skill, ctx):
-    """A skill script, while its scripts/ matches the pinned ref and this call
-    writes nothing there."""
+def canonical(real, skill, ctx, path):
+    """A skill script run by a path whose directory is the skill's scripts/
+    (the scripts find their siblings beside the path they were run by: a link
+    elsewhere would run what lies there), while scripts/ matches the pinned ref
+    and this call writes nothing there."""
+    return not unread_why(real, skill, ctx, path)
+
+
+def unread_why(real, skill, ctx, path):
+    """Why a skill script is read like any other rather than run unread; ""
+    when canonical(). path: the script as run, before its links."""
     if skill not in ctx.canon:
         ctx.canon[skill] = pinned(skill)
     scripts = os.path.realpath(os.path.join(skill, "scripts"))
+    if os.path.realpath(os.path.dirname(path)) != scripts:
+        return "run through a link from outside its scripts/"
     if written(scripts, ctx) or any(
         w.startswith(scripts + os.sep) for w in ctx.written
     ):
-        return False
-    return os.path.relpath(real, skill) in ctx.canon[skill]
+        return "this call writes into its scripts/"
+    if os.path.relpath(real, skill) not in ctx.canon[skill]:
+        return "its scripts/ differ from the pinned ref"
+    return ""
 
 
 def scan_file(raw, kind, ctx, cwd, depth, env=(), run=False):
@@ -4470,10 +4591,12 @@ def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
     if os.path.isdir(real):
         return
     skill = in_skill(real)
+    why = ""
     if skill:
         if not run:
             block("canonical-read", f"{raw} read as a program")
-        if canonical(real, skill, ctx):
+        why = unread_why(real, skill, ctx, path)
+        if not why:
             changed = [e for e in env if e not in CLEAN_ENV] + ctx.exported
             if changed:
                 block("canonical-env", f"{raw} run with {', '.join(changed)}")
@@ -4481,6 +4604,17 @@ def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
     if real in ctx.scanned:
         return
     ctx.scanned.add(real)
+    if why:  # a state refusal while it is read says why it was
+        ctx.unread.append(f"{os.path.basename(real)} of {skill}: {why}")
+        try:
+            return read_script(path, real, raw, kind, ctx, cwd, depth)
+        finally:
+            ctx.unread.pop()
+    read_script(path, real, raw, kind, ctx, cwd, depth)
+
+
+def read_script(path, real, raw, kind, ctx, cwd, depth):
+    """scan_path()'s read of a script it does not trust: its program judged."""
     try:
         if os.path.exists(path) and not regular(path):  # a FIFO: open() may hang
             raise OSError(0, "not a regular file")
@@ -5032,6 +5166,9 @@ def git_command(argv, ctx, cwd, lit=None):
         tool_rules(ln, ctx, cwd)
         lsub = lit[i + 1 :] if lit and len(lit) == len(argv) else None
         pr_message("git-obs", sub[1:], lsub, ctx, cwd)
+        lobs = lsub and ["git-obs", *lsub]
+        bot_directives("git-obs", ["git-obs", *sub[1:]], (lobs, None), ctx, cwd)
+        close_rules("git-obs", sub[1:], ctx, cwd)
         wide = " ".join([ln, *expansions(sub[1:], ctx, cwd)])
         api_rules(wide, ctx, cwd, reads=git_obs_reads(sub[1:]))
         comment_rules("git-obs", ["git-obs", *sub[1:]], ctx, cwd)
@@ -5415,18 +5552,228 @@ def state_word(word, ctx, cwd, path=False):
     return False
 
 
-def pinned_script(name, run, ctx, cwd, names):
-    """Whether this runs one of the skill's scripts in names by path while it
-    matches the pinned ref."""
-    word = run[0] if name in names else ""
-    if name in SHELLS and len(run) > 1:
+def pinned_script(name, run, ctx, cwd, names=None):
+    """Whether this runs one of the skill's scripts in names (None: any) by
+    path, unread: canonical()."""
+    word = run[0] if names is None or name in names else ""
+    if (name in SHELLS or PYTHON.fullmatch(name)) and len(run) > 1:
         word = run[1]
-    if "/" not in word or os.path.basename(word) not in names:
+    if "/" not in word or names is not None and os.path.basename(word) not in names:
         return False
     paths = locate(word, ctx, cwd)[0] or []
     real = os.path.realpath(paths[0]) if len(paths) == 1 else ""
     skill = in_skill(real)
-    return bool(skill) and canonical(real, skill, ctx)
+    return bool(skill) and canonical(real, skill, ctx, paths[0])
+
+
+def flat(text):
+    """Text as the shell joins its words, for a search: line continuations
+    joined, $'...' decoded, then quotes and backslashes dropped."""
+    text = text.replace("\\\n", "")
+    try:
+        text = re.sub(r"\$'((?:[^'\\]|\\.)*)'", lambda m: ansi_c(m.group(1)), text)
+    except ValueError:
+        pass
+    return re.sub(r"[\"'\\]", "", text)
+
+
+def names_state(text):
+    """Whether a call's text names the state directory by any piece, or reaches
+    a directory through /proc or /dev/fd beside a ~/.local."""
+    t = flat(text or "")
+    return bool(STATE_PIECE.search(t)) or (
+        ".local" in t and ("/proc/" in t or "/dev/fd/" in t)
+    )
+
+
+def cdpath(ctx):
+    """Whether a relative cd may land anywhere: CDPATH set for the call."""
+    return bool(os.environ.get("CDPATH")) or "CDPATH=" in (ctx.command or "")
+
+
+def unplaced(word, ctx, cwd):
+    """Whether the guard cannot tell where a write to word lands: a value only
+    the shell knows, a brace, glob or {} it does not expand, a path through
+    /proc or /dev/fd, or a relative one where the directory is unknown."""
+    if "{}" in word or re.search(r"(?:^|/)(?:proc|dev/fd)/", word):
+        return True
+    for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
+        for w in braces(word) or [None]:
+            paths = locate(w, ctx, d)[0] if w is not None else None
+            if not paths or any(GLOB.search(p) or "/proc/" in p for p in paths):
+                return True
+    return False
+
+
+def state_target(name, word, ctx, cwd, sources=()):
+    """Whether a word a command writes to lies in the state directory: placed
+    (each brace alternative, an option's value after its =, the output of a
+    substitution the call can read), as written, by its leaf in any directory,
+    or, for a tree writer, above it (state_parent())."""
+    parts = filter(None, (word, word.partition("=")[2]))
+    words = [w for p in parts for w in braces(p) or [p]]
+    words += [x for w in words if "$" in w for x in lit_texts(w, ctx, cwd) or ()]
+    return (
+        any(state_word(w, ctx, cwd, path=True) for w in words)
+        or any(STATE_LEAF.search(flat(w)) for w in words)
+        or name in TREE_WRITERS
+        and any(state_parent(w, ctx, cwd, name, sources) for w in words)
+    )
+
+
+def write_words(name, args):
+    """The words a command writes to, as written -- cp, mv, install, mkdir, rm
+    and tar (write_targets()), tee, ln, dd of=, sort -o, rsync's destination
+    -- or None: another command, or one it cannot read."""
+    if name in ("mkdir", "cp", "mv", "install", "rm", "tar"):
+        return write_targets(name, args)
+    if name == "tee":
+        return [a for a in args if a[:1] != "-"]
+    if name == "ln":
+        opts, pos = parse_opts(args, "tS", ("--target-directory", "--suffix"))
+        into = [v for k, v in opts if k in ("-t", "--target-directory")]
+        return into or (pos[-1:] if len(pos) > 1 else None)
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    if name == "sort":
+        long = ("--key", "--field-separator", "--buffer-size", "--output")
+        long += ("--temporary-directory", "--parallel", "--files0-from")
+        opts = parse_opts(args, "kStTo", long)[0]
+        return [v for k, v in opts if k in ("-o", "--output")]
+    if name == "rsync":
+        pos = [a for a in args if a[:1] != "-"]
+        return pos[-1:] if len(pos) > 1 else None
+    return extract_into(name, args)
+
+
+def extract_into(name, args):
+    """The directory an archive extractor writes into: bsdtar as tar, unzip -d,
+    7z -o, cpio -p DIR (-i: here), python -m zipfile|tarfile -e ARCHIVE [DIR];
+    None for anything else."""
+    if name == "bsdtar":
+        return write_targets("tar", args)
+    if name == "unzip":
+        into = [v for k, v in parse_opts(args, "dxP", ())[0] if k == "-d"]
+        return into or ["."]
+    if name in ("7z", "7za"):
+        into = [a[2:] for a in args if a.startswith("-o")]
+        return into or ["."]
+    if name == "cpio":
+        opts, pos = parse_opts(args, "EFHIMORt", ())
+        flags = {k for k, _ in opts} | {a for a in args if a.startswith("--")}
+        if flags & {"-p", "--pass-through"}:
+            return pos[-1:] or None
+        return ["."] if flags & {"-i", "--extract"} else []
+    if PYTHON.fullmatch(name) and args[:2] in (["-m", "zipfile"], ["-m", "tarfile"]):
+        if args[2:3] in (["-e"], ["--extract"]):
+            return args[4:5] or ["."]
+        return []
+    return None
+
+
+def git_paths(run):
+    """The directories a git command writes into: its -C, --git-dir and
+    --work-tree, the working directory without -C, and what clone, init,
+    worktree and submodule name."""
+    out, i, here = [], 1, True
+    while i < len(run) and run[i][:1] == "-":
+        a = run[i]
+        k, eq, v = a.partition("=")
+        if a in ("-C", "--git-dir", "--work-tree") and i + 1 < len(run):
+            out.append(run[i + 1])
+            here = here and a != "-C"
+            i += 2
+            continue
+        if eq and k in ("--git-dir", "--work-tree"):
+            out.append(v)
+        i += 2 if a in ("-c", "--namespace", "--config-env") else 1
+    if run[i : i + 1] in (["clone"], ["init"], ["worktree"], ["submodule"]):
+        out += [a for a in run[i + 1 :] if a[:1] != "-"]
+    return out + (["."] if here else [])
+
+
+# Commands that write no file, beyond the read-only ones that may look at a stamp.
+LOOKERS = {"test", "[", "[[", "diff", "cmp", "sha1sum", "sha256sum", "sha512sum"}
+LOOKERS |= {"md5sum", "b2sum", "cksum", "file", "od", "hexdump", "more", "base64"}
+LOOKERS |= {"readlink", "realpath", "basename", "dirname", "du", "nl", "cut", "tr"}
+LOOKERS |= {"comm", "read", "unset", "shift", "exit", "return", "break", "continue"}
+
+
+def reader(name, run):
+    """Whether a command writes no file of its own: osc and git subcommands that
+    only read, sort without -o, uniq without a second operand, and READERS
+    (note_writer() skips the same)."""
+    if name == "osc":
+        sub, args = osc_sub(run)
+        if OSC_ALIAS.get(sub, sub) in OSC_READS:
+            return True
+        if sub in ("rq", "request", "review"):
+            verb = (osc_args("request", args, OSC_OPTS_ASK)[1] or [""])[0]
+            return verb in ("list", "ls", "show", "log")
+        return sub == "comment" or sub == "api" and comment_or_get(args)
+    if name == "sort":
+        return not write_words("sort", run[1:])
+    if name == "uniq":
+        valued = ("--skip-fields", "--skip-chars", "--check-chars")
+        return len(parse_opts(run[1:], "fsw", valued)[1]) < 2
+    return name in READERS or name in LOOKERS
+
+
+UNPLACED = "a write the guard cannot place, in a call naming the state directory"
+
+
+def state_touch(name, run, ctx, cwd, xargs=False):
+    """Why a command touches the state directory, as (detail, kind), or None:
+    it writes there (as placed), runs inside it, names it and writes where the
+    guard cannot tell, or, in a call naming it, writes anywhere the guard cannot
+    place (through what this call made too). A look, a copy out of it, git's
+    messages and the skill's own scripts run unread (as merged, gate.sh writing
+    its stamps) pass."""
+    if pinned_script(name, run, ctx, cwd, STATE_WRITERS):
+        return None
+    if reads_only(name, run, ctx, cwd) or name in LOOKERS:
+        return None
+    unread = pinned_script(name, run, ctx, cwd)
+    words = git_paths(run) if name == "git" else write_words(name, run[1:])
+    if words is not None and not xargs:
+        sources = [a for a in run[1:] if a[:1] != "-" and a not in words]
+        tool = "unzip" if PYTHON.fullmatch(name) else name  # python -m zipfile -e
+        for w in words:
+            if state_target(tool, w, ctx, cwd, sources):
+                return ("a command touching the state directory", "state")
+            if ctx.state_named and (unplaced(w, ctx, cwd) or made(w, ctx, cwd)):
+                return (UNPLACED, "state-unplaced")
+        for w in words:  # a link or directory made here may lead anywhere
+            ctx.made.update(p for p in locate(w, ctx, cwd)[0] or () if p != cwd)
+        return None
+    if cwd and state_cwd(cwd):
+        return ("a command touching the state directory", "state")
+    declared = name in DECLARE
+    if any(
+        state_target(name, a, ctx, cwd)
+        for a in run
+        if not (declared and ASSIGN.match(a))
+    ):
+        return ("a command touching the state directory", "state")
+    if ctx.state_named and not unread and (xargs or not reader(name, run)):
+        return (UNPLACED, "state-unplaced")
+    return None
+
+
+def made(word, ctx, cwd):
+    """Whether a write lands through a path this call made before it."""
+    paths = locate(word, ctx, cwd)[0] or ()
+    return any(
+        p == m or p.startswith(m.rstrip("/") + "/") for p in paths for m in ctx.made
+    )
+
+
+def state_block(ctx, detail, kind="state"):
+    """Refuse a write into the state directory: from a skill script read
+    rather than run unread, saying why it was read."""
+    if ctx.unread:
+        block("stamp", f"{detail}, in {ctx.unread[-1]}", "state-unread")
+    block("stamp", detail, kind)
 
 
 def reads_only(name, run, ctx, cwd):
@@ -5493,44 +5840,45 @@ def enter(target, ctx, cwd):
     return new
 
 
-def touches_stamp(name, run, outs, ctx, cwd, state=False):
-    """A command that names the stamp directory (state: the state directory,
-    placed in cwd), or runs inside it -- but the pinned script that writes
-    there, a look that writes no file, and git's arguments, which are text
-    (branch names, messages, grep patterns)."""
-    writers = STATE_WRITERS if state else ("target-gate.sh",)
-    if pinned_script(name, run, ctx, cwd, writers):
+def touches_stamp(name, run, outs, ctx, cwd):
+    """A command that names the stamp directory, or runs inside it -- but the
+    pinned target-gate.sh, a look that writes no file, and git's arguments,
+    which are text (branch names, messages, grep patterns)."""
+    if pinned_script(name, run, ctx, cwd, ("target-gate.sh",)):
         return False
     if all(t == "/dev/null" for t in outs) and reads_only(name, run, ctx, cwd):
         return False
-    if cwd and (state_cwd(cwd) if state else in_stamps(cwd, ctx, cwd)):
+    if cwd and in_stamps(cwd, ctx, cwd):
         return True
     if name == "git":
         return False
     declared = name in DECLARE
-    words = [a for a in run if not (declared and ASSIGN.match(a))]
-    if not state:
-        return any(stamp_word(a, ctx, cwd) for a in words)
-    if name in TREE_WRITERS and any(state_parent(a, ctx, cwd) for a in words[1:]):
-        return True
-    return any(state_word(a, ctx, cwd, path=True) for a in words)
+    return any(
+        stamp_word(a, ctx, cwd) for a in run if not (declared and ASSIGN.match(a))
+    )
 
 
-# Commands that put a tree they name into a directory: aimed at the state
-# directory's parent, one named opensuse-packaging lands in its place.
-TREE_WRITERS = {"cp", "mv", "ln", "install", "rsync", "tar", "bsdtar", "unzip", "cpio"}
-STATE_PARENT = Rx(r"/\.local/+state/*$")
+# Commands that put a tree into a directory, and those of them whose tree the
+# command line does not show (an archive, rsync's DIR/ contents): aimed above the
+# state directory, a tree that holds it lands in its place.
+EXTRACTORS = {"rsync", "tar", "bsdtar", "unzip", "cpio", "7z", "7za"}
+TREE_WRITERS = EXTRACTORS | {"cp", "mv", "ln", "install"}
+STATE_PARENT = Rx(r"/\.local(?:/+state)?/*$")
 
 
-def state_parent(word, ctx, cwd):
-    """Whether a word (or an option's value after its =) places the state
-    directory's parent, ~/.local/state, in cwd (each directory of a loop)."""
+def state_parent(word, ctx, cwd, name="", sources=()):
+    """Whether a word (or an option's value after its =) a tree writer aims at,
+    placed in cwd (each directory of a loop), lies above the state directory:
+    ~/.local or ~/.local/state, and the home directory itself for an archive
+    or a tree named .local (or a directory's contents)."""
+    names = {os.path.basename(s.rstrip("/")) for s in sources}
+    whole = name in EXTRACTORS or names & {".local", ".", ".."} or "" in names
     for w in filter(None, (word, word.partition("=")[2])):
         for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
             for p in locate(w, ctx, d)[0] or ():
-                real = p if "\0" in p else os.path.realpath(p)
-                if STATE_PARENT.search(p) or STATE_PARENT.search(real):
-                    return True
+                for x in (p, p if "\0" in p else os.path.realpath(p)):
+                    if STATE_PARENT.search(x) or whole and x.rstrip("/") in homes():
+                        return True
     return False
 
 
@@ -5553,8 +5901,10 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     for t in outs:
         if stamp_word(t, ctx, cwd, path=True):
             block("stamp", "a redirection into the stamp directory")
-        if state_word(t, ctx, cwd, path=True):
-            block("stamp", "a redirection into the state directory", "state")
+        if state_target(">", t, ctx, cwd):
+            state_block(ctx, "a redirection into the state directory")
+        if ctx.state_named and unplaced(t, ctx, cwd):
+            state_block(ctx, f"{UNPLACED} (a redirection)", "state-unplaced")
         note_written(t, ctx, cwd)
         if t != "/dev/null":
             where = target_path(t, cwd)
@@ -5622,6 +5972,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if name in ("cd", "pushd"):
         rest = [a for a in run[1:] if a not in ("-L", "-P", "-e", "-@")]
         new = None if rest[:1] == ["-"] else enter(rest[0] if rest else "~", ctx, cwd)
+        if rest and rest[0][:1] not in "/.~$" and cdpath(ctx):
+            new = None  # CDPATH may place it anywhere
         return new, None
     if name == "popd":
         return None, None
@@ -5635,13 +5987,13 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         credential_read(name, argv, run, ctx, here)
     if touches_stamp(name, run, outs, ctx, here):
         block("stamp", "a command touching the stamp directory")
-    if touches_stamp(name, run, outs, ctx, here, state=True):
-        block("stamp", "a command touching the state directory", "state")
-    note_writes(name, run[1:], ctx, here)
     wrapped = argv[: len(argv) - len(run)]
-    via = (
-        "the arguments xargs adds" if "xargs" in map(os.path.basename, wrapped) else ""
-    )
+    xargs = "xargs" in map(os.path.basename, wrapped)
+    touched = state_touch(name, run, ctx, here, xargs)
+    if touched:
+        state_block(ctx, *touched)
+    note_writes(name, run[1:], ctx, here)
+    via = "the arguments xargs adds" if xargs else ""
     if name in ("source", ".") and len(run) > 1:
         review_record(run[1], run[2:], ctx, here, via)
     elif name not in SHELLS:
@@ -5673,6 +6025,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         pr_message("tea", args, largs, ctx, here)
         ltea = largs and ["tea", *largs]
         bot_directives("tea", ["tea", *args], (ltea, lit[1]), ctx, here)
+        close_rules("tea", args, ctx, here)
         if TEA_API.search(wide) and "pulls" in wide and not reads:
             if pool_or_unknown(wide, ctx, here, cmd=True):
                 block("create-tea-api", "a tea api write to pool pulls")
@@ -5681,6 +6034,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         tool_rules(joined, ctx, here)
         pr_message("git-obs", run[1:], lrun and lrun[1:], ctx, here)
         bot_directives("git-obs", run, (lrun, lit[1]), ctx, here)
+        close_rules("git-obs", run[1:], ctx, here)
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here)
@@ -6418,6 +6772,7 @@ def judge(ev):
     try:
         if isinstance(inp.get("command"), str):
             ctx.command = inp["command"]
+            ctx.state_named = names_state(ctx.command)
             shell_pass(inp["command"], ctx, cwd, 0)
             while ctx.traps:  # a trap's command runs last, after every write
                 text, here, depth = ctx.traps.pop(0)
