@@ -429,7 +429,22 @@ leakfiles() {
     find /tmp /var/tmp /dev/shm "/run/user/$(id -u)" -maxdepth 3 \( -path "$work" -o -path "$tools" \) -prune \
       -o -type f -user "$(id -u)" -newer "$work/stamp" -print 2> /dev/null
     find "$work" "$tools" -path "$FIX" -prune -o -type f -print
-  } | xargs -r -d '\n' grep -lE -- 'SECRET[-_][0-9]|TEA-OTHER' 2> /dev/null | grep -vxF -f <(printf '%s\n' "${fixtures[@]}")
+  } | xargs -r -d '\n' grep -lE -- 'SECRET[-_][0-9]|TEA-OTHER' 2> /dev/null | grep -vxF -f <(printf '%s\n' "${fixtures[@]}") | mine
+}
+# Another launcher suite running at the same time keeps its fixtures in a
+# directory like ours, with fix/envcheck in it: those are its logins, not a leak.
+mine() {
+  local f d rest top
+  while IFS= read -r f; do
+    top=''
+    for d in /tmp /var/tmp /dev/shm "/run/user/$(id -u)"; do
+      [[ $f == "$d"/*/* ]] || continue
+      rest=${f#"$d"/}
+      top=$d/${rest%%/*}
+    done
+    [ -n "$top" ] && [ "$top" != "$work" ] && [ -e "$top/fix/envcheck" ] && continue
+    printf '%s\n' "$f"
+  done
 }
 secret() { cat "$FIX/secrets/$N-$1" 2>/dev/null; }
 stored() { cat "$FIX/secrets/"* | sha256sum; }
@@ -1623,11 +1638,16 @@ out="$(sc uninstall ghost 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qx "stop $N-agent@ghost.service" "$FIX/systemctl-calls" \
   && pass "uninstall stops an instance that was never installed" || fail "uninstall of a stray unit: rc=$rc $out"
 # What goes into the drop-in is one value a line: systemd would read more.
-for bad in "--image=img:1"$'\n'"PodmanArgs=--privileged" "--as=$work/ws%t" "--as=$work/ws\\"; do
+# systemd also ends a line at a carriage return, expands a $ and ends a quoted
+# value at a double quote.
+for bad in "--image=img:1"$'\n'"PodmanArgs=--privileged" "--as=$work/ws%t" "--as=$work/ws\\" \
+  "--image=img:1"$'\r'"PodmanArgs=--privileged" "--as=$work/ws\$HOME" "--as=$work/ws\"x" \
+  "--as=$work/ws"$'\001' "--image=img:1"$'\t'"x"; do
   out="$(sc install inj --workdir "$work/ws" "${bad%%=*}" "${bad#*=}" 2>&1)"; rc=$?
-  [ "$rc" != 0 ] && grep -qF "a line break, a % or a backslash" <<<"$out" && [ ! -e "$pubdir/$N-agent@inj.container.d" ] \
-    && pass "install refuses ${bad%%=*} with a line break, a % or a backslash" \
-    || fail "install ${bad%%=*} injection: rc=$rc $out"
+  [ "$rc" != 0 ] && grep -qF "a control character, a %, a \$, a backslash or a double quote" <<<"$out" \
+    && [ ! -e "$pubdir/$N-agent@inj.container.d" ] \
+    && pass "install refuses ${bad%%=*} with a character systemd would read: $(printf %q "${bad#*=}")" \
+    || fail "install ${bad%%=*} injection $(printf %q "${bad#*=}"): rc=$rc $out"
 done
 # The work directory is mounted where --as says: not over the image's own files.
 for at in /etc/opencode/x /etc /usr/local /home/agent / /srv/../usr/bin //home/agent/.claude /bin /sbin/x /lib /lib64 /usr/../bin \
@@ -1784,6 +1804,12 @@ rm "$FIX/want-locale"
   || fail "the server password reached: $(sort -u "$FIX/env-leak" | tr '\n' ' ')"
 [ ! -e "$FIX/secret-leak" ] && pass "no login is in the arguments or the environment of a command" \
   || fail "a login reached: $(sort -u "$FIX/secret-leak" | tr '\n' ' ')"
+sib="$(mktemp -d -p /tmp)"; mkdir "$sib/fix"; : > "$sib/fix/envcheck"; echo OBS-SECRET-1 > "$sib/fix/imported"
+stray="$(mktemp -p /tmp)"; echo OBS-SECRET-1 > "$stray"
+left="$(leakfiles)"
+[ "$left" = "$stray" ] && pass "the leak scan passes over another suite's run and still finds a stray login" \
+  || fail "the leak scan with another suite's run: $left"
+rm -rf "$sib" "$stray"
 left="$(leakfiles)"
 [ -z "$left" ] && pass "no login is left in a file" || fail "a login is in: $left"
 [ ! -e "$FIX/cwd-leak" ] && pass "no command starts in the work directory" \

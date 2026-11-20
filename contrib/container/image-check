@@ -11,8 +11,9 @@ fail() {
 hooks=/home/agent/.claude/hooks
 skill=/etc/opencode/skills/opensuse-packaging
 scratch=$(mktemp -d)
-# opencode and its runtime leave files in the temporary directory.
-export TMPDIR=$scratch
+# opencode and its runtime leave files in the temporary directory; its terminal
+# helper keeps its socket below /tmp whatever TMPDIR says.
+export TMPDIR=$scratch OPENCODE_PTY_SOCKET_DIR=$scratch/pty
 server=
 cleanup() {
 	if [ -n "$server" ]; then
