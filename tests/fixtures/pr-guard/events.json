@@ -9955,5 +9955,334 @@
       "command": "cp /var/tmp/x.json ~/.local/state/osc-submission-watch/x.json"
     },
     "cwd": "@PLAIN@"
+  },
+  "gate-sh-symlinked": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/evil/gate.sh @OSC@/devel/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gate-sh-symlinked-path": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/evil/gate.sh @OSC@/devel/x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "canonical-dir-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/scripts-link/pool-pr.sh @CLONE@"
+    },
+    "cwd": "@CLONE@"
+  },
+  "state-xargs-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json | xargs cp /var/tmp/f.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-xargs-I": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -d ~/.local/state/opensuse-packaging/gate/obs/foo | xargs -I{} cp /var/tmp/f.json {}/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-env-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "P=$HOME/.local/state/opensuse-packaging bash -c 'cp /var/tmp/f.json \"$P/gate/obs/foo/devel:x.json\"'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-export-py": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export P=$HOME/.local/state/opensuse-packaging; python3 -c 'import os; open(os.environ[\"P\"] + \"/gate/obs/foo/devel:x.json\", \"w\").write(\"{}\")'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-array": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "a=(~/.local/state/opensuse-packaging); cp /var/tmp/f.json \"${a[0]}/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-param-subst": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "P=~/.local/state/opensuse-packagingXX; cp /var/tmp/f.json \"${P%XX}/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-brace-tee": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tee ~/.local/{state,state}/opensuse-packaging/gate/obs/foo/devel:x.json < /var/tmp/f.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-subst-echo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/f.json \"$HOME/.local/$(echo state)/opensuse-packaging/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-pwd-subst": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state && cp /var/tmp/f.json \"$(pwd)/opensuse-packaging/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-proc-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state && cp /var/tmp/f.json /proc/self/cwd/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-dev-fd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "exec 3<~/.local/state; cp /var/tmp/f.json /dev/fd/3/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-ln-same-call": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ln -s ~/.local /var/tmp/L && cp /var/tmp/f.json /var/tmp/L/state/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-bwrap": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bwrap --dev-bind / / --bind ~/.local/state /mnt cp /var/tmp/f.json /mnt/opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-unshare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "unshare -rm sh -c 'mount --bind ~/.local/state /mnt && cp /var/tmp/f.json /mnt/opensuse-packaging/gate/obs/foo/devel:x.json'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-cd-dirname": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd \"$(dirname ~/.local/state/x)\" && cp /var/tmp/f.json opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-cdpath": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "CDPATH=~/.local/state cd opensuse-packaging && cp /var/tmp/f.json gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-redirect-unplaced": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=$(cat /var/tmp/p.txt); echo '{}' > \"$D/opensuse-packaging/gate/obs/foo/devel:x.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-diff-state": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "diff ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json /var/tmp/x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-cat-out": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json > /var/tmp/copy.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-cp-out": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json /var/tmp/copy.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "stamp-read-test": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "test -f ~/.local/state/opensuse-packaging/gate/obs/foo/devel:x.json && echo stamped"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-cp-target-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp --target-directory=opensuse-packaging/gate/obs/foo /var/tmp/devel:x.json"
+    },
+    "cwd": "@HOME@/.local/state"
+  },
+  "state-ln-target-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ln -s --target-directory=opensuse-packaging/gate/obs/foo /var/tmp/devel:x.json"
+    },
+    "cwd": "@HOME@/.local/state"
+  },
+  "state-dd-of": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state && dd if=/var/tmp/f.json of=opensuse-packaging/gate/obs/foo/devel:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-sort-o-home": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sort -o.local/state/opensuse-packaging/gate/obs/foo/devel:x.json /var/tmp/f.json"
+    },
+    "cwd": "@HOME@"
+  },
+  "state-sort-output-eq": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.local/state && sort --output=opensuse-packaging/gate/obs/foo/devel:x.json /var/tmp/f.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-osc-output": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co devel:x foo --output-dir=opensuse-packaging/gate/obs/foo"
+    },
+    "cwd": "@HOME@/.local/state"
+  },
+  "comment-merge-ok-split": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe merge ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-group-split": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe @qa-team : approve"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-approve-split": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls approve 2 --login src.opensuse.org --repo perl/perl-Foo merge ok"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-clause": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe 'LGTM, merge ok'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-group-human": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe '@alice approved the same change in sr#1234, so this follows.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-git-obs-space": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr review approve -m 'merge ok' perl/perl-Foo#2"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-others-tea": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls close 2 --login src.opensuse.org --repo perl/perl-Foo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-others-git-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr close perl/perl-Foo#2"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-others-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs api -X PATCH /repos/perl/perl-Foo/pulls/2 --data '{\"state\": \"closed\"}'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-others-tea-api": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea api -X PATCH repos/perl/perl-Foo/pulls/2 -d '{\"state\": \"closed\"}'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls close 7 --login src.opensuse.org --repo AI/mistral-vibe"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "pr-close-own-git-obs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git obs pr close AI/mistral-vibe#7"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "mr-s-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc mr -s 1390002 -m 'x' devel:tools tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "revoke-api-body": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST /request/1390002 -d 'cmd=changestate&newstate=revoked'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "revoke-api-semicolon": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1390002?cmd=changestate;newstate=revoked'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-body": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST /request/1390007 -d 'cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "decline-api-body": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST /request/1390001 -d 'cmd=changestate&newstate=declined'"
+    },
+    "cwd": "@PLAIN@"
   }
 }
