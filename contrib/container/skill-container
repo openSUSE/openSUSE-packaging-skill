@@ -98,7 +98,7 @@ known() {
 }
 usage() {
 	cat <<EOF
-usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE] [--new-ssh-key]
+usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE] [--new-ssh-key | --ssh-key FILE]
        skill-container ssh-key
        skill-container install <instance> --workdir DIR [--as DIR] [--memory FILE] [--image IMAGE]
        skill-container up <instance> [--model provider/model]
@@ -113,7 +113,8 @@ usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE] 
 secrets  copies the api.opensuse.org login of osc, the src.opensuse.org login of
          tea, the github.com login of gh, the Bugzilla API key and one opencode
          integration into podman secrets, and makes an SSH key for pushes to
-         src.opensuse.org on its first run; --new-ssh-key replaces that key.
+         src.opensuse.org on its first run; --new-ssh-key replaces that key,
+         --ssh-key FILE takes a key of yours instead, one without a passphrase.
          It prints the secret names only.
 ssh-key  prints the public half of that key: add it to your src.opensuse.org
          account once.
@@ -229,7 +230,7 @@ gh_login() {
 	printf '    git_protocol: https\n    user: %s\n    oauth_token: %s\n' "$user" "$token"
 }
 cmd_secrets() {
-	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model newkey='' keydir=''
+	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model newkey='' ownkey='' keydir=''
 	while (($#)); do
 		case $1 in
 		--model-auth)
@@ -244,6 +245,10 @@ cmd_secrets() {
 			newkey=1
 			shift
 			;;
+		--ssh-key)
+			ownkey=${2?--ssh-key needs a file}
+			shift 2
+			;;
 		*) die "secrets: unknown argument: $1" ;;
 		esac
 	done
@@ -251,6 +256,8 @@ cmd_secrets() {
 	[[ $bugzilla_key == /* ]] || bugzilla_key=$start/$bugzilla_key
 	{ [ -f "$bugzilla_key" ] && [ -r "$bugzilla_key" ] && [ -s "$bugzilla_key" ]; } ||
 		die "no Bugzilla API key at $bugzilla_key"
+	[ -z "$ownkey" ] || [ -z "$newkey" ] || die "secrets: --ssh-key names the key, --new-ssh-key makes one: give one of them"
+	[[ -z $ownkey || $ownkey == /* ]] || ownkey=$start/$ownkey
 	resolve
 	# All of them are complete before any replaces the secret of an earlier run.
 	osc=$(osc_login)
@@ -259,12 +266,21 @@ cmd_secrets() {
 	model=$(PATH=$userpath OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" auth export "$model_auth")
 	printf '%s' "$model" | jq -e 'length > 0' >/dev/null 2>&1 ||
 		die "opencode exported no credential for $model_auth"
-	# The key is the container's own: the account's key settings can revoke it
-	# alone. A later run keeps it, or the key you registered would stop working.
-	if [ -n "$newkey" ] || ! podman secret exists "$name-ssh" 2>/dev/null; then
+	# Without --ssh-key the key is the container's own: the account's key
+	# settings can revoke it alone. A later run keeps the key, or the one you
+	# registered would stop working.
+	if [ -n "$ownkey" ] || [ -n "$newkey" ] || ! podman secret exists "$name-ssh" 2>/dev/null; then
 		keydir=$(mktemp -d -p "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}") || die "no private directory for the SSH key"
 		trap 'rm -rf "$keydir"' EXIT
-		ssh-keygen -q -t ed25519 -N '' -C "$name" -f "$keydir/key" >/dev/null || die "no SSH key was made"
+		if [ -z "$ownkey" ]; then
+			ssh-keygen -q -t ed25519 -N '' -C "$name" -f "$keydir/key" >/dev/null || die "no SSH key was made"
+		else
+			# The copy is what is judged and stored. Nobody types a passphrase
+			# in the container, so a key that needs one would never log in.
+			{ [ -f "$ownkey" ] && (umask 077 && cp "$ownkey" "$keydir/key") 2>/dev/null &&
+				ssh-keygen -y -P '' -f "$keydir/key" </dev/null >/dev/null 2>&1; } ||
+				die "no SSH private key without a passphrase at $ownkey"
+		fi
 	fi
 	printf '%s\n' "$osc" | store osc
 	printf '%s\n' "$tea" | store tea
