@@ -158,6 +158,7 @@
     { "action": "edit", "resource": "*.opencode/*", "effect": "deny" },
     { "action": "edit", "resource": "*.opencode/plan/*", "effect": "allow" },
     { "action": "edit", "resource": "*target-gate/*", "effect": "deny" },
+    { "action": "edit", "resource": "*.local/state/opensuse-packaging/*", "effect": "deny" },
 
     // Code Mode's execute tool runs JavaScript whose fetch takes any method, header and
     // body, seen by no hook or permission, and its opencode.session_move moves the

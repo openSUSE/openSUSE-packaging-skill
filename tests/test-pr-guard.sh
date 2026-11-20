@@ -131,6 +131,10 @@ mkfifo "$W/fifo"
 mkdir -p "$W/sweep" && for i in $(seq -w 1 64); do printf 'echo %s\n' "$i" > "$W/sweep/p$i.sh"; done
 # A local script named like the gate, which copies its arguments.
 cp "$FX/fake-gate.sh" "$W/target-gate.sh"; chmod +x "$W/target-gate.sh"
+# A skill whose gate.sh, as merged, writes its stamp: unread only while pinned.
+mkdir -p "$W/state-skill/scripts" && cp "$FX/state-gate.sh" "$W/state-skill/scripts/gate.sh"
+git init -q -b main "$W/state-skill" && git -C "$W/state-skill" add -A && git -C "$W/state-skill" commit -q -m init
+git -C "$W/state-skill" update-ref refs/remotes/origin/main HEAD
 # A worktree named like the stamp directory, which is no git directory (spelled
 # in pieces: the guard reads this suite), and a git directory not named .git.
 g=gate; mkdir -p "$W/wt/target-$g"
@@ -170,7 +174,7 @@ s = json.load(open(spec))
 def stub(path, text):
     open(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
 def stamp(prj, pkg, files, review=True, build=True, no_entry="", obs=None, pre=None, added=None, factory=True):
-    d = os.path.join(home, ".local/state/opensuse-packaging/gate/obs", pkg)
+    d = os.path.join(home, s["state_dir"], "gate", "obs", pkg)
     os.makedirs(d, exist_ok=True)
     st = {"project": prj, "package": pkg, "verdict": "GREEN", "files": files, "tree": "0" * 64}
     if review:
@@ -241,6 +245,8 @@ for key in ("checkouts", "unstamped", "edited", "obs_checkouts"):
             stamp(prj, pkg, {f"{pkg}.spec": md5}, obs=[] if key == "obs_checkouts" else None)
         if key == "edited":
             open(os.path.join(d, pkg + ".spec"), "a").write("Version: 2\n")
+# A link into the state directory, which a write through it reaches.
+os.symlink(os.path.join(home, s["state_dir"]), os.path.join(work, "links", "state"))
 PY
 
 # ev <name>: the fixture event, placeholders filled in.
@@ -926,6 +932,32 @@ case_ stamp-var-subst-chain 2 stamp     "a command touching the stamp directory"
 case_ stamp-fake-gate     2 stamp       "a command touching the stamp directory"
 case_ stamp-canonical-gate 0 - ""                         PR_GUARD_SKILL_DIR="$S"
 
+echo "--- the state directory: gate.sh's stamps and the incoming reviews', written by their scripts alone"
+case_ stamp-write-gate-dir     2 stamp-write "only the skill's own gate.sh"
+case_ stamp-edit-incoming-dir  2 stamp-write "only the skill's own gate.sh"
+case_ stamp-write-incoming-dir 2 stamp "a redirection into the state directory"
+case_ stamp-shell-cp           2 stamp "a command touching the state directory"
+case_ stamp-xdg-default        2 stamp "a command touching the state directory"
+# Through a link into it, from above it, from inside it, or by a cd it cannot place.
+case_ stamp-symlink-write      2 stamp "a command touching the state directory"
+case_ stamp-ln-into-state      2 stamp "a command touching the state directory"
+case_ stamp-cd-relative        2 stamp "a redirection into the state directory"
+case_ stamp-cd-inside-cp       2 stamp "a command touching the state directory"
+case_ stamp-cd-unplaced-state  2 stamp "a redirection into the state directory"
+case_ stamp-cwd-event-state    2 stamp "a redirection into the state directory"
+case_ stamp-cwd-above-mv       2 stamp "a command touching the state directory"
+case_ stamp-mv-into-parent     2 stamp "a command touching the state directory"
+case_ stamp-cp-state-sibling   0 - ""
+case_ stamp-python-state       2 stamp "program text touching the state directory"
+# Looking is not writing, and a git argument is text.
+case_ stamp-read-cat-state     0 - ""
+case_ stamp-read-cwd-state     0 - ""
+case_ stamp-text-state-commit  0 - ""
+# The skill's gate.sh writes its stamps only as merged: an edited one is read, and refused.
+case_ gate-sh-pinned-writes    0 - ""                     PR_GUARD_SKILL_DIR="$W/state-skill"
+case_ gate-sh-pinned-in-state  0 - ""                     PR_GUARD_SKILL_DIR="$W/state-skill"
+case_ gate-sh-unpinned-writes  2 stamp "a redirection into the state directory"
+
 echo "--- osc"
 case_ osc-build-x86_64    2 emulated-build "x86_64 on aarch64"
 case_ osc-build-setsid    2 emulated-build "x86_64 on aarch64"
@@ -1016,7 +1048,8 @@ case_ osc-ci-api-prefix          2 maintenance-commit "an osc commit into openSU
 case_ osc-ci-conf-prefix         2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ osc-ci-setopt              2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ osc-api-var-get            0 - ""
-case_ osc-api-var-request        0 - ""
+# A request's id is no project: a revoke of one only the shell knows asks whose it is.
+ask_ osc-api-var-request         others-request "osc api newstate=revoked: cannot tell which request it takes"
 case_ osc-api-quoted-home        0 - ""
 case_ osc-ci-var-devel           0 - ""
 # Nor do they take a package copied, linked or aggregated in, deleted or
@@ -1472,6 +1505,19 @@ case_ comment-gh-help           0 - ""
 case_ comment-in-commit-message 0 - ""
 case_ comment-echo              0 - ""
 ask_ comment-bash-c             comment "tea comment"
+# A line a forge bot acts on: autogits merges on a maintainer's "merge ok", the
+# group-review bot reviews on "@group : approve". Refused in any comment, review or
+# request message, inline, from a file or as a JSON body; one the guard cannot read too.
+case_ comment-merge-ok-tea      2 bot-directive 'the tea comment body with a bot directive ("merge ok")'
+case_ comment-merge-ok-sentence 0 - ""
+case_ comment-merge-ok-osc-file 2 bot-directive 'the osc api body with a bot directive ("merge ok")'
+case_ comment-merge-ok-osc-cat  2 bot-directive 'the osc comment create body with a bot directive ("merge ok")'
+case_ comment-group-approve     2 bot-directive '("@qa-team : approve")'
+case_ comment-group-approve-api 2 bot-directive '("@factory-maintainers : approve")'
+case_ comment-body-unreadable   2 bot-directive-unknown "the osc comment create body"
+case_ approve-message-merge-ok  2 bot-directive 'the git-obs pr review body with a bot directive ("Merge OK")'
+case_ tea-approve-merge-ok      2 bot-directive 'the tea pulls approve body with a bot directive ("merge ok")'
+case_ accept-message-merge-ok   2 bot-directive 'the osc rq accept message with a bot directive ("merge ok")'
 # An ask never outweighs a refusal elsewhere in the call.
 case_ comment-deny-wins         2 osc-yes "an osc request with --yes"
 # osc's options, its slash-split operands, a held subcommand; git obs; a closing comment.
@@ -1524,6 +1570,19 @@ case_ accept-api-own            0 - ""
 ask_ accept-api-declined        accept-forward "a decline through osc api"
 case_ accept-revoke             0 - ""
 ask_ osc-sub-unknown            accept-forward "which osc command"
+# Closing someone else's request declines their work, and --force skips its reviews:
+# the user's call. The user's own requests run as before.
+ask_ supersede-others           others-request "osc rq supersede 1390002: filed by other"
+case_ supersede-own             0 - ""
+ask_ revoke-others              others-request "osc rq revoke 1390002: filed by other"
+case_ revoke-own                0 - ""
+ask_ reopen-others              others-request "osc rq reopen 1390007: filed by other"
+ask_ sr-s-others                others-request "osc sr -s 1390002: filed by other"
+ask_ sr-supersede-long-others   others-request "osc sr -s 1390007: filed by other"
+ask_ revoke-api-others          others-request "osc api newstate=revoked 1390002: filed by other"
+ask_ accept-force-others        others-request "osc rq accept --force 1390002: filed by other"
+case_ accept-force-own          0 - ""
+ask_ accept-or-revoke-others    others-request "osc rq accept --or-revoke 1390002: filed by other"
 # Every lookup goes to the instance osc -A names: here, one with none of the stubs.
 ask_ forward-apiurl             accept-forward "cannot read"
 # The same fixtures for both: autoforward-gate.sh and the guard agree on each.
@@ -2367,7 +2426,8 @@ python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?
 
 echo "--- the skill's own tools, and every suite, run unrefused"
 for f in "$REPO"/skills/opensuse-packaging/scripts/*.sh "$REPO"/skills/opensuse-packaging/scripts/*.py "$HERE"/test-*.sh; do
-  case ${f##*/} in _*|pool-pr.sh|leap-sync.sh|target-gate.sh) continue;; esac
+  # The scripts that write stamps run only as merged, unread: read, they are refused.
+  case ${f##*/} in _*|pool-pr.sh|leap-sync.sh|target-gate.sh|gate.sh) continue;; esac
   case $f in *.py) run=python3;; *) run=bash;; esac
   out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[2],
     "tool_input": {"command": sys.argv[1]}}))' "$run $f --help" "$work/plain" | python3 "$GUARD" 2>&1)"; got=$?
@@ -2379,8 +2439,8 @@ py="$(python3 -c 'import importlib.util, sys
 spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 print(mod.PREFILTER.pattern); print(mod.STAMP_DIR); print(mod.CRED_DIR.pattern)
-print(",".join(mod.CRED_HOMES))' "$GUARD")"
-{ IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; IFS= read -r py_homes; } <<<"$py"
+print(",".join(mod.CRED_HOMES)); print(mod.STATE_DIR.pattern)' "$GUARD")"
+{ IFS= read -r py_pre; IFS= read -r py_stamp; IFS= read -r py_cred; IFS= read -r py_homes; IFS= read -r py_state; } <<<"$py"
 for PLUGIN in "$V1PLUGIN" "$V2PLUGIN"; do
   v=${PLUGIN%/pool-pr-guard.ts}; v=${v##*/}
   # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
@@ -2402,6 +2462,11 @@ for PLUGIN in "$V1PLUGIN" "$V2PLUGIN"; do
   [ -n "$ts" ] && [ "$py_homes" = "$ts" ] && grep -qF 'above(' "$PLUGIN" \
     && pass "$v: plugin also judges a call run above the credential files" \
     || fail "$v: the plugin's CRED_HOMES differs or is unused: guard '$py_homes' plugin '$ts'"
+  # shellcheck disable=SC2016  # the backticks are the pattern's, not the shell's
+  ts="$(sed -n 's/^const STATE_DIR = new RegExp(String\.raw`\(.*\)`)$/\1/p' "$PLUGIN")"
+  [ -n "$ts" ] && [ "$py_state" = "$ts" ] && grep -qF 'STATE_DIR.test(' "$PLUGIN" \
+    && pass "$v: plugin also judges a call run inside the state directory" \
+    || fail "$v: the plugin's STATE_DIR differs or is unused: guard '$py_state' plugin '$ts'"
 done
 # Each plugin is wired to its own plugin API: 1.x never runs a 2.x file nor the reverse.
 grep -qF '"tool.execute.before"' "$V1PLUGIN" && ! grep -qF 'ctx.tool.hook' "$V1PLUGIN" \
@@ -2453,6 +2518,7 @@ console.log([
   await run({ tool: "shell", input: { command: merge } }),
   await run({ tool: "shell", input: { command: "ls" } }),
   await run({ tool: "write", input: { path: ".git/target-" + "gate/t-b.json", content: "{}" } }),
+  await run({ tool: "write", input: { path: "~/.local/state/opensuse-" + "packaging/gate/obs/x/y.json", content: "{}" } }),
   await run({ tool: "shell", input: { command: push, workdir: pool } }),
   await run({ tool: "shell", input: { command: push } }),
   await run({ tool: "shell", input: "x" }),
@@ -2463,8 +2529,8 @@ console.log([
 JS
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$(V2_GATE="$W/gate.sh" $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
-  [ "$out" = "refused run refused refused run refused refused run refused" ] \
-    && pass "opencode-v2: the plugin refuses a merge, a stamp write, a pool push, unreadable input and an ask, and hands the guard the agent" \
+  [ "$out" = "refused run refused refused refused run refused refused run refused" ] \
+    && pass "opencode-v2: the plugin refuses a merge, stamp writes, a pool push, unreadable input and an ask, and hands the guard the agent" \
     || fail "opencode-v2: the plugin run gave '$out'"
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"

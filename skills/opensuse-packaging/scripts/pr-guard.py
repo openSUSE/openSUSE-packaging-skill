@@ -6,7 +6,10 @@ update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
 (tea, git-obs, a merge URL on pool, or elsewhere an API call that does not
 provably only read; gh is not judged), push to a branch that heads an open pool
 PR or over HTTPS to src.opensuse.org (SSH carries the login), write a
-target-gate.sh stamp, run an emulated osc build, file a request against the
+target-gate.sh stamp or into the skill's state directory (gate.sh's stamps;
+only the pinned gate.sh writes there), post a comment, review or request
+message with a line that starts with a bot directive (merge ok, @group :
+approve), run an emulated osc build, file a request against the
 scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
 file a submit request to a project other than the package's devel project in
@@ -60,7 +63,9 @@ ELIGIBLE (no reviewer, the user's package or an unowned one in a project
 they maintain, Factory's devel project; for a project kept in git, its
 project git's _maintainership.json and workflow.config Reviewers; whoever
 filed the request), and every
-decline and approvenew; an osc commit of a checkout whose files match no GREEN
+decline and approvenew; a revoke, supersede, reopen or wipe of a request
+someone else filed (a submit superseding it too), or its accept with osc's
+force option; an osc commit of a checkout whose files match no GREEN
 gate.sh run (or of a whole project checkout); a submit request whose source
 files match no GREEN gate.sh run with the change review's PASS and a GREEN
 build recorded; a review recorded with gate.sh from a call the event names no
@@ -180,9 +185,11 @@ def unquoted(text):
     return re.sub(r"[\"'\\]", "", text)
 
 
-# A call run inside the stamp directory is judged whatever it says. Two pieces:
-# the guard reads this file too when a call runs it.
+# A call run inside the stamp directory, or the skill's state directory (gate.sh's
+# stamps), is judged whatever it says. In pieces: the guard reads this file too
+# when a call runs it.
 STAMP_DIR = "target-" + "gate"
+STATE_DIR = re.compile(r"/\.local/+st" + r"ate/+opensuse-packaging(?:/|$)")
 
 
 def text_of(ev):
@@ -199,9 +206,9 @@ def text_of(ev):
 
 
 def watched(cwd):
-    """A cwd the call is judged in whatever it says: the stamp directory, a
-    directory of credential files, or one above them -- as written or resolved,
-    as the rules place it (a symlink, a leading //)."""
+    """A cwd the call is judged in whatever it says: the stamp or state
+    directory, a directory of credential files, or one above them -- as written
+    or resolved, as the rules place it (a symlink, a leading //)."""
     if not isinstance(cwd, str) or not cwd:
         return False
     home = os.path.expanduser("~")
@@ -210,6 +217,7 @@ def watched(cwd):
         top = os.path.normpath(d).rstrip("/") + "/"
         if (
             STAMP_DIR in d
+            or STATE_DIR.search(d)
             or CRED_DIR.search(d)
             or any((h + r + "/").startswith(top) for h in homes for r in CRED_HOMES)
         ):

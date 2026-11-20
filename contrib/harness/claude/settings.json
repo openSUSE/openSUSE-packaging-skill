@@ -7,6 +7,8 @@
       "Write(~/.claude/hooks/**)",
       "Edit(~/.config/opencode/**)",
       "Write(~/.config/opencode/**)",
+      "Edit(~/.local/state/opensuse-packaging/**)",
+      "Write(~/.local/state/opensuse-packaging/**)",
       "Read(~/.config/osc/**)",
       "Read(~/.oscrc)",
       "Read(~/.config/tea/**)",
