@@ -612,11 +612,14 @@ cmd_install() {
 		[[ $memory == /* ]] || memory=$start/$memory
 		check_memory
 	fi
-	# The drop-in is a unit file: systemd expands a %, reads a new line as a
-	# setting of its own and joins the next line after a backslash.
+	# The drop-in is a unit file: systemd expands a % and a $, reads a new line or
+	# a carriage return as a setting of its own, joins the next line after a
+	# backslash and ends a quoted value at a double quote.
 	for v in "$workdir" "$inside" "$image" "$userconf"; do
 		case $v in
-		*$'\n'* | *%* | *\\*) die "install refuses a path or an image name with a line break, a % or a backslash" ;;
+		*[[:cntrl:]]* | *%* | *\$* | *\\* | *\"*)
+			die "install refuses a path or an image name with a control character, a %, a \$, a backslash or a double quote"
+			;;
 		esac
 	done
 	for s in osc tea github bugzilla model ssh; do
