@@ -9,8 +9,8 @@ PR or over HTTPS to src.opensuse.org (SSH carries the login), write a
 target-gate.sh stamp or into the skill's state directory (gate.sh's stamps;
 only the pinned gate.sh writes there; in a call that names that directory,
 any write the guard cannot place), post a comment, review or request message
-with a line or clause that starts with "merge ok", or a line that is an
-"@group : approve", run an emulated osc build, file a request against the
+with a line or list item that starts with "merge ok" or "@group : approve",
+run an emulated osc build, file a request against the
 scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
 request that overrides osc's devel-project check or create one through the API,
 file a submit request to a project other than the package's devel project in
@@ -66,8 +66,9 @@ project git's _maintainership.json and workflow.config Reviewers; whoever
 filed the request), and every
 decline and approvenew; a revoke, supersede, reopen or wipe of a request
 someone else filed (a submit superseding it too), or its accept with osc's
-force option, and a close of (or API write to) a PR someone else opened; an
-osc commit of a checkout whose files match no GREEN
+force option, and a close, reopen or edit (tea's issues verbs too) of, or an
+API write to, a PR someone else opened; an osc commit of a checkout whose
+files match no GREEN
 gate.sh run (or of a whole project checkout); a submit request whose source
 files match no GREEN gate.sh run with the change review's PASS and a GREEN
 build recorded; a review recorded with gate.sh from a call the event names no
@@ -92,7 +93,8 @@ code (-c, -e, an eval or trap string), and text fed to a shell or interpreter
 (heredoc, here-string, < FILE, a pipe from echo, printf or cat). A script the
 same call writes is not run: its content is not known yet. The scripts in the
 skill checkout's scripts/ run unread only when run by a path in that directory
-(a link from elsewhere is read), while every file scripts/ tracks is byte-identical to its blob at the pinned ref (as merged,
+(a link from elsewhere is read), while nothing untracked lies there (but
+__pycache__) and every file scripts/ tracks is byte-identical to its blob at the pinned ref (as merged,
 not as edited locally), with no environment change but TMPDIR, LC_ALL, LANG,
 NO_COLOR and CHANGES_AUTHOR.
 

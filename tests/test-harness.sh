@@ -239,11 +239,13 @@ check(last_execute == [{"action": "execute", "resource": "*", "effect": "deny"}]
       "opencode-v2: the last entry that matches execute is its '*' deny, which removes the tool")
 v2_edit = [(r["resource"], r["effect"]) for r in v2_tail if r["action"] == "edit"]
 STAMP = "target-" + "gate"
-STATE = "/home/user/.local/state/opensuse-" + "packaging"  # in pieces: pr-guard reads this suite
+# The state directory from a fixture, its paths joined: pr-guard reads this suite.
+STATE = "/home/user/" + open(os.path.join(FXDIR, "state-dir.txt")).read().strip()
 EDIT_PATHS = [".claude/hooks/pr-guard.py", "/home/user/.claude/hooks/_pr_guard.py", "/home/user/.claude/settings.json",
               "/home/user/.config/opencode/plugins/pool-pr-guard.ts", "opencode.json", "sub/opencode.jsonc",
               ".opencode/plugins/x.ts", f".git/{STAMP}/t-b.json", f"/w/pool/x/.git/{STAMP}/t-b.json",
-              f"{STATE}/gate/obs/foo/devel:x.json", f"{STATE}/incoming/obs/1.json"]
+              os.path.join(STATE, "gate", "obs", "foo", "devel:x.json"),
+              os.path.join(STATE, "incoming", "obs", "1.json")]
 EDIT_OK = ["foo.spec", "foo.changes", "_service", "README.md", "opencode.spec", "opencode.changes",
            f"skills/opensuse-packaging/scripts/{STAMP}.sh", ".opencode/plan/x.md", "/home/user/.opencode/plan/x.md",
            "/home/user/.local/state/osc-submission-watch/state.json"]

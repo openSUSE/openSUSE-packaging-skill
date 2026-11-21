@@ -102,7 +102,7 @@ fi
 restore() { [ -n "$bak" ] && mv -f "$bak" "$file"; }
 
 rc=0
-FILE="$file" SEP="$sep" STAMP="$stamp" AUTHOR="$author" BODY="$body" python3 - <<'PYEOF' || rc=$?
+FILE="$file" SEP="$sep" STAMP="$stamp" AUTHOR="$author" BODY="$body" python3 -I - <<'PYEOF' || rc=$?
 import os, sys
 f      = os.environ["FILE"]
 sep    = os.environ["SEP"]

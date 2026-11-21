@@ -52,15 +52,17 @@ STATE_TEXT = Rx(
     r"|opensuse-packaging[\s\"',/+]*(?:gate|incoming)(?![\w.-])"
 )
 # Its pieces in a call's text, however the shell assembles them (quotes, braces,
-# substitutions, variables): the leaf, which names it in any directory; and the
-# parent and $XDG_STATE_HOME, with which a write the guard cannot place is refused.
+# substitutions, variables): the leaf, which names it in any directory; and with
+# it, $XDG_STATE_HOME before its name and the stamps' own layout, with which a
+# write the guard cannot place is refused. osc's state beside it is none.
 LEAF = (
     r"(?<![a-z])state\W{0,6}opensuse\W{0,4}packaging"
     r"|opensuse\W{0,4}packaging\W{0,6}(?:gate|incoming)(?![\w.-])"
 )
 STATE_LEAF = Rx(rf"(?i){LEAF}")
 STATE_PIECE = Rx(
-    rf"(?i){LEAF}|\.local\W{{0,6}}st|XDG_STATE_HOME|(?:gate|incoming)/+(?:obs|gitea)/"
+    rf"(?i){LEAF}|XDG_STATE_HOME\W{{0,8}}opensuse\W{{0,4}}packaging"
+    r"|(?:gate|incoming)/+(?:obs|gitea)/"
 )
 # The skill's scripts that write there, run unread while they match the pin.
 STATE_WRITERS = ("gate.sh", "incoming-review.sh")
@@ -511,8 +513,8 @@ MESSAGES = {
     "bring it back first (git status there, then git merge --ff-only of the ref).",
     "state-unplaced": "{0}: the guard cannot tell where it writes, and the call names "
     "the skill's state directory (~/.local/state/opensuse-packaging), where only the "
-    "skill's own gate.sh writes. Write to a literal path outside it, and look at the "
-    "stamps in a call of their own.",
+    "skill's own gate.sh writes. Write to a literal path outside it (a directory made "
+    "in an earlier call), and look at or copy the stamps in a call of their own.",
     "bot-directive": '{0}: autogits merges a PR on a maintainer\'s "merge ok", and the '
     'group-review bot reviews on an "@group : approve" line, so no comment, review or '
     "request message carries one. Reword it.",
@@ -2614,10 +2616,18 @@ def others_pr(owner, repo, n, ctx):
     return "" if login == user else f"opened by {login or 'no one named'}"
 
 
+# tea's verbs that change an issue or PR's state or text: its issues verbs take
+# a PR's number too (the issues endpoint), and git-obs pr's.
+TEA_ITEM = {"pr", "pulls", "pull", "issues", "issue", "i"}
+TEA_STATE = {"close", "reopen", "open", "edit", "e"}
+GIT_OBS_STATE = {"close", "reopen"}
+
+
 def close_rules(name, args, ctx, cwd):
-    """Closing, or any API write to, a src.opensuse.org PR someone else opened:
-    tea pulls close, git-obs pr close, a tea or git-obs api write to one issue
-    or PR item (PR_ITEM). Asked, like the closing of a request."""
+    """Closing, reopening or editing, or any API write to, a src.opensuse.org
+    PR (or issue) someone else opened: tea pulls|issues close, reopen or edit,
+    git-obs pr close or reopen, a tea or git-obs api write to one issue or PR
+    item (PR_ITEM). Asked, like the closing of a request."""
 
     def one(w):
         vals = spellings(w, ctx, cwd, False)
@@ -2632,22 +2642,23 @@ def close_rules(name, args, ctx, cwd):
     if name == "tea":
         opts, pos = split_args(args, None, TEA_BODY_SHORT, TEA_BODY_LONG)
         words = unlit(pos)
-        if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] == ["close"]:
+        if words[:1] and words[0] in TEA_ITEM and words[1:2] and words[1] in TEA_STATE:
             repos = [one(v) for k, v in opts if k in ("-r", "--repo")]
             m = OWNER_REPO.fullmatch(repos[-1] if repos else "")
             o, r = m.groups() if m else ("", "")
             for w in words[2:] or [""]:
-                judge_item(f"tea {words[0]} close", o, r, one(w))
+                judge_item(f"tea {words[0]} {words[1]}", o, r, one(w))
             return
         api, endpoints = words[:1] == ["api"], words[1:2]
         body = {"-d", "--data", "-f", "--field", "-F", "--Field"}
     elif name == "git-obs":
         rest = git_obs_rest(args)
         words = [a for a in rest if a[:1] != "-"]
-        if words[:2] == ["pr", "close"]:
+        if words[:1] == ["pr"] and words[1:2] and words[1] in GIT_OBS_STATE:
             for w in [a for a in words[2:] if "#" in a] or [""]:
                 m = GIT_OBS_ID.fullmatch(one(w))
-                judge_item("git-obs pr close", *(m.groups() if m else ("", "", "")))
+                what = f"git-obs pr {words[1]}"
+                judge_item(what, *(m.groups() if m else ("", "", "")))
             return
         opts, pos = split_args(rest, None, "X", ("--method", "--data"), GIT_OBS_LONG)
         api, endpoints, body = words[:1] == ["api"], unlit(pos)[1:2], {"--data"}
@@ -2666,12 +2677,12 @@ def close_rules(name, args, ctx, cwd):
                 judge_item(f"{name} api {verb}", *m.groups())
 
 
-# What a forge bot acts on: autogits merges a PR on a maintainer's "merge ok",
-# matched at the start of a line or of a clause in one, past punctuation and
-# markup; the group-review bot reviews on an "@group : approve" (or decline) line.
-MERGE_OK = Rx(r"(?i)(?:[^\w@]|_)*(merge[\W_]*ok(?:ay)?)(?!\w)")
-GROUP_REVIEW = Rx(r"(?i)(?:[^\w@]|_)*(@[\w.+-]+\s*:\s*(?:approve|decline))(?!\w)")
-CLAUSE = Rx(r"(?<=[.!?;:,])\s*|\s+[-\u2013\u2014]+\s+")
+# What a forge bot acts on, at the start of a line or of a list item (past
+# punctuation and markup): autogits merges a PR on a maintainer's "merge ok", the
+# group-review bot reviews on "@group : approve" (or decline).
+LINE_START = r"(?i)(?:[^\w@]|_)*(?:\d+[.)]\s+)?"
+MERGE_OK = Rx(rf"{LINE_START}(merge[\W_]*ok(?:ay)?)(?!\w)")
+GROUP_REVIEW = Rx(rf"{LINE_START}(@[\w.+-]+\s*:\s*(?:approve|decline))(?!\w)")
 # The options that take a value of tea's comment, pulls review verbs and api,
 # short and long; git-obs pr's long options, which argparse takes by prefix.
 TEA_BODY_SHORT = "lrRodXfFH"
@@ -2693,9 +2704,8 @@ def json_strings(value):
 
 def comment_fault(text):
     """Why a comment, review or request message would command a forge bot, or
-    None: a line, or a clause in one, that starts with "merge ok", or a line
-    that starts with "@group : approve". A JSON body is judged by its strings
-    too."""
+    None: a line, or a list item, that starts with "merge ok" or "@group :
+    approve". A JSON body is judged by its strings too."""
     texts = [text]
     try:
         texts += json_strings(json.loads(text))
@@ -2703,9 +2713,7 @@ def comment_fault(text):
         pass
     for t in texts:
         for ln in t.splitlines():
-            m = GROUP_REVIEW.match(ln)
-            for part in CLAUSE.split(ln):
-                m = m or MERGE_OK.match(part)
+            m = GROUP_REVIEW.match(ln) or MERGE_OK.match(ln)
             if m:
                 return f'with a bot directive ("{m.group(1)}")'
     return None
@@ -3918,7 +3926,7 @@ def run_text(text, kind, ctx, cwd, depth):
     api_rules(whole, ctx, cwd)
     if STAMP.search(whole):
         block("stamp", "program text touching the stamp directory")
-    if STATE_TEXT.search(whole):
+    if STATE_TEXT.search(whole) or names_state(whole):
         state_block(ctx, "program text touching the state directory")
     for m in CODE_PUSH.finditer(whole):
         if not other_forge(whole, m, ctx, cwd):
@@ -4522,13 +4530,19 @@ def pinned(skill):
     """The files of the skill's scripts/ at the pinned ref, when every file
     that the index or the ref lists there matches its pinned blob on disk; else
     an empty set. The scripts run their siblings, so one edited file untrusts
-    them all. Compared by blob hash of the bytes on disk (--no-filters: a clean
-    filter would hash an edit to the pinned blob); `git diff` would trust an
-    assume-unchanged index entry, and HEAD any local commit."""
+    them all, and so does any file there git does not track, ignored or not (a
+    module named like one they import, a sourceless .pyc, runs beside them) but
+    a __pycache__, which their Python never reads (PYTHONPYCACHEPREFIX). Compared
+    by blob hash of the bytes on disk (--no-filters: a clean filter would hash an
+    edit to the pinned blob); `git diff` would trust an assume-unchanged index
+    entry, and HEAD any local commit."""
     ref = os.environ.get("PR_GUARD_PIN_REF") or PIN_REF
     tree = git(skill, (), "ls-tree", "-r", "-z", ref, "--", "scripts")
     index = git(skill, (), "ls-files", "-s", "-z", "--", "scripts")
-    if not tree or index is None:
+    others = git(skill, (), "ls-files", "--others", "-z", "--", "scripts")
+    if not tree or index is None or others is None:
+        return set()
+    if any("__pycache__" not in p.split("/") for p in filter(None, others.split("\0"))):
         return set()
     blobs = {}
     for ent in filter(None, tree.split("\0")):
@@ -4565,7 +4579,7 @@ def unread_why(real, skill, ctx, path):
     ):
         return "this call writes into its scripts/"
     if os.path.relpath(real, skill) not in ctx.canon[skill]:
-        return "its scripts/ differ from the pinned ref"
+        return "its scripts/ differ from the pinned ref (an edited, added or untracked file)"
     return ""
 
 
@@ -5578,12 +5592,8 @@ def flat(text):
 
 
 def names_state(text):
-    """Whether a call's text names the state directory by any piece, or reaches
-    a directory through /proc or /dev/fd beside a ~/.local."""
-    t = flat(text or "")
-    return bool(STATE_PIECE.search(t)) or (
-        ".local" in t and ("/proc/" in t or "/dev/fd/" in t)
-    )
+    """Whether shell text names the state directory by any piece."""
+    return bool(STATE_PIECE.search(flat(text or "")))
 
 
 def cdpath(ctx):
@@ -5672,9 +5682,10 @@ def extract_into(name, args):
 
 
 def git_paths(run):
-    """The directories a git command writes into: its -C, --git-dir and
-    --work-tree, the working directory without -C, and what clone, init,
-    worktree and submodule name."""
+    """The directories and files a git command writes into: its -C, --git-dir
+    and --work-tree, the working directory without -C, what clone, init,
+    worktree and submodule name, and its subcommand's --output, -o and
+    --prefix."""
     out, i, here = [], 1, True
     while i < len(run) and run[i][:1] == "-":
         a = run[i]
@@ -5689,7 +5700,20 @@ def git_paths(run):
         i += 2 if a in ("-c", "--namespace", "--config-env") else 1
     if run[i : i + 1] in (["clone"], ["init"], ["worktree"], ["submodule"]):
         out += [a for a in run[i + 1 :] if a[:1] != "-"]
+    sub, rest = (run[i : i + 1] or [""])[0], run[i + 1 :]
+    for j, a in enumerate(rest):
+        k, eq, v = a.partition("=")
+        if k in GIT_OUTPUTS and ("*" in GIT_OUTPUTS[k] or sub in GIT_OUTPUTS[k]):
+            out += [v] if eq else rest[j + 1 : j + 2]
+        elif a[:2] == "-o" and len(a) > 2 and sub in GIT_OUTPUTS["-o"]:
+            out.append(a[2:])
     return out + (["."] if here else [])
+
+
+# git's options that name a file or directory a subcommand writes, and the
+# subcommands they do it for ("*": any).
+GIT_OUTPUTS = {"--output": {"*"}, "--output-directory": {"format-patch"}}
+GIT_OUTPUTS |= {"-o": {"format-patch", "archive"}, "--prefix": {"checkout-index"}}
 
 
 # Commands that write no file, beyond the read-only ones that may look at a stamp.
@@ -6201,6 +6225,7 @@ def shell_pass(text, ctx, cwd, depth):
     """Walk the simple commands of shell text, following cd, subshells, and
     pipes into a shell or interpreter. Returns what it writes to stdout, as
     literal-aware text: one output() per writer, in order."""
+    ctx.state_named = ctx.state_named or names_state(text)  # a script's text too
     first = len(ctx.docs)
     body = split_heredocs(text, ctx)
     for doc, expands in ctx.docs[first:]:

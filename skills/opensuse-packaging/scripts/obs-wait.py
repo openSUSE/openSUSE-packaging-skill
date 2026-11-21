@@ -60,9 +60,10 @@ import time
 import urllib.request
 import xml.etree.ElementTree as ET
 
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _obs_scope as scope  # the repos/arches gate.sh --obs-build judges
-import _sanitize  # escape/Unicode-smuggling filter for third-party text
+import _obs_scope as scope  # noqa: E402  # the repos/arches gate.sh --obs-build judges
+import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
 FEED_URL = "https://rabbit.opensuse.org/cgi-bin/webevents.py"
 FEED_OPEN = 15  # seconds for the stream to answer

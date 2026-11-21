@@ -62,13 +62,17 @@ readable that way.
 - Output is compact plain text meant to be read by an agent in one tool result: no raw
   JSON dumps, no whole logs. Prefer one line per finding and a verdict line.
 - Standard library only, Python 3.11+. The suites are offline; network lookups are stubbed.
+- A shell script runs inline Python isolated (`python3 -I -c`, `python3 -I -`): otherwise
+  the working directory, often a package checkout, comes first on `sys.path`, and a
+  `json.py` there runs. `check-skills.py` enforces it.
 - **The pool PR gate changes only with the maintainer's explicit approval** — `target-gate.sh`
   (builds and stamps a pool tree), `pool-pr.sh` (the only route to a pool PR), `leap-sync.sh`
   (sync, then the gate), `pr-guard.py` and `_pr_guard.py` (the harness hook and its rules).
   No standing permission to maintain the skill's scripts covers them. The guard runs the
   scripts in `scripts/` unread only by a path in that directory (not a link from
   elsewhere), and only while every file `scripts/` tracks matches its blob on
-  the checkout's `origin/main` (`PR_GUARD_PIN_REF`); a local edit to any of them, even
+  the checkout's `origin/main` (`PR_GUARD_PIN_REF`), and nothing untracked lies there
+  but `__pycache__`; a local edit to any of them, even
   `scripts/README.md`, has it read them all until the change is merged. So merging a change
   to *any* script changes what the guard lets through: no other script may push, write a
   pool PR or touch a stamp. The guard itself is installed as a pinned copy of its two files

@@ -196,7 +196,7 @@ fi
 
 # ---- 3+4. SRs in flight, both directions ------------------------------------
 parse_srs() { # stdin: request collection XML; args: filter-source-project (optional)
-  python3 -c '
+  python3 -I -c '
 import sys, xml.etree.ElementTree as ET
 flt = sys.argv[1] if len(sys.argv) > 1 else ""
 try:
@@ -272,7 +272,7 @@ if [ -n "$devel" ]; then
     err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
     [ "$grc" = 124 ] && err="git-obs timed out after 30s"
     [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
-    prs="$(printf '%s' "$resp" | python3 -c '
+    prs="$(printf '%s' "$resp" | python3 -I -c '
 import sys, json
 raw = sys.stdin.read()
 if raw.startswith("Response:"): raw = raw.split("\n", 1)[1] if "\n" in raw else ""

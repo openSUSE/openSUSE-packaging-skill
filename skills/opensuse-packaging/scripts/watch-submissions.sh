@@ -124,7 +124,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OBS_RC=$OBS_RC INCOMING_RC=$INCOMING_RC GITEA_RC=$GITEA_RC \
 ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING RESOLVE=$RESOLVE \
-OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
+OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" SCRIPT_DIR="$SCRIPT_DIR" python3 -I -X pycache_prefix=/dev/null/opensuse-packaging - <<'PYEOF'
 import json, os, subprocess, sys, xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.environ["SCRIPT_DIR"])

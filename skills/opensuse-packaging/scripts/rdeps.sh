@@ -27,7 +27,7 @@ esac
 # build-summary.sh's standard-aarch64 default). Don't "fix" the mismatch.
 needle="$1"; project="${2:-openSUSE:Factory}"; repo="${3:-standard}"; arch="${4:-x86_64}"
 
-osc api "/build/$project/$repo/$arch/_builddepinfo" 2>/dev/null | python3 -c '
+osc api "/build/$project/$repo/$arch/_builddepinfo" 2>/dev/null | python3 -I -c '
 import sys, xml.etree.ElementTree as ET
 needle, scope = sys.argv[1], sys.argv[2]
 try:

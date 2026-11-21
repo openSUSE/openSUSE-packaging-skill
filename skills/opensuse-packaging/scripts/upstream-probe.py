@@ -72,9 +72,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _sanitize  # escape/Unicode-smuggling filter for third-party text
-import _forges
+import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
+import _forges  # noqa: E402
 
 
 # Every output line of this script embeds forge-controlled strings (tag names,

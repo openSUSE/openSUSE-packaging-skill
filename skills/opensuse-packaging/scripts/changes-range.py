@@ -51,6 +51,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _forges  # noqa: E402
 import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text

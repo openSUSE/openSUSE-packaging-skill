@@ -65,7 +65,7 @@ if [ "$source_sel" != git ]; then
   fi
   # Parse with xml.etree — a grep of 'name=... project=...' depends on OBS's
   # attribute order and would silently break on a reorder.
-  obs_out="$(printf '%s' "$resp" | python3 -c '
+  obs_out="$(printf '%s' "$resp" | python3 -I -c '
 import sys, xml.etree.ElementTree as ET
 try:
     root = ET.fromstring(sys.stdin.read() or "<collection/>")

@@ -80,8 +80,9 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _sanitize  # escape/Unicode-smuggling filter for third-party text
+import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
 # seconds per osc / git-obs call: both have hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first

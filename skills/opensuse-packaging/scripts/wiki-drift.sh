@@ -41,7 +41,7 @@ done
 [ -r "$manifest" ] || { echo "error: manifest not found: $manifest" >&2; exit 2; }
 
 SDIR="$(cd "$(dirname "$0")" && pwd)"
-DIFFMODE=$diffmode UPDATE=$update MANIFEST=$manifest PAGES="${pages[*]:-}" SDIR="$SDIR" python3 - <<'PY'
+DIFFMODE=$diffmode UPDATE=$update MANIFEST=$manifest PAGES="${pages[*]:-}" SDIR="$SDIR" python3 -I -X pycache_prefix=/dev/null/opensuse-packaging - <<'PY'
 import json, os, sys, urllib.parse, urllib.request, difflib, datetime
 
 # The live wiki is world-editable third-party content; --diff prints its raw

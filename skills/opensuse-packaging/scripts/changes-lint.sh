@@ -109,7 +109,7 @@ done
 rc=0; unreadable=0
 for f in "$@"; do
   [ -r "$f" ] || { echo "$f: unreadable" >&2; unreadable=1; continue; }
-  python3 - "$f" "$entries" "$author" <<'PY' || rc=1
+  python3 -I - "$f" "$entries" "$author" <<'PY' || rc=1
 import itertools, re, sys
 f, nent, me = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 WHO = re.compile(r"^(.*\S) <([^<>]+)>$")
