@@ -26,6 +26,14 @@ case_() {
   LAST=$out
 }
 
+# gate.sh runs bwrap from /usr/bin alone: a copy of the scripts whose gate.sh names
+# another path stands in for a host without bwrap, or with one that fails.
+gcopy() {   # gcopy <name> <bwrap path>: a copy of the skill's scripts whose gate.sh runs that bwrap
+  rm -rf "$work/sk-$1"; cp -r "$(dirname "$GATE")" "$work/sk-$1"
+  sed -i "s|^BWRAP=/.*\$|BWRAP=$2|" "$work/sk-$1/gate.sh"
+  grep -qxF "BWRAP=$2" "$work/sk-$1/gate.sh" || fail "gcopy $1: gate.sh names no BWRAP=/path"
+}
+
 # A bad --entries is a usage error before any gate runs, not a red gate.
 mkdir -p "$work/pkg0" && printf 'Name: p\n' > "$work/pkg0/p.spec"
 for n in 0 x -1; do
@@ -1147,7 +1155,7 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
     > "$work/t-green/foo.spec"
   sed -i '4s/^- Update to 1.0$/- Build with the system zlib/' "$work/t-green/foo.changes"
   out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-green" 2>&1)"
-  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\)[ ,].*/\1/p' <<<"$out")
   [ -n "$t12" ] && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d["verdict"]=="GREEN" and d["tree"].startswith(sys.argv[2]) and set(d["files"])=={"foo.changes","foo.spec"}))' "$SF" "$t12" \
     && pass "a GREEN run stamps the tree its verdict names" || { fail "GREEN stamp"; printf '%s\n' "$out" | sed 's/^/    /'; }
   grep -qF "note: no --rpms DIR" <<<"$out" && [ -z "$(sv "$SF" build)" ] \
@@ -1390,7 +1398,7 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   rm -f "$SC"; scmgit "$work/t-scm" && ( cd "$work/t-scm" && git branch -q base && git branch -q -u base ) \
     || fail "scmsync git fixture"
   out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/t-scm" 2>&1)"
-  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\)[ ,].*/\1/p' <<<"$out")
   [ -n "$t12" ] && [ "$t12" = "$(sv "$SC" tree | cut -c1-12)" ] && grep -qF "OK: devel:example is the target, by git PR" <<<"$out" \
     && python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1]))
 sys.exit(sorted(d["files"]) != ["_scmsync.obsinfo", "build.specials.obscpio", "scmpkg.changes", "scmpkg.spec"])' "$SC" \
@@ -1438,7 +1446,7 @@ out="$(OBS=$O HOME="$work/home" PATH="$work/scbin:$work/obin:$PATH" SC_MODE=same
 grep -qF "## tracked: rc=0" <<<"$out" && pass "the mkpac checkout once osc added: tracked green" \
   || { fail "mkpac checkout after osc add"; printf '%s\n' "$out" | sed 's/^/    /'; }
 if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/download_files ]; then
-  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\) .*/\1/p' <<<"$out")
+  t12=$(sed -n 's/^VERDICT: GREEN — all gates passed for tree \([0-9a-f]\{12\}\)[ ,].*/\1/p' <<<"$out")
   [ -n "$t12" ] && [ "$t12" != "${EMPTY:0:12}" ] \
     && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d["tree"].startswith(sys.argv[2]) and set(d["files"])=={"bar.changes","bar.spec"}))' "$SB" "$t12" \
     && pass "the mkpac checkout once osc added: GREEN, its two files stamped" \
@@ -1455,8 +1463,8 @@ fi
 # gate was GREEN. Several specs share one checkout, so one gate run checks many,
 # and the runs go in parallel: the fixtures first, then every run, then the checks.
 if command -v rpmspec > /dev/null && command -v rpmbuild > /dev/null; then
-  # %prep runs only in a bwrap sandbox that starts; without one its cases are skipped
-  sbx=0; env -i PATH="$PATH" bwrap --ro-bind / / true > /dev/null 2>&1 && sbx=1
+  # %prep runs only in a sandbox of the bwrap gate.sh names; without one its cases are skipped
+  sbx=0; bw=$(sed -n 's|^BWRAP=||p' "$GATE"); env -i PATH="$PATH" "${bw:-/usr/bin/bwrap}" --ro-bind / / true > /dev/null 2>&1 && sbx=1
   HDR=$'Name:           p\nVersion:        1\nRelease:        0\nSummary:        t\nLicense:        MIT'
   PATH="$work/scbin:$PATH"   # the stand-in spec-cleaner (SC_MODE=same unless set) saves a second a spec
   ms() { mkdir -p "$work/$1"; { echo "$HDR"; cat; } > "$work/$1/$2.spec"; }   # ms <dir> <name> < spec body
@@ -1629,10 +1637,16 @@ PY
   printf '<services>\n  <service name="format_spec_file"/>\n</services>\n' > "$work/pp-red/_service"
   pspec pp-red noparse hello -- 'Bogus: tag'
   pspec pp-log bad goodbye; echo build > "$work/build.log"
-  # never unsandboxed: no bwrap that starts is UNKNOWN, and nothing runs
-  mkdir -p "$work/nobw"; printf '#!/bin/sh\necho "bwrap: no permission" >&2; exit 1\n' > "$work/nobw/bwrap"; chmod +x "$work/nobw/bwrap"
+  # never unsandboxed: a bwrap denied user namespaces is UNKNOWN, one failing otherwise
+  # red, and nothing runs either way
+  mkdir -p "$work/nobw"
+  printf '#!/bin/sh\necho "bwrap: setting up uid map: Permission denied" >&2; exit 1\n' > "$work/nobw/bwrap"
+  printf '#!/bin/sh\necho "bwrap: no permission" >&2; exit 1\n' > "$work/nobw/bwrap-bad"
+  chmod +x "$work/nobw/bwrap" "$work/nobw/bwrap-bad"; gcopy pnobw "$work/nobw/bwrap"; gcopy pbad "$work/nobw/bwrap-bad"
   # shellcheck disable=SC2016
   pspec pp-nobw ran hello 'touch "$HOME/.gate-test-ran"'
+  # shellcheck disable=SC2016
+  pspec pp-badbw ran hello 'touch "$HOME/.gate-test-ran"'
   # not enough room under /var/tmp to unpack: UNKNOWN, nothing unpacked
   mkdir -p "$work/nodf"; printf '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 100 99 1 99%% /var/tmp\\n"\n' > "$work/nodf/df"
   chmod +x "$work/nodf/df"; pspec pp-df room hello   # a tree no other run caches
@@ -1663,7 +1677,8 @@ PY
     "$work/emb-rpm/e.spec" > /dev/null 2>&1 && find "$work/emb-rpm/RPMS" -name '*.rpm' -exec cp {} "$work/emb-rpms/" \;
 
   bg rs-ok; bg rs-sc SC_MODE=group; bg rs-red; bg pp-log -- --build-log "$work/build.log"
-  bg pp-nobw HOME="$work/home" PATH="$work/nobw:$PATH"
+  HOME="$work/home" bash "$work/sk-pnobw/gate.sh" "$work/pp-nobw" > "$work/pp-nobw.out" 2>&1 &
+  HOME="$work/home" bash "$work/sk-pbad/gate.sh" "$work/pp-badbw" > "$work/pp-badbw.out" 2>&1 &
   bg sp-defect SC_MODE=unbrace; bg sp-dash SC_MODE=unbrace; bg sp-group SC_MODE=group
   bg pp-emb -- --rpms "$work/emb-rpms"
   if [ "$sbx" = 1 ]; then
@@ -1709,10 +1724,13 @@ PY
 
   got pp-nobw
   sec pp-nobw prep 0
-  has pp-nobw prep "UNKNOWN: %prep not run: no sandbox (bwrap: no permission)" "no sandbox is UNKNOWN"
-  [ ! -e "$work/home/.gate-test-ran" ] && pass "prep: nothing ran without the sandbox" || fail "prep: %prep ran unsandboxed"
+  has pp-nobw prep "UNKNOWN: %prep not run: no sandbox (bwrap: setting up uid map: Permission denied)" "no user namespaces is UNKNOWN"
   grep -qE '^VERDICT: .*not proven on this host.*no sandbox' <<<"$out" && pass "prep: no sandbox is on the verdict line" \
     || { fail "prep: no sandbox not on the verdict line"; grep VERDICT <<<"$out"; }
+  got pp-badbw
+  sec pp-badbw prep 1; sec pp-badbw rpmspec 1
+  has pp-badbw prep "RED: %prep not run: the sandbox does not start (bwrap: no permission)" "another bwrap failure is red"
+  [ ! -e "$work/home/.gate-test-ran" ] && pass "prep: nothing ran without the sandbox" || fail "prep: %prep ran unsandboxed"
   if [ "$sbx" = 1 ]; then
     got pp-ok
     sec pp-ok prep 0
@@ -2009,18 +2027,22 @@ python3 "$work/skill-copy/obs-wait.py" --help >/dev/null 2>&1; python3 "$work/sk
 # parse-surface lists the parse-time code (%(, %{lua:, %{expand:, %include,
 # %{load:, %%) a spec adds over openSUSE:Factory/<pkg>'s, as information: it is
 # never red, and the spec is parsed whatever it finds. The fake OBS serves
-# Factory and logs osc's -A; in psbin a fake rpmspec records each call and a
-# bwrap that cannot start leaves the parse unsandboxed, where that fake is seen.
+# Factory and logs osc's -A; in psbin a fake rpmspec records each call. gate.sh
+# runs bwrap from /usr/bin alone, so copies of the scripts whose gate.sh names
+# another path stand in for a host without bwrap and for a bwrap that fails;
+# without a sandbox the parse runs here, where the fake rpmspec is seen.
 mkdir -p "$work/psbin" "$work/pxbin"
 # shellcheck disable=SC2016  # the stubs' own $ expressions, expanded when they run
 { printf '#!/bin/bash\necho "$*" >> "$PS_CALLS"\nfor a; do f=$a; done; cat "$f"\n' > "$work/psbin/rpmspec"
-  printf '#!/bin/sh\necho "bwrap: No permissions to create new namespace" >&2\nexit 1\n' > "$work/psbin/bwrap"
+  printf '#!/bin/sh\necho "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces." >&2\nexit 1\n' > "$work/psbin/bwrap"
+  printf '#!/bin/sh\necho "bwrap: Can'"'"'t create file at /x: Resource temporarily unavailable" >&2\nexit 1\n' > "$work/psbin/bwrap-bad"
   printf '#!/bin/bash\necho "$*" >> "$PS_OSC"\nexit 1\n' > "$work/pxbin/osc"; }
-chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/pxbin/osc"
-ps_() {   # ps_ <dir> [gate args]
+chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/psbin/bwrap-bad" "$work/pxbin/osc"
+gcopy nobw "$work/no-such/bwrap"; gcopy nsbw "$work/psbin/bwrap"; gcopy badbw "$work/psbin/bwrap-bad"
+ps_() {   # ps_ <dir> [gate args]: unsandboxed, through the copy that finds no bwrap
   rm -f "$work/ps-calls" "$work/ps-a"
   out="$(OBS=$O HOME="$work/home" PS_CALLS="$work/ps-calls" OSC_A_LOG="$work/ps-a" \
-    PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$@" 2>&1)"; rc=$?
+    PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "${PSGATE:-$work/sk-nobw/gate.sh}" "$@" 2>&1)"; rc=$?
 }
 psdir() {   # psdir <case> <pkg> < spec: a checkout of <pkg> (no .osc) holding that spec
   rm -rf "$work/ps-$1"; mkdir -p "$work/ps-$1/$2"; cat > "$work/ps-$1/$2/$2.spec"
@@ -2102,15 +2124,27 @@ out="$(bash "$GATE" "$work/ps-plain/qux" --parse-code "x" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF -- "unknown option --parse-code" <<<"$out" && pass "--parse-code is gone: usage" \
   || fail "--parse-code: rc=$rc"
 
-# Every rpm parse runs in the sandbox %prep uses where bwrap starts; where it cannot
-# (the container), the spec parses as before and one line says so, never red.
+# Every rpm parse runs in the sandbox %prep uses where /usr/bin/bwrap starts. Without
+# bwrap, or where it is denied user namespaces (the container), the spec parses as
+# before and one line says so, never red; any other bwrap failure is red, nothing
+# parses, and %prep does not run.
 ps_ "$work/ps-same/bar"
-grep -qF "note: no sandbox here (bwrap: No permissions to create new namespace): the specs parse unsandboxed" <<<"$out" \
+grep -qF "note: no sandbox here (bwrap is not installed): the specs parse unsandboxed" <<<"$out" \
   && grep -qF "## rpmspec: rc=0" <<<"$out" && [ -s "$work/ps-calls" ] \
-  && pass "sandbox-fallback: no bwrap sandbox, the spec parses unsandboxed and says so" \
-  || { fail "sandbox-fallback"; printf '%s\n' "$out" | sed 's/^/    /'; }
-# With a sandbox, the suite's own spec reads a file under $HOME and counts the network
-# interfaces at parse time: neither the file nor any interface but lo is there.
+  && pass "sandbox-not-installed: the spec parses unsandboxed and says so" \
+  || { fail "sandbox-not-installed"; printf '%s\n' "$out" | sed 's/^/    /'; }
+PSGATE="$work/sk-nsbw/gate.sh" ps_ "$work/ps-same/bar"
+grep -qF "note: no sandbox here (bwrap: No permissions to create a new namespace, likely because" <<<"$out" \
+  && grep -qF "## rpmspec: rc=0" <<<"$out" && [ -s "$work/ps-calls" ] \
+  && pass "sandbox-no-userns: the spec parses unsandboxed and says so" \
+  || { fail "sandbox-no-userns"; printf '%s\n' "$out" | sed 's/^/    /'; }
+PSGATE="$work/sk-badbw/gate.sh" ps_ "$work/ps-same/bar"
+grep -qF "## rpmspec: rc=1" <<<"$out" && grep -qF "RED: the sandbox does not start (bwrap: Can't create file at /x" <<<"$out" \
+  && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
+  && pass "sandbox-broken: another bwrap failure is red and nothing parses" \
+  || { fail "sandbox-broken"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# With a sandbox, the suite's own spec probes at parse time: a file under $HOME, the
+# network interfaces, the sources through %{_sourcedir}, and a write into the log.
 mkdir -p "$work/home-sb" "$work/sb/sbx"; echo SECRET-IN-HOME > "$work/home-sb/secret"
 cat > "$work/sb/sbx/sbx.spec" <<EOF
 Name:           sbx
@@ -2119,19 +2153,35 @@ Release:        0
 Summary:        %(cat $work/home-sb/secret 2>/dev/null || echo no-home)
 License:        MIT
 URL:            https://example.com/%(grep -c : /proc/net/dev)
+Group:          src-%(test -f %{_sourcedir}/sbx.spec && echo yes || echo NO)
+Vendor:         log-%(touch $work/gate-sbx/forged 2>/dev/null && echo WROTE || echo none)
 %description
 t
 EOF
-out="$(HOME="$work/home-sb" bash "$GATE" "$work/sb/sbx" 2>&1)"; p="$work/gate-sbx/parsed.sbx.spec"
-if grep -qF "note: no sandbox here" <<<"$out"; then
-  echo "SKIP: sandboxed parse (no bwrap sandbox starts here)"
-  grep -qF "## rpmspec: rc=0" <<<"$out" && pass "sandbox: none starts, the spec parsed as before" \
-    || { fail "sandbox: unsandboxed parse"; printf '%s\n' "$out" | sed 's/^/    /'; }
-else
-  grep -qx 'Summary:        no-home' "$p" && grep -qx 'URL:            https://example.com/1' "$p" \
-    && pass "sandbox: a parse reads nothing under \$HOME and sees no network but lo" \
-    || { fail "sandbox: the parse saw \$HOME or the network"; sed 's/^/    /' "$p" 2>/dev/null; printf '%s\n' "$out" | sed 's/^/    /'; }
-fi
+ln -sfn "$work/sb/sbx" "$work/sbx-link"
+sbxok=""   # whether the first run found a sandbox: after it, falling back is a failure
+sbxrun() {   # sbxrun <name> <dir> [env...]: the real gate on the probe spec; the probe's answers in $p
+  rm -f "$work/gate-sbx/forged"
+  out="$(env HOME="$work/home-sb" "${@:3}" bash "$GATE" "$2" 2>&1)"; p="$work/gate-sbx/parsed.sbx.spec"
+  if grep -qF "note: no sandbox here" <<<"$out" && [ -n "$sbxok" ]; then
+    fail "$1: parsed unsandboxed where a sandbox starts"; printf '%s\n' "$out" | grep -F "no sandbox here" | sed 's/^/    /'
+  elif grep -qF "note: no sandbox here" <<<"$out"; then
+    echo "SKIP: $1 (no bwrap sandbox starts here)"
+  elif grep -qx 'Summary:        no-home' "$p" && grep -qx 'URL:            https://example.com/1' "$p" \
+       && grep -qx 'Group:          src-yes' "$p" && grep -qx 'Vendor:         log-none' "$p" && [ ! -e "$work/gate-sbx/forged" ]; then
+    pass "$1: nothing under \$HOME, no network but lo, the sources there, the log not writable"
+  else
+    fail "$1"; sed 's/^/    /' "$p" 2>/dev/null; printf '%s\n' "$out" | sed 's/^/    /'
+  fi
+}
+sbxrun sandbox "$work/sb/sbx"
+grep -qF "note: no sandbox here" <<<"$out" || sbxok=1
+sbxrun "sandbox, the checkout through a symlink" "$work/sbx-link"
+# The caller's environment cannot switch the sandbox off: an empty or odd HOME, or a
+# failing bwrap first on PATH.
+sbxrun "sandbox, HOME empty" "$work/sb/sbx" HOME=
+sbxrun "sandbox, HOME=/" "$work/sb/sbx" HOME=/
+sbxrun "sandbox, a failing bwrap first on PATH" "$work/sb/sbx" PATH="$work/psbin:$PATH"
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

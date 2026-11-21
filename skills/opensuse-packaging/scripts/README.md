@@ -347,12 +347,13 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                the base package and each flavor. GREEN records them as the
                tree's build. Without it (and without --obs-build) %prep runs
                here: rpmbuild -bp --nodeps in a bwrap sandbox (no network,
-               only /usr and /etc of the host, $HOME empty, the checkout
+               only /usr and /etc of the host, a HOME of its own, the checkout
                read-only, only a scratch dir under /var/tmp writable), a pass
                cached per spec and sources; red when it fails or passes 900 s,
-               UNKNOWN but not red when no sandbox starts, /var/tmp lacks the
-               room, or %prep stops on what a BuildRequires missing here
-               would bring
+               or when bwrap fails to start for another reason than missing
+               user namespaces; UNKNOWN but not red without bwrap or user
+               namespaces, when /var/tmp lacks the room, or when %prep stops
+               on what a BuildRequires missing here would bring
   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
                also refuses a prebuilt binary the package ships, whatever its
                exception line says (firmware alone may ship); without it the
@@ -394,12 +395,13 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
                (re.search), when the user says another target matters
   --arches REGEX  with --obs-build: also judge the arches that match
 Parsing a spec runs its %(...), Lua and the files it includes as you, and %prep
-runs the package's code. Both run in a bwrap sandbox where the host starts one:
-no network, only /usr and /etc of the host, $HOME empty, the checkout
-read-only, the log or scratch directory the only place to write, no
-environment but PATH, the locale and HOME. Without one (a container lacking
-user namespaces) the specs parse unsandboxed, as before, and rpmspec says so;
-%prep does not run. parse-surface lists the parse-time code a spec adds over
+runs the package's code. Both run in a sandbox of /usr/bin/bwrap: no network,
+only /usr and /etc of the host, HOME=/tmp/home, the checkout read-only, a
+fresh directory (a copy of the spec, %prep's scratch) the only place to write,
+no environment but PATH, the locale and HOME. Without bwrap, or where it is
+denied user namespaces (a container), the specs parse unsandboxed, as before,
+and rpmspec says so, while %prep does not run; any other failure to start it
+is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
 openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
 %{load:, %% and the forms that rebuild one), as information, never red; a
 lookup that fails says the comparison was not possible. A contributor's
@@ -456,7 +458,7 @@ It also runs spec-cleaner itself, the canonical four-flag invocation with a fres
 
 `parse-surface` lists the parse-time code a spec adds over openSUSE:Factory/<pkg>'s (`_parse_scan.py`), sanitized, for the change review and the incoming review: `%(...)`, Lua, what `%include` and `%{load:}` read, text expanded twice, and a construct Factory has whose file, macro or parametric caller changed. It is information and never red: an independent review found forms no text scan sees (a host macro that hands its arguments to a shell). A package Factory lacks counts every construct as new; a listing, file or scan that fails says the comparison was not possible, also not red; a tree with no construct needs no lookup. Factory is read from openSUSE's OBS by name (`osc -A https://api.opensuse.org`), whatever apiurl the checkout names.
 
-Every rpm parse the gate makes runs in the sandbox `%prep` uses: `rpmspec -P` of each flavour and of spec-cleaner's output, `rpmspec -q --buildrequires`, and `rpm --eval` of a BuildRequires value. It starts under `env -i` with `PATH`, the locale and an empty `$HOME`, with no network, the checkout read-only and the log directory the only place to write; a harmless sample spec parsed so saw neither a file under the real `$HOME` nor any network interface but `lo`, and could not resolve a name. Where no bwrap sandbox starts (a container without user namespaces) the specs parse unsandboxed, as before, and the rpmspec section says so in one line, never red; `%prep` then does not run at all. A contributor's submission is still read as text only until the user's go to accept it (`references/untrusted-content.md` "The two sharp local-execution vectors").
+Every rpm parse the gate makes runs in the sandbox `%prep` uses: `rpmspec -P` of each flavour and of spec-cleaner's output, `rpmspec -q --buildrequires`, and `rpm --eval` of a BuildRequires value. It starts `/usr/bin/bwrap`, never one found on `PATH`, under `env -i` with `PATH`, the locale and `HOME=/tmp/home` (none of the caller's), with no network and the checkout bound read-only at its physical path; the spec goes in as a copy in a fresh directory, the only place the parse may write, so parse-time code cannot touch the gate's log, whose `parsed.*` and `hostonly.*` files later steps trust. A harmless sample spec parsed so saw no file under the real `$HOME`, no network interface but `lo`, no name resolution and a read-only checkout, also through a symlinked path and with `HOME=/`. Only without bwrap, or when bwrap is denied user namespaces (a container), do the specs parse unsandboxed, as before, said in one line of the rpmspec section, never red, and `%prep` does not run; any other failure to start bwrap is red, nothing parses and `%prep` is red too, so the caller's environment (an empty `HOME`, a `bwrap` first on `PATH`) cannot switch the sandbox off. A `%prep` skipped after a parse that stopped on this host is named on the verdict line. A contributor's submission is still read as text only until the user's go to accept it (`references/untrusted-content.md` "The two sharp local-execution vectors").
 
 source_validator's exit code is not factory-auto's verdict: it prints an unreferenced file as a `(W) Attention, "<file>" is not mentioned …` warning and exits 0, and `check_source.py` declines on the first such line. The gate marks source_validator red on it (sr#1386155 went out green with an unlisted `swift-lang-rpmlintrc`).
 
