@@ -450,6 +450,7 @@ fi
 mkdir -p "$work/obin"
 cat > "$work/obin/osc" <<'EOF'
 #!/bin/bash
+[ "$1" = -A ] && { [ -z "${OSC_A_LOG:-}" ] || echo "$2 $3 $4" >> "$OSC_A_LOG"; shift 2; }
 case "$1" in
   develproject) [ -f "$OBS/devel/$3" ] && { cat "$OBS/devel/$3"; exit 0; } ;;
   api) case "$2" in
@@ -2004,6 +2005,133 @@ grep -q '^## changes-range' <<<"$out" && [ ! -e "$work/planted-ran" ] \
 python3 "$work/skill-copy/obs-wait.py" --help >/dev/null 2>&1; python3 "$work/skill-copy/sr-status.py" --help >/dev/null 2>&1
 [ ! -e "$work/skill-copy/__pycache__" ] && pass "no __pycache__ in the skill's scripts/ after gate.sh and its Python scripts ran" \
   || fail "the skill's scripts/ got a __pycache__: $(find "$work/skill-copy/__pycache__" -type f -printf '%f ' | head -c 200)"
+
+# parse-surface lists the parse-time code (%(, %{lua:, %{expand:, %include,
+# %{load:, %%) a spec adds over openSUSE:Factory/<pkg>'s, as information: it is
+# never red, and the spec is parsed whatever it finds. The fake OBS serves
+# Factory and logs osc's -A; in psbin a fake rpmspec records each call and a
+# bwrap that cannot start leaves the parse unsandboxed, where that fake is seen.
+mkdir -p "$work/psbin" "$work/pxbin"
+# shellcheck disable=SC2016  # the stubs' own $ expressions, expanded when they run
+{ printf '#!/bin/bash\necho "$*" >> "$PS_CALLS"\nfor a; do f=$a; done; cat "$f"\n' > "$work/psbin/rpmspec"
+  printf '#!/bin/sh\necho "bwrap: No permissions to create new namespace" >&2\nexit 1\n' > "$work/psbin/bwrap"
+  printf '#!/bin/bash\necho "$*" >> "$PS_OSC"\nexit 1\n' > "$work/pxbin/osc"; }
+chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/pxbin/osc"
+ps_() {   # ps_ <dir> [gate args]
+  rm -f "$work/ps-calls" "$work/ps-a"
+  out="$(OBS=$O HOME="$work/home" PS_CALLS="$work/ps-calls" OSC_A_LOG="$work/ps-a" \
+    PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$@" 2>&1)"; rc=$?
+}
+psdir() {   # psdir <case> <pkg> < spec: a checkout of <pkg> (no .osc) holding that spec
+  rm -rf "$work/ps-$1"; mkdir -p "$work/ps-$1/$2"; cat > "$work/ps-$1/$2/$2.spec"
+}
+advisory() {   # advisory <name> <expected line>: listed, never red, and the spec parsed anyway
+  grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF -- "$2" <<<"$out" && [ -s "$work/ps-calls" ] \
+    && ! grep -q "^VERDICT: RED — .*parse-surface" <<<"$out" && ! grep -qF "SKIPPED (parse-surface" <<<"$out" \
+    && pass "$1: listed, not red, and the spec parsed" \
+    || { fail "$1: expected an advisory listing '$2'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+cat <<'EOF' | put openSUSE:Factory/bar bar.spec
+Name:           bar
+Version:        1.0
+Source1:        bar.inc
+%global commit 0123abcd
+%global short %(c=%{commit}; echo ${c:0:7})
+%include %{SOURCE1}
+EOF
+printf '%%define bar_x 1\n' | put openSUSE:Factory/bar bar.inc
+psbar() {   # psbar <case>: a checkout of bar holding Factory's spec and bar.inc, then each line of stdin
+  { cat "$O/openSUSE:Factory/bar/bar.spec"; cat; } | psdir "$1" bar; cp "$O/openSUSE:Factory/bar/bar.inc" "$work/ps-$1/bar/"
+}
+psbar same < /dev/null
+ps_ "$work/ps-same/bar"
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+  && [ -s "$work/ps-calls" ] && pass "parse-identical-to-factory: green, and the spec is parsed" \
+  || { fail "parse-identical-to-factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ -s "$work/ps-a" ] && ! grep -qv '^https://api.opensuse.org ' "$work/ps-a" \
+  && pass "parse-surface asks openSUSE's OBS by name (osc -A), whatever the checkout names" \
+  || { fail "parse-surface osc -A"; sed 's/^/    /' "$work/ps-a" 2>/dev/null; }
+sed -i 's/^%global commit 0123abcd$/%global commit 4567cdef/' "$work/ps-same/bar/bar.spec"
+ps_ "$work/ps-same/bar"
+grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+  && pass "parse-plain-value: a new commit hash in a macro Factory's shell line uses lists nothing" \
+  || { fail "parse-plain-value"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sed -i 's/^%global commit 4567cdef$/%global commit x;id;/' "$work/ps-same/bar/bar.spec"
+ps_ "$work/ps-same/bar"
+# shellcheck disable=SC2016  # spec text, not shell
+advisory parse-macro-injected 'bar.spec:5: %global short %(c=%{commit}; echo ${c:0:7}) — shell: uses %commit, defined anew'
+grep -qF "note: 1 construct(s) of parse-time code openSUSE:Factory/bar lacks verbatim" <<<"$out" \
+  && pass "parse-macro-injected: says it is information for the review" || fail "parse-macro-injected: the note"
+printf '%%global stamp %%(date +%%%%s)\n' | psbar shell
+ps_ "$work/ps-shell/bar"
+advisory parse-added-shell 'bar.spec:7: %global stamp %(date +%%s) — shell, %%: new'
+printf '%%global o (\n%%define bar_y %%{expand:%%%%%%{o}id)}\n' | psbar expand
+ps_ "$work/ps-expand/bar"
+advisory parse-expand-indirection 'bar.spec:8: %define bar_y %{expand:%%%{o}id)} — expand, %%: new'
+printf '%%{lua:\n  print("x")\n}\n' | psbar lua
+ps_ "$work/ps-lua/bar"
+advisory parse-lua 'bar.spec:7: %{lua: (+2 lines) — lua: new'
+grep -qxF '      print("x")' <<<"$out" && pass "parse-lua: the block's body is listed too" || fail "parse-lua: the body"
+psbar include < /dev/null; printf '%%define bar_x %%(id)\n' > "$work/ps-include/bar/bar.inc"
+ps_ "$work/ps-include/bar"
+advisory parse-include-target-changed 'bar.inc:1: %define bar_x %(id) — shell: new'
+psbar include-tags < /dev/null; printf 'Source1000: https://registry.example/a-1.tgz\n' > "$work/ps-include-tags/bar/bar.inc"
+ps_ "$work/ps-include-tags/bar"
+grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+  && pass "parse-include-tags-only: an included file that changed without a construct lists nothing" \
+  || { fail "parse-include-tags-only"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: zork\n%%define zork_v %%(echo 1)\n' | psdir new zork
+ps_ "$work/ps-new/zork"
+advisory parse-not-in-factory 'zork.spec:2: %define zork_v %(echo 1) — shell: new'
+grep -qF "note: openSUSE:Factory/zork does not exist: every construct counts as new" <<<"$out" \
+  && pass "parse-not-in-factory: says Factory lacks the package" || fail "parse-not-in-factory: the note"
+touch "$O/fail-list"
+ps_ "$work/ps-same/bar"
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "note: no comparison with openSUSE:Factory/bar: cannot list it" <<<"$out" \
+  && [ -s "$work/ps-calls" ] && ! grep -q "^VERDICT: RED — .*parse-surface" <<<"$out" \
+  && pass "parse-base-fetch-fails: says the comparison was not possible, not red" \
+  || { fail "parse-base-fetch-fails"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -f "$O/fail-list"
+# A tree without a construct needs no base: no lookup of Factory at all.
+rm -f "$work/ps-osc"; printf 'Name: qux\nVersion: 1\n' | psdir plain qux
+out="$(PS_OSC="$work/ps-osc" PATH="$work/pxbin:$PATH" bash "$GATE" "$work/ps-plain/qux" 2>&1)"
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no spec holds a parse-time construct" <<<"$out" \
+  && ! grep -qF "openSUSE:Factory/qux" "$work/ps-osc" 2>/dev/null \
+  && pass "parse-no-construct: green without a lookup" || { fail "parse-no-construct"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(bash "$GATE" "$work/ps-plain/qux" --parse-code "x" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF -- "unknown option --parse-code" <<<"$out" && pass "--parse-code is gone: usage" \
+  || fail "--parse-code: rc=$rc"
+
+# Every rpm parse runs in the sandbox %prep uses where bwrap starts; where it cannot
+# (the container), the spec parses as before and one line says so, never red.
+ps_ "$work/ps-same/bar"
+grep -qF "note: no sandbox here (bwrap: No permissions to create new namespace): the specs parse unsandboxed" <<<"$out" \
+  && grep -qF "## rpmspec: rc=0" <<<"$out" && [ -s "$work/ps-calls" ] \
+  && pass "sandbox-fallback: no bwrap sandbox, the spec parses unsandboxed and says so" \
+  || { fail "sandbox-fallback"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# With a sandbox, the suite's own spec reads a file under $HOME and counts the network
+# interfaces at parse time: neither the file nor any interface but lo is there.
+mkdir -p "$work/home-sb" "$work/sb/sbx"; echo SECRET-IN-HOME > "$work/home-sb/secret"
+cat > "$work/sb/sbx/sbx.spec" <<EOF
+Name:           sbx
+Version:        1
+Release:        0
+Summary:        %(cat $work/home-sb/secret 2>/dev/null || echo no-home)
+License:        MIT
+URL:            https://example.com/%(grep -c : /proc/net/dev)
+%description
+t
+EOF
+out="$(HOME="$work/home-sb" bash "$GATE" "$work/sb/sbx" 2>&1)"; p="$work/gate-sbx/parsed.sbx.spec"
+if grep -qF "note: no sandbox here" <<<"$out"; then
+  echo "SKIP: sandboxed parse (no bwrap sandbox starts here)"
+  grep -qF "## rpmspec: rc=0" <<<"$out" && pass "sandbox: none starts, the spec parsed as before" \
+    || { fail "sandbox: unsandboxed parse"; printf '%s\n' "$out" | sed 's/^/    /'; }
+else
+  grep -qx 'Summary:        no-home' "$p" && grep -qx 'URL:            https://example.com/1' "$p" \
+    && pass "sandbox: a parse reads nothing under \$HOME and sees no network but lo" \
+    || { fail "sandbox: the parse saw \$HOME or the network"; sed 's/^/    /' "$p" 2>/dev/null; printf '%s\n' "$out" | sed 's/^/    /'; }
+fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

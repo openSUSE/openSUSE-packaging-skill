@@ -1,6 +1,7 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-# (osc checkouts), no copy of a skill script, source_validator, factory-auto's
+# (osc checkouts), no copy of a skill script, the parse-time code the specs add
+# (parse-surface), source_validator, factory-auto's
 # URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
 # (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
 # changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
@@ -93,11 +94,18 @@
 #   --repos REGEX  with --obs-build: also judge the repos whose name matches
 #                (re.search), when the user says another target matters
 #   --arches REGEX  with --obs-build: also judge the arches that match
-# Parsing a spec runs its %(...) on this host as you, and %prep runs the
-# package's code (sandboxed, which keeps it off the network and out of $HOME but
-# is no reason to trust it): run the gate only on a checkout you are changing
-# yourself, never on someone else's submission (references/untrusted-content.md
-# "The two sharp local-execution vectors").
+# Parsing a spec runs its %(...), Lua and the files it includes as you, and %prep
+# runs the package's code. Both run in a bwrap sandbox where the host starts one:
+# no network, only /usr and /etc of the host, $HOME empty, the checkout
+# read-only, the log or scratch directory the only place to write, no
+# environment but PATH, the locale and HOME. Without one (a container lacking
+# user namespaces) the specs parse unsandboxed, as before, and rpmspec says so;
+# %prep does not run. parse-surface lists the parse-time code a spec adds over
+# openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
+# %{load:, %% and the forms that rebuild one), as information, never red; a
+# lookup that fails says the comparison was not possible. A contributor's
+# submission is read as text only until the user's go to accept it
+# (references/untrusted-content.md "The two sharp local-execution vectors").
 # Entry: a tree that differs from the target needs a .changes top entry the
 # target lacks (factory-auto: "No changelog"), and one Factory lacks too when
 # the target is Factory's devel project; --amend-top and --squash-mine take an
@@ -125,6 +133,7 @@
 #       4 = --obs-build: still building, or built from older sources: wait
 #       (obs-wait.py), then rerun.
 set -uo pipefail
+unset GATE_SANDBOX   # set below, only when a sandbox starts
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Its Python reads and writes no __pycache__ beside the scripts: a directory under
 # /dev/null cannot exist, so no compiled module can be planted there either.
@@ -1023,9 +1032,15 @@ SECTION = re.compile(
 MACROREF = re.compile(r"(?<!%)%[{(A-Za-z_]")
 
 
+def rpm_cmd(args):
+    # in gate.sh's bwrap sandbox when one starts here (GATE_SANDBOX: its env -i and bwrap words)
+    pre = os.environ.get("GATE_SANDBOX", "")
+    return (pre.split("\x1f") if pre else []) + args
+
+
 def rpmspec(path):
     try:
-        return subprocess.run(["rpmspec", "-P", "--define", "_sourcedir " + os.getcwd(), path],
+        return subprocess.run(rpm_cmd(["rpmspec", "-P", "--define", "_sourcedir " + os.getcwd(), path]),
                               capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -1048,7 +1063,7 @@ def as_built(lines, flavor=""):
 
 def defined(name):
     try:
-        out = subprocess.run(["rpm", "--eval", "%%{?%s:1}" % name], capture_output=True, text=True).stdout
+        out = subprocess.run(rpm_cmd(["rpm", "--eval", "%%{?%s:1}" % name]), capture_output=True, text=True).stdout
     except OSError:
         return True
     return out.strip() == "1"
@@ -1070,7 +1085,7 @@ def provided(names):
     if not names:
         return True
     try:
-        return subprocess.run(["rpm", "-q", "--whatprovides"] + names, capture_output=True).returncode == 0
+        return subprocess.run(rpm_cmd(["rpm", "-q", "--whatprovides"] + names), capture_output=True).returncode == 0
     except OSError:
         return False
 
@@ -1078,7 +1093,7 @@ def provided(names):
 def buildrequires(path, lines):
     # the names a spec BuildRequires: rpmspec's own answer when it parses, else the
     # lines outside any %if (a dependency that names a macro is skipped)
-    p = subprocess.run(["rpmspec", "-q", "--buildrequires", "--define", "_sourcedir " + os.getcwd(), path],
+    p = subprocess.run(rpm_cmd(["rpmspec", "-q", "--buildrequires", "--define", "_sourcedir " + os.getcwd(), path]),
                        capture_output=True, text=True) if path else None
     if p is not None and p.returncode == 0:
         return [ln.split()[0] for ln in p.stdout.splitlines() if ln.strip() and not ln.startswith("(")]
@@ -1093,7 +1108,7 @@ def buildrequires(path, lines):
             value = t.split(":", 1)[1].strip()
             if "%" in value:  # what this host's macros make of it; a spec's own macro stays unknown
                 try:
-                    value = subprocess.run(["rpm", "--eval", value], capture_output=True, text=True).stdout.strip()
+                    value = subprocess.run(rpm_cmd(["rpm", "--eval", value]), capture_output=True, text=True).stdout.strip()
                 except OSError:
                     continue
                 if "%" in value:
@@ -1723,6 +1738,49 @@ done
 [ $rc -eq 0 ] && echo "OK: no file named like a skill script" >> "$log/skill-scripts.txt"
 show skill-scripts $rc "$log/skill-scripts.txt"
 
+# Parse surface: the parse-time code each spec adds over openSUSE:Factory/<pkg>'s
+# (_parse_scan.py), read as text, for the review. Information only, never red: a
+# text scan cannot see everything rpm runs, which is why the parses below run in
+# a sandbox where the host has one. Only a tree with a construct needs Factory's
+# copy, read from openSUSE's OBS whatever apiurl the checkout names.
+: > "$log/parse-surface.txt"; pf=openSUSE:Factory/$pkg; pb="$log/parse-base"; nocmp=""
+obs=(osc -A https://api.opensuse.org)
+need=$(timeout 60 python3 -I "$HERE/_parse_scan.py" needs . 2> "$log/parse-needs.err"); nrc=$?
+if [ $nrc -ne 0 ]; then
+  nocmp="the scan failed (exit $nrc): $(head -n 1 "$log/parse-needs.err")${need%%$'\n'*}"
+elif [ -z "$need" ]; then
+  echo "OK: no spec holds a parse-time construct" >> "$log/parse-surface.txt"
+else
+  mkdir -p "$pb"
+  if timeout 60 "${obs[@]}" api "/source/$pf?expand=1" > "$log/parse-factory.xml" 2> "$log/parse-factory.err"; then
+    while IFS= read -r f; do
+      grep -qF "name=\"$f\"" "$log/parse-factory.xml" || continue   # Factory lacks it
+      if ! timeout 60 "${obs[@]}" cat openSUSE:Factory "$pkg" "$f" > "$pb/$f" 2> "$log/parse-factory.err"; then
+        rm -f "$pb/$f"
+        grep -q 'HTTP Error 404' "$log/parse-factory.err" || nocmp="cannot read its $f: $(head -n 1 "$log/parse-factory.err")"
+      fi
+    done <<< "$need"
+  elif grep -q 'HTTP Error 404' "$log/parse-factory.err"; then
+    rm -f "$log/parse-factory.xml"
+    echo "note: $pf does not exist: every construct counts as new" >> "$log/parse-surface.txt"
+  else
+    nocmp="cannot list it: $(head -n 1 "$log/parse-factory.err")"
+  fi
+  if [ -z "$nocmp" ]; then
+    timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
+    n=$(grep -c '^[^ ]' "$log/parse-added.txt")
+    case $src in
+      0) echo "OK: every parse-time construct is in $pf verbatim" ;;
+      1) cat "$log/parse-added.txt"
+         echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text" ;;
+      124) nocmp="the scan did not finish in 120 s" ;;
+      *) nocmp="the scan failed (exit $src): $(head -n 1 "$log/parse-added.txt")" ;;
+    esac >> "$log/parse-surface.txt"
+  fi
+fi
+[ -z "$nocmp" ] || printf 'note: no comparison with %s: %s\n' "$pf" "$nocmp" | python3 -I "$HERE/_sanitize.py" >> "$log/parse-surface.txt"
+show parse-surface 0 "$log/parse-surface.txt"
+
 if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
   /usr/lib/obs/service/source_validator --outdir "$log/sv" > "$log/source_validator.txt" 2>&1; rc=$?
   # factory-auto (check_source.py) declines on these although the validator exits 0
@@ -1750,10 +1808,40 @@ else
   echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
 fi
 
+sandbox() {   # sandbox <writable dir>: the bwrap arguments, in sbx (also %prep's)
+  # only /usr and /etc of the host, never / (core dumps, journals, other users'
+  # files); run under env -i, so not even bwrap's own PID 1 holds the gate's env
+  sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session
+       --ro-bind /usr /usr --ro-bind /etc /etc --dev /dev --proc /proc
+       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs "$HOME")
+  local x
+  for x in /bin /sbin /lib /lib64 /lib32 /libx32 /var/lib/rpm; do   # usrmerge links, the rpm db
+    if [ -L "$x" ]; then sbx+=(--symlink "$(readlink "$x")" "$x")
+    elif [ -d "$x" ]; then sbx+=(--ro-bind "$x" "$x"); fi
+  done
+  sbx+=(--ro-bind "$PWD" "$PWD" --bind "$1" "$1")
+}
+# Every rpm parse here (rpmspec -P of each flavour and of spec-cleaner's output,
+# rpmspec -q --buildrequires, rpm --eval of a BuildRequires value) runs in that
+# sandbox under env -i, with PATH, the locale and an empty HOME: a spec's %(...)
+# and Lua see no network, nothing of $HOME, and the checkout read-only, with the
+# log directory the only place to write. Where none starts (a container without
+# user namespaces) the specs parse unsandboxed, as before, and rpmspec says so.
+nosbx=""
+if ! command -v bwrap >/dev/null 2>&1; then
+  nosbx="bwrap is not installed"
+elif ! { sandbox "$log"; perr=$(env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" true 2>&1); }; then
+  nosbx=${perr%%$'\n'*}; nosbx=${nosbx:-bwrap does not start}
+else
+  pre=(env -i PATH="$PATH" HOME="$HOME")
+  [ -z "${LANG:-}" ] || pre+=(LANG="$LANG"); [ -z "${LC_ALL:-}" ] || pre+=(LC_ALL="$LC_ALL")
+  GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" bwrap "${sbx[@]}" --chdir "$PWD"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
+fi
+
 # The spec as rpm reads it. rpmspec -P expands every macro, comments included:
 # opencode sr#1394137 was declined for "%prep" in a comment ("Unknown tag:
 # %prep"), and codenomad's "# %{cargo_test} ..." comment ran cargo test. Parsing
-# runs the spec's %(...) on this host: a checkout you are changing yourself only.
+# runs the spec's %(...): in the sandbox above where the host has one.
 # A parse that stops for want of the build root (a macro a BuildRequires
 # defines) is UNKNOWN, not red, and named on the verdict line.
 hostnote=""
@@ -1763,6 +1851,7 @@ if command -v rpmspec >/dev/null 2>&1; then
     [ -e "$s" ] || continue
     py parse "$s" "$log" >> "$log/rpmspec.txt" || rc=1
   done
+  [ -z "$nosbx" ] || echo "note: no sandbox here ($nosbx): the specs parse unsandboxed" >> "$log/rpmspec.txt"
   [ $rc -eq 0 ] && ! grep -q '^UNKNOWN' "$log/rpmspec.txt" \
     && echo "OK: every spec parses in each build OBS runs, and no comment expands into a section name or commands" >> "$log/rpmspec.txt"
   # what this host could not judge goes on the verdict line
@@ -1784,19 +1873,6 @@ fi
 # rpm's version. What only the
 # build root has (a missing BuildRequires' file, tool or module, a source a
 # service makes, an arch the spec builds) leaves %prep UNKNOWN, not red.
-sandbox() {   # sandbox <writable dir>: the bwrap arguments, in sbx
-  # only /usr and /etc of the host, never / (core dumps, journals, other users'
-  # files); run under env -i, so not even bwrap's own PID 1 holds the gate's env
-  sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session
-       --ro-bind /usr /usr --ro-bind /etc /etc --dev /dev --proc /proc
-       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs "$HOME")
-  local x
-  for x in /bin /sbin /lib /lib64 /lib32 /libx32 /var/lib/rpm; do   # usrmerge links, the rpm db
-    if [ -L "$x" ]; then sbx+=(--symlink "$(readlink "$x")" "$x")
-    elif [ -d "$x" ]; then sbx+=(--ro-bind "$x" "$x"); fi
-  done
-  sbx+=(--ro-bind "$PWD" "$PWD" --bind "$1" "$1")
-}
 tmo=${GATE_PREP_TIMEOUT:-900}
 if [ ${#buildlogs[@]} -gt 0 ]; then
   echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"

@@ -6,8 +6,8 @@ every time — they encode the exact queries that are easy to get subtly wrong. 
 exit code is in `references/script-usage.md` (guarded against the scripts, so an agent needs
 no `--help` call); this file carries the *why* and the traps.
 
-Every runnable script prints usage with `-h`/`--help` (`_anitya.py`, `_forges.py` and
-`_pr_guard.py` are modules, not commands); the user-scoped ones (`my-packages`, `my-requests`, `sr-status`,
+Every runnable script prints usage with `-h`/`--help` (`_anitya.py`, `_forges.py`,
+`_parse_scan.py` and `_pr_guard.py` are modules, not commands); the user-scoped ones (`my-packages`, `my-requests`, `sr-status`,
 `preflight`) default the OBS account to `osc whois` unless `--user` is given
 (`factory-report.py` uses `--highlight` for the same purpose).
 
@@ -247,6 +247,10 @@ Shared GitHub/GitLab/PyPI/npm/crates.io probe helpers imported by `upstream-prob
 
 Which repo/arch of an OBS build counts — Tumbleweed/Factory and Leap 16 on x86_64 and aarch64 unless widened — the link origin of an expanded listing, and the per-repo/arch codes of an `osc results` answer; imported by `gate.sh --obs-build` and `obs-wait.py build` so the gate and the wait judge the same set: Leap 16 drops out for an openSUSE:Factory target in both, gate.sh's by its stamp's target and obs-wait.py's by `--target` (`tests/test-obs-wait.sh` checks both import it). Not directly runnable.
 
+## `_parse_scan.py`
+
+The parse-time constructs of a spec, read as text, for `gate.sh`'s parse-surface step, which lists those a tree adds over Factory's spec as information for the review: a text scan cannot be complete, so the parse itself runs in gate.sh's sandbox. It finds what rpm runs, loads or expands twice while it parses: `%(`; `lua`, `expand`, `load` and `include` in any call form, and `%include`, `%if` and `%elif` behind a `%%` the line's expansion turns into a directive; `lua:` in an expression (`%if`, `%elif`, `%[…]`, `%{expr:…}`); `sub`, `gsub`, `rep`, `reverse`, `upper`, `lower`, `basename`, `dirname`, `suffix`, `url2path`/`u2p`, `macrobody` and `shrink`, which can rewrite an undefined `%name` (rpm keeps it as it is) into one of those; `%%`; a lone `%`; and a bare `%lu` a later expansion completes into `%lua`. Each was seen to run code under `rpm --eval` 4.20 or in an independent review of the scanner: `%global p %` then `%{p}(id)` runs `id`, `%define a %lu` with `%{a}a print(1)` runs Lua, `%{shrink:%lu }a` is `%lua`. Lines split on LF alone and a NUL ends one, as rpm reads them. `%%` and a lone `%` count only where a later expansion reaches them, on a line that defines a macro, sets a tag or calls a macro with arguments: a comment's `%%check` is none. A construct Factory's spec has verbatim still counts when a file a shell, Lua, `%include` or `%load` line names differs (each file a path glob matches; by Factory's listed md5 unless the scan reads it as text), when a macro it uses is defined anew (tags in either case: `%{URL}`, `%{SOURCEURL0}`; a value of plain characters passes, so a version bump or a new commit hash does, unless the line puts the macro right after a `%%`), and when a new line calls a parametric macro it defines. An `%include` of a file of the tree is read in its place, so a regenerated `node_modules.spec.inc` of `Source` lines adds nothing. Out of its reach: what a host macro does with its arguments (`%requires_eq`, `%pkg_version`, `%sysusers_create_package` pass theirs to a shell) and `_multibuild` flavour names. Its CLI (`constructs`, `added`, `needs`, `scan`) serves gate.sh, which gives `scan` 120 s, and the suites: exit 0 nothing found or added, 1 found or added, 2 usage, 3 a file it cannot read or an internal error.
+
 ## `_pr_guard.py`
 
 The rules of `pr-guard.py`, compiled from source only once a call matches the prefilter, which keeps an unmatched call near Python's own start-up time. Installed beside the pinned `pr-guard.py`: without it every matched call is refused. Not directly runnable; a change to it is a change to the guard.
@@ -295,7 +299,8 @@ the mechanics byte-compatible so fixes port both ways.
 ## gate.sh
 
 The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-(osc checkouts), no copy of a skill script, source_validator, factory-auto's
+(osc checkouts), no copy of a skill script, the parse-time code the specs add
+(parse-surface), source_validator, factory-auto's
 URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
 (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
 changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
@@ -388,11 +393,18 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
   --repos REGEX  with --obs-build: also judge the repos whose name matches
                (re.search), when the user says another target matters
   --arches REGEX  with --obs-build: also judge the arches that match
-Parsing a spec runs its %(...) on this host as you, and %prep runs the
-package's code (sandboxed, which keeps it off the network and out of $HOME but
-is no reason to trust it): run the gate only on a checkout you are changing
-yourself, never on someone else's submission (references/untrusted-content.md
-"The two sharp local-execution vectors").
+Parsing a spec runs its %(...), Lua and the files it includes as you, and %prep
+runs the package's code. Both run in a bwrap sandbox where the host starts one:
+no network, only /usr and /etc of the host, $HOME empty, the checkout
+read-only, the log or scratch directory the only place to write, no
+environment but PATH, the locale and HOME. Without one (a container lacking
+user namespaces) the specs parse unsandboxed, as before, and rpmspec says so;
+%prep does not run. parse-surface lists the parse-time code a spec adds over
+openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
+%{load:, %% and the forms that rebuild one), as information, never red; a
+lookup that fails says the comparison was not possible. A contributor's
+submission is read as text only until the user's go to accept it
+(references/untrusted-content.md "The two sharp local-execution vectors").
 Entry: a tree that differs from the target needs a .changes top entry the
 target lacks (factory-auto: "No changelog"), and one Factory lacks too when
 the target is Factory's devel project; --amend-top and --squash-mine take an
@@ -442,7 +454,9 @@ It also runs spec-cleaner itself, the canonical four-flag invocation with a fres
 
 `prep` runs `%prep` when no `--build-log` says a local build ran it: `rpmbuild -bp --nodeps` with the checkout as `_sourcedir`, unpacking into a scratch directory under `/var/tmp`. `%prep` is the package's code, and upstream's with it (nodejs-electron runs a python script from its tarball, others `./autogen.sh` or `./configure`), so it runs under bwrap: no network (a `%prep` that fetches fails as it does on OBS), nothing of the host but `/usr`, `/etc`, the usrmerge links and the rpm database (no `/home`, `/root`, core dumps or journals), `$HOME`, `/run`, `/tmp` and `/var/tmp` empty, the checkout read-only and only the scratch directory writable. bwrap itself starts under `env -i` with `PATH` and `HOME` alone, so no process in the sandbox, its PID 1 included, holds the gate's environment. Where no bwrap starts it does not run at all: `UNKNOWN`, named on the verdict line. It is red when `%prep` fails (photocraft's patch no longer applied while the gate was GREEN; electron's `%prep` died on `unexpected EOF`) and when it runs past 900 s (`GATE_PREP_TIMEOUT` shortens that in the suite). Before it unpacks, `/var/tmp` must have 8 times the size of the sources free (it is shared with build roots), else `UNKNOWN`. A signal, the time limit or an error kills the whole process group and removes the scratch directory, read-only parts included; a signal exits 130. A pass is cached by a hash of the spec, every other file but the `.changes`, and rpm's version, so a `.changes`-only re-gate costs the hash. Measured cold (64 cores): bugwarden 3 s, craft-anything 5 s, openidea 9 s, nodejs-signal-ringrtc 12 s, nodejs-electron 275 s plus 66 s to delete 13 GB. A `%prep` that stops on what only the build root has is `UNKNOWN`, not red, and named on the verdict line, where upstream text arrives sanitized: a command, a `/usr` file (opencode copies photon-node's) or a python module while some BuildRequires is not installed here, a source a source service (`obs_scm`, `tar_scm`, `tar`, `recompress`, `download_files`, `go_modules`, `cargo_vendor`, `node_modules`) makes on OBS or at build time (zed's tarball), and the build arch when the spec excludes this host's (an x86_64-only package on an aarch64 host). Only the output of the command that failed counts.
 
-Parsing a spec runs its `%(...)` on this host as you, unsandboxed, and the sandbox around `%prep` is no reason to trust a spec either: the gate is for a checkout you are changing yourself, never for someone else's submission (`references/untrusted-content.md` "The two sharp local-execution vectors").
+`parse-surface` lists the parse-time code a spec adds over openSUSE:Factory/<pkg>'s (`_parse_scan.py`), sanitized, for the change review and the incoming review: `%(...)`, Lua, what `%include` and `%{load:}` read, text expanded twice, and a construct Factory has whose file, macro or parametric caller changed. It is information and never red: an independent review found forms no text scan sees (a host macro that hands its arguments to a shell). A package Factory lacks counts every construct as new; a listing, file or scan that fails says the comparison was not possible, also not red; a tree with no construct needs no lookup. Factory is read from openSUSE's OBS by name (`osc -A https://api.opensuse.org`), whatever apiurl the checkout names.
+
+Every rpm parse the gate makes runs in the sandbox `%prep` uses: `rpmspec -P` of each flavour and of spec-cleaner's output, `rpmspec -q --buildrequires`, and `rpm --eval` of a BuildRequires value. It starts under `env -i` with `PATH`, the locale and an empty `$HOME`, with no network, the checkout read-only and the log directory the only place to write; a harmless sample spec parsed so saw neither a file under the real `$HOME` nor any network interface but `lo`, and could not resolve a name. Where no bwrap sandbox starts (a container without user namespaces) the specs parse unsandboxed, as before, and the rpmspec section says so in one line, never red; `%prep` then does not run at all. A contributor's submission is still read as text only until the user's go to accept it (`references/untrusted-content.md` "The two sharp local-execution vectors").
 
 source_validator's exit code is not factory-auto's verdict: it prints an unreferenced file as a `(W) Attention, "<file>" is not mentioned …` warning and exits 0, and `check_source.py` declines on the first such line. The gate marks source_validator red on it (sr#1386155 went out green with an unlisted `swift-lang-rpmlintrc`).
 
