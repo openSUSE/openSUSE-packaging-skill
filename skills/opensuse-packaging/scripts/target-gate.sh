@@ -508,7 +508,7 @@ fn = {
 }[cmd]
 sys.exit(fn(*args))
 PYEOF
-py() { python3 -c "$PY" "$@"; }
+py() { python3 -I -c "$PY" "$@"; }
 
 tmpd=$(mktemp -d "${TMPDIR:-/var/tmp}/target-gate.XXXXXX") || refuse "mktemp failed"
 trap 'rm -rf "$tmpd"' EXIT

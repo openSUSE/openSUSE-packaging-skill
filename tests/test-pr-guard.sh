@@ -75,8 +75,8 @@ git -C "$work/pdef" config remote.pushDefault fork
 clone_ "$work/tokened" leap-16.0 "origin=https://user:tok3n@${F#https://}/pool/x.git"
 
 # A skill checkout whose pool-pr.sh stand-in, a target-gate.sh it would run and
-# another script are committed and merged (origin/main, the pinned ref);
-# new-tool.sh is not committed.
+# another script are committed and merged (origin/main, the pinned ref); the
+# cases below add an uncommitted new-tool.sh only while they need it.
 S=$work/skill
 mkdir -p "$S/scripts" && cp "$FX/pool-pr.sh" "$FX/open-pr.sh" "$S/scripts/"
 # A changes-prepend.sh that is refused if read: allowed, it ran unread.
@@ -84,7 +84,6 @@ cp "$FX/pool-pr.sh" "$S/scripts/changes-prepend.sh"
 printf '#!/bin/bash\necho "gate $*"\n' > "$S/scripts/target-gate.sh"
 git init -q -b main "$S" && git -C "$S" add -A && git -C "$S" commit -q -m init
 git -C "$S" update-ref refs/remotes/origin/main HEAD
-cp "$FX/pool-pr.sh" "$S/scripts/new-tool.sh"
 cp "$S/scripts/target-gate.sh" "$work/pinned-gate.sh"; cp "$S/scripts/pool-pr.sh" "$work/pinned-pool-pr.sh"
 W=$work/scripts
 { cat "$FX/pool-pr.sh"; echo 'echo pushed'; } > "$W/pool-pr-copy.sh"
@@ -92,6 +91,7 @@ W=$work/scripts
 mkdir -p "$W/elsewhere" && cp "$S/scripts/pool-pr.sh" "$W/elsewhere/"; ln -s "$S/scripts/pool-pr.sh" "$W/pool-pr-link.sh"
 cp "$FX/open-pr.sh" "$FX/open_pr.py" "$FX/open-pr.js" "$FX/open-pr.pl" "$FX/agit.sh" "$FX/land.sh" "$FX/quoting.sh" "$FX/stamp.py" "$FX/kpi.py" "$FX/self-append.sh" "$FX/self-append-merge.sh" "$W/"
 cp "$FX/scrape-token.sh" "$FX/obs-api.sh" "$FX/open_pr_split.py" "$FX/open_pr_comment.py" "$W/"
+cp "$FX/state-xargs.sh" "$FX/state-bash-c.sh" "$W/"
 # Stand-in credential files under the suite's HOME, and a link to one; their
 # names live in a fixture, since the guard reads this suite.
 python3 -c 'import json, os, sys
@@ -802,7 +802,9 @@ case_ canonical-symlink   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DI
 case_ canonical-dir-link  0 - ""                          PR_GUARD_SKILL_DIR="$S"
 case_ canonical-copy      2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
 case_ canonical-exact-copy 2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+cp "$FX/pool-pr.sh" "$S/scripts/new-tool.sh"
 case_ canonical-untracked 2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+rm "$S/scripts/new-tool.sh"
 case_ canonical-sourced   2 canonical-read "read as a program" PR_GUARD_SKILL_DIR="$S"
 case_ canonical-fed       2 canonical-read "read as a program" PR_GUARD_SKILL_DIR="$S"
 case_ canonical-env-path  2 canonical-env "run with PATH"      PR_GUARD_SKILL_DIR="$S"
@@ -858,10 +860,25 @@ case_ canonical-sibling-gutted  2 create-api "a write to pool pulls" PR_GUARD_SK
 git -C "$S" rm -q --cached scripts/target-gate.sh
 case_ canonical-sibling-dropped 2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
 git -C "$S" reset -q; cp "$work/pinned-gate.sh" "$S/scripts/target-gate.sh"
-git -C "$S" add scripts/new-tool.sh
+cp "$FX/pool-pr.sh" "$S/scripts/new-tool.sh"; git -C "$S" add scripts/new-tool.sh
 case_ canonical-sibling-added   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
 git -C "$S" rm -q --cached scripts/new-tool.sh
+case_ canonical-pool-pr   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+rm "$S/scripts/new-tool.sh"
 case_ canonical-pool-pr   0 - ""                          PR_GUARD_SKILL_DIR="$S"
+# Any file scripts/ does not track runs beside the pinned scripts -- a module named
+# like the standard library they import, a sourceless .pyc, ignored or not -- and
+# untrusts them all; a __pycache__, which their Python never reads, does not.
+printf 'raise SystemExit\n' > "$S/scripts/argparse.py"
+case_ canonical-pool-pr   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+mv "$S/scripts/argparse.py" "$S/scripts/argparse.pyc"
+case_ canonical-pool-pr   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+echo 'argparse.pyc' > "$S/.git/info/exclude"
+case_ canonical-pool-pr   2 create-api "a write to pool pulls" PR_GUARD_SKILL_DIR="$S"
+rm "$S/scripts/argparse.pyc" "$S/.git/info/exclude"
+mkdir -p "$S/scripts/__pycache__" && printf 'x' > "$S/scripts/__pycache__/_forges.cpython-313.pyc"
+case_ canonical-pool-pr   0 - ""                          PR_GUARD_SKILL_DIR="$S"
+rm -r "$S/scripts/__pycache__"
 
 echo "--- stamps"
 case_ stamp-redirect      2 stamp       "a redirection into the stamp directory"
@@ -980,11 +997,18 @@ for name in state-xargs-echo state-xargs-I state-env-bash-c state-export-py stat
     state-redirect-unplaced; do
   case_ "$name" 2 stamp "state directory"
 done
-# A destination given with an option is a destination.
+# A destination given with an option is a destination, git's too.
 for name in state-cp-target-eq state-ln-target-eq state-dd-of state-sort-o-home \
-    state-sort-output-eq state-osc-output; do
+    state-sort-output-eq state-osc-output state-git-log-output state-git-checkout-index \
+    state-git-show-output; do
   case_ "$name" 2 stamp "state directory"
 done
+# A script the call runs that names it fails closed the same way.
+case_ state-script-xargs       2 stamp "state directory"
+case_ state-script-bash-c      2 stamp "state directory"
+# osc's own state beside it names no piece of it.
+case_ osc-state-ls-then-build  0 - ""
+case_ watch-state-then-make    0 - ""
 # Reads stay allowed, and so does a copy out of it.
 case_ stamp-read-diff-state    0 - ""
 case_ stamp-read-cat-out       0 - ""
@@ -1556,7 +1580,10 @@ case_ accept-message-merge-ok   2 bot-directive 'the osc rq accept message with 
 case_ comment-merge-ok-split    2 bot-directive 'with a bot directive ("merge ok")'
 case_ comment-group-split       2 bot-directive 'with a bot directive ("@qa-team : approve")'
 case_ tea-approve-split         2 bot-directive 'with a bot directive ("merge ok")'
-case_ comment-merge-ok-clause   2 bot-directive 'with a bot directive ("merge ok")'
+# Only a line, or a list item, that starts with it: not a clause after a comma or colon.
+case_ comment-merge-ok-clause   0 - ""
+case_ comment-merge-ok-colon    0 - ""
+case_ comment-merge-ok-numbered 2 bot-directive 'with a bot directive ("merge ok")'
 case_ comment-git-obs-space     2 bot-directive 'with a bot directive ("merge ok")'
 case_ comment-group-human       0 - ""
 # An ask never outweighs a refusal elsewhere in the call.
@@ -1638,6 +1665,13 @@ ask_ pr-close-others-api        others-request "git-obs api PATCH perl/perl-Foo#
 ask_ pr-close-others-tea-api    others-request "tea api PATCH perl/perl-Foo#2: opened by other"
 case_ pr-close-own              0 - ""
 case_ pr-close-own-git-obs      0 - ""
+# tea's issues close, reopen and edit take a PR's number as well (the issues endpoint).
+ask_ tea-issue-close-others     others-request "tea issues close perl/perl-Foo#2: opened by other"
+ask_ tea-i-close-others         others-request "tea i close perl/perl-Foo#2: opened by other"
+ask_ tea-issue-edit-others      others-request "tea issue edit perl/perl-Foo#2: opened by other"
+ask_ tea-pr-reopen-others       others-request "tea pulls reopen perl/perl-Foo#2: opened by other"
+ask_ gitobs-pr-reopen-others    others-request "git-obs pr reopen perl/perl-Foo#2: opened by other"
+case_ tea-issue-close-own       0 - ""
 # Every lookup goes to the instance osc -A names: here, one with none of the stubs.
 ask_ forward-apiurl             accept-forward "cannot read"
 # The same fixtures for both: autoforward-gate.sh and the guard agree on each.
@@ -1896,7 +1930,8 @@ case_ ci-redirect-devnull       0 - ""
 ask_ accept-api-approve         accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
 ask_ accept-api-slash           accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
 ask_ comment-git-obs-reopen     comment "git-obs pr reopen with a comment"
-case_ comment-git-obs-reopen-plain 0 - ""
+# A reopen without a comment is no comment; of a PR someone else opened, it asks as a reopen.
+ask_ comment-git-obs-reopen-plain others-request "git-obs pr reopen AI/mistral-vibe#3: opened by other"
 # A commit is refused only for a write that runs before it and lands in its checkout; a request
 # for any write anywhere in the call.
 case_ ci-after-sort-o          2 gate-sequence "sort"
@@ -2573,7 +2608,7 @@ console.log([
   await run({ tool: "shell", input: { command: merge } }),
   await run({ tool: "shell", input: { command: "ls" } }),
   await run({ tool: "write", input: { path: ".git/target-" + "gate/t-b.json", content: "{}" } }),
-  await run({ tool: "write", input: { path: "~/.local/state/opensuse-" + "packaging/gate/obs/x/y.json", content: "{}" } }),
+  await run({ tool: "write", input: { path: process.env.V2_STATE + "/incoming/x.json", content: "{}" } }),
   await run({ tool: "shell", input: { command: push, workdir: pool } }),
   await run({ tool: "shell", input: { command: push } }),
   await run({ tool: "shell", input: "x" }),
@@ -2583,7 +2618,8 @@ console.log([
 ].join(" "))
 JS
   # shellcheck disable=SC2086  # tsrun is a command line
-  out="$(V2_GATE="$W/gate.sh" $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
+  v2state="$HOME/$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["state_dir"])' "$FX/stamped.json")"
+  out="$(V2_GATE="$W/gate.sh" V2_STATE="$v2state" $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1)"
   [ "$out" = "refused run refused refused refused run refused refused run refused" ] \
     && pass "opencode-v2: the plugin refuses a merge, stamp writes, a pool push, unreadable input and an ask, and hands the guard the agent" \
     || fail "opencode-v2: the plugin run gave '$out'"

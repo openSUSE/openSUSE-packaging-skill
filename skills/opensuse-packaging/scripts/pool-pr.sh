@@ -88,7 +88,7 @@ trap 'rm -rf "$tmpd"' EXIT
 # be another forge's) and exits non-zero on an HTTP error.
 gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
   || { echo "could not read your src.opensuse.org user through git-obs: $(gerr) — nothing pushed" >&2; exit 6; }
 
 # Every page: a head-branch clash or a PR on page 2 must not read as "none".
@@ -98,7 +98,7 @@ while :; do
   [ "$page" -le 20 ] || { echo "open-PR list for pool/$pkg does not end — nothing pushed" >&2; exit 6; }
   gapi "$api/pulls?state=open&limit=50&page=$page" > "$tmpd/pulls.$page" \
     || { echo "could not list open PRs on pool/$pkg: $(gerr) — nothing pushed" >&2; exit 6; }
-  n=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, list); print(len(d))' "$tmpd/pulls.$page" 2>/dev/null) \
+  n=$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, list); print(len(d))' "$tmpd/pulls.$page" 2>/dev/null) \
     || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate; nothing pushed" >&2; exit 6; }
   [ "$n" = 0 ] && break
   page=$((page + 1))
@@ -106,7 +106,7 @@ done
 
 # Prints mode, PR number, head branch, head repo, PR url, head commit, one per
 # line; exit 3 = refused.
-plan=$(python3 - "$user" "$base" "$base-${sha:0:12}" "$tmpd"/pulls.* <<'EOF'
+plan=$(python3 -I - "$user" "$base" "$base-${sha:0:12}" "$tmpd"/pulls.* <<'EOF'
 import json
 import sys
 
@@ -215,17 +215,17 @@ if [ "$replace" = 1 ]; then
 fi
 if [ "$mode" = update ]; then
   # EditPullRequestOption has no head field; the push above already moved it.
-  payload=$(python3 -c 'import json,sys; d={"title": sys.argv[1]}; sys.argv[2] and d.update(body=sys.argv[3]); print(json.dumps(d))' \
+  payload=$(python3 -I -c 'import json,sys; d={"title": sys.argv[1]}; sys.argv[2] and d.update(body=sys.argv[3]); print(json.dumps(d))' \
     "$title" "$setbody" "$body")
   method=PATCH; url="$api/pulls/$num"
 else
-  payload=$(python3 -c 'import json,sys; print(json.dumps(dict(zip(("head", "base", "title", "body"), sys.argv[1:]))))' \
+  payload=$(python3 -I -c 'import json,sys; print(json.dumps(dict(zip(("head", "base", "title", "body"), sys.argv[1:]))))' \
     "$user:$head" "$base" "$title" "$body")
   method=POST; url="$api/pulls"
 fi
 resp=$(gapi -X "$method" --data "$payload" "$url") \
   || { echo "PR $method failed: $(gerr) — $hrepo:$head is pushed; re-run to finish" >&2; exit 6; }
-pr=$(printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d["number"])); print(d["html_url"])' 2>/dev/null) \
+pr=$(printf '%s' "$resp" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(int(d["number"])); print(d["html_url"])' 2>/dev/null) \
   || { echo "PR $method rejected: $(printf '%s' "$resp" | head -c 300)" >&2; exit 6; }
 { read -r num; read -r purl; } <<<"$pr"
 verb=opened; [ "$mode" = update ] && verb=updated; [ "$replace" = 1 ] && verb="updated (head replaced)"

@@ -36,7 +36,7 @@ esac
 prj="$1"; repo="${2:-}"; arch="${3:-x86_64}"
 
 if [ -z "$repo" ]; then
-  repo="$(osc api "/source/$prj/_meta" 2>/dev/null | python3 -c '
+  repo="$(osc api "/source/$prj/_meta" 2>/dev/null | python3 -I -c '
 import sys, xml.etree.ElementTree as ET
 try:
     root = ET.fromstring(sys.stdin.read() or "<project/>")
@@ -53,7 +53,7 @@ res="$(osc api "/build/$prj/_result?repository=$repo&arch=$arch" 2>/dev/null)"
 
 # Parse with xml.etree (attribute-order-independent), classify, print, and
 # encode the verdict in the exit code.
-printf '%s' "$res" | PRJ="$prj" REPO="$repo" ARCH="$arch" python3 -c '
+printf '%s' "$res" | PRJ="$prj" REPO="$repo" ARCH="$arch" python3 -I -c '
 import sys, os, subprocess, time, xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 try:

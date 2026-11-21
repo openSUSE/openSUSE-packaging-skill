@@ -126,6 +126,9 @@
 #       (obs-wait.py), then rerun.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Its Python reads and writes no __pycache__ beside the scripts: a directory under
+# /dev/null cannot exist, so no compiled module can be planted there either.
+export PYTHONPYCACHEPREFIX=/dev/null/opensuse-packaging
 read -r -d '' PY <<'PYEOF'
 import calendar
 import difflib
@@ -1557,7 +1560,7 @@ fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbu
       "need": need, "entry": entry, "comments": comments}[cmd]
 sys.exit(fn(*args))
 PYEOF
-py() { python3 -c "$PY" "$@"; }
+py() { python3 -I -X pycache_prefix="$PYTHONPYCACHEPREFIX" -c "$PY" "$@"; }
 dir=.; entries=1; amend=""; squash=""; target=""; gitbase=""; buildlogs=(); rpms=""; deviation=""; noentry=""; full=0; review=""; nopts=0
 obsbuild=0; repos=""; arches=""
 while [ $# -gt 0 ]; do

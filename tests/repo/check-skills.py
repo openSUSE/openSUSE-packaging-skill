@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Repository gates: skill frontmatter, public-content hygiene, attribution.
+"""Repository gates: skill frontmatter, public-content hygiene, attribution,
+isolated inline Python.
 
-Three checks the other suites cannot make, because they are about what the
+Four checks the other suites cannot make, because they are about what the
 repository publishes rather than what the scripts do:
 
   frontmatter  the Agent Skills contract -- a skill that violates it installs
@@ -9,12 +10,15 @@ repository publishes rather than what the scripts do:
   public       this is a public repository: no personal identifiers, anyone's,
                and that rule is only as good as something that enforces it
   attribution  no tool/assistant attribution in the published files
+  isolation    a skill's shell script runs inline Python (python3 -c, python3 -)
+               with -I: otherwise the working directory, a package checkout an
+               agent wrote, comes first on sys.path and its json.py runs
 
 Budgets and cross-reference pointers are deliberately NOT here: tests/
 test-skill-budget.sh and tests/test-doc-lint.sh already own those, and a second
 implementation would drift from the first.
 
-  python3 tests/repo/check-skills.py [--only frontmatter,public,attribution]
+  python3 tests/repo/check-skills.py [--only frontmatter,public,attribution,isolation]
 
 Prints "<check>: <file>[:<line>]: <message>" per finding; exit 1 on any
 finding, 0 when clean.
@@ -277,10 +281,35 @@ def check_attribution(findings):
     _scan(findings, "attribution", ATTRIBUTION_PATTERNS)
 
 
+# python3 with its options, ending in -c or - (the program on stdin): -X takes a value.
+PY_INLINE = re.compile(
+    r"\bpython3((?:\s+-X\s+\S+|\s+-[A-Za-z]+)*)\s+-(?:c\b|(?=[\s;|)]|$))"
+)
+
+
+def check_isolation(findings):
+    for base, _, files in os.walk(SKILLS):
+        if os.path.basename(base) != "scripts":
+            continue
+        for fn in sorted(f for f in files if f.endswith(".sh")):
+            full = os.path.join(base, fn)
+            with open(full, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+            for n, line in enumerate(lines, start=1):
+                if line.lstrip().startswith("#"):
+                    continue
+                for m in PY_INLINE.finditer(line):
+                    opts = [w for w in m.group(1).split() if w[:1] == "-" and w != "-X"]
+                    if not any("I" in w for w in opts):
+                        where = os.path.relpath(full, ROOT)
+                        findings.append(("isolation", where, n, "python3 without -I"))
+
+
 CHECKS = {
     "frontmatter": check_frontmatter,
     "public": check_public,
     "attribution": check_attribution,
+    "isolation": check_isolation,
 }
 
 

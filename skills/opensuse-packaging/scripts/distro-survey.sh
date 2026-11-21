@@ -153,7 +153,7 @@ elif [ -z "$REPOLOGY" ] || [ "$REPOLOGY" = '[]' ]; then
              REPOLOGY="$RBODY"; RSTATE=ok
              # %{url_effective} is the redirect target, so its last path
              # segment is the resolved slug (percent-encoded: python%3Arequests).
-             rname=$(printf '%s' "${rurl##*/}" | python3 -c \
+             rname=$(printf '%s' "${rurl##*/}" | python3 -I -c \
                'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null)
              note "repology: '$pkg' resolved via tools/project-by ($nt) to project '${rname:-${rurl##*/}}'"
              break
@@ -171,7 +171,7 @@ elif [ -z "$REPOLOGY" ] || [ "$REPOLOGY" = '[]' ]; then
     # different (and much less trustworthy) answer than "nobody ships it".
     sleep 1
     rget "https://repology.org/api/v1/projects/" --data-urlencode "search=$pkg"
-    cand=$(printf '%s' "$RBODY" | python3 -c '
+    cand=$(printf '%s' "$RBODY" | python3 -I -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -205,7 +205,7 @@ rg() {
   # and gcc-17.0.9999, so drop any version with a 9999 component as well as
   # everything Repology itself flags status=rolling (that status exists exactly
   # for 9999/git/HEAD packages and is excluded from its own newest calculation).
-  printf '%s' "$REPOLOGY" | python3 -c '
+  printf '%s' "$REPOLOGY" | python3 -I -c '
 import sys, json, re
 pref = sys.argv[1]
 try:
@@ -237,7 +237,7 @@ print(max(vs, key=vkey) if vs else "-")
 fnote=''
 get "https://mdapi.fedoraproject.org/rawhide/srcpkg/$pkg"
 fcode=$GCODE
-fv=$(printf '%s' "$GBODY" | python3 -c '
+fv=$(printf '%s' "$GBODY" | python3 -I -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -254,7 +254,7 @@ if [ -z "$fv" ]; then
   esac
 fi
 get "https://src.fedoraproject.org/api/0/rpms/$pkg/tree/rawhide"
-fp=$(printf '%s' "$GBODY" | python3 -c '
+fp=$(printf '%s' "$GBODY" | python3 -I -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -273,7 +273,7 @@ row 'Fedora' "$fv" "${fp}${fp:+${fnote:+ }}${fnote}"
 # while sid actually carries 0.23.0-3. Prefer sid; if the package is only in
 # other suites, fall back to the first entry and NAME the suite.
 get "https://sources.debian.org/api/src/$pkg/"
-dv=$(printf '%s' "$GBODY" | python3 -c "
+dv=$(printf '%s' "$GBODY" | python3 -I -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -297,7 +297,7 @@ row 'Gentoo' "$(rg gentoo)"
 # 200 and an empty results list, so an empty list is a real '-' — only a failed
 # fetch (which leaves the parse with nothing to chew on) becomes '?'.
 get "https://archlinux.org/packages/search/json/?name=$pkg"
-av=$(printf '%s' "$GBODY" | python3 -c "import sys,json;r=json.load(sys.stdin).get('results',[]);print(r[0]['pkgver'] if r else '-')" 2>/dev/null)
+av=$(printf '%s' "$GBODY" | python3 -I -c "import sys,json;r=json.load(sys.stdin).get('results',[]);print(r[0]['pkgver'] if r else '-')" 2>/dev/null)
 [ -z "$av" ] && av=$(gmark)
 row 'Arch' "$av"
 

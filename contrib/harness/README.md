@@ -544,8 +544,10 @@ yourself. It asks before:
   request` `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`creq`/`mr` with `-s ID`,
   an `accept` with `--force` or `--or-revoke`, the API's `newstate=revoked|superseded|new|
   review|deleted` (or `force` on an accept; in the query or a `-d` body, `&` or `;` between
-  the parameters); a `tea pulls close`, `git-obs pr close` or Gitea API write to a PR
-  someone else opened. Each acts on their work as a decline does; your own run;
+  the parameters); a `tea pulls` or `tea issues` `close`, `reopen` or `edit` (the issues
+  endpoint takes a PR's number too), a `git-obs pr close` or `reopen`, or a Gitea API
+  write to a PR someone else opened. Each acts on their work as a decline does; your own
+  run;
 - **a delete of several osc checkouts at once**: your own recursive `rm` or `find …
   -delete` (with no name test) that removes two or more package checkouts, as a project
   checkout of several packages or a scratch directory of them; one checkout per `rm`
@@ -670,7 +672,9 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
    merged**. Every file that `scripts/` tracks, in the index or at the pinned ref, must
    hash (`git hash-object --no-filters`) to its blob at `refs/remotes/origin/main` of that
    checkout (not `HEAD`). The scripts run their siblings, so one edited, added or dropped
-   file untrusts them all, and so does a call that writes into `scripts/`. A script must
+   file untrusts them all, and so does any file there git does not track, ignored or not
+   (a module named like one they import, a sourceless `.pyc`; a `__pycache__` does not,
+   since their Python reads none), and a call that writes into `scripts/`. A script must
    also be run by a path whose directory is that `scripts/` (a link to it from elsewhere
    would run the siblings beside the link) and get no environment change but `TMPDIR`, `LC_ALL`, `LANG`,
    `NO_COLOR`, `CHANGES_AUTHOR`, `DISTRO_SURVEY_BUDGET` and `DISTRO_SURVEY_TIMEOUT`. A local edit or an unmerged commit is read like any
@@ -736,14 +740,16 @@ The state directory, `~/.local/state/opensuse-packaging` (`gate.sh`'s stamps in 
 the incoming reviews' in `incoming/`), is judged by what a command writes: each target
 placed in the working directory through the call's values, brace alternatives, readable
 substitutions and symlinks, an option's attached value (`--target-directory=`, `of=`,
-`-oFILE`) included, and as written when the guard cannot place it
+`-oFILE`, git's `--output=` and `checkout-index --prefix=`) included, and as written when
+the guard cannot place it
 (`$X/.local/state/opensuse-packaging`, `${XDG_STATE_HOME:-…}/opensuse-packaging`, a leaf
 `…/state/opensuse-packaging` or `opensuse-packaging/gate` under any directory). A tree
 copied, moved, linked or unpacked into `~/.local` or `~/.local/state`, or, as an archive or
 a tree named `.local`, into `~`, counts too, and so does program text that joins `state`
 and `opensuse-packaging`, or `opensuse-packaging` and `gate` or `incoming`, in any pieces.
-It fails closed: in a call whose text names the directory by any piece (`.local/st…`,
-`XDG_STATE_HOME`, the leaf, `gate/obs/`), any write it cannot place is refused (`xargs`,
+It fails closed: in a call, or a script it runs, whose text names the directory by any
+piece (the leaf, `$XDG_STATE_HOME…opensuse-packaging`, `gate/obs/`; osc's state beside it
+is none), any write it cannot place is refused (`xargs`,
 `bash -c`, an interpreter, `bwrap`, `unshare`, an array or `${…}` operator, `/proc/self/cwd`,
 `/dev/fd`, a path through what the call made, a relative `cd` under `CDPATH`). Reads pass,
 copies out of it too (`cat STAMP > /var/tmp/x`, `cp STAMP /var/tmp/x`, `diff`, `test`).
@@ -862,10 +868,12 @@ create must be refused too, the `AI/zzz` create must run, and so must
   directory git's `-C`, `--git-dir`, `--work-tree` and `clone`/`init` targets count.
 - A path to the state directory the call holds only in a file it reads at run time
   (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
-  'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen.
-- A comment's `merge ok` counts at the start of a line, or of a clause in one; a sentence
-  that only contains the words (`once the merge ok is given`) passes, and so does an
-  `@group : approve` that does not start its line.
+  'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen, nor one the call
+  builds with no piece of it in its text (`base64 -d`, `rev`, other filters of a
+  substitution), nor a module an agent planted in a directory the skill's own scripts
+  import from other than their `scripts/` (which the pinned check covers).
+- A comment's `merge ok` or `@group : approve` counts at the start of a line or of a list
+  item; one later in a line (`Note: merge ok is what the bot reads`) passes.
 - The opencode plugins do not send `patch`/`apply_patch` tool calls to the guard.
   opencode 2.x offers `patch` (one `patchText` argument) in place of `write` and `edit` to
   every model whose id contains `gpt-` but neither `gpt-4` nor `oss` (`gpt-5`,

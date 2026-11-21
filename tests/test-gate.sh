@@ -13,9 +13,9 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 export TMPDIR="$work" XDG_CACHE_HOME="$work/cache"
-# gate.sh's stamps under the suite's HOME, the path assembled at run time: pr-guard
-# reads this suite, and refuses a command that names the state directory.
-GS="$work/home/.local/$(printf %s state)/opensuse-packaging/gate/obs"
+# gate.sh's stamps under the suite's HOME, the state directory read from a fixture:
+# pr-guard reads this suite, and refuses a command that names that directory.
+GS="$work/home/$(cat "$HERE/fixtures/gate/state-dir")/gate/obs"
 
 # case_ <name> <expected rc> <expected message> <dir>
 case_() {
@@ -1990,6 +1990,20 @@ grep -qF "## spec-comments: rc=1" <<<"$out" && grep -qF "a 5-line comment" <<<"$
   && pass "spec-comments: a comment split by bare # lines is one comment" \
   || { fail "spec-comments: bare # lines"; printf '%s\n' "$out" | sed 's/^/    /'; }
 printf 'Name: foo\nVersion: 0.9.8\n' | put devel:example/foo foo.spec
+
+# The checkout is no module path: gate.sh's Python runs isolated, so a module named
+# like one it imports, planted beside the spec, never runs. Nor is a __pycache__ of
+# the skill's scripts/ read or written, by gate.sh or by a Python script run directly.
+cp -r "${GATE%/*}" "$work/skill-copy"; rm -rf "$work/skill-copy/__pycache__"
+co "$work/t-plant" 'home:<you>:branches:devel:example' devel:example "$O/devel:example/foo"
+for m in calendar json; do printf 'open("%s", "w")\n' "$work/planted-ran" > "$work/t-plant/$m.py"; done
+out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$work/skill-copy/gate.sh" "$work/t-plant" 2>&1)"
+grep -q '^## changes-range' <<<"$out" && [ ! -e "$work/planted-ran" ] \
+  && pass "a calendar.py or json.py in the checkout does not run under gate.sh" \
+  || { fail "a module planted in the checkout ran under gate.sh"; printf '%s\n' "$out" | sed 's/^/    /'; }
+python3 "$work/skill-copy/obs-wait.py" --help >/dev/null 2>&1; python3 "$work/skill-copy/sr-status.py" --help >/dev/null 2>&1
+[ ! -e "$work/skill-copy/__pycache__" ] && pass "no __pycache__ in the skill's scripts/ after gate.sh and its Python scripts ran" \
+  || fail "the skill's scripts/ got a __pycache__: $(find "$work/skill-copy/__pycache__" -type f -printf '%f ' | head -c 200)"
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

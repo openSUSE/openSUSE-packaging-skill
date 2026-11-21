@@ -29,7 +29,7 @@ for prj in "$@"; do
     echo "ERROR: search for $prj failed: ${xml##*$'\n'}" >&2
     exit 5
   fi
-  if ! names="$(python3 -c '
+  if ! names="$(python3 -I -c '
 import sys, xml.etree.ElementTree as ET
 root = ET.fromstring(sys.stdin.read())
 if root.tag != "collection":

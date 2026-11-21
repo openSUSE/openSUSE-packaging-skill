@@ -61,14 +61,14 @@ tmpd=$(mktemp --directory -p "${TMPDIR:-/var/tmp}" leap-sync.XXXXXX) || { echo "
 trap 'rm -rf "$tmpd"' EXIT
 gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
   || { echo "could not read your src.opensuse.org user through git-obs: $(gerr)" >&2; exit 6; }
 
 # --- duplicate-PR guard: refuse to double-file over someone else's open PR ---
 prs=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50") \
   || { echo "could not query open PRs for pool/$pkg: $(gerr)" >&2; exit 6; }
 rm -rf "$tmpd"; trap - EXIT
-existing=$(printf '%s' "$prs" | python3 -c "
+existing=$(printf '%s' "$prs" | python3 -I -c "
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(1)

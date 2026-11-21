@@ -10284,5 +10284,110 @@
       "command": "osc api -X POST /request/1390001 -d 'cmd=changestate&newstate=declined'"
     },
     "cwd": "@PLAIN@"
+  },
+  "tea-issue-close-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea issues close 2 --login src.opensuse.org --repo perl/perl-Foo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-i-close-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea i close 2 --login src.opensuse.org --repo perl/perl-Foo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-issue-edit-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea issue edit 2 --login src.opensuse.org --repo perl/perl-Foo --title x"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-pr-reopen-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls reopen 2 --login src.opensuse.org --repo perl/perl-Foo"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-pr-reopen-others": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr reopen perl/perl-Foo#2"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "tea-issue-close-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea issues close 7 --login src.opensuse.org --repo AI/mistral-vibe"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-log-output": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ log -1 --format=%B --output=$HOME/.local/state/opensuse-packaging/incoming/obs/1.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-checkout-index": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ checkout-index -a --prefix=$HOME/.local/state/opensuse-packaging/incoming/obs/"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-show-output": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ show --output=$HOME/.local/state/opensuse-packaging/incoming/obs/1.json HEAD:x.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-script-xargs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/state-xargs.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-script-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/state-bash-c.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "osc-state-ls-then-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la ~/.local/state/osc/ ; osc build --noservice"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
+  "watch-state-then-make": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.local/state/osc-submission-watch/state.json; make -C /var/tmp/build"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-colon": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe 'Note: merge ok is what the bot reads, so I left it out.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-merge-ok-numbered": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe '1. merge ok'"
+    },
+    "cwd": "@PLAIN@"
   }
 }

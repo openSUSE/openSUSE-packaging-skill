@@ -57,7 +57,7 @@ done
 
 if [ "$update" = 1 ] && [ -f _service ]; then
   # inherit url/base/pkg from the existing service unless overridden
-  read -r s_url s_vf s_oldrev <<<"$(python3 -c '
+  read -r s_url s_vf s_oldrev <<<"$(python3 -I -c '
 import xml.etree.ElementTree as ET
 r = ET.parse("_service").getroot()
 for s in r.findall("service"):
@@ -103,7 +103,7 @@ if [ "$update" = 1 ]; then
   # set_version, cargo_vendor, ...) and forces the versionformat to '~git',
   # silently changing the package's version string on '+git' packages.
   cp _service _service.bak
-  python3 - "$sha" <<'PY' || { mv -f _service.bak _service; echo "in-place re-pin failed; _service restored" >&2; exit 2; }
+  python3 -I - "$sha" <<'PY' || { mv -f _service.bak _service; echo "in-place re-pin failed; _service restored" >&2; exit 2; }
 import re, sys
 sha = sys.argv[1]
 src = open("_service", encoding="utf-8").read()

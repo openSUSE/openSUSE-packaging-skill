@@ -78,8 +78,9 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _sanitize  # escape/Unicode-smuggling filter for third-party text
+import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FACTORY = "openSUSE:Factory"

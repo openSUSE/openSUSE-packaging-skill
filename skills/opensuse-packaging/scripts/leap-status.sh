@@ -37,7 +37,7 @@ gget() { curl -fsS --max-time 20 "$1"; }
 # ---- 1. branches + per-branch spec version ----------------------------------
 branches_json="$(gget "$G/api/v1/repos/pool/$pkg/branches")" \
   || { echo "ERROR: could not list pool/$pkg branches (network, or no pool repo)" >&2; exit 5; }
-branches="$(printf '%s' "$branches_json" | python3 -c '
+branches="$(printf '%s' "$branches_json" | python3 -I -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -51,7 +51,7 @@ bver() {  # spec Version: on a branch
   # all empty). Use the REST contents endpoint instead: it answers without a
   # token, and an empty result now really does mean "could not determine".
   gget "$G/api/v1/repos/pool/$pkg/contents/$pkg.spec?ref=$1" 2>/dev/null \
-    | python3 -c '
+    | python3 -I -c '
 import sys, json, base64, re
 try:
     raw = base64.b64decode(json.load(sys.stdin).get("content") or "").decode("utf-8", "replace")
@@ -81,7 +81,7 @@ other="$(printf '%s\n' "$branches" | grep -vE '^(factory|leap-16\.[01]|slfo-(1\.
 # ---- 2. open PRs -------------------------------------------------------------
 prs_json="$(gget "$G/api/v1/repos/pool/$pkg/pulls?state=open")" \
   || { echo "ERROR: could not list open PRs on pool/$pkg" >&2; exit 5; }
-prs="$(printf '%s' "$prs_json" | PKG="$pkg" G="$G" python3 -c '
+prs="$(printf '%s' "$prs_json" | PKG="$pkg" G="$G" python3 -I -c '
 import sys, os, json, urllib.request, re
 pkg, g = os.environ["PKG"], os.environ["G"]
 try: d = json.load(sys.stdin)
