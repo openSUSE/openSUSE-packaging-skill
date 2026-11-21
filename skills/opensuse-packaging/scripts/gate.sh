@@ -48,12 +48,13 @@
 #                the base package and each flavor. GREEN records them as the
 #                tree's build. Without it (and without --obs-build) %prep runs
 #                here: rpmbuild -bp --nodeps in a bwrap sandbox (no network,
-#                only /usr and /etc of the host, $HOME empty, the checkout
+#                only /usr and /etc of the host, a HOME of its own, the checkout
 #                read-only, only a scratch dir under /var/tmp writable), a pass
 #                cached per spec and sources; red when it fails or passes 900 s,
-#                UNKNOWN but not red when no sandbox starts, /var/tmp lacks the
-#                room, or %prep stops on what a BuildRequires missing here
-#                would bring
+#                or when bwrap fails to start for another reason than missing
+#                user namespaces; UNKNOWN but not red without bwrap or user
+#                namespaces, when /var/tmp lacks the room, or when %prep stops
+#                on what a BuildRequires missing here would bring
 #   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
@@ -95,12 +96,13 @@
 #                (re.search), when the user says another target matters
 #   --arches REGEX  with --obs-build: also judge the arches that match
 # Parsing a spec runs its %(...), Lua and the files it includes as you, and %prep
-# runs the package's code. Both run in a bwrap sandbox where the host starts one:
-# no network, only /usr and /etc of the host, $HOME empty, the checkout
-# read-only, the log or scratch directory the only place to write, no
-# environment but PATH, the locale and HOME. Without one (a container lacking
-# user namespaces) the specs parse unsandboxed, as before, and rpmspec says so;
-# %prep does not run. parse-surface lists the parse-time code a spec adds over
+# runs the package's code. Both run in a sandbox of /usr/bin/bwrap: no network,
+# only /usr and /etc of the host, HOME=/tmp/home, the checkout read-only, a
+# fresh directory (a copy of the spec, %prep's scratch) the only place to write,
+# no environment but PATH, the locale and HOME. Without bwrap, or where it is
+# denied user namespaces (a container), the specs parse unsandboxed, as before,
+# and rpmspec says so, while %prep does not run; any other failure to start it
+# is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
 # openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
 # %{load:, %% and the forms that rebuild one), as information, never red; a
 # lookup that fails says the comparison was not possible. A contributor's
@@ -138,6 +140,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Its Python reads and writes no __pycache__ beside the scripts: a directory under
 # /dev/null cannot exist, so no compiled module can be planted there either.
 export PYTHONPYCACHEPREFIX=/dev/null/opensuse-packaging
+# bwrap from the system alone, never one found on PATH
+BWRAP=/usr/bin/bwrap
 read -r -d '' PY <<'PYEOF'
 import calendar
 import difflib
@@ -146,7 +150,9 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -1032,16 +1038,31 @@ SECTION = re.compile(
 MACROREF = re.compile(r"(?<!%)%[{(A-Za-z_]")
 
 
-def rpm_cmd(args):
-    # in gate.sh's bwrap sandbox when one starts here (GATE_SANDBOX: its env -i and bwrap words)
+def run_rpm(args, spec=None, timeout=300):
+    """args (rpm or rpmspec) in gate.sh's sandbox when one starts here (GATE_SANDBOX:
+    its env -i and bwrap words). The spec it reads goes in as a copy in a fresh
+    directory, the only place the parse may write, and is named back in what rpm
+    prints, so nothing the parse runs reaches the gate's own files."""
     pre = os.environ.get("GATE_SANDBOX", "")
-    return (pre.split("\x1f") if pre else []) + args
+    pre, tmp, copy = (pre.split("\x1f") if pre else []), None, None
+    try:
+        if spec and pre:
+            tmp = tempfile.mkdtemp(prefix="gate-parse-")
+            copy = os.path.join(tmp, os.path.basename(spec))
+            shutil.copyfile(spec, copy)
+            args, pre = [copy if a == spec else a for a in args], pre + ["--bind", tmp, tmp]
+        p = subprocess.run(pre + args, capture_output=True, text=True, timeout=timeout)
+        if copy:
+            p.stdout, p.stderr = p.stdout.replace(copy, spec), p.stderr.replace(copy, spec)
+        return p
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def rpmspec(path):
     try:
-        return subprocess.run(rpm_cmd(["rpmspec", "-P", "--define", "_sourcedir " + os.getcwd(), path]),
-                              capture_output=True, text=True, timeout=300)
+        return run_rpm(["rpmspec", "-P", "--define", "_sourcedir " + os.getcwd(), path], path)
     except (OSError, subprocess.TimeoutExpired):
         return None
 
@@ -1063,8 +1084,8 @@ def as_built(lines, flavor=""):
 
 def defined(name):
     try:
-        out = subprocess.run(rpm_cmd(["rpm", "--eval", "%%{?%s:1}" % name]), capture_output=True, text=True).stdout
-    except OSError:
+        out = run_rpm(["rpm", "--eval", "%%{?%s:1}" % name], timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
         return True
     return out.strip() == "1"
 
@@ -1085,16 +1106,19 @@ def provided(names):
     if not names:
         return True
     try:
-        return subprocess.run(rpm_cmd(["rpm", "-q", "--whatprovides"] + names), capture_output=True).returncode == 0
-    except OSError:
+        return run_rpm(["rpm", "-q", "--whatprovides"] + names, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
         return False
 
 
 def buildrequires(path, lines):
     # the names a spec BuildRequires: rpmspec's own answer when it parses, else the
     # lines outside any %if (a dependency that names a macro is skipped)
-    p = subprocess.run(rpm_cmd(["rpmspec", "-q", "--buildrequires", "--define", "_sourcedir " + os.getcwd(), path]),
-                       capture_output=True, text=True) if path else None
+    try:
+        p = run_rpm(["rpmspec", "-q", "--buildrequires", "--define", "_sourcedir " + os.getcwd(), path],
+                    path) if path else None
+    except (OSError, subprocess.TimeoutExpired):
+        p = None
     if p is not None and p.returncode == 0:
         return [ln.split()[0] for ln in p.stdout.splitlines() if ln.strip() and not ln.startswith("(")]
     names, depth = [], 0
@@ -1108,8 +1132,8 @@ def buildrequires(path, lines):
             value = t.split(":", 1)[1].strip()
             if "%" in value:  # what this host's macros make of it; a spec's own macro stays unknown
                 try:
-                    value = subprocess.run(rpm_cmd(["rpm", "--eval", value]), capture_output=True, text=True).stdout.strip()
-                except OSError:
+                    value = run_rpm(["rpm", "--eval", value], timeout=60).stdout.strip()
+                except (OSError, subprocess.TimeoutExpired):
                     continue
                 if "%" in value:
                     continue
@@ -1608,7 +1632,7 @@ done
 [ "$obsbuild" = 0 ] || { [ -z "$review" ] && [ "$nopts" = "$([ -n "$rpms" ] && echo 1 || echo 0)" ]; } \
   || { echo "gate.sh: --obs-build records OBS's build and runs no gate: it takes DIR, --rpms, --repos and --arches only" >&2; exit 2; }
 [ -z "$repos$arches" ] || [ "$obsbuild" = 1 ] || { echo "gate.sh: --repos and --arches go with --obs-build" >&2; exit 2; }
-cd "$dir" || exit 2
+cd -P -- "$dir" || exit 2
 # Anywhere else source_validator reports rc=0 over nothing: a green piece of a
 # verdict about no package.
 specs=( *.spec )
@@ -1808,34 +1832,41 @@ else
   echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
 fi
 
-sandbox() {   # sandbox <writable dir>: the bwrap arguments, in sbx (also %prep's)
+sandbox() {   # sandbox [writable dir]: the bwrap arguments, in sbx (the parses' and %prep's)
   # only /usr and /etc of the host, never / (core dumps, journals, other users'
-  # files); run under env -i, so not even bwrap's own PID 1 holds the gate's env
+  # files), and a HOME of its own; run under env -i with HOME=/tmp/home, so not
+  # even bwrap's own PID 1 holds the gate's env
   sbx=(--unshare-net --unshare-pid --unshare-ipc --die-with-parent --new-session
        --ro-bind /usr /usr --ro-bind /etc /etc --dev /dev --proc /proc
-       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs "$HOME")
+       --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --dir /tmp/home)
   local x
   for x in /bin /sbin /lib /lib64 /lib32 /libx32 /var/lib/rpm; do   # usrmerge links, the rpm db
     if [ -L "$x" ]; then sbx+=(--symlink "$(readlink "$x")" "$x")
     elif [ -d "$x" ]; then sbx+=(--ro-bind "$x" "$x"); fi
   done
-  sbx+=(--ro-bind "$PWD" "$PWD" --bind "$1" "$1")
+  sbx+=(--ro-bind "$PWD" "$PWD" --chdir "$PWD")
+  [ -z "${1:-}" ] || sbx+=(--bind "$1" "$1")
 }
 # Every rpm parse here (rpmspec -P of each flavour and of spec-cleaner's output,
 # rpmspec -q --buildrequires, rpm --eval of a BuildRequires value) runs in that
-# sandbox under env -i, with PATH, the locale and an empty HOME: a spec's %(...)
-# and Lua see no network, nothing of $HOME, and the checkout read-only, with the
-# log directory the only place to write. Where none starts (a container without
-# user namespaces) the specs parse unsandboxed, as before, and rpmspec says so.
-nosbx=""
-if ! command -v bwrap >/dev/null 2>&1; then
+# sandbox under env -i, with PATH, the locale and HOME=/tmp/home: a spec's %(...)
+# and Lua see no network, nothing of $HOME, and the checkout read-only, with a
+# fresh directory holding its copy of the spec the only place to write. Without
+# bwrap, or where it is denied user namespaces (a container), the specs parse
+# unsandboxed, as before, and rpmspec says so; any other failure to start it is
+# red and nothing parses, so a caller's environment cannot switch it off.
+USERNS='No permissions to create (a )?new namespace|Creating new namespace failed|setting up uid map|Can.t mount proc|max_user_namespaces|loopback: Failed|Failed to make / slave'
+nosbx=""; sbxbad=""
+if [ ! -x "$BWRAP" ]; then
   nosbx="bwrap is not installed"
-elif ! { sandbox "$log"; perr=$(env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" true 2>&1); }; then
-  nosbx=${perr%%$'\n'*}; nosbx=${nosbx:-bwrap does not start}
+elif ! { sandbox; perr=$(env -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" true 2>&1); }; then
+  perr=$(printf '%s' "$perr" | python3 -I "$HERE/_sanitize.py")
+  if grep -qE "$USERNS" <<<"$perr"; then nosbx=${perr%%$'\n'*}
+  else sbxbad=${perr%%$'\n'*}; sbxbad=${sbxbad:-bwrap exited without a word}; fi
 else
-  pre=(env -i PATH="$PATH" HOME="$HOME")
+  pre=(env -i PATH="$PATH" HOME=/tmp/home)
   [ -z "${LANG:-}" ] || pre+=(LANG="$LANG"); [ -z "${LC_ALL:-}" ] || pre+=(LC_ALL="$LC_ALL")
-  GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" bwrap "${sbx[@]}" --chdir "$PWD"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
+  GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" "$BWRAP" "${sbx[@]}"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
 fi
 
 # The spec as rpm reads it. rpmspec -P expands every macro, comments included:
@@ -1845,7 +1876,10 @@ fi
 # A parse that stops for want of the build root (a macro a BuildRequires
 # defines) is UNKNOWN, not red, and named on the verdict line.
 hostnote=""
-if command -v rpmspec >/dev/null 2>&1; then
+if [ -n "$sbxbad" ]; then
+  echo "RED: the sandbox does not start ($sbxbad): nothing parses the specs" > "$log/rpmspec.txt"
+  show rpmspec 1 "$log/rpmspec.txt"
+elif command -v rpmspec >/dev/null 2>&1; then
   : > "$log/rpmspec.txt"; rc=0
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
@@ -1878,8 +1912,10 @@ if [ ${#buildlogs[@]} -gt 0 ]; then
   echo "note: not run: the --build-log build ran %prep" > "$log/prep.txt"; show prep 0 "$log/prep.txt"
 elif ! command -v rpmbuild >/dev/null 2>&1; then
   echo "## prep: SKIPPED (no rpmbuild)"; red+=(prep)
-elif ! command -v bwrap >/dev/null 2>&1 || ! { sandbox "$log"; perr=$(env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" true 2>&1); }; then
-  perr=${perr:-bwrap is not installed}; why="no sandbox (${perr%%$'\n'*})"
+elif [ -n "$sbxbad" ]; then
+  echo "RED: %prep not run: the sandbox does not start ($sbxbad)" > "$log/prep.txt"; show prep 1 "$log/prep.txt"
+elif [ -n "$nosbx" ]; then
+  why="no sandbox ($nosbx)"
   echo "UNKNOWN: %prep not run: $why" > "$log/prep.txt"; hostnote+="${hostnote:+; }%prep: $why"
   show prep 0 "$log/prep.txt"
 else
@@ -1889,7 +1925,8 @@ else
   for s in "${specs[@]}"; do
     [ -e "$s" ] || continue
     if [ -e "$log/hostonly.$s" ]; then
-      echo "UNKNOWN: %prep of $s not run: rpmspec -P stopped on this host" >> "$log/prep.txt"; continue
+      echo "UNKNOWN: %prep of $s not run: rpmspec -P stopped on this host" >> "$log/prep.txt"
+      hostnote+="${hostnote:+; }$s: %prep not run"; continue
     elif command -v rpmspec >/dev/null 2>&1 && [ ! -e "$log/parsed.$s" ]; then
       echo "$s: not run: the spec does not parse" >> "$log/prep.txt"; rc=1; continue
     fi
@@ -1909,7 +1946,7 @@ else
     cp "$rs" "$bp/rpm.spec"; t0=$SECONDS
     # in the background, so a signal can kill its process group (the EXIT trap)
     sandbox "$bp"
-    timeout -k 30 "$tmo" env -i PATH="$PATH" HOME="$HOME" bwrap "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+    timeout -k 30 "$tmo" env -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
       "$bp/rpm.spec" > "$log/prep.$s.log" 2>&1 &
     prep_pid=$!; wait "$prep_pid"; prc=$?; prep_pid=""
     chmod -R u+w "$bp"; rm -rf "$bp"; bp=""

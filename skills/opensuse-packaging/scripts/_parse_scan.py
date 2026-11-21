@@ -69,7 +69,8 @@ RESHAPES += ("dirname", "suffix", "url2path", "u2p", "macrobody", "shrink")
 NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 TAGS = {"name", "version", "release", "epoch", "summary", "license", "url"}
 TAGS |= {"bugurl", "vcs", "disturl", "docdir", "group", "vendor", "packager"}
-TAGS |= {"distribution"}
+TAGS |= {"distribution", "sourcelicense", "disttag", "translationurl"}
+TAGS |= {"upstreamreleases", "modularitylabel", "buildsystem", "prefix", "prefixes"}
 READS = {"shell", "lua", "include", "load"}
 PLAIN = re.compile(r"[A-Za-z0-9._+~^-]*")
 LONE = re.compile(r"%(?![A-Za-z0-9_%{(\[*#?!-])")
@@ -141,8 +142,10 @@ def logical(text):
     return out
 
 
-def kinds(s):
-    """What makes logical line s a parse-time construct; [] for nothing."""
+def kinds(s, index=None):
+    """What makes logical line s a parse-time construct; [] for nothing. With the
+    index of its text, a lua: call that reaches an expression through a macro
+    counts too (%define x lua:..., then %if %{x})."""
     bare = s.replace("%%", "\0")
     found = ["shell"] if "%(" in bare else []
     for m in CALL.finditer(bare):
@@ -151,8 +154,15 @@ def kinds(s):
     d = DIRECTIVE.match(s)
     if d and d.group(1) == "include" and "include" not in found:
         found.append("include")
-    if "lua:" in s and (d and d.group(1) != "include" or EXPR.search(bare)):
-        if "lua" not in found:
+    expr = d and d.group(1) != "include" or EXPR.search(bare)
+    if expr and "lua" not in found:
+        if (
+            "lua:" in s
+            or index
+            and any(
+                "lua:" in v for name in index.uses(s) for v in index.defs.get(name, ())
+            )
+        ):
             found.append("lua")
     if not (STORE.search(s) or REF.search(bare)):
         return found
@@ -167,7 +177,8 @@ def kinds(s):
 
 def constructs(text):
     """(first line number, logical line) of each parse-time construct of text."""
-    return [(n, s) for n, s in logical(text) if kinds(s)]
+    index = Index(logical(text))
+    return [(n, s) for n, s in index.lines if kinds(s, index)]
 
 
 def refs(s):
@@ -274,7 +285,7 @@ def arg(line, end, braced):
 def targets(line, index, names):
     """The files of names a running construct reads or names; None among them
     for an %include or %load whose file the text cannot tell."""
-    if not READS & set(kinds(line)):
+    if not READS & set(kinds(line, index)):
         return set()
     out = set()
     for m in re.finditer(r"(/?)([A-Za-z0-9_.+~@*?\[\]-]+)", index.resolve(line)):
@@ -332,7 +343,7 @@ def added_constructs(new_text, base_text, changed=frozenset()):
     new, base = Index(logical(new_text)), Index(logical(base_text))
     out = []
     for n, s in new.lines:
-        found = kinds(s)
+        found = kinds(s, new)
         if found:
             why = (
                 "new"
@@ -405,7 +416,7 @@ def tree(d):
             continue
         seen.add(f)
         index = Index(logical(read(os.path.join(d, f))))
-        for s in [s for _, s in index.lines if kinds(s)]:
+        for s in [s for _, s in index.lines if kinds(s, index)]:
             fetch.add(f)
             reads = (targets(s, index, names) - {None}) & names
             if INCLUDE.match(s) or INCLUDE_ARG.search(s):
@@ -418,23 +429,33 @@ def tree(d):
     return specs + sorted(loaded - set(specs)), sorted(fetch), wanted
 
 
-def show(f, n, s, why, clean):
+def show(f, n, s, why, found):
     """One line per construct, the lines it runs on below it, indented (10 at most)."""
     cut = [ln if len(ln) <= 160 else ln[:157] + "..." for ln in s.split("\n")]
     more = " (+%d lines)" % (len(cut) - 1) if len(cut) > 1 else ""
-    out = ["%s:%d: %s%s — %s: %s" % (f, n, cut[0], more, ", ".join(kinds(s)), why)]
+    out = ["%s:%d: %s%s — %s: %s" % (f, n, cut[0], more, ", ".join(found), why)]
     out += ["    " + ln for ln in cut[1:11]]
     if len(cut) > 11:
         out.append("    ... %d more lines" % (len(cut) - 11))
-    print(clean("\n".join(out)))
+    return "\n".join(out)
 
 
 def run(cmd, args):
+    """The lines to print, each (file, line number, construct, kinds, why)."""
     if cmd == "constructs":
-        return [[(args[0], n, s, "construct") for n, s in constructs(read(args[0]))]]
+        text = read(args[0])
+        index = Index(logical(text))
+        return [
+            (args[0], n, s, kinds(s, index), "construct") for n, s in constructs(text)
+        ]
     if cmd == "added":
+        new = read(args[0])
+        index = Index(logical(new))
         base = read(args[1]) if os.path.exists(args[1]) else ""
-        return [[(args[0],) + t for t in added_constructs(read(args[0]), base)]]
+        return [
+            (args[0], n, s, kinds(s, index), why)
+            for n, s, why in added_constructs(new, base)
+        ]
     d, b = args[:2]
     files, _, wanted = tree(d)
     sums = listed(args[2]) if len(args) > 2 else {}
@@ -446,13 +467,14 @@ def run(cmd, args):
         if md5(old) != md5(os.path.join(d, f)):
             changed.add(f)
     names = {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
-    pairs = []
+    found = []
     for f in files:
         new, where = inline(d, f, names)
         old = inline(b, f, names)[0] if os.path.exists(os.path.join(b, f)) else []
-        found = added_constructs("\n".join(new), "\n".join(old), changed)
-        pairs.append([where[n - 1] + (s, why) for n, s, why in found])
-    return pairs
+        index = Index(logical("\n".join(new)))
+        for n, s, why in added_constructs("\n".join(new), "\n".join(old), changed):
+            found.append(where[n - 1] + (s, kinds(s, index), why))
+    return found
 
 
 def main(argv):
@@ -461,7 +483,11 @@ def main(argv):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import _sanitize
 
-    clean = _sanitize.sanitize
+    def say(text):
+        # sanitized, and bytes that are no UTF-8 shown as \xNN, never a traceback
+        clean = _sanitize.sanitize(text).encode("utf-8", "surrogateescape")
+        print(clean.decode("utf-8", "backslashreplace"))
+
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
     want = {"constructs": [1], "added": [2], "needs": [1], "scan": [2, 3]}
     if len(args) not in want.get(cmd, []):
@@ -470,20 +496,18 @@ def main(argv):
         return 2
     try:
         if cmd == "needs":
-            print(clean("\n".join(tree(args[0])[1])))
+            say("\n".join(tree(args[0])[1]))
             return 0
-        pairs = run(cmd, args)
+        found = run(cmd, args)
+        for f, n, s, kind, why in found:
+            say(show(f, n, s, why, kind))
     except (OSError, UnicodeError, ET.ParseError) as e:
-        name = getattr(e, "filename", None) or "a file"
-        print(clean("cannot read %s: %s" % (name, e)))
+        say("cannot read %s: %s" % (getattr(e, "filename", None) or "a file", e))
         return 3
     except Exception as e:  # a bug here must not read as "nothing found"
-        print(clean("internal error: %s: %s" % (type(e).__name__, e)))
+        say("internal error: %s: %s" % (type(e).__name__, e))
         return 3
-    for found in pairs:
-        for f, n, s, why in found:
-            show(f, n, s, why, clean)
-    return 1 if any(pairs) else 0
+    return 1 if found else 0
 
 
 if __name__ == "__main__":

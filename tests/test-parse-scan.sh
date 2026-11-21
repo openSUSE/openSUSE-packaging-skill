@@ -64,6 +64,16 @@ hit shrink-glue 'shrink' <<<'%global x %{shrink:%lu }a print(1)'
 hit u2p 'u2p' <<<'%global x %{u2p:%{lu/x}}'
 hit cr-in-line '%%' < <(printf '%%global x 1\r%%%%(id)\nSummary: %%{x}\n')
 hit nul-ends-line '%%' < <(printf '%%global x %%{?nil:\0}\n%%%%(id)}\nSummary: %%{x}\n')
+# A Lua call that reaches an expression through a macro.
+printf '%%define x lua:os.execute("id")\n%%if %%{x}\n%%endif\nRelease: %%{expr:%%{x}}\n' > "$work/luax.spec"
+out="$(python3 -I "$SCAN" constructs "$work/luax.spec")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'luax.spec:2: %if %{x} — lua: construct' <<<"$out" && grep -qF 'luax.spec:4: Release: %{expr:%{x}} — lua: construct' <<<"$out" \
+  && pass "construct lua-through-a-macro" || { fail "construct lua-through-a-macro: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A construct line that is no UTF-8: listed with its bytes escaped, never a traceback.
+printf '%%global x %%(echo \377\376)\n' > "$work/bad.spec"
+out="$(python3 -I "$SCAN" constructs "$work/bad.spec" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'bad.spec:1: %global x %(echo \xff\xfe) — shell: construct' <<<"$out" && ! grep -q Traceback <<<"$out" \
+  && pass "a construct line that is no UTF-8 is listed, its bytes escaped" || { fail "non-UTF-8 line: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 hit shell-continued 'shell' <<'EOF'
 %global x %(echo \
   more)
@@ -117,7 +127,8 @@ added parametric-new-call 1 'a new line calls %f' "$work/param.spec" "$work/para
 printf 'Name: foo\n%%global inc %%{mydir}/x.inc\n%%include %%{inc}\n' > "$work/inc.spec"
 added include-unnamed 1 'reads a file the text does not name' "$work/inc.spec" "$work/inc.spec"
 # Tags rpm defines macros from, in either case: a new value under Factory's shell line counts.
-for tag in 'URL:%{URL}' 'URL:%{url}' 'BugUrl:%{bugurl}' 'Source0:%{SOURCEURL0}' 'Version:%{VERSION}'; do
+for tag in 'URL:%{URL}' 'URL:%{url}' 'BugUrl:%{bugurl}' 'Source0:%{SOURCEURL0}' 'Version:%{VERSION}' \
+           'DistTag:%{disttag}' 'Prefix:%{prefix}' 'SourceLicense:%{sourcelicense}'; do
   printf '%s https://a.example/x.tgz\n%%global u %%(echo %s)\n' "${tag%%:*}:" "${tag#*:}" > "$work/tag-base.spec"
   sed 's|x.tgz$|$(id)|' "$work/tag-base.spec" > "$work/tag.spec"
   added "tag-${tag#*:}" 1 'defined anew' "$work/tag.spec" "$work/tag-base.spec"
