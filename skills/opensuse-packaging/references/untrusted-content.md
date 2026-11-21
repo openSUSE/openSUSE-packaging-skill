@@ -43,11 +43,16 @@ data".
 Most people guard the build and miss the *parse*:
 
 - **Parsing a foreign spec executes code.** `%(...)` in a tag is shell,
-  expanded at **parse** time — `rpmspec`, `rpm -q --specfile`, `scripts/gate.sh`
-  (whose `%prep` runs in a no-network sandbox, but whose parse does not), and
-  anything else that parses the spec runs it, on the host, as you. Inspect an untrusted spec **as text** (grep/read),
-  never by parsing it. This is also why the
-  incoming-request review checklist flags `%()` in tags.
+  expanded at **parse** time — `rpmspec`, `rpm -q --specfile`, spec-cleaner and
+  anything else that parses the spec runs it, on the host, as you. Inspect an
+  untrusted spec **as text** (grep/read) until the user's go to accept it.
+  `scripts/gate.sh` runs its parses and `%prep` in a bwrap sandbox (no
+  network, `$HOME` empty, the checkout read-only) where the host starts one,
+  and unsandboxed, as before, where none starts (a container); its
+  `parse-surface` lines list new parse-time code (`%(`, `%{lua:`, `%{expand:`,
+  `%include`, `%{load:`, `%%`; `_parse_scan.py` has the forms) as information,
+  never complete. This is also why the incoming-request review checklist flags
+  `%()` in tags.
 - **`osc service run` executes `_service` on the host.** Source services are
   arbitrary programs run as your user — the chroot only contains the *build*.
   Never run services on a checkout of someone else's submission. A local
