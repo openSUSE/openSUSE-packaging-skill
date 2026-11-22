@@ -37,7 +37,13 @@ a macro it does not put right after a %%), or, for a parametric macro it
 defines, when a new line calls it. An %include of a file of the tree is read in
 its place, as rpm reads it, so what counts is the constructs that file brings (a
 node_modules.spec.inc of Source lines brings none); a loaded macro file that
-differs counts as a whole.
+differs counts as a whole. A file such a line names must come out of macros
+with one value each that the text gives before the line: a plain %define or
+%global of one word, or a tag, outside %if and never given another, none a
+loaded file defines, and no Lua line that defines macros; an escaped line is
+read with its escapes live. Any other name (one the text never defines, a
+conditional, %{expand:} or %undefine definition) and a lone % or glue, which
+joins code nobody can name, give an "incomplete:" line.
 Out of scope: what a host macro does with its arguments (%requires_eq x';id;'
 reaches a shell inside the host's own macro) and _multibuild flavour names.
 
@@ -53,11 +59,13 @@ Usage: python3 -I _parse_scan.py constructs FILE
          (no copy, no entry: Factory lacks it)
   A file that leaves DIR once its links are followed is never read and is
   reported; where a cap stops the scan (an %include deeper than 8, more than
-  64 files or 8 MiB of included text, a macro expanding past 64 KiB) an
-  "incomplete:" line says so, and nothing past it counts as verbatim.
+  64 files, a file or included text past 8 MiB, a macro expanding past 64 KiB,
+  32 MiB of macro text resolved, a line using 500 macros) an "incomplete:"
+  line says so, as for a name without one value, and nothing counts as verbatim.
 Exit: 0 = no construct found (constructs) or added (added, scan); needs: listed
       1 = found or added, 2 = usage, 3 = a file it cannot read, or an internal
-      error, 4 = nothing found, but the scan stopped short (incomplete:)
+      error, 4 = nothing found, but the scan stopped short or could not name a
+      file for sure (incomplete:)
 """
 
 import fnmatch
@@ -104,11 +112,24 @@ INCLUDE_ARG = re.compile(r"%(\{?)[?!]*(?:include|load)(?![A-Za-z0-9_])")
 SOURCE_KEY = re.compile(r"(source|patch)(?:url)?([0-9]+)")
 # what rpm's line reader counts: an escape, a macro that opens, a bracket
 TOKEN = re.compile(r"\\.?|%[{(\[%]|[{}()\[\]]")
-PLAIN_DEF = re.compile(r"\s*%%(?:define|global)\s+(%s)\s+(\S+)$" % NAME)
-FILE_TAG = re.compile(r"(?i)\s*(source|patch)([0-9]*)\s*:\s*(\S+)$")
-NEVR_TAG = re.compile(r"(?i)\s*(name|version|release)\s*:\s*(\S+)$")
+PLAIN_DEF = re.compile(r"\s*%%(define|global)\s+(%s)\s+(\S+)$" % NAME)
+LAZY = re.compile(r"\s*%%define\s+(%s)" % NAME)  # a body that runs where it is used
+ONE_WORD = re.compile(r"\s*[A-Za-z]+[0-9]*(?:\([^)]*\))?\s*:\s*(\S+)$")
+PUT = re.compile(r"%%\{[?]?(%s)\}|%%(%s)|%%\{([SP]):\s*([0-9]+)\}" % (NAME, NAME))
+USE = re.compile(r"%%\{?[?!]*(%s)(?::\s*([0-9]+))?" % NAME)
+IF = re.compile(r"\s*%(?:if|ifarch|ifnarch|ifos|ifnos)(?![A-Za-z0-9_])")
+ENDIF = re.compile(r"\s*%endif(?![A-Za-z0-9_])")
+LOAD = re.compile(r"%\{?[?!]*load(?![A-Za-z0-9_])")
+MACRO = re.compile(r"^[ \t]*%%(%s)" % NAME, re.M)  # a macro file's definition
+LUA_DEFINES = re.compile(r"rpm\s*\.\s*(?:un)?define|macros\s*[.\[]")
+# rpm's own macros and directives: what they give comes from their arguments
+BUILTINS = set(RUNS + RESHAPES) | {"expand", "quote", "shescape", "expr", "exists"}
+BUILTINS |= {"defined", "undefined", "echo", "warn", "error", "verbose", "trace"}
+BUILTINS |= {"dump", "dnl", "define", "global", "undefine", "if", "elif", "else"}
+BUILTINS |= {"endif", "ifarch", "ifnarch", "ifos", "ifnos"}
 # how far a scan goes before it stops short and says so
 MAX_DEPTH, MAX_FILES, MAX_BYTES, MAX_EXPANSION = 8, 64, 8 << 20, 64 << 10
+MAX_USES, MAX_CACHE, MAX_RESOLVED, MAX_NAMED = 500, 8 << 20, 32 << 20, 20
 
 
 def note(notes, why):
@@ -209,69 +230,112 @@ def constructs(text):
     return [(n, s) for n, s in index.lines if kinds(s, index)]
 
 
-def refs(s):
-    """The macros line s uses (%{S:1} as SOURCE1, %%{x} none), but those it defines."""
-    bare = s.replace("%%", "\0")
+def named(s):
+    """The macros line s names (%{S:1} as SOURCE1), but those behind a %%."""
     out = set()
-    for m in re.finditer(r"%%\{?[?!]*(%s)(?::\s*([0-9]+))?" % NAME, bare):
+    for m in USE.finditer(s.replace("%%", "\0")):
         name, num = m.group(1), m.group(2)
         if name in ("S", "P") and num:
             name = ("SOURCE" if name == "S" else "PATCH") + num
         out.add(key(name))
-    return out - {key(n) for n in DEFINE.findall(bare)}
+    return out
+
+
+def refs(s):
+    """The macros line s uses, but those it defines."""
+    return named(s) - {key(n) for n in DEFINE.findall(s.replace("%%", "\0"))}
 
 
 class Index:
     """What a text's logical lines define, looked up once: each macro's
     defining lines (%define, %global, %undefine, or the tag rpm sets it from),
-    and the plain values a file name can be resolved with. A macro given two
-    different values names no file: rpm takes the one in force at each line,
-    which text read whole cannot tell."""
+    and the values a file name can be resolved with. A macro has one only when
+    each definition of it is a plain one outside %if (a %define or %global of
+    one word, a tag), all alike: rpm takes the one in force at each line, which
+    text read whole cannot tell."""
+
+    spent = 0  # the macro text resolved in this run, every text's together
 
     def __init__(self, lines):
         self.lines, self.have, self.defs, self.refs = [], set(), {}, {}
         self.vals, self.ambiguous, self.short = {"_sourcedir": "."}, set(), []
-        self.kinds, self.resolved, self.reads = {}, {}, {}  # worked out once each
+        self.vals["nil"] = ""
+        # where each line and each macro's first definition is; the macros noted
+        self.at, self.first, self.unsure = {}, {}, set()
+        # %if nesting; a Lua or %load line that may define any macro; and the
+        # macros a %load line's files define (None: not known), where known
+        self.depth, self.hidden, self.loads = 0, False, None
+        self.kinds, self.resolved, self.reads, self.cached = {}, {}, {}, 0
+        self.users, self.ran = None, {}  # the lines that use each macro; runs_at()
         self.extend(lines)
 
-    def value(self, name, v, first=False):
-        if name not in self.vals:
-            self.vals[name] = v
-        elif self.vals[name] != v and not first:
+    def value(self, name, v):
+        """A definition of name: v, or None for one that gives no single value."""
+        if v is None or "%" in PUT.sub("", v) or self.vals.setdefault(name, v) != v:
             self.ambiguous.add(name)
 
     def extend(self, lines):
         for n, d in lines:
+            self.at.setdefault(d, len(self.lines))
             self.lines.append((n, d))
             self.have.add(d)
+            if self.ran or self.users is not None:
+                self.users, self.ran = None, {}
             if "%" not in d and ":" not in d:
                 continue
-            for name in {key(n) for n in DEFINE.findall(d.replace("%%", "\0"))}:
-                self.defs.setdefault(name, []).append(d)
-            m = TAG.match(d)
-            if m:
-                tag, num = m.group(1).lower(), m.group(2)
-                if tag in ("source", "patch"):
-                    self.defs.setdefault("%s%d" % (tag, int(num or 0)), []).append(d)
-                elif tag in TAGS and not num:
-                    self.defs.setdefault(tag, []).append(d)
-            m = PLAIN_DEF.match(d)
-            if m:
-                self.value(key(m.group(1)), m.group(2))
-                continue
-            m = FILE_TAG.match(d)
-            if m:
-                f = m.group(3).split("#/")[-1].rsplit("/", 1)[-1]
-                self.value("%s%d" % (m.group(1).lower(), int(m.group(2) or 0)), f)
-                continue
-            m = NEVR_TAG.match(d)
-            if m:
-                self.value(m.group(1).lower(), m.group(2), first=True)
+            if IF.match(d):
+                self.depth += 1
+            elif ENDIF.match(d):
+                self.depth = max(self.depth - 1, 0)
+            if self.define(d) and (self.kinds or self.resolved or self.reads):
+                # worked out with the definitions before this line
+                self.kinds, self.resolved, self.reads, self.cached = {}, {}, {}, 0
+
+    def define(self, d):
+        """Take in what line d defines; whether it defines anything."""
+        pos, top, hidden = len(self.lines) - 1, not self.depth, self.hidden
+        for name in {key(n) for n in DEFINE.findall(d.replace("%%", "\0"))}:
+            self.defs.setdefault(name, []).append(d)
+        m = PLAIN_DEF.match(d)
+        found = {key(n) for n in DEFINE.findall(d)}  # behind a %% too
+        for name in found:
+            if m and top and name == key(m.group(2)):
+                # a %global's value is expanded once as it is defined
+                v = m.group(3)
+                self.value(name, v.replace("%%", "%") if m.group(1) == "global" else v)
+            else:
+                self.value(name, None)
+        t = TAG.match(d)
+        tag = t.group(1).lower() if t else ""
+        file = tag in ("source", "patch")
+        if file or tag in TAGS and not t.group(2):
+            tag = "%s%d" % (tag, int(t.group(2) or 0)) if file else tag
+            self.defs.setdefault(tag, []).append(d)
+            v = ONE_WORD.match(d)
+            v = v.group(1).replace("%%", "%") if v and top else None
+            if v and file:  # the file a URL names
+                v = v.split("#/")[-1].rsplit("/", 1)[-1]
+            self.value(tag, v)
+            found.add(tag)
+        if LOAD.search(d):
+            got = self.loads(d) if self.loads else None
+            self.hidden = self.hidden or got is None
+            for name in got or ():
+                self.value(name, None)
+                found.add(name)
+        if "lua" in d and LUA_DEFINES.search(d) and "lua" in kinds(d):
+            self.hidden = True
+        for name in found:
+            self.first.setdefault(name, pos)
+        return bool(found) or self.hidden != hidden
 
     def uses(self, s):
         """Each macro line s uses, through the definitions this text gives."""
         seen, todo = set(), sorted(refs(s))
-        while todo and len(seen) < 500:
+        while todo:
+            if len(seen) >= MAX_USES:
+                note(self.short, "a line uses more than 500 macros")
+                break
             name = todo.pop()
             if name not in seen:
                 seen.add(name)
@@ -282,36 +346,88 @@ class Index:
         return seen
 
     def resolve(self, s):
-        """s with the macros this text gives a plain value, the Source and Patch
-        file names and %_sourcedir (the tree) put in, as far as text can tell."""
-        if s not in self.resolved:
-            self.resolved[s] = self._resolve(s)
-        return self.resolved[s]
+        """s with the values this text gives its macros put in (the Source and
+        Patch file names, %_sourcedir as the tree), and the names put in; s as
+        written and none where that passes a cap."""
+        if s in self.resolved:
+            return self.resolved[s]
+        found = self._resolve(s)
+        if self.cached + len(found[0]) <= MAX_CACHE:
+            self.cached += len(found[0])
+            self.resolved[s] = found
+        return found
 
     def _resolve(self, s):
-
-        def put(m):
-            name = m.group(1) or m.group(2)
-            if m.group(3):
-                name = ("SOURCE" if m.group(3) == "S" else "PATCH") + m.group(4)
-            name = key(name)
-            return (
-                m.group(0)
-                if name in self.ambiguous
-                else self.vals.get(name, m.group(0))
-            )
-
-        rx = r"%%\{[?]?(%s)\}|%%(%s)|%%\{([SP]):\s*([0-9]+)\}" % (NAME, NAME)
-        first = s
+        first, used = s, set()
         for _ in range(8):
-            t = re.sub(rx, put, s)
-            if len(t) > MAX_EXPANSION:  # left as written, which names no file
-                note(self.short, "a macro expands past 64 KiB")
-                return first
-            if t == s:
+            out, size, end = [], 0, 0
+            for m in PUT.finditer(s):
+                name = m.group(1) or m.group(2)
+                if m.group(3):
+                    name = ("SOURCE" if m.group(3) == "S" else "PATCH") + m.group(4)
+                name = key(name)
+                if name in self.ambiguous or name not in self.vals:
+                    continue
+                size += m.start() - end + len(self.vals[name])
+                if size > MAX_EXPANSION:  # measured before the text is built
+                    note(self.short, "a macro expands past 64 KiB")
+                    return first, set()
+                out += [s[end : m.start()], self.vals[name]]
+                end = m.end()
+                used.add(name)
+            if not out:
                 break
-            s = t
-        return s
+            size += len(s) - end
+            if size > MAX_EXPANSION:
+                note(self.short, "a macro expands past 64 KiB")
+                return first, set()
+            if Index.spent + size > MAX_RESOLVED:
+                note(self.short, "more than 32 MiB of macro text resolved")
+                return first, set()
+            Index.spent += size
+            s = "".join(out) + s[end:]
+        return s, used
+
+    def runs_at(self, s, seen=frozenset()):
+        """Where line s runs: where it is; for a %define, the first use of the
+        macro after it, a %define's in turn (its own place if none, or past 50)."""
+        pos = self.at.get(s, len(self.lines))
+        m = LAZY.match(s)
+        if not m or key(m.group(1)) in seen or len(seen) > 50:
+            return pos
+        if s not in self.ran:
+            if self.users is None:
+                self.users = {}
+                for _, u in self.lines:
+                    for name in refs(u) if "%" in u else ():
+                        self.users.setdefault(name, []).append(u)
+            name = key(m.group(1))
+            later = [
+                self.runs_at(u, seen | {name})
+                for u in self.users.get(name, ())
+                if self.at.get(u, -1) > pos
+            ]
+            self.ran[s] = min(later, default=pos)
+        return self.ran[s]
+
+    def doubts(self, s, pos):
+        """The macros line s, read at pos, names without one value the text gives
+        before it: each one left once resolved, each one put in from a definition
+        after it; and each one, where a Lua or %load line may define any."""
+        t, used = self.resolve(s)
+        out = named(t) - BUILTINS
+        out |= {n for n in used if self.first.get(n, -1) > pos}
+        return out | used if self.hidden else out
+
+    def doubt(self, name):
+        if name in self.unsure:
+            return
+        self.unsure.add(name)
+        why = "%%%s has no single value the text gives, so a file read through it"
+        if len(self.unsure) > MAX_NAMED:
+            note(self.short, "more than 20 macros have no single value the text gives")
+        else:
+            note(self.short, why % name + " is not known")
 
 
 def plain(d):
@@ -348,16 +464,27 @@ def targets(line, index, names, found=None):
 
 
 def _targets(line, index, names, found):
-    if not READS & set(kinds(line, index) if found is None else found):
+    found = kinds(line, index) if found is None else found
+    pos = index.runs_at(line)
+    if {"lone %", "glue"} & set(found):
+        why = "a lone % or glue joins code at parse time: what it reads is not known"
+        note(index.short, why)
+    if "%%" in found and not READS & set(found):
+        # read as a later expansion leaves it, every escape live
+        line = re.sub("%%+", "%", line)
+        found = kinds(line, index)
+    if not READS & set(found):
         return set()
+    for name in sorted(index.doubts(line, pos)):
+        index.doubt(name)
     out = set()
-    for m in re.finditer(r"(/?)([A-Za-z0-9_.+~@*?\[\]-]+)", index.resolve(line)):
+    for m in re.finditer(r"(/?)([A-Za-z0-9_.+~@*?\[\]-]+)", index.resolve(line)[0]):
         glob = m.group(1) and re.search(
             r"[*?\[]", m.group(2)
         )  # a path's, not a regex's
         out |= set(fnmatch.filter(names, m.group(2))) if glob else {m.group(2)} & names
     for m in INCLUDE_ARG.finditer(line):
-        a = index.resolve(arg(line, m.end(), m.group(1) == "{"))
+        a = index.resolve(arg(line, m.end(), m.group(1) == "{"))[0]
         a = a[2:] if a.startswith("./") else a
         if not a or "%" in a or ".." in a.split("/"):
             out.add(None)
@@ -475,14 +602,17 @@ def files_of(d):
 def units(d, f, names):
     """f's logical lines as rpm reads them, each %include of a file of d put in
     its place, as (file, line number, text, depth); the %include lines whose
-    file leaves d, which are not read, as (file, line number, text, why); and
-    why the text could not be read whole. An %include's file is named with the
-    macros of all the text read so far, the spec's and every included file's."""
-    lines = [(f, n, s, 0) for n, s in file_lines(os.path.join(d, f))]
-    index = Index([((f, n), s) for _, n, s, _ in lines])
-    left, notes, count, size, k = [], [], 0, 0, 0
-    while k < len(lines):
-        src, n, s, depth = lines[k]
+    file leaves d, which are not read, as (file, line number, text, why); why
+    the text could not be read whole; and its index, built in reading order. An
+    %include's file is named with the macros of the text read before it, the
+    spec's and every included file's, as rpm names it."""
+    if os.path.getsize(os.path.join(d, f)) > MAX_BYTES:
+        return [], [], ["a file past 8 MiB was not read: %s" % f], Index([])
+    todo = [(f, n, s, 0) for n, s in reversed(file_lines(os.path.join(d, f)))]
+    lines, index, left, notes, count, size = [], Index([]), [], [], 0, 0
+    index.loads = lambda s: loaded(d, s, index, names)
+    while todo:
+        src, n, s, depth = todo.pop()
         t = targets(s, index, names) if INCLUDE.match(s) else {None}
         inc = t.pop() if len(t) == 1 and None not in t else None
         if inc and not inside(d, inc):
@@ -496,21 +626,29 @@ def units(d, f, names):
             elif size > MAX_BYTES:
                 note(notes, "more than 8 MiB of included text")
             else:
-                sub = [
-                    (inc, m, x, depth + 1) for m, x in file_lines(os.path.join(d, inc))
-                ]
-                lines[k : k + 1] = sub
-                index.extend([((inc, m), x) for _, m, x, _ in sub])
+                sub = file_lines(os.path.join(d, inc))
+                todo += [(inc, m, x, depth + 1) for m, x in reversed(sub)]
                 count += 1
                 continue
-        k += 1
+        lines.append((src, n, s, depth))
+        index.extend([((src, n), s)])
     for why in index.short:
         note(notes, why)
-    # the text as read, each %include put in its place, for the comparison;
-    # an %include line defines nothing, so the definitions stand as they are
-    index.lines = [((src, n), s) for src, n, s, _ in lines]
-    index.have = {s for _, s in index.lines}
     return lines, left, notes, index
+
+
+def loaded(d, s, index, names):
+    """The macros the files %load line s loads define; None where a file is
+    not one of d's to read."""
+    out = set()
+    for f in targets(s, index, names):
+        path = f and os.path.join(d, f)
+        if not f or not inside(d, f) or not os.path.isfile(path):
+            return None
+        if os.path.getsize(path) > MAX_BYTES:
+            return None
+        out |= {key(n) for n in MACRO.findall(read(path))}
+    return out
 
 
 @functools.lru_cache(maxsize=64)
@@ -594,17 +732,24 @@ def run(cmd, args):
     """What to print: each finding as (file, line number, construct, kinds, why),
     and why the scan stopped short of the whole text."""
     notes = []
+
+    def text(path):
+        if os.path.getsize(path) <= MAX_BYTES:
+            return read(path)
+        note(notes, "a file past 8 MiB was not read: %s" % os.path.basename(path))
+        return ""
+
     if cmd == "constructs":
-        text = read(args[0])
-        index = Index(logical(text))
+        new = text(args[0])
+        index = Index(logical(new))
         found = [
-            (args[0], n, s, kinds(s, index), "construct") for n, s in constructs(text)
+            (args[0], n, s, kinds(s, index), "construct") for n, s in constructs(new)
         ]
         return found, notes
     if cmd == "added":
-        new = read(args[0])
+        new = text(args[0])
         index = Index(logical(new))
-        base = read(args[1]) if os.path.exists(args[1]) else ""
+        base = text(args[1]) if os.path.exists(args[1]) else ""
         found = added_constructs(new, base, notes=notes)
         return [(args[0], n, s, kinds(s, index), why) for n, s, why in found], notes
     d, b = args[:2]

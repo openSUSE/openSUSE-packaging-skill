@@ -244,14 +244,15 @@ out="$(timeout 30 python3 -I "$SCAN" scan "$work/t9" "$work/b9")"; rc=$?
 [ "$rc" = 1 ] && grep -qF 'p.spec:3: %include %{SOURCE1} — include: leaves the checkout' <<<"$out" && ! grep -q secret-outside <<<"$out" \
   && pass "scan: a top-level link to a file outside the checkout is not read, and reported" \
   || { fail "scan file link: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-# A macro defined twice names no file: rpm takes the definition in force at each
-# line, the scan cannot, so that %include is never "verbatim".
+# An %include is named with the definitions before it, as rpm names it; once a
+# macro has two values it names no file, so that %include is never "verbatim".
 mkdir -p "$work/t10" "$work/b10"
 printf 'Name: lw\n%%define inc a.inc\n%%include %%{inc}\n%%define inc b.inc\n%%include %%{inc}\n' | tee "$work/t10/lw.spec" > "$work/b10/lw.spec"
 printf '%%define lw_a 1\n' > "$work/b10/a.inc"; printf '%%define lw_a %%(id)\n' > "$work/t10/a.inc"
 printf '%%define lw_b 1\n' | tee "$work/t10/b.inc" > "$work/b10/b.inc"
 out="$(timeout 30 python3 -I "$SCAN" scan "$work/t10" "$work/b10")"; rc=$?
-[ "$rc" = 1 ] && grep -qF 'lw.spec:3: %include %{inc} — include: reads a file the text does not name' <<<"$out" \
+[ "$rc" = 1 ] && grep -qF 'a.inc:1: %define lw_a %(id) — shell: new' <<<"$out" \
+  && grep -qF 'lw.spec:5: %include %{inc} — include: reads a file the text does not name' <<<"$out" \
   && pass "scan: an %include through a macro defined twice is not verbatim" || { fail "scan redefined macro: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # Where a cap stops the scan, it says so and never claims the rest verbatim: a
 # chain of includes past depth 8, a macro that expands past 64 KiB, and more than
@@ -278,6 +279,92 @@ cp "$work/t13/big.inc" "$work/b13/big.inc"
 out="$(timeout 30 python3 -I "$SCAN" scan "$work/t13" "$work/b13")"; rc=$?
 [ "$rc" = 4 ] && grep -qF 'incomplete: more than 8 MiB of included text' <<<"$out" \
   && pass "scan: more than 8 MiB of included text stops short within seconds, and says so" || { fail "scan size cap: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+# No OK on any doubt: each tree is its base but for the file rpm reads, which the
+# scan cannot name for sure, so an incomplete: line names the macro (exit 4).
+# twin <dir> <spec>: the same spec in the tree and its base; differ <dir> <file>
+twin() { mkdir -p "$work/$1" "$work/$1b"; printf '%b' "$2" | tee "$work/$1/$1.spec" > "$work/$1b/$1.spec"; }
+differ() { printf 'a\n' > "$work/$1b/$2"; printf 'b\n' > "$work/$1/$2"; }
+doubt() {  # doubt <dir> <macro> <what>
+  local out rc
+  out="$(timeout 30 python3 -I "$SCAN" scan "$work/$1" "$work/$1b")"; rc=$?
+  [ "$rc" = 4 ] && grep -qF "incomplete: %$2 has no single value the text gives" <<<"$out" \
+    && pass "scan: $3, no OK" || { fail "scan $1: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+}
+twin amb 'Name: amb\n%define d a.txt\n%define d b.txt\n%global x %{expand:%(cat %{d})}\n'
+printf 'a\n' | tee "$work/amb/a.txt" > "$work/ambb/a.txt"; differ amb b.txt
+doubt amb d "a shell line reads through a macro given two values"
+twin ifdef 'Name: ifdef\n%if 0%{?never}\n%define d -evil\n%endif\n%global x %(cat foo%{?d}.txt)\n'
+differ ifdef foo.txt; doubt ifdef d "a macro defined inside %if"
+twin late 'Name: late\n%global x %(cat foo%{?d}.txt)\n%define d -evil\n'
+differ late foo.txt; doubt late d "a macro defined after the line that reads through it"
+twin lazy 'Name: lazy\n%define x %(cat foo%{?d}.txt)\n%global y %{x}\n%define d -evil\n'
+differ lazy foo.txt; doubt lazy d "a macro defined after a %define body first runs"
+# A %define body runs where the macro is used: one above Version: that is used
+# below it reads through %version for sure.
+twin above 'Name: above\n%define sv %(cat data-%{version}.txt)\nVersion: 1\nRelease: %{sv}\n'
+differ above data-1.txt
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/above" "$work/aboveb")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'above.spec:2: %define sv %(cat data-%{version}.txt) — shell: reads data-1.txt, which differs' <<<"$out" \
+  && ! grep -q '^incomplete:' <<<"$out" \
+  && pass "scan: a %define body above Version: runs where it is used" || { fail "scan above: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+twin host 'Name: host\n%global s %(cat sums.%{_arch})\n'
+differ host sums.x86_64; doubt host _arch "a macro the text never defines"
+twin vers 'Name: vers\nVersion: 1\n%package sub\nVersion: 2\n%global x %(cat data-%{version}.txt)\n'
+printf 'a\n' | tee "$work/vers/data-1.txt" > "$work/versb/data-1.txt"; differ vers data-2.txt
+doubt vers version "a subpackage's Version: sets %version anew"
+twin luadef 'Name: luadef\n%define d a.txt\n%{lua: rpm.define("d b" .. ".txt")}\n%global x %(cat %{d})\n'
+printf 'a\n' | tee "$work/luadef/a.txt" > "$work/luadefb/a.txt"; differ luadef b.txt
+doubt luadef d "Lua may define the macro"
+# Only a Lua line defines macros: a Source named macros.lua is no Lua.
+twin srclua 'Name: srclua\nSource1: macros.lua\nVersion: 1\n%global x %(cat data-%{version}.txt)\n'
+differ srclua data-1.txt
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/srclua" "$work/srcluab")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'reads data-1.txt, which differs' <<<"$out" && ! grep -q '^incomplete:' <<<"$out" \
+  && pass "scan: a Source named macros.lua leaves the macros certain" || { fail "scan srclua: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+twin loaddef 'Name: loaddef\nSource1: m.macros\n%define d a.txt\n%{load:%{SOURCE1}}\n%global x %(cat %{d})\n'
+printf '%%d b.txt\n' | tee "$work/loaddef/m.macros" > "$work/loaddefb/m.macros"
+printf 'a\n' | tee "$work/loaddef/a.txt" > "$work/loaddefb/a.txt"; differ loaddef b.txt
+doubt loaddef d "a loaded file may define the macro"
+# A conditional definition: rpm reads evil.inc, which no plain line names.
+twin cond 'Name: cond\n%{!?inc:%global inc evil.inc}\n%include %{inc}\n%define inc good.inc\n'
+printf '%%define good 1\n' | tee "$work/cond/good.inc" > "$work/condb/good.inc"
+printf '%%define e 1\n' > "$work/condb/evil.inc"; printf '%%define e %%(id)\n' > "$work/cond/evil.inc"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/cond" "$work/condb")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'cond.spec:3: %include %{inc} — include: reads a file the text does not name' <<<"$out" \
+  && grep -qF 'incomplete: %inc has no single value the text gives' <<<"$out" \
+  && pass "scan: an %include through a conditionally defined macro is never verbatim" || { fail "scan cond: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+# An escaped construct reads what it reads once a later expansion makes it live;
+# a lone % joins code nobody can name, so a verbatim one is never OK.
+twin pct 'Name: pct\n%global p %%(cat data.txt)\n'; differ pct data.txt
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/pct" "$work/pctb")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'pct.spec:2: %global p %%(cat data.txt) — %%: reads data.txt, which differs' <<<"$out" \
+  && pass "scan: an escaped shell line reads its file" || { fail "scan escaped reads: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+twin lone 'Name: lone\n%global p %\n%global x %{p}(cat data.txt)\n'; differ lone data.txt
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/lone" "$work/loneb")"; rc=$?
+[ "$rc" = 4 ] && grep -qF 'incomplete: a lone % or glue joins code at parse time' <<<"$out" \
+  && pass "scan: a verbatim lone % is never OK" || { fail "scan lone: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+twin wide "Name: wide\n$(for i in $(seq 0 599); do printf '%%define m%d 1\\n' "$i"; done)%global x %(echo $(for i in $(seq 0 599); do printf '%%{m%d}' "$i"; done))\n"
+sed -i 's/^%define m0 1$/%define m0 1 2/' "$work/wide/wide.spec"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/wide" "$work/wideb")"; rc=$?
+[ "$rc" != 0 ] && grep -qF 'incomplete: a line uses more than 500 macros' <<<"$out" \
+  && pass "scan: a line using more than 500 macros is never OK" || { fail "scan wide: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+# The caps bound memory and time: a 1 MiB value put in 2000 times on one line, 10000
+# lines that each put in 60 KiB, and a spec past 8 MiB, each under 1 GiB of address
+# space, finish within seconds and say they stopped short.
+mkdir -p "$work/onepass" "$work/onepassb" "$work/many" "$work/manyb" "$work/huge" "$work/hugeb"
+python3 -I -c 'import sys; open(sys.argv[1], "w").write("Name: one\n%define a " + "x" * (1 << 20) + "\n%global y %(echo " + "%{a}" * 2000 + ")\n")' "$work/onepass/one.spec"
+python3 -I -c 'import sys; open(sys.argv[1], "w").write("Name: many\n%define a " + "x" * 61440 + "\n" + "".join("%%global y%d %%(echo %%{a} %d)\n" % (i, i) for i in range(10000)))' "$work/many/many.spec"
+python3 -I -c 'import sys; open(sys.argv[1], "w").write("Name: huge\n%global y %(id)\n" + "# padding line of a spec past the cap\n" * 250000)' "$work/huge/huge.spec"
+for t in onepass many huge; do cp "$work/$t/"*.spec "$work/${t}b/"; done
+capped() {  # capped <dir> <note> <what>
+  local out rc
+  out="$(ulimit -v 1048576; timeout 30 python3 -I "$SCAN" scan "$work/$1" "$work/$1b" 2>&1)"; rc=$?
+  [ "$rc" = 4 ] && grep -qF "incomplete: $2" <<<"$out" && ! grep -q 'MemoryError' <<<"$out" \
+    && pass "scan: $3, under 1 GiB" || { fail "scan $1: rc=$rc"; printf '%s\n' "$out" | head -5 | cut -c1-200 | sed 's/^/    /'; }
+}
+capped onepass 'a macro expands past 64 KiB' "a 1 MiB value put in 2000 times stops short"
+capped many 'more than 32 MiB of macro text resolved' "10000 lines of 60 KiB each stop short"
+capped huge 'a file past 8 MiB was not read: huge.spec' "a spec past 8 MiB is not read"
 out="$(python3 -I "$SCAN" scan "$work/t" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF "Usage:" <<<"$out" && pass "usage: exit 2" || fail "usage: rc=$rc"
 out="$(python3 -I "$SCAN" constructs "$work/no-such.spec" 2>&1)"; rc=$?
