@@ -42,19 +42,25 @@ move unattended: then it asks, showing the review and the facts it checked
 again; a submit to openSUSE:Factory while devel still holds the files an
 accepted FIXABLE review saw; incoming-review.sh's record option outside the
 incoming-review agent (an argument it cannot read there counts on the agent's
-own command line); any accept, approval, comment or decline from the
-incoming-review or changes-review agent; and in the incoming-review agent,
-every call judged, whatever parses or runs a submission: rpmspec, rpmbuild,
-rpm with a spec or its eval option, quilt setup, osc build (chroot, shell,
-wipe), osc service but wait, gate.sh, target-gate.sh and the skill's other
-scripts that parse a spec or run a service. A -h/--help
+own command line); any accept, approval, comment, decline, close, revoke or
+supersede from the incoming-review or changes-review agent; and in the
+incoming-review agent, every call judged, whatever parses or runs a
+submission: the rpm family by name or through a link (rpmlint too), quilt
+setup, osc build (chroot, shell, wipe), an osc checkout or update that runs the
+source services, osc service but wait, gate.sh, target-gate.sh and the skill's
+other scripts that parse a spec, run a service or build; and a write, move or
+delete of the installed guard (~/.claude/hooks), Claude Code's settings.json or
+the opencode plugins (~/.config/opencode/plugins), which the user changes by
+hand. A command run through fakeroot, strace, ltrace, unshare, flock, taskset,
+chrt, prlimit, systemd-run, nsenter, setpriv or script is judged as itself. A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.
 
 The agent's own commands (not the scripts or program code they run) are also
 refused when they read a credential file (tea's, osc's, gh's, netrc, git's
-credential stores, osc's cookie jar, an MCP server's api-key) other than by
+credential stores, osc's cookie jar, an MCP server's api-key, the opencode
+server's service.json) other than by
 listing it, set or run an askpass program, run one of the tools' own secret
 printers (gh auth, tea login helper/edit, git-obs login list, git credential
 helpers, secret-tool, osc's full config dump, HTTP debugging and tokens),
@@ -169,13 +175,14 @@ PREFILTER = re.compile(
 # A call run inside a directory of credential files, or in one above them, is
 # judged whatever it says: a bare `.` or a relative name reaches them from there.
 CRED_DIR = re.compile(
-    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/osc|ssh)(?:/|$)"
+    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/(?:osc|opencode)|ssh)(?:/|$)"
 )
 CRED_HOMES = (
     "/.config/tea",
     "/.config/osc",
     "/.config/gh",
     "/.local/state/osc",
+    "/.local/state/opencode",
     "/.config/mcp-",
     "/.ssh",
 )
