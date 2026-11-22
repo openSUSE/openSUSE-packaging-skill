@@ -5390,11 +5390,13 @@ def assign(word, lword, ctx):
     return k
 
 
-def unwrap(argv, cwd=None):
+def unwrap(argv, cwd=None, ctx=None):
     """Strip keywords, assignments and command wrappers: (argv, shell string or
     None, environment changes, the directory env -C moves to). A word named
-    like a wrapper is one only as a bare name or a path to an ELF binary (cwd
-    places a relative one): any other is a script, read as such."""
+    like a wrapper is one only as a bare name or a path to an ELF binary, its
+    variables the values this call (ctx) gave them and cwd placing a relative
+    one: any other is a script, read as such, and one only the shell can place
+    is refused (wrapper_binary())."""
     changes, chdir, i, n = [], None, 0, len(argv)
 
     def skip(j, valued):
@@ -5415,7 +5417,7 @@ def unwrap(argv, cwd=None):
         elif ASSIGN.match(w):
             changes.append(w.split("=", 1)[0].rstrip("+"))
             i += 1
-        elif "/" in w and base in WRAPPER_NAMES and not binary(w, cwd):
+        elif "/" in w and base in WRAPPER_NAMES and not wrapper_binary(w, ctx, cwd):
             break
         elif base == "script":  # util-linux permutes its options: -c anywhere
             return [], script_command(argv[i + 1 :]), changes, chdir
@@ -5510,6 +5512,19 @@ def unwrap(argv, cwd=None):
         else:
             break
     return argv[i:], None, changes, chdir
+
+
+def wrapper_binary(word, ctx, cwd):
+    """Whether a path named like a wrapper runs the real one: every spelling
+    this call's values give it is an ELF binary (binary()). One whose value
+    only the shell knows is refused as unresolved, so it is neither unwrapped
+    nor read; without a call (ctx None) it is no wrapper."""
+    if not VARIABLE.search(word):
+        return binary(word, cwd)
+    spelled = substitute(word, ctx, cwd) if ctx is not None else []
+    if ctx is not None and not spelled:
+        block("exec-unresolved", word)
+    return bool(spelled) and all(binary(w, cwd) for w in spelled)
 
 
 def binary(word, cwd=None):
@@ -6809,7 +6824,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         if depth == 0 and op.lstrip("0123456789") in ("<", "<>"):
             for w in braced([t], "a redirection"):
                 cred_word(w, "a redirection", False, ctx, cwd)
-    run, shell, env, chdir = unwrap(argv, cwd)
+    run, shell, env, chdir = unwrap(argv, cwd, ctx)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.

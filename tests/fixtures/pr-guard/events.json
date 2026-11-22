@@ -11293,5 +11293,84 @@
       "command": "git-obs pr review approve --commit 1111111111111111111111111111111111111111 incorg/inc_under#11"
     },
     "cwd": "@PLAIN@"
+  },
+  "wrapvar-nice-decline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/nice osc rq decline -m no 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-timeout": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "T=/usr/bin; $T/timeout 5 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-nohup-quoted": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; \"$D/nohup\" osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-env-braced": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; ${D}/env osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-nice-approve": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/nice git-obs pr review approve incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-in-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/wrapvar.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-script-qc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/script -qc \"osc rq accept -m 'ok' 1391011\" /dev/null"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-push": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/nice git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "wrapvar-merge": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/nice tea pulls merge --repo pool/x 5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapvar-reviewer-flock": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "D=/usr/bin; $D/flock /var/tmp/l rpmspec -P incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a781",
+    "agent_type": "incoming-review"
+  },
+  "wrapvar-unset-in-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/wrapunset.sh"
+    },
+    "cwd": "@PLAIN@"
   }
 }
