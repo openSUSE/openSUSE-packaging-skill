@@ -12,10 +12,15 @@ opencode=${OPENCODE:-opencode}
 inner=http://127.0.0.1:4096
 # The memory graph the image reads when no volume holds one yet.
 memname=memory.jsonl
+# When the retries of the command end: its first try sets it (see retried).
+cutoff=
 die() {
-	echo "skill-container: $*" >&2
+	echo "skill-container: $*" >&"$diefd"
 	exit 1
 }
+# The stream the launcher started with: a retry hides the errors of its later
+# tries, never why the launcher stops.
+exec {diefd}>&2
 # The agent writes the work directory, and a command takes more than its
 # arguments from the directory it starts in: python its modules, opencode its
 # plugins, the loader a library when one of its lists has an empty entry. The
@@ -365,7 +370,8 @@ api() { filtered timeout 30 podman exec "$ctr" opencode api "$@" --server "$inne
 # project (an empty id, which is not documented) and for each project by its id.
 saved() {
 	local projects id ids
-	projects=$(api GET /api/project | jq -rs '.[0][].id') || return 1
+	projects=$(api GET /api/project |
+		jq -rs 'if length == 1 and (.[0] | type) == "array" then .[0][].id else error("no list") end') || return 1
 	mapfile -t ids < <(printf %s "$projects")
 	ids=('' "${ids[@]}")
 	{
@@ -391,26 +397,35 @@ ruled() {
 	# A list without an end is an answer all the same: asking again pages as long.
 	return 2
 }
-# podman answers nothing while another container holds its storage lock: a read
-# that fails is asked again for five minutes, and only the last one's errors show.
-# One that fails with 2 had an answer and is not asked again.
+# podman answers nothing, or an error of its own, while another container holds
+# its storage lock: what fails is tried again, five seconds apart, for 60 tries
+# or until five minutes after the command's first try, whichever ends first: the
+# old approvals and login stay live no longer. The first try's errors show, the
+# later ones' do not. Only ruled's list without an end fails with 2, which is not
+# tried again; the callers below turn every other failure into 1.
 retried() {
-	local try rc
-	for try in $(seq 59); do
-		if "$@" 2>/dev/null; then return 0; else rc=$?; fi
+	local n rc
+	: "${cutoff:=$((SECONDS + 300))}"
+	for ((n = 1; n <= 60; n++)); do
+		rc=0
+		if ((n == 1)); then "$@" || rc=$?; else "$@" 2>/dev/null || rc=$?; fi
+		[ "$rc" != 0 ] || return 0
 		[ "$rc" != 2 ] || return 2
-		[ "$try" != 1 ] || echo "skill-container: $ctr did not answer; asking again for up to 5 minutes" >&2
+		((n < 60 && SECONDS < cutoff)) || return 1
+		((n > 1)) || echo "skill-container: could not read or change what $ctr keeps; trying again for up to 5 minutes" >&2
 		sleep 5
 	done
-	"$@"
+	return 1
 }
-# Into forget's approvals and sessions.
-readperms() { approvals=$(saved) && sessions=$(ruled); }
-# Removes those it finds, and stops when one stays.
-forget() {
-	local approvals sessions id reset="'podman volume rm $name-$inst-state' removes them, with the sessions"
-	retried readperms || die "cannot read the permissions $ctr keeps: $reset"
-	[ -n "$approvals$sessions" ] || return 0
+# Into forget's approvals and sessions. With pipefail saved can fail with the
+# status of the command in the container, 2 among them.
+readperms() {
+	approvals=$(saved) || return 1
+	sessions=$(ruled)
+}
+# One round: removes what forget's lists hold and reads them again. A removal
+# the busy podman lost leaves its item listed for the next round.
+clearperms() {
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
 		[[ $id =~ ^[A-Za-z0-9_]+$ ]] || die "a saved approval of $ctr has an unexpected id: $reset"
@@ -421,8 +436,14 @@ forget() {
 		[[ $id =~ ^[A-Za-z0-9_]+$ ]] || die "a session of $ctr has an unexpected id: $reset"
 		api PATCH "/api/session/$id" -d '{"permissions":[]}' >/dev/null || true
 	done <<<"$sessions"
-	{ retried readperms && [ -z "$approvals$sessions" ]; } ||
-		die "the permissions $ctr keeps cannot be removed: $reset"
+	readperms && [ -z "$approvals$sessions" ]
+}
+# Removes those it finds, and stops when one stays.
+forget() {
+	local approvals sessions id reset="'podman volume rm $name-$inst-state' removes them, with the sessions"
+	retried readperms || die "cannot read the permissions $ctr keeps: $reset"
+	[ -n "$approvals$sessions" ] || return 0
+	retried clearperms || die "the permissions $ctr keeps cannot be removed: $reset"
 	echo "skill-container: removed the saved approvals and session rules of $ctr" >&2
 }
 # The model login is the secret's alone: one the state volume keeps from an
@@ -436,21 +457,26 @@ logins() {
 				if type == "string" and length > 0 and (test("[^A-Za-z0-9_]") | not) then . else error("id") end'
 	} 2>/dev/null
 }
-# Into relogin's creds.
-readlogins() { creds=$(logins); }
+# Into relogin's creds, as readperms.
+readlogins() { creds=$(logins) || return 1; }
 # The server answers the removal of a login it does not hold like any other:
-# the list, read again, says what is left.
-relogin() {
-	local creds id reset="'podman volume rm $name-$inst-state' removes them, with the sessions; the unit is stopped"
-	retried readlogins || die "cannot read the model logins $ctr keeps: $reset"
+# the list, read again, says what is left. One round, as clearperms.
+clearlogins() {
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
 		api DELETE "/api/credential/$id" >/dev/null || true
 	done <<<"$creds"
-	{ retried readlogins && [ -z "$creds" ]; } || die "the model logins $ctr keeps cannot be removed: $reset"
-	# Its input is the login: what it says about a failure is not shown.
-	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null 2>&1 ||
-		die "the model credential was not imported; the unit is stopped"
+	readlogins && [ -z "$creds" ]
+}
+# Its input is the login: what it says about a failure is not shown.
+importlogin() {
+	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null 2>&1 || return 1
+}
+relogin() {
+	local creds id reset="'podman volume rm $name-$inst-state' removes them, with the sessions; the unit is stopped"
+	retried readlogins || die "cannot read the model logins $ctr keeps: $reset"
+	retried clearlogins || die "the model logins $ctr keeps cannot be removed: $reset"
+	retried importlogin || die "the model credential was not imported; the unit is stopped"
 }
 # True when one of two directories holds the other.
 nested() { [[ $1/ == "$2"/* || $2/ == "$1"/* ]]; }
