@@ -33,6 +33,28 @@ gcopy() {   # gcopy <name> <bwrap path>: a copy of the skill's scripts whose gat
   sed -i "s|^BWRAP=/.*\$|BWRAP=$2|" "$work/sk-$1/gate.sh"
   grep -qxF "BWRAP=$2" "$work/sk-$1/gate.sh" || fail "gcopy $1: gate.sh names no BWRAP=/path"
 }
+# An env and a timeout first on PATH that drop the sandbox: each prints bwrap's
+# namespace message, then runs the command bwrap would have run, without bwrap.
+mkdir -p "$work/unbw"
+cat > "$work/unbw/env" <<'EOF'
+#!/bin/sh
+echo "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces." >&2
+if [ "${0##*/}" = timeout ]; then
+  while [ $# -gt 0 ]; do case "$1" in -k) shift 2 ;; -*) shift ;; *) shift; break ;; esac; done
+fi
+case "${1:-}" in env|*/env) shift ;; esac
+while [ $# -gt 0 ]; do case "$1" in -i|*=*) shift ;; *) break ;; esac; done
+case "${1:-}" in
+  bwrap|*/bwrap) shift
+    while [ $# -gt 0 ]; do case "$1" in
+      --unshare-*|--die-with-parent|--new-session) shift ;;
+      --dev|--proc|--tmpfs|--dir|--chdir) shift 2 ;;
+      --ro-bind|--bind|--symlink) shift 3 ;;
+      *) break ;; esac; done ;;
+esac
+exec "$@"
+EOF
+cp "$work/unbw/env" "$work/unbw/timeout"; chmod +x "$work/unbw/env" "$work/unbw/timeout"
 
 # A bad --entries is a usage error before any gate runs, not a red gate.
 mkdir -p "$work/pkg0" && printf 'Name: p\n' > "$work/pkg0/p.spec"
@@ -1647,6 +1669,9 @@ PY
   pspec pp-nobw ran hello 'touch "$HOME/.gate-test-ran"'
   # shellcheck disable=SC2016
   pspec pp-badbw ran hello 'touch "$HOME/.gate-test-ran"'
+  # an env and a timeout first on PATH do not take %prep out of the sandbox
+  # shellcheck disable=SC2016
+  pspec pp-unbw home hello 'test ! -e "$HOME/.gate-test-secret"'
   # not enough room under /var/tmp to unpack: UNKNOWN, nothing unpacked
   mkdir -p "$work/nodf"; printf '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 100 99 1 99%% /var/tmp\\n"\n' > "$work/nodf/df"
   chmod +x "$work/nodf/df"; pspec pp-df room hello   # a tree no other run caches
@@ -1683,7 +1708,7 @@ PY
   bg pp-emb -- --rpms "$work/emb-rpms"
   if [ "$sbx" = 1 ]; then
     bg pp-ok HOME="$work/home" GATE_TEST_SECRET=leaked; bg pp-cache; bg pp-red; bg pp-salt
-    bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2
+    bg pp-df PATH="$work/nodf:$PATH"; bg pp-tmo GATE_PREP_TIMEOUT=2; bg pp-unbw HOME="$work/home" PATH="$work/unbw:$PATH"
   fi
   wait
   [ "$sbx" = 0 ] || bash "$GATE" "$work/pp-cache" > "$work/pp-cache.out" 2>&1   # the second run of the same tree
@@ -1732,6 +1757,8 @@ PY
   has pp-badbw prep "RED: %prep not run: the sandbox does not start (bwrap: no permission)" "another bwrap failure is red"
   [ ! -e "$work/home/.gate-test-ran" ] && pass "prep: nothing ran without the sandbox" || fail "prep: %prep ran unsandboxed"
   if [ "$sbx" = 1 ]; then
+    got pp-unbw
+    has pp-unbw prep "OK: %prep of home.spec ran in" "an env and a timeout first on PATH leave %prep in the sandbox"
     got pp-ok
     sec pp-ok prep 0
     has pp-ok prep "OK: %prep of ok.spec ran in" "a patch that applies"
@@ -2143,6 +2170,38 @@ grep -qF "## rpmspec: rc=1" <<<"$out" && grep -qF "RED: the sandbox does not sta
   && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
   && pass "sandbox-broken: another bwrap failure is red and nothing parses" \
   || { fail "sandbox-broken"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Which bwrap failures fall back, taken from bubblewrap 0.11.2's messages
+# (strings /usr/bin/bwrap): no user namespaces (EINVAL; EPERM, also in the older
+# "creating" wording), none left (ENOSPC, user.max_user_namespaces=0), or a
+# container refusing a uid map, /proc, lo or a slave /. Any other failure, the
+# generic clone failure among them, is red and parses nothing.
+bwstub() {   # bwstub <name> <message>: a copy of the scripts whose bwrap prints that and fails
+  printf '#!/bin/sh\necho "%s" >&2\nexit 1\n' "$2" > "$work/psbin/bw-$1"; chmod +x "$work/psbin/bw-$1"
+  gcopy "bw-$1" "$work/psbin/bw-$1"
+}
+bwstub eagain 'bwrap: Creating new namespace failed: Resource temporarily unavailable'
+PSGATE="$work/sk-bw-eagain/gate.sh" ps_ "$work/ps-same/bar" < /dev/null
+grep -qF "## rpmspec: rc=1" <<<"$out" \
+  && grep -qF "RED: the sandbox does not start (bwrap: Creating new namespace failed: Resource temporarily unavailable)" <<<"$out" \
+  && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
+  && pass "sandbox-clone-failed: bwrap's generic clone failure is red and nothing parses" \
+  || { fail "sandbox-clone-failed"; printf '%s\n' "$out" | sed 's/^/    /'; }
+while IFS='|' read -r name msg; do
+  bwstub "$name" "$msg"
+  PSGATE="$work/sk-bw-$name/gate.sh" ps_ "$work/ps-same/bar" < /dev/null
+  grep -qF "note: no sandbox here ($msg): the specs parse unsandboxed" <<<"$out" \
+    && grep -qF "## rpmspec: rc=0" <<<"$out" && [ -s "$work/ps-calls" ] \
+    && pass "sandbox-fallback-$name: falls back, says so" || { fail "sandbox-fallback-$name"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done <<'EOF'
+einval|bwrap: Creating new namespace failed, likely because the kernel does not support user namespaces.  bwrap must be installed setuid on such systems.
+eperm|bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.
+eperm-old|bwrap: No permissions to creating new namespace, likely because the kernel does not allow non-privileged user namespaces.
+enospc|bwrap: Creating new namespace failed: nesting depth or /proc/sys/user/max_*_namespaces exceeded (ENOSPC)
+uidmap|bwrap: setting up uid map: Permission denied
+proc|bwrap: Can't mount proc on /newroot/proc: Operation not permitted
+loopback|bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
+slave|bwrap: Failed to make / slave: Permission denied
+EOF
 # With a sandbox, the suite's own spec probes at parse time: a file under $HOME, the
 # network interfaces, the sources through %{_sourcedir}, and a write into the log.
 mkdir -p "$work/home-sb" "$work/sb/sbx"; echo SECRET-IN-HOME > "$work/home-sb/secret"
@@ -2182,6 +2241,7 @@ sbxrun "sandbox, the checkout through a symlink" "$work/sbx-link"
 sbxrun "sandbox, HOME empty" "$work/sb/sbx" HOME=
 sbxrun "sandbox, HOME=/" "$work/sb/sbx" HOME=/
 sbxrun "sandbox, a failing bwrap first on PATH" "$work/sb/sbx" PATH="$work/psbin:$PATH"
+sbxrun "sandbox, an env that drops bwrap first on PATH" "$work/sb/sbx" PATH="$work/unbw:$PATH"
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
