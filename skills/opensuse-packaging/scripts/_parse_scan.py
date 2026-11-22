@@ -384,21 +384,38 @@ def listed(path):
 INCLUDE = re.compile(r"\s*%%?include(?![A-Za-z0-9_])")
 
 
-def inline(d, f, names, depth=0):
-    """f's lines as rpm reads them, each %include of a file of d put in its
-    place, and the file and line each came from."""
-    index = Index(logical(read(os.path.join(d, f))))
-    out, where = [], []
-    for n, s in index.lines:
-        t = targets(s, index, names) if INCLUDE.match(s) else {None}
-        if depth < 8 and len(t) == 1 and None not in t:
-            inc = t.pop()
-            if os.path.isfile(os.path.join(d, inc)):
-                sub, at = inline(d, inc, names, depth + 1)
-                out, where = out + sub, where + at
+def units(d, f, names, limit=64):
+    """f's logical lines as rpm reads them, each %include of a file of d put in
+    its place, as (file, line number, text, depth). An %include's file is named
+    with the macros of all the text read so far, the spec's and every included
+    file's alike; at most limit files go in, none deeper than 8."""
+    lines = [(f, n, s, 0) for n, s in logical(read(os.path.join(d, f)))]
+    done, count = set(), 0
+    while count < limit:
+        index = Index([(n, s) for _, n, s, _ in lines])
+        for k, (src, n, s, depth) in enumerate(lines):
+            if (src, n) in done or depth >= 8 or not INCLUDE.match(s):
                 continue
+            t = targets(s, index, names)
+            inc = t.pop() if len(t) == 1 and None not in t else None
+            if inc and os.path.isfile(os.path.join(d, inc)):
+                text = read(os.path.join(d, inc))
+                sub = [(inc, m, x, depth + 1) for m, x in logical(text)]
+                lines, count = lines[:k] + sub + lines[k + 1 :], count + 1
+                break
+            done.add((src, n))
+        else:
+            break
+    return lines
+
+
+def inline(d, f, names):
+    """f's physical lines as rpm reads them, each %include of a file of d put
+    in its place (units()), and the file and line each came from."""
+    out, where = [], []
+    for src, n, s, _ in units(d, f, names):
         out += s.split("\n")
-        where += [(f, n + k) for k in range(s.count("\n") + 1)]
+        where += [(src, n + k) for k in range(s.count("\n") + 1)]
     return out, where
 
 
@@ -406,27 +423,34 @@ def tree(d):
     """What d's specs and the files they include or load hold: the files to
     scan (the specs, an included file read in its place, and the loaded
     ones), the ones to read from Factory as text, and every file a construct
-    other than an %include names."""
+    other than an %include names, each named with the macros of all the text
+    it is read with."""
     names = {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
     specs = sorted(n for n in names if n.endswith(".spec"))
     todo, seen, fetch, loaded, wanted = list(specs), set(), set(), set(), set()
-    while todo:
+    while todo and len(seen) < 64:
         f = todo.pop()
         if f in seen:
             continue
         seen.add(f)
-        index = Index(logical(read(os.path.join(d, f))))
-        for s in [s for _, s in index.lines if kinds(s, index)]:
-            fetch.add(f)
+        lines = units(d, f, names)
+        index = Index([(n, s) for _, n, s, _ in lines])
+        read_in = {src for src, _, _, _ in lines}
+        if len(read_in) > 1:
+            fetch |= read_in
+        for src, _, s, _ in lines:
+            if not kinds(s, index):
+                continue
+            fetch |= {f, src}
             reads = (targets(s, index, names) - {None}) & names
-            if INCLUDE.match(s) or INCLUDE_ARG.search(s):
+            if INCLUDE_ARG.search(s):
                 fetch |= reads
-                todo += sorted(reads)
             if re.search(r"%\{?[?!]*load(?![A-Za-z0-9_])", s):
                 loaded |= reads
-            if not INCLUDE.match(s):
+                todo += sorted(reads)
+            if not INCLUDE.match(s) or not reads <= read_in:
                 wanted |= reads
-    return specs + sorted(loaded - set(specs)), sorted(fetch), wanted
+    return specs + sorted(loaded - set(specs)), sorted(fetch & names), wanted
 
 
 def show(f, n, s, why, found):

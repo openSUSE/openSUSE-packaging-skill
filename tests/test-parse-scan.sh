@@ -206,6 +206,27 @@ printf '%%global y %%(id)\n' > "$work/t5/evil.inc"
 out="$(python3 -I "$SCAN" scan "$work/t5" "$work/b5")"; rc=$?
 [ "$rc" = 1 ] && grep -qF 'evil.inc:1: %global y %(id) — shell: new' <<<"$out" \
   && pass "scan: an escaped %%include is followed" || { fail "scan escaped include: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A file named through a macro another file defines: the spec's Source5, read by a
+# shell line of the file it includes; and a file an included file includes through
+# the spec's Source2. Only the data, or the nested file, changes.
+mkdir -p "$work/t6" "$work/b6"
+printf 'Name: m\nSource1: m.inc\nSource5: data.txt\n%%include %%{SOURCE1}\n' | tee "$work/t6/m.spec" > "$work/b6/m.spec"
+printf '%%global n %%(cat %%{SOURCE5})\n' | tee "$work/t6/m.inc" > "$work/b6/m.inc"
+printf 'a\n' > "$work/b6/data.txt"; printf 'b\n' > "$work/t6/data.txt"
+out="$(python3 -I "$SCAN" scan "$work/t6" "$work/b6")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'm.inc:1: %global n %(cat %{SOURCE5}) — shell: reads data.txt, which differs' <<<"$out" \
+  && pass "scan: a file named by the spec's macro in an included file's shell line" \
+  || { fail "scan cross-file name: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/t7" "$work/b7"
+printf 'Name: n\nSource1: outer.inc\nSource2: inner.inc\n%%include %%{SOURCE1}\n' | tee "$work/t7/n.spec" > "$work/b7/n.spec"
+printf '%%include %%{SOURCE2}\n' | tee "$work/t7/outer.inc" > "$work/b7/outer.inc"
+printf '%%define n_x 1\n' > "$work/b7/inner.inc"; printf '%%define n_x %%(id)\n' > "$work/t7/inner.inc"
+out="$(python3 -I "$SCAN" needs "$work/t7")"
+[ "$out" = $'inner.inc\nn.spec\nouter.inc' ] && pass "needs: a nested include named by the spec's macro" || fail "needs nested: '$out'"
+out="$(python3 -I "$SCAN" scan "$work/t7" "$work/b7")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'inner.inc:1: %define n_x %(id) — shell: new' <<<"$out" \
+  && pass "scan: a nested include named by the spec's macro is read in its place" \
+  || { fail "scan nested include: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 out="$(python3 -I "$SCAN" scan "$work/t" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF "Usage:" <<<"$out" && pass "usage: exit 2" || fail "usage: rc=$rc"
 out="$(python3 -I "$SCAN" constructs "$work/no-such.spec" 2>&1)"; rc=$?

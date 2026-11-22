@@ -2147,9 +2147,9 @@ out="$(PS_OSC="$work/ps-osc" PATH="$work/pxbin:$PATH" bash "$GATE" "$work/ps-pla
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no spec holds a parse-time construct" <<<"$out" \
   && ! grep -qF "openSUSE:Factory/qux" "$work/ps-osc" 2>/dev/null \
   && pass "parse-no-construct: green without a lookup" || { fail "parse-no-construct"; printf '%s\n' "$out" | sed 's/^/    /'; }
-out="$(bash "$GATE" "$work/ps-plain/qux" --parse-code "x" 2>&1)"; rc=$?
-[ "$rc" = 2 ] && grep -qF -- "unknown option --parse-code" <<<"$out" && pass "--parse-code is gone: usage" \
-  || fail "--parse-code: rc=$rc"
+out="$(bash "$GATE" "$work/ps-plain/qux" --no-such-option 2>&1)"; rc=$?
+[ "$rc" = 2 ] && grep -qF -- "unknown option --no-such-option" <<<"$out" && ! grep -q '^## ' <<<"$out" \
+  && pass "an unknown option: usage, no gate ran" || fail "an unknown option: rc=$rc"
 
 # Every rpm parse runs in the sandbox %prep uses where /usr/bin/bwrap starts. Without
 # bwrap, or where it is denied user namespaces (the container), the spec parses as
