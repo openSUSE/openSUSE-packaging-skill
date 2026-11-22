@@ -1,0 +1,590 @@
+#!/bin/bash
+# test-incoming-review.sh — incoming-review.sh offline: fake osc, git-obs, tea
+# and curl on PATH answer from each case's fixture tree (a missing fixture is a
+# 404, one with a .fail beside it a 500), each case has a HOME of its own, and
+# the guard file the recorder checks is a fixture. A case builds its fixtures
+# from plain trees (src: the request's source, tgt: its target) and knobs, runs
+# --show, then the recording with the key --show printed, and expects an exit
+# code plus a line. Exit 0 = all assertions hold.
+# shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
+# idiom: pass and fail both return 0, so exactly one verdict is ever printed.
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/.." && pwd)"
+IRV="$REPO/skills/opensuse-packaging/scripts/incoming-review.sh"
+fails=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+# The stamps under each case's HOME, the state directory read from a fixture:
+# pr-guard reads this suite, and refuses a command that names that directory.
+SD="$(cat "$HERE/fixtures/gate/state-dir")"
+h=home  # spelled apart: no literal home project in a public file
+# The recording option read from a fixture: pr-guard keeps it to the reviewing agent.
+REC="$(cat "$HERE/fixtures/incoming-review/record-flag")"
+
+# ---------------------------------------------------------------- stubs
+mkdir -p "$work/bin"
+cat > "$work/bin/osc" <<'EOF'
+#!/bin/bash
+# The recorder names openSUSE's OBS (osc's default apiurl can be another
+# instance); sr-status.py --pr, which it runs for a PR's build, does not.
+A=""
+if [ "${1:-}" = -A ]; then
+  [ "${2:-}" = https://api.opensuse.org ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
+  A="-A "; shift 2
+fi
+echo "osc $A$*" >> "$FIX/calls"
+case "${1:-} ${2:-}" in
+  "api "*) [ $# -eq 2 ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
+    f="$FIX/obs/$(printf %s "$2" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "results --xml") [ $# -eq 4 ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
+    f="$FIX/obs/results_$(printf %s "$3/$4" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
+esac
+[ ! -e "$f.fail" ] || { echo "Server returned an error: HTTP Error 500: Internal Server Error" >&2; exit 1; }
+[ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+cat "$f"
+EOF
+cat > "$work/bin/git-obs" <<'EOF'
+#!/bin/bash
+echo "git-obs $*" >> "$FIX/calls"
+# Only the src.opensuse.org login may answer: the default one can be another forge.
+[ "${1:-} ${2:-} ${3:-} ${4:-}" = "-G src.opensuse.org -q api" ] && [ $# -eq 5 ] \
+  || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
+f="$FIX/gitea/$(printf %s "$5" | tr -c 'A-Za-z0-9._:-' '_')"
+[ ! -e "$f.fail" ] || { echo "*** Error: 500 Internal Server Error" >&2; exit 1; }
+[ -f "$f" ] || { echo "*** Error: 404 Not Found" >&2; exit 1; }
+cat "$f"
+EOF
+cat > "$work/bin/curl" <<'EOF'
+#!/bin/bash
+echo "curl $*" >> "$FIX/calls"
+out="" url=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) out=${2:-}; shift ;; --url) url=${2:-}; shift ;; esac
+  shift
+done
+[ -n "$out" ] && [ -n "$url" ] || { echo "fake curl: no -o or --url" >&2; exit 2; }
+f="$FIX/net/$(printf %s "$url" | tr -c 'A-Za-z0-9._:-' '_')"
+[ -f "$f" ] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }
+cp "$f" "$out"
+EOF
+cat > "$work/bin/tea" <<'EOF'
+#!/bin/bash
+echo "tea $*" >> "$FIX/calls"
+echo "fake tea: not expected" >&2
+exit 99
+EOF
+chmod +x "$work/bin/"*
+printf 'def foreign_accept(ctx, run):\n    return None\n' > "$work/guard-new.py"
+printf 'def accept_one(ctx, run):\n    return None\n' > "$work/guard-old.py"
+
+# ---------------------------------------------------------------- fixture builder
+# Every API answer, keyed as the stubs key a path, from the case's src/ and tgt/
+# trees and its knobs in k/ (a missing knob takes the default below).
+cat > "$work/mkfix.py" <<'PY'
+import base64
+import hashlib
+import json
+import os
+import re
+import sys
+import urllib.parse
+from xml.sax.saxutils import quoteattr
+
+D = sys.argv[1]
+H = "home"  # spelled apart: no literal home project in a public file
+
+
+def k(name, default=""):
+    p = os.path.join(D, "k", name)
+    if not os.path.exists(p):
+        return default
+    with open(p) as fh:
+        return fh.read().strip()
+
+
+def q(s):
+    return urllib.parse.quote(s, safe=":+")
+
+
+def put(sub, path, data):
+    os.makedirs(os.path.join(D, sub), exist_ok=True)
+    with open(os.path.join(D, sub, re.sub(r"[^A-Za-z0-9._:-]", "_", path)), "wb") as fh:
+        fh.write(data if isinstance(data, bytes) else data.encode())
+
+
+def tree(d, recurse):
+    if not os.path.isdir(d):
+        return None
+    out = {}
+    for root, _, files in os.walk(d):
+        for n in files:
+            rel = os.path.relpath(os.path.join(root, n), d)
+            if recurse or "/" not in rel:
+                with open(os.path.join(root, n), "rb") as fh:
+                    out[rel] = fh.read()
+    return out
+
+
+def md5(b):
+    return hashlib.md5(b).hexdigest()
+
+
+def srcmd5(fs):
+    return md5("".join("%s  %s\n" % (md5(b), n) for n, b in sorted(fs.items())).encode())
+
+
+def listing(name, s, files, link=""):
+    x = '<directory name="%s" rev="3" vrev="3" srcmd5="%s">%s' % (name, s, link)
+    for n, b in sorted(files.items()):
+        x += '<entry name=%s md5="%s" size="%d" mtime="1700000000"/>' % (quoteattr(n), md5(b), len(b))
+    return x + "</directory>"
+
+
+RESULTS = "openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 succeeded\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded"
+
+
+def results(prj, pkg, s, path):
+    """Build results of prj/pkg from the knob's "repo arch code" lines (code -:
+    no status of pkg there), each succeeded or failed one's last job of s."""
+    res = "<resultlist>"
+    for ln in k("results", RESULTS).splitlines():
+        repo, arch, code = ln.split()
+        res += '<result project="%s" repository="%s" arch="%s" code="published" state="published">' % (prj, repo, arch)
+        if code != "-":
+            res += '<status package="%s" code="%s"/>' % (pkg, code)
+            put("obs", "/build/%s/%s/%s/_jobhistory?package=%s&limit=1" % (q(prj), q(repo), q(arch), q(pkg)),
+                '<jobhistlist><jobhist package="%s" srcmd5="%s" code="%s"/></jobhistlist>'
+                % (pkg, s if k("jobsrc", "same") == "same" else "0" * 32, code))
+        res += "</result>"
+    put("obs", path, res + "</resultlist>")
+
+
+if k("kind", "obs") == "obs":
+    rid, creator, rev = k("id", "1001"), k("creator", "contrib"), k("rev", "3")
+    sprj, spkg, tprj, tpkg = H + ":contrib:branches:devel:example", "foo", "devel:example", "foo"
+    src, tgt = tree(os.path.join(D, "src"), False), tree(os.path.join(D, "tgt"), False)
+    ssrc = srcmd5(src)
+    opts = "".join("<%s>%s</%s>" % (t, v, t) for t, v in (ln.split(None, 1) for ln in k("options", "sourceupdate cleanup").splitlines()))
+    act = '<action type="submit"><source project="%s" package="%s"%s/><target project="%s" package="%s"/>%s</action>' % (
+        sprj, spkg, ' rev="%s"' % rev if rev else "", tprj, tpkg, "<options>%s</options>" % opts if opts else "")
+    put("obs", "/request/%s" % rid,
+        '<request id="%s" creator="%s">%s<state name="review" when="2026-11-20T10:00:00"/>'
+        "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1"))))
+    link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"/>' % (
+        tprj, tpkg, "1" * 32, "1" * 32, "2" * 32) if k("link", "0") == "1" else ""
+    put("obs", "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else ""), listing(spkg, ssrc, src, link))
+    # the source package now: as the request has it, or moved on since
+    cur = dict(src, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
+    if rev:
+        put("obs", "/source/%s/%s?expand=1" % (q(sprj), q(spkg)), listing(spkg, srcmd5(cur), cur, link))
+    results(sprj, spkg, srcmd5(cur), "/build/%s/_result?package=%s&multibuild=1" % (q(sprj), q(spkg)))
+    for n, b in src.items():
+        put("obs", "/source/%s/%s/%s?rev=%s" % (q(sprj), q(spkg), q(n), ssrc), b)
+    if tgt is not None:
+        tsrc = srcmd5(tgt)
+        put("obs", "/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), listing(tpkg, tsrc, tgt))
+        for n, b in tgt.items():
+            put("obs", "/source/%s/%s/%s?rev=%s" % (q(tprj), q(tpkg), q(n), tsrc), b)
+else:
+    creator = k("creator", "contrib")
+
+    def gsha(b):
+        return hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+
+    def gtree(side):
+        ents = {}
+        for p, b in tree(os.path.join(D, side), True).items():
+            if re.search(r"\.tar\.(gz|xz|zst)$", p):  # archives live in LFS
+                b = b"version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize %d\n" % (
+                    hashlib.sha256(b).hexdigest().encode(), len(b))
+            ents[p] = ("100644", b)
+        for ln in k("symlinks_" + side, "").splitlines():
+            p, t = ln.split()
+            ents[p] = ("120000", t.encode())
+        return ents
+
+    def tree_json(ents):
+        dirs = sorted({os.path.dirname(p) for p in ents if "/" in p})
+        items = [{"path": d, "mode": "040000", "type": "tree", "sha": "9" * 40} for d in dirs]
+        items += [{"path": p, "mode": m, "type": "blob", "sha": gsha(b), "size": len(b)} for p, (m, b) in sorted(ents.items())]
+        return json.dumps({"sha": "8" * 40, "truncated": False, "page": 1, "total_count": len(items), "tree": items}, indent=1)
+
+    def commit(name, ents):
+        return hashlib.sha1(name.encode() + json.dumps(sorted((p, m, gsha(b)) for p, (m, b) in ents.items())).encode()).hexdigest()
+
+    head_t, base_t = gtree("src"), gtree("tgt")
+    head, mb = commit("head", head_t), commit("base", base_t)
+    pr = {"number": 7, "title": "Update foo to 1.1", "body": "Please have a look.", "state": "open",
+          "user": {"login": creator}, "merge_base": mb,
+          "head": {"sha": head, "ref": "update", "repo": {"full_name": "contrib/foo"}},
+          "base": {"sha": k("basesha", mb), "ref": "factory", "repo": {"full_name": "pool/foo"}}}
+    put("gitea", "/repos/pool/foo/pulls/7", json.dumps(pr))
+    for sha, ents in ((head, head_t), (mb, base_t)):
+        put("gitea", "/repos/pool/foo/git/trees/%s?recursive=true&per_page=1000" % sha, tree_json(ents))
+        for _, b in ents.values():
+            put("gitea", "/repos/pool/foo/git/blobs/%s" % gsha(b),
+                json.dumps({"sha": gsha(b), "size": len(b), "encoding": "base64", "content": base64.b64encode(b).decode()}))
+    # the staging bot's build of the head, as sr-status.py --pr reads it: only with the knob
+    comments = []
+    if k("prbuild", "0") == "1":
+        pp = "devel:example:PullRequest:7"
+        comments = [{"user": {"login": "autogits_obs_staging_bot"}, "created_at": "2026-11-20T10:00:00Z",
+                     "body": "Build at https://build.opensuse.org/project/show/%s" % pp}]
+        put("obs", "/source/%s/foo/_scmsync.obsinfo" % pp, "mtime: 1700000000\ncommit: %s\n" % head)
+        files = {p: b for p, (_, b) in head_t.items() if "/" not in p}
+        put("obs", "/source/%s/foo?expand=1" % pp, listing("foo", srcmd5(files), files))
+        results(pp, "foo", srcmd5(files), "results_%s/foo" % pp)
+    put("gitea", "/repos/pool/foo/issues/7/comments", json.dumps(comments))
+PY
+
+# ---------------------------------------------------------------- base trees
+fk() { printf %s "$1" | tr -c 'A-Za-z0-9._:-' '_'; }   # a fixture's name, as the stubs key it
+spec() {
+  printf 'Name:           foo\nVersion:        %s\nRelease:        0\nSummary:        An example\n' "$1"
+  printf 'License:        MIT\nURL:            https://example.org/foo\n'
+  printf 'Source0:        https://example.org/releases/%%{name}-%%{version}.tar.gz\nBuildArch:      noarch\n\n'
+  printf '%%description\nAn example.\n\n%%prep\n%%autosetup\n\n%%build\n\n%%install\n\n%%files\n\n%%changelog\n'
+}
+B="$work/base"; mkdir -p "$B/src/sub" "$B/tgt/sub" "$B/net"
+spec 1.1 > "$B/src/foo.spec"; spec 1.0 > "$B/tgt/foo.spec"
+OLDCH='-------------------------------------------------------------------
+Mon Oct  5 10:00:00 UTC 2026 - Tester <tester@example.com>
+
+- Update to 1.0
+'
+printf '%s\n' "$OLDCH" > "$B/tgt/foo.changes"
+printf -- '-------------------------------------------------------------------\nMon Nov 16 10:00:00 UTC 2026 - Contributor <contrib@example.com>\n\n- Update to 1.1\n\n%s\n' "$OLDCH" > "$B/src/foo.changes"
+printf 'foo 1.1\0tarball\n' > "$B/src/foo-1.1.tar.gz"
+printf 'foo 1.0\0tarball\n' > "$B/tgt/foo-1.0.tar.gz"
+printf 'notes\n' > "$B/src/sub/notes.txt"; cp "$B/src/sub/notes.txt" "$B/tgt/sub/notes.txt"
+cp "$B/src/foo-1.1.tar.gz" "$B/net/$(fk https://example.org/releases/foo-1.1.tar.gz)"
+
+GOOD='Thanks, the update to 1.1 looks right.
+- The changelog entry names the new version.
+It goes in once the maintainer agrees.'
+GOODSUM=$(printf %s "$GOOD" | sha256sum | cut -d' ' -f1)
+GUARDF="$work/guard-new.py"
+SP="$h:contrib:branches:devel:example"   # the request's source project
+
+# ---------------------------------------------------------------- helpers
+# fresh <name>: a case directory from the base trees; knob <name> <value>; fix: build the answers
+fresh() { D="$work/c/$1"; mkdir -p "$work/c"; cp -a "$B" "$D"; mkdir -p "$D/home" "$D/tmp" "$D/k"; }
+knob() { printf '%s\n' "$2" > "$D/k/$1"; }
+fix() { rm -rf "$D/obs" "$D/gitea"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
+irv() {
+  out="$(FIX=$D HOME=$D/home TMPDIR=$D/tmp INCOMING_REVIEW_GUARD=$GUARDF PATH="$work/bin:$PATH" \
+    bash "$IRV" "$@" 2>&1)"; rc=$?
+}
+keyof() { sed -n 's/^key \([0-9a-f]\{12\}\)$/\1/p' <<<"$out" | tail -n 1; }
+vfile() { printf '%s %s key %s\n%s\n' "$1" "$2" "$3" "$4" > "$D/verdict.txt"; }
+stampf() { printf '%s/home/%s/incoming/%s/%s.json' "$D" "$SD" "$1" "$2"; }
+expect() {
+  [ "$rc" = "$2" ] && grep -qF -- "$3" <<<"$out" && pass "$1 (rc=$2)" || {
+    fail "$1: expected rc=$2 and '$3', got rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+showkey() {   # showkey <case> [id]: --show, K its key
+  irv --show "${2:-sr#1001}"; K=$(keyof)
+  [ "$rc" = 0 ] && [ -n "$K" ] || { fail "$1: --show gave rc=$rc and no key"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+# refused <case> <verdict> <message> [comment]: --show, then the verdict with its key
+# is refused (rc 1) and leaves no stamp
+refused() {
+  showkey "$1"; vfile "$2" 1001 "$K" "${4:-$GOOD}"; irv "$REC" 1001 "$D/verdict.txt"
+  expect "$1" 1 "$3"
+  [ ! -e "$(stampf obs 1001)" ] || fail "$1: a refused review left a stamp"
+}
+recorded() {   # recorded <case> <verdict> [comment] [id] [stamp kind] [stamp name]
+  showkey "$1" "${4:-sr#1001}"; vfile "$2" "${4:-1001}" "$K" "${3:-$GOOD}"; irv "$REC" "${4:-1001}" "$D/verdict.txt"
+  expect "$1" 0 "RECORDED: $2"
+  SF="$(stampf "${5:-obs}" "${6:-1001}")"
+}
+cat > "$work/stampcheck.py" <<'PY'
+import json
+import os
+import stat
+import sys
+
+path, *pairs = sys.argv[1:]
+bad = []
+mode = stat.S_IMODE(os.stat(path).st_mode)
+if mode != 0o600:
+    bad.append("mode %o" % mode)
+with open(path) as fh:
+    s = json.load(fh)
+for p in pairs:
+    key, _, want = p.partition("=")
+    v = s
+    for part in key.split("."):
+        v = v.get(part) if isinstance(v, dict) else None
+    got = v if isinstance(v, str) else json.dumps(v, sort_keys=True)
+    if not (want[1:] in got if want.startswith("~") else got == want):
+        bad.append("%s=%s, want %s" % (key, got[:100], want))
+left = [n for n in os.listdir(os.path.dirname(path)) if n.endswith(".tmp")]
+if left:
+    bad.append("temp files left: %s" % left)
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+PY
+stampok() {   # stampok <case> <path> key=value...  (~value: contains)
+  local name=$1 r; shift
+  r=$(python3 -I "$work/stampcheck.py" "$@" 2>&1) && pass "$name: the stamp holds it" || fail "$name: stamp: $r"
+}
+
+# ---------------------------------------------------------------- show
+fresh show-key; fix
+showkey show-key; K1=$K
+expect show-key 0 "key $K1"
+[ "$(tail -n 2 <<<"$out")" = "build $SP
+key $K1" ] && pass "show-key: the source project, then the key, last" || fail "show-key: last lines: $(tail -n 2 <<<"$out")"
+grep -qF -- '---8<--- third-party content' <<<"$out" && grep -qF -- '--->8--- end third-party content' <<<"$out" \
+  && grep -qxF '+Version:        1.1' <<<"$out" && grep -qxF 'findings: none' <<<"$out" \
+  && pass "show-key: the diff between the markers, no finding" || { fail "show-key: diff or findings"; printf '%s\n' "$out" | sed 's/^/    /'; }
+irv --show 1001
+[ "$(keyof)" = "$K1" ] && pass "show-key: the same content gives the same key" || fail "show-key: key $(keyof), then $K1"
+grep -q '^tea ' "$D/calls" && fail "show-key: tea was called" || pass "show-key: neither tea nor a raw fetch, osc and git-obs only"
+grep '^osc ' "$D/calls" | grep -qv '^osc -A ' && fail "show-key: an osc call without -A: $(cat "$D/calls")" \
+  || pass "show-key: every osc call names openSUSE's OBS"
+
+# ---------------------------------------------------------------- record
+fresh record-pass; fix
+recorded record-pass PASS
+stampok record-pass "$SF" v=1 kind=obs id=1001 creator=contrib verdict=PASS "key=$K" "comment_sha256=$GOODSUM" \
+  "comment=$GOOD" obs.actions=1 obs.action.type=submit 'obs.action.options=["sourceupdate"]' obs.action.source.rev=3 \
+  obs.action.target.project=devel:example "obs.action.source.files=~\"foo-1.1.tar.gz\"" \
+  "obs.action.target.files=~\"foo-1.0.tar.gz\"" "build.project=$SP" build.package=foo build.required=true build.green=true \
+  "build.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk "/source/$SP/foo?expand=1")")" \
+  "obs.action.target.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk '/source/devel:example/foo?expand=1')")" \
+  scan.exit=0 'findings=[]' "recorded=~T"
+vfile FIXABLE 1001 "$K" "$GOOD"; irv "$REC" sr#1001 "$D/verdict.txt"
+expect record-pass 0 "RECORDED: FIXABLE"
+stampok record-pass "$SF" verdict=FIXABLE "key=$K"
+vfile PASS 1001 "$K" "$GOOD"; irv "$REC=1001" "$D/verdict.txt"
+expect "record-pass: the =ID spelling" 0 "RECORDED: PASS"
+# The stamp lands at <kind>/<stem>.json under the state directory, and nothing else does.
+[ "$(find "$D/home" -type f)" = "$SF" ] && pass "record-pass: the one stamp file, exactly there" \
+  || fail "record-pass: files under HOME: $(find "$D/home" -type f)"
+
+fresh record-key-moved; fix
+showkey record-key-moved
+printf -- '- Fix a typo\n' >> "$D/src/foo.changes"; fix
+vfile PASS 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+expect record-key-moved 3 "KEY MOVED"
+[ ! -e "$(stampf obs 1001)" ] && pass "record-key-moved: no stamp" || fail "record-key-moved: a stamp was written"
+
+fresh record-no-rev; knob rev ''; fix
+refused record-no-rev PASS "the request pins no source rev"
+
+fresh record-link-numeric-rev; knob link 1; fix
+refused record-link-numeric-rev PASS "is no 32-hex srcmd5"
+fresh record-link-srcmd5; knob link 1; knob rev 0123456789abcdef0123456789abcdef; fix
+recorded record-link-srcmd5 PASS
+
+fresh record-target-moved; fix
+showkey record-target-moved
+printf -- '- A fix in the devel project\n' >> "$D/tgt/foo.changes"; fix
+vfile PASS 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+expect record-target-moved 3 "KEY MOVED"
+
+fresh record-multi-action; knob actions 2; fix
+refused record-multi-action PASS "shape: 2 actions"
+
+fresh record-updatelink; knob options "$(printf 'sourceupdate cleanup\nupdatelink true')"; fix
+refused record-updatelink PASS "option updatelink=true"
+
+fresh record-shell-added; sed -i '/^Version:/a %global stamp %(id)' "$D/src/foo.spec"; fix
+refused record-shell-added PASS "adds parse-time code"
+
+# An %include chain past depth 8, the same in source and target: the scanner
+# finds nothing added and stops short (its exit 4).
+fresh record-scan-incomplete
+for s in src tgt; do
+  for i in 1 2 3 4 5 6 7 8 9 10; do printf '%%include inc%d.inc\n' $((i + 1)) > "$D/$s/inc$i.inc"; done
+  printf 'x\n' > "$D/$s/inc11.inc"; sed -i '/^Version:/a %include inc1.inc' "$D/$s/foo.spec"
+done
+fix
+refused record-scan-incomplete FIXABLE "the parse scan stopped short"
+grep -qxF 'scan: 4 (incomplete)' <<<"$out" && pass "record-scan-incomplete: scan exit 4 shown" || fail "record-scan-incomplete: no scan 4 line"
+
+fresh record-bidi; printf -- '- Fix the \xe2\x80\xae order\n' >> "$D/src/foo.changes"; fix
+refused record-bidi PASS "foo.changes line 11 holds a bidi or zero-width character (U+202E)"
+
+fresh record-service-changed; printf '<services><service name="download_files" mode="manual"/></services>\n' > "$D/src/_service"; fix
+refused record-service-changed PASS "content: _service added"
+
+fresh record-tarball-mismatch; fix
+printf 'something else\n' > "$D/net/$(fk https://example.org/releases/foo-1.1.tar.gz)"
+refused record-tarball-mismatch PASS "foo-1.1.tar.gz differs from the bytes at https://example.org/releases/foo-1.1.tar.gz"
+
+fresh record-source-host; sed -i 's|https://example.org/releases/|https://mirror.example.net/|' "$D/src/foo.spec"
+cp "$D/net/$(fk https://example.org/releases/foo-1.1.tar.gz)" "$D/net/$(fk https://mirror.example.net/foo-1.1.tar.gz)"; fix
+refused record-source-host PASS "downloads from mirror.example.net, a host the target's Sources do not use"
+grep -qF "the bytes of foo-1.1.tar.gz are not checked: mirror.example.net is no host the target's Sources use" <<<"$out" \
+  && ! grep '^curl ' "$D/calls" | grep -q mirror.example.net \
+  && pass "record-source-host: nothing is fetched from a host the target does not use" || fail "record-source-host: fetched from the new host"
+
+fresh record-vendor-archive; printf 'zstd\0vendor\n' > "$D/src/vendor.tar.zst"
+sed -i '/^Source0:/a Source1:        vendor.tar.zst' "$D/src/foo.spec"; fix
+refused record-vendor-archive PASS "vendor.tar.zst added: a service-made vendor or obscpio archive"
+
+fresh record-binary-no-url; printf 'PNG\0data\n' > "$D/src/logo.png"; fix
+refused record-binary-no-url PASS "logo.png is binary, added, and no Source URL names it"
+
+fresh record-diff-cap; python3 -I -c 'import sys; open(sys.argv[1], "w").write("line\n" * 40000)' "$D/src/big.patch"; fix
+refused record-diff-cap PASS "the diff is over the 128 KiB cap"
+
+# Build evidence: the source package's own results, from the request's sources.
+fresh record-no-build; knob results ''; fix
+refused record-no-build PASS "build: $SP/foo: no Tumbleweed or Leap 16 build on x86_64 or aarch64 succeeded"
+refused record-no-build FIXABLE "build: $SP/foo: no Tumbleweed or Leap 16 build on x86_64 or aarch64 succeeded"
+
+# gate.sh's judged set: what the source project builds of Tumbleweed and Leap 16 on
+# x86_64 and aarch64, nothing else, and an excluded arch skipped.
+fresh record-build-judged-set
+knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed i586 failed\nopenSUSE_Leap_15.6 x86_64 failed\n16.0 aarch64 excluded')"; fix
+recorded record-build-judged-set PASS
+stampok record-build-judged-set "$SF" 'build.results={"16.0/aarch64": "excluded", "openSUSE_Tumbleweed/x86_64": "succeeded"}' build.green=true
+
+fresh record-build-red; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 failed\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
+refused record-build-red FIXABLE "openSUSE_Tumbleweed/aarch64 failed"
+
+fresh record-build-no-aarch64; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 -\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
+refused record-build-no-aarch64 PASS "openSUSE_Tumbleweed/aarch64 has no build of foo"
+
+fresh record-build-old-sources; knob jobsrc old; fix
+refused record-build-old-sources PASS "built 000000000000, not the sources"
+
+fresh record-build-source-moved; knob moved 1; fix
+refused record-build-source-moved PASS "build: $SP/foo moved since the request"
+
+fresh record-new-package; rm -r "$D/tgt"; fix
+refused record-new-package PASS "devel:example/foo does not exist: a new package"
+
+# ---------------------------------------------------------------- the comment
+fresh record-comment-url; fix
+refused record-comment-url PASS "a URL other than a build, src or bugzilla.opensuse.org one: https://example.com/x" \
+  "$(printf 'Thanks.\n- See https://example.com/x for the reason.')"
+recorded record-comment-url PASS "$(printf 'Thanks.\n- See https://bugzilla.opensuse.org/show_bug.cgi?id=1 and https://build.opensuse.org/request/show/1001.')"
+
+fresh record-comment-merge-ok; fix
+refused record-comment-merge-ok PASS 'a bot directive ("merge ok")' "$(printf 'Thanks.\nmerge ok')"
+refused record-comment-merge-ok PASS 'a bot directive ("@factory : approve")' "$(printf 'Thanks.\n- @factory : approve')"
+
+fresh record-comment-internal-tag; fix
+refused record-comment-internal-tag PASS 'an internal tag ("VERDICT")' "$(printf 'VERDICT: fine.\nThanks.')"
+refused record-comment-internal-tag PASS 'an internal tag ("tree 0123456789ab")' "Reviewed tree 0123456789ab, thanks."
+refused record-comment-internal-tag PASS 'an internal tag ("gate.sh")' "The gate.sh run is clean, thanks."
+
+fresh record-comment-mention; fix
+refused record-comment-mention PASS "an @-mention of someone, not of the creator contrib" "Thanks @contrib, and @someone too."
+recorded record-comment-mention PASS "Thanks @contrib."
+
+fresh record-comment-long; fix
+refused record-comment-long PASS "characters, over 1500" "$(printf 'x%.0s' $(seq 1 1501))"
+
+# ---------------------------------------------------------------- BLOCK and the rollout guard
+fresh record-block-always; knob results ''; printf -- '- Fix the \xe2\x80\xae order\n' >> "$D/src/foo.changes"; fix
+recorded record-block-always BLOCK "$(printf 'This cannot go in.\n- See https://example.com/x')"
+stampok record-block-always "$SF" verdict=BLOCK 'comment_sha256=' 'comment=' "findings=~no Tumbleweed or Leap 16 build" \
+  "findings=~U+202E" "findings=~comment: a URL" build.green=false
+grep -qF "the stamp allows no comment" <<<"$out" && pass "record-block-always: a comment that breaks a rule is not stamped" \
+  || fail "record-block-always: no note on the comment"
+recorded record-block-always BLOCK "$(printf 'This cannot go in yet.\n- The package does not build.')"
+stampok record-block-always "$SF" verdict=BLOCK "comment_sha256=$(printf 'This cannot go in yet.\n- The package does not build.' | sha256sum | cut -d' ' -f1)"
+
+fresh record-guard-not-installed; fix
+GUARDF="$work/guard-old.py"
+refused record-guard-not-installed PASS "has no foreign_accept yet: only BLOCK records"
+refused record-guard-not-installed FIXABLE "has no foreign_accept yet: only BLOCK records"
+recorded record-guard-not-installed BLOCK
+GUARDF="$work/guard-new.py"
+
+# ---------------------------------------------------------------- failed lookups
+# Each failed, empty or malformed answer is exit 5, never "nothing found".
+lk() {   # lk <case> <message> [show|record]: the case's answers as mutated fail with 5
+  if [ "${3:-show}" = record ]; then
+    vfile BLOCK 1001 000000000000 "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+  else
+    irv --show sr#1001
+  fi
+  expect "lookup-fails-is-5: $1" 5 "$2"
+  [ ! -e "$(stampf obs 1001)" ] || fail "lookup-fails-is-5: $1: a stamp was written"
+}
+SL="$(fk "/source/$h:contrib:branches:devel:example/foo?expand=1&rev=3")"
+fresh lk-request-404; fix; rm "$D/obs/_request_1001"; lk "request 404" "osc api /request/1001 failed"
+fresh lk-listing-500; fix; touch "$D/obs/$SL.fail"; lk "source listing 500" "HTTP Error 500"
+# Only a 404 means "none" (a new package): any other failure there is no answer.
+fresh lk-target-500; fix; touch "$D/obs/$(fk '/source/devel:example/foo?expand=1').fail"; lk "target listing 500" "HTTP Error 500"
+fresh lk-current-500; fix; touch "$D/obs/$(fk "/source/$SP/foo?expand=1").fail"; lk "current source listing 500" "HTTP Error 500"
+fresh lk-empty; fix; : > "$D/obs/_request_1001"; lk "an empty answer" "an empty answer"
+fresh lk-two-docs; fix; cat "$D/obs/_request_1001" "$D/obs/_request_1001" > "$D/two"; mv "$D/two" "$D/obs/_request_1001"
+lk "two documents" "an unparseable answer"
+fresh lk-malformed; fix
+printf '<directory name="foo" srcmd5="%s"><entry name="foo.spec" size="3"/></directory>' "$(printf '3%.0s' $(seq 1 32))" \
+  > "$D/obs/$(fk '/source/devel:example/foo?expand=1')"
+lk "a malformed listing" "a malformed entry (foo.spec)"
+fresh lk-results; fix; touch "$D/obs/$(fk "/build/$SP/_result?package=foo&multibuild=1").fail"
+lk "build results 500" "HTTP Error 500" record
+fresh lk-jobhistory; fix; : > "$D/obs/$(fk "/build/$SP/openSUSE_Tumbleweed/x86_64/_jobhistory?package=foo&limit=1")"
+lk "an empty job history" "an empty answer" record
+fresh lk-file; fix; printf 'tampered\n' > "$D/obs/$(fk "/source/$h:contrib:branches:devel:example/foo/foo.spec?rev=")$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$SL")"
+lk "a file whose bytes do not match its md5" "the bytes fetched do not match"
+fresh lk-pr-404; knob kind gitea; fix; rm "$D/gitea/$(fk /repos/pool/foo/pulls/7)"
+irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "git-obs api /repos/pool/foo/pulls/7 failed"
+fresh lk-pr-truncated; knob kind gitea; fix; sed -i 's/"truncated": false/"truncated": true/' "$D"/gitea/_repos_pool_foo_git_trees_*
+irv --show pool/foo#7; expect "lookup-fails-is-5: a truncated tree" 5 "a malformed or truncated answer"
+# A PR's build is not required, but a failed lookup of it is no answer either.
+fresh lk-pr-build; knob kind gitea; fix; touch "$D/gitea/$(fk /repos/pool/foo/issues/7/comments).fail"
+irv --show pool/foo#7; expect "lookup-fails-is-5: the PR build lookup fails" 5 "LOOKUP FAILED: sr-status.py --pr pool/foo#7 (6)"
+
+# ---------------------------------------------------------------- src.opensuse.org PRs
+fresh show-key-pr; knob kind gitea; fix
+showkey show-key-pr pool/foo#7
+grep -qxF '+Version:        1.1' <<<"$out" && grep -qxF 'findings: none' <<<"$out" \
+  && grep -qxF "build -" <<<"$out" && grep -qxF "build: none, not required for a PR: no build of this head" <<<"$out" \
+  && pass "show-key-pr: the diff, no finding (the LFS tarball matches its Source URL), no build required" \
+  || { fail "show-key-pr: diff, findings or build project"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+fresh record-pr-pass; knob kind gitea; fix
+recorded record-pr-pass PASS "$GOOD" pool/foo#7 gitea pool_foo_7
+stampok record-pr-pass "$SF" kind=gitea id=pool/foo#7 verdict=PASS "key=$K" gitea.owner=pool gitea.repo=foo \
+  gitea.number=7 "gitea.head=~$(sed -n 's/.*"sha": "\([0-9a-f]\{40\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")" \
+  "gitea.files=~\"foo.spec\"" "gitea.files=~\"sub/notes.txt\"" build.project= build.required=false build.verdict=none \
+  "build.note=no build of this head" build.green=false
+
+fresh record-pr-built; knob kind gitea; knob prbuild 1; fix
+recorded record-pr-built PASS "$GOOD" pool/foo#7 gitea pool_foo_7
+grep -qxF "build devel:example:PullRequest:7" <<<"$out" && pass "record-pr-built: the staging project named" || fail "record-pr-built: no build line"
+stampok record-pr-built "$SF" build.project=devel:example:PullRequest:7 build.verdict=green build.green=true build.required=false
+
+fresh record-pr-head-moved; knob kind gitea; fix
+showkey record-pr-head-moved pool/foo#7
+printf -- '- Fix a typo\n' >> "$D/src/foo.changes"; fix
+vfile PASS pool/foo#7 "$K" "$GOOD"; irv "$REC" pool/foo#7 "$D/verdict.txt"
+expect record-pr-head-moved 3 "KEY MOVED"
+
+fresh record-pr-base-moved; knob kind gitea; fix
+showkey record-pr-base-moved pool/foo#7
+knob basesha "$(printf 'a%.0s' $(seq 1 40))"; fix
+vfile PASS pool/foo#7 "$K" "$GOOD"; irv "$REC" pool/foo#7 "$D/verdict.txt"
+expect record-pr-base-moved 3 "KEY MOVED"
+
+fresh record-pr-symlink; knob kind gitea; knob symlinks_src 'spec-link foo.spec'; fix
+showkey record-pr-symlink pool/foo#7; vfile PASS pool/foo#7 "$K" "$GOOD"; irv "$REC" pool/foo#7 "$D/verdict.txt"
+expect record-pr-symlink 1 "content: symlink spec-link added"
+
+# ---------------------------------------------------------------- usage
+fresh usage; fix
+irv; expect "usage: no mode" 2 "--show or --record expected"
+irv --show 'pool/../x#1'; expect "usage: a malformed id" 2 "not an id"
+irv "$REC" 1001 "$D/none.txt"; expect "usage: no FILE" 2 "cannot read"
+printf 'LGTM\nfine\n' > "$D/verdict.txt"; irv "$REC" 1001 "$D/verdict.txt"; expect "usage: a first line of no verdict" 2 "is no 'PASS|FIXABLE|BLOCK"
+vfile PASS 1002 000000000000 "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"; expect "usage: another id in FILE" 2 "names 1002, not 1001"
+irv --help; expect "usage: --help" 0 "Usage: incoming-review.sh --show"
+# Only the spellings the guard knows record: an abbreviation is a usage error.
+vfile PASS 1001 000000000000 "$GOOD"; irv --rec 1001 "$D/verdict.txt"; expect "usage: --rec is no --record" 2 "--show or --record expected"
+irv "$REC=" "$D/verdict.txt"; expect "usage: an empty --record=" 2 "not an id"
+
+echo "---"; [ "$fails" = 0 ] && echo "all incoming-review checks passed" || echo "$fails FAILED"
+exit $((fails > 0))

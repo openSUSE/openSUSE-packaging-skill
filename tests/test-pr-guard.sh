@@ -2777,7 +2777,7 @@ python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?
 echo "--- the skill's own tools, and every suite, run unrefused"
 for f in "$REPO"/skills/opensuse-packaging/scripts/*.sh "$REPO"/skills/opensuse-packaging/scripts/*.py "$HERE"/test-*.sh; do
   # The scripts that write stamps run only as merged, unread: read, they are refused.
-  case ${f##*/} in _*|pool-pr.sh|leap-sync.sh|target-gate.sh|gate.sh) continue;; esac
+  case ${f##*/} in _*|pool-pr.sh|leap-sync.sh|target-gate.sh|gate.sh|incoming-review.sh) continue;; esac
   case $f in *.py) run=python3;; *) run=bash;; esac
   out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[2],
     "tool_input": {"command": sys.argv[1]}}))' "$run $f --help" "$work/plain" | python3 "$GUARD" 2>&1)"; got=$?
