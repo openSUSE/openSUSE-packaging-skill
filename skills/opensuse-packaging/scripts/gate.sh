@@ -136,6 +136,14 @@
 #       (obs-wait.py), then rerun.
 set -uo pipefail
 unset GATE_SANDBOX   # set below, only when a sandbox starts
+# Only the absolute entries of PATH: in the checkout an empty, . or relative one
+# would run a file planted there instead of the host's tool.
+abs=""; rest="$PATH:"
+while [ -n "$rest" ]; do
+  case ${rest%%:*} in /*) abs+=${abs:+:}${rest%%:*} ;; esac
+  rest=${rest#*:}
+done
+export PATH=$abs
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Its Python reads and writes no __pycache__ beside the scripts: a directory under
 # /dev/null cannot exist, so no compiled module can be planted there either.
@@ -1772,10 +1780,14 @@ show skill-scripts $rc "$log/skill-scripts.txt"
 : > "$log/parse-surface.txt"; pf=openSUSE:Factory/$pkg; pb="$log/parse-base"; nocmp=""
 obs=(osc -A https://api.opensuse.org)
 need=$(timeout 60 python3 -I "$HERE/_parse_scan.py" needs . 2> "$log/parse-needs.err"); nrc=$?
-if [ $nrc -ne 0 ]; then
+short=$(grep '^incomplete: ' <<< "$need"); need=$(grep -v '^incomplete: ' <<< "$need")
+if [ $nrc -ne 0 ] && [ $nrc -ne 4 ]; then
   nocmp="the scan failed (exit $nrc): $(head -n 1 "$log/parse-needs.err")${need%%$'\n'*}"
+elif [ -z "$need" ] && [ -n "$short" ]; then
+  { printf '%s\n' "$short"
+    echo "note: the text scan stopped short (incomplete: above): a spec it did not read may hold parse-time constructs"; } >> "$log/parse-surface.txt"
 elif [ -z "$need" ]; then
-  echo "OK: no spec holds a parse-time construct" >> "$log/parse-surface.txt"
+  echo "OK: no spec holds a parse-time construct the text scan can see" >> "$log/parse-surface.txt"
 else
   mkdir -p "$pb"
   if timeout 60 "${obs[@]}" api "/source/$pf?expand=1" > "$log/parse-factory.xml" 2> "$log/parse-factory.err"; then
@@ -1796,7 +1808,7 @@ else
     timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
     n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
     case $src in
-      0) echo "OK: every parse-time construct is in $pf verbatim" ;;
+      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; the parse itself runs in the sandbox)" ;;
       1|4) cat "$log/parse-added.txt"
          [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
          ! grep -q '^incomplete: ' "$log/parse-added.txt" \

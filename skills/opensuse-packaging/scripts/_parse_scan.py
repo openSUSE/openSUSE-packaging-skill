@@ -46,13 +46,21 @@ conditional, %{expand:} or %undefine definition) and a lone % or glue, which
 joins code nobody can name, give an "incomplete:" line.
 Out of scope: what a host macro does with its arguments (%requires_eq x';id;'
 reaches a shell inside the host's own macro) and _multibuild flavour names.
+Known gaps, where the text heuristic can call a file certain that is not: a
+%define body that first runs earlier than the scan places it (through a use it
+does not see); a %global fixed when it is read, resolved here with definitions
+that come after it; Lua that defines macros without the literal rpm.define or
+macros; positional and option macros (%1, %*, %{-f*}); escaped names on a line
+that also holds a live construct; host macros (%sysusers_create_package and
+others) that run a shell themselves.
 
 Usage: python3 -I _parse_scan.py constructs FILE
        python3 -I _parse_scan.py added NEW BASE
        python3 -I _parse_scan.py needs DIR
        python3 -I _parse_scan.py scan DIR BASEDIR [LISTING]
   needs: the files scan reads from Factory as text (none: no spec holds a
-         construct): each spec with one, and each file a spec includes or loads
+         construct): each spec with one, and each file a spec includes or loads;
+         then an "incomplete:" line for each cap that kept a file unread
   scan:  each *.spec of DIR, with the files it %includes read in their place,
          and each file it loads, against their copies in BASEDIR; any other file
          a construct names against its md5 in LISTING, OBS's expanded listing
@@ -65,7 +73,7 @@ Usage: python3 -I _parse_scan.py constructs FILE
 Exit: 0 = no construct found (constructs) or added (added, scan); needs: listed
       1 = found or added, 2 = usage, 3 = a file it cannot read, or an internal
       error, 4 = nothing found, but the scan stopped short or could not name a
-      file for sure (incomplete:)
+      file for sure (incomplete:); needs: listed, but incomplete:
 """
 
 import fnmatch
@@ -796,8 +804,9 @@ def main(argv):
         return 2
     try:
         if cmd == "needs":
-            say("\n".join(tree(args[0])[1]))
-            return 0
+            _, fetch, _, _, notes = tree(args[0])
+            say("\n".join(fetch + ["incomplete: %s" % why for why in notes]))
+            return 4 if notes else 0
         found, notes = run(cmd, args)
         for f, n, s, kind, why in found:
             say(show(f, n, s, why, kind) if n else "%s: %s" % (f, why))

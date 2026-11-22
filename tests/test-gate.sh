@@ -2094,7 +2094,7 @@ psbar() {   # psbar <case>: a checkout of bar holding Factory's spec and bar.inc
 }
 psbar same < /dev/null
 ps_ "$work/ps-same/bar"
-grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
   && [ -s "$work/ps-calls" ] && pass "parse-identical-to-factory: green, and the spec is parsed" \
   || { fail "parse-identical-to-factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
 [ -s "$work/ps-a" ] && ! grep -qv '^https://api.opensuse.org ' "$work/ps-a" \
@@ -2102,7 +2102,7 @@ grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: every parse-time co
   || { fail "parse-surface osc -A"; sed 's/^/    /' "$work/ps-a" 2>/dev/null; }
 sed -i 's/^%global commit 0123abcd$/%global commit 4567cdef/' "$work/ps-same/bar/bar.spec"
 ps_ "$work/ps-same/bar"
-grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
   && pass "parse-plain-value: a new commit hash in a macro Factory's shell line uses lists nothing" \
   || { fail "parse-plain-value"; printf '%s\n' "$out" | sed 's/^/    /'; }
 sed -i 's/^%global commit 4567cdef$/%global commit x;id;/' "$work/ps-same/bar/bar.spec"
@@ -2126,7 +2126,7 @@ ps_ "$work/ps-include/bar"
 advisory parse-include-target-changed 'bar.inc:1: %define bar_x %(id) — shell: new'
 psbar include-tags < /dev/null; printf 'Source1000: https://registry.example/a-1.tgz\n' > "$work/ps-include-tags/bar/bar.inc"
 ps_ "$work/ps-include-tags/bar"
-grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
   && pass "parse-include-tags-only: an included file that changed without a construct lists nothing" \
   || { fail "parse-include-tags-only"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A scan that stopped short says so and never claims the rest verbatim: an
@@ -2137,7 +2137,7 @@ printf '%%define bar_d 1\n' | tee "$work/ps-deep/bar/bar-i11.inc" | put openSUSE
 ps_ "$work/ps-deep/bar"
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "incomplete: an %include past depth 8 was not read" <<<"$out" \
   && grep -qF "note: the comparison with openSUSE:Factory/bar is incomplete" <<<"$out" \
-  && ! grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+  && ! grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
   && pass "parse-incomplete: a scan stopped by a cap says so, no OK line" \
   || { fail "parse-incomplete"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm -f "$O"/openSUSE:Factory/bar/bar-i*.inc
@@ -2156,9 +2156,16 @@ rm -f "$O/fail-list"
 # A tree without a construct needs no base: no lookup of Factory at all.
 rm -f "$work/ps-osc"; printf 'Name: qux\nVersion: 1\n' | psdir plain qux
 out="$(PS_OSC="$work/ps-osc" PATH="$work/pxbin:$PATH" bash "$GATE" "$work/ps-plain/qux" 2>&1)"
-grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no spec holds a parse-time construct" <<<"$out" \
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qxF "OK: no spec holds a parse-time construct the text scan can see" <<<"$out" \
   && ! grep -qF "openSUSE:Factory/qux" "$work/ps-osc" 2>/dev/null \
   && pass "parse-no-construct: green without a lookup" || { fail "parse-no-construct"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A spec past the scan's 8 MiB is not read, so nothing says it holds no construct:
+# the incomplete: line, never the OK line.
+python3 -I -c 'import sys; sys.stdout.write("Name: huge\nVersion: 1\n%global y %(id)\n" + "# padding line of a spec past the cap\n" * 250000)' | psdir huge huge
+ps_ "$work/ps-huge/huge"
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qxF "incomplete: a file past 8 MiB was not read: huge.spec" <<<"$out" \
+  && ! grep -qF "OK: no spec holds" <<<"$out" \
+  && pass "parse-huge-spec: a spec past 8 MiB is incomplete, no OK line" || { fail "parse-huge-spec"; printf '%s\n' "$out" | grep -A4 '## parse-surface' | sed 's/^/    /'; }
 out="$(bash "$GATE" "$work/ps-plain/qux" --no-such-option 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF -- "unknown option --no-such-option" <<<"$out" && ! grep -q '^## ' <<<"$out" \
   && pass "an unknown option: usage, no gate ran" || fail "an unknown option: rc=$rc"
@@ -2276,6 +2283,27 @@ if [ -n "$sbxok" ]; then
   [ -e "$work/gate-sbx/prep.sbx.spec.log" ] && ! grep -q PLANTED "$work/gate-sbx/prep.sbx.spec.log" \
     && pass "sandbox, a . first on PATH: %prep runs /usr/bin's rpmbuild" \
     || { fail "sandbox, a . first on PATH: %prep"; sed 's/^/    /' "$work/gate-sbx/prep.sbx.spec.log" 2>/dev/null; printf '%s\n' "$out" | grep -F '## prep' | sed 's/^/    /'; }
+fi
+# On the host PATH keeps only its absolute entries: once gate.sh is in the checkout,
+# a . or an empty entry would run what is planted there, as the caller, logins and all.
+psbar hostpath < /dev/null; rm -f "$work"/hostran-* "$work/ps-a"
+for t in python3 grep osc; do
+  printf '#!/bin/sh\ntouch %s/hostran-%s\nexit 1\n' "$work" "$t" > "$work/ps-hostpath/bar/$t"; chmod +x "$work/ps-hostpath/bar/$t"
+done
+out="$(OBS=$O HOME="$work/home" OSC_A_LOG="$work/ps-a" PATH=".:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/ps-hostpath/bar" 2>&1)"
+ran=$(find "$work" -maxdepth 1 -name 'hostran-*' -printf '%f ')
+[ -z "$ran" ] && grep -qF "## parse-surface: rc=0" <<<"$out" && [ -s "$work/ps-a" ] \
+  && pass "host PATH, a . first: no python3, grep or osc planted in the checkout runs" \
+  || { fail "host PATH, a . first: ${ran:-the gate did not run through}"; printf '%s\n' "$out" | head -20 | sed 's/^/    /'; }
+if [ -e /usr/bin/spec-cleaner ] || [ -e /bin/spec-cleaner ]; then
+  echo "SKIP: host PATH, an empty entry (this host has spec-cleaner in /usr/bin)"
+else
+  printf 'Name: qux\nVersion: 1\n' | psdir sclean qux; rm -f "$work"/hostran-*
+  printf '#!/bin/sh\ntouch %s/hostran-spec-cleaner\nexit 1\n' "$work" > "$work/ps-sclean/qux/spec-cleaner"; chmod +x "$work/ps-sclean/qux/spec-cleaner"
+  out="$(OBS=$O HOME="$work/home" PATH="$work/obin:/usr/bin:/bin:" bash "$GATE" "$work/ps-sclean/qux" 2>&1)"
+  [ ! -e "$work/hostran-spec-cleaner" ] && grep -qF "## spec-cleaner: SKIPPED (not installed)" <<<"$out" \
+    && pass "host PATH, an empty entry last: a spec-cleaner planted in the checkout is not found" \
+    || { fail "host PATH, an empty entry last"; printf '%s\n' "$out" | grep -E 'spec-cleaner|hostran' | sed 's/^/    /'; }
 fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
