@@ -15,8 +15,12 @@ maintainers are never acted on.
    wins over your own request in flight (3), which wins over incoming (5), which wins over a
    due forward (4).
 2. **The incoming-review agent runs** once per item, in a context that did not write the
-   update. It reads the submission as text, builds it on OBS in a project of its own, and
-   records its verdict with `scripts/incoming-review.sh --record`.
+   update. It reads the submission as text, takes its build evidence from what OBS already
+   built, and records its verdict with `scripts/incoming-review.sh --record`. It never parses
+   or builds the submission: pr-guard refuses it `rpmspec`, `rpm` with a spec, `rpmbuild`,
+   `osc build`, `osc service` (`run`, `runall`, `localrun`, `disabledrun`), `gate.sh` and
+   `target-gate.sh`. A contributor's spec is parsed only by `gate.sh`, in its sandbox, in the
+   update that follows the user's go on the accept.
 3. **By verdict:** "PASS", "FIXABLE" and "BLOCK" below. Each starts by posting the recorded
    comment ("Posting the comment, accepting, declining").
 4. **The update** waits while a PASS or FIXABLE item is open; after a BLOCK it continues.
@@ -38,7 +42,8 @@ maintainers are never acted on.
 ## What the recorder refuses
 
 `scripts/incoming-review.sh --show <sr#ID | owner/repo#N>` prints the sanitized diff, the
-mechanical findings and `key <sha12>`, which binds the fetched content. `--record <id> FILE`
+mechanical findings, `build <source project>` (kept in the stamp's `build.project`) and
+`key <sha12>`, which binds the fetched content. `--record <id> FILE`
 takes a file whose first line is `PASS|FIXABLE|BLOCK <id> key <sha12>`, followed by the comment;
 it fetches everything again first. It refuses PASS and FIXABLE on any of:
 
@@ -49,9 +54,11 @@ it fetches everything again first. It refuses PASS and FIXABLE on any of:
   `_aggregate`, `*.macros`, `.gitmodules` or symlink; bidi or zero-width bytes; a tarball that
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
   obscpio archive; a diff over the size cap;
-- **build:** no green build in the build project (`home:<user>:incoming:sr<id>` for a request),
-  on Tumbleweed and the enabled Leap 16 repositories, x86_64 and aarch64, or a build project
-  with paths to anything but the devel project and `openSUSE:Factory`, or with publishing on;
+- **build, for a request:** the source package's current srcmd5 is not the request's, or no
+  success from those sources in the source project on the repositories and arches
+  `gate.sh --obs-build` judges (Tumbleweed and Leap 16, x86_64 and aarch64, those the source
+  project builds, at least one). A PR is built only when the devel project builds PRs: its
+  build is reported when there is one, and is not required;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
   `@`-mention of anyone but the creator, an internal tag (VERDICT, tree keys, gate names), a
   bot directive (`merge ok`, `@group : approve`), or a comment over the length cap.
@@ -64,8 +71,8 @@ refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup faile
 
 | Verdict | Means | Next |
 |---|---|---|
-| PASS | nothing to change; green build | comment, accept on the user's go, forward |
-| FIXABLE | right and green; packaging or wording defects only | comment, accept on the go, follow-up fix, then forward |
+| PASS | nothing to change; a request's sources build green | comment, accept on the user's go, forward |
+| FIXABLE | right, a request's sources green; packaging or wording defects only | comment, accept on the go, follow-up fix, then forward |
 | BLOCK | anything else | comment, recommend a decline, decline only on the go |
 
 ## PASS
@@ -112,9 +119,11 @@ refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup faile
 ## Posting the comment, accepting, declining
 
 - The caller posts the recorded comment — the verdict file without its first line — unchanged
-  and unattended. pr-guard passes a comment on someone else's item only when its sha256 matches
-  the stamp, and refuses a second copy. Mechanics:
+  and unattended. pr-guard passes a comment on someone else's item when its text's sha256
+  equals the stamp's, and checks nothing else. Mechanics:
   `references/request-text.md` "Comments: reading them, posting an approved one".
+- An accept or approve with no review stamp is refused ("review it first"). With one, pr-guard
+  asks for the user's go, showing the verdict; for a PR head with no build, the ask says so.
 - Accept, approve, decline and request-changes each need the user's explicit go naming that
   item; a go never carries to the next item. A harness that cannot prompt refuses the call:
   report it as waiting for the user's go, with no command for the user to run.
