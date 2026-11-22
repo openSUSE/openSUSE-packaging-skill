@@ -281,7 +281,8 @@ boundary between the agent and what is inside the container.
   and `password`, and `update` after its restart,
   remove the session rules they find and the saved approvals of every project the server
   lists, and stop when a list cannot be read or a rule stays, after trying again for up
-  to five minutes in all, or 60 times each. An approval of a project
+  to five minutes in all, or 60 times each, and at once when a list holds a value that
+  is no id or the session list does not end. An approval of a project
   the server does not list is found only by a query opencode does not document. That
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.

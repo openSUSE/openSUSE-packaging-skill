@@ -145,13 +145,13 @@ case "$1 $2" in
   [ -n "${FAKE_TIMEOUT-}" ] || printf '%s\n' "$*" >> "$FIX/untimed"
   # Counts the calls of $1. Line N of $FIX/$1-script says how call N goes, as
   # with a podman another container keeps busy: silent answers nothing, fail is
-  # podman's own error, slow the same six seconds later, exit2 answers and ends
+  # podman's own error, slow the same 15 seconds later, exit2 answers and ends
   # with status 2; else it answers.
   busy() {
     echo >> "$FIX/$1-asked"
     case $(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null) in
     silent) exit 0 ;;
-    slow) sleep 6; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
+    slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
     esac
@@ -1196,10 +1196,11 @@ approval per_c3
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] && [ -s "$FIX/client-calls" ] \
   && pass "run removes a saved approval, then starts the client" || fail "run with a saved approval: rc=$rc $out"
-approval ../session/ses_1
+approval ../session/ses_1; : > "$FIX/sleep-calls"
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -qF "DELETE /api/permission/saved/.." "$FIX/podman-calls" \
-  && pass "run refuses a saved approval whose id is not one" || fail "run with a made-up id: rc=$rc $out"
+  && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "run refuses a saved approval whose id is not one, at once" || fail "run with a made-up id: rc=$rc $out"
 approval per_d4; touch "$FIX/keeps"
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses while a saved approval stays" \
@@ -1225,9 +1226,11 @@ out="$(sc run obs hello 2>&1)"; rc=$?
   || fail "run with an approval of an unlisted project: rc=$rc $out"
 n=0
 for projects in '{"error":"no"}' '' '[{"id":"../x"}]'; do
-  n=$((n+1)); printf '%s' "$projects" > "$FIX/projects"; : > "$FIX/client-calls"
+  n=$((n+1)); printf '%s' "$projects" > "$FIX/projects"; : > "$FIX/client-calls"; : > "$FIX/sleep-calls"
   out="$(sc run obs hello 2>&1)"; rc=$?
+  # A list that is no list is asked for again; a project id that is none is not.
   [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -qF "projectID=.." "$FIX/podman-calls" \
+    && { [ "$n" != 3 ] || [ ! -s "$FIX/sleep-calls" ]; } \
     && pass "run refuses when the projects cannot be listed ($n)" \
     || fail "run without a list of projects ($n): rc=$rc $out"
 done
@@ -1247,10 +1250,11 @@ sessions "[{\"id\":\"ses_d\",\"permissions\":$allow}]"; touch "$FIX/keeps-rules"
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses while a session keeps its rules" \
   || fail "run with rules that stay: rc=$rc $out"
-rm "$FIX/keeps-rules"; sessions "[{\"id\":\"../permission/saved/x\",\"permissions\":$allow}]"
+rm "$FIX/keeps-rules"; sessions "[{\"id\":\"../permission/saved/x\",\"permissions\":$allow}]"; : > "$FIX/sleep-calls"
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -qF "PATCH /api/session/.." "$FIX/podman-calls" \
-  && pass "run refuses a session whose id is not one" || fail "run with a made-up session id: rc=$rc $out"
+  && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "run refuses a session whose id is not one, at once" || fail "run with a made-up session id: rc=$rc $out"
 sessions '{"error":"no"}'
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses when the sessions cannot be listed" \
@@ -1395,11 +1399,11 @@ out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "podman volume rm" <<<"$out" \
   && pass "model logins that cannot be listed: the unit is stopped, no credential is sent" \
   || fail "up without a list of model logins: rc=$rc $out"
-restart; kept_login 'cred_a/../../session'
+restart; kept_login 'cred_a/../../session'; : > "$FIX/sleep-calls"
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ -z "$(leaks <<<"$out")" ] \
-  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" \
-  && pass "a kept model login with an unexpected id: no call is made with it, no credential is sent" \
+  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "a kept model login with an unexpected id: no call is made with it, no credential is sent, no pause" \
   || fail "up with a model login id: rc=$rc $out"
 restart; kept_login cred_old1; touch "$FIX/login-stays"; scripted logins
 out="$(sc up obs 2>&1)"; rc=$?
@@ -1412,18 +1416,19 @@ out="$(sc up obs 2>&1)"; rc=$?
 rm "$FIX/login-stays"
 # An id is one value in the answer; split into lines, a line break in it makes two.
 for id in 'cred_x\ncred_y' 'cred_a\n' ''; do
-  restart; kept_login "$id"
+  restart; kept_login "$id"; : > "$FIX/sleep-calls"
   out="$(sc up obs 2>&1)"; rc=$?
   [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ -z "$(leaks <<<"$out")" ] \
     && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && grep -qF "podman volume rm" <<<"$out" \
+    && [ ! -s "$FIX/sleep-calls" ] \
     && pass "a kept model login with the id '$id': no call is made with it, no credential is sent" \
     || fail "up with the model login id '$id': rc=$rc $out"
 done
 # Nor is an id that is no text, whatever it holds.
-restart; echo '{"data":[{"id":{"k":"SECRET-7"}}]}' > "$FIX/logins"
+restart; echo '{"data":[{"id":{"k":"SECRET-7"}}]}' > "$FIX/logins"; : > "$FIX/sleep-calls"
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ -z "$(leaks <<<"$out")" ] \
-  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" \
+  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
   && pass "a kept model login whose id is no text: no call is made, nothing of it is shown" \
   || fail "up with a model login id that is no text: rc=$rc $out"
 restart; kept_login cred_old1; touch "$FIX/login-ghost"
@@ -1497,24 +1502,48 @@ out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 1 ] \
   && pass "an answer that ends with status 2 is asked for again" \
   || fail "up with an answer that ends with status 2: rc=$rc $(reads logins) reads $out"
-# bash takes SECONDS from the environment. Five seconds short of the largest
-# number the start's deadline still fits; six seconds later the read's has
-# wrapped round and is past: nothing is tried again after five minutes.
-restart; scripted projects fail; echo 6 > "$FIX/start-slow"
-out="$("${scenv[@]}" SECONDS=9223372036854775502 HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
+# bash takes SECONDS from the environment. 314 short of the largest number,
+# the start's deadline still fits for 14 seconds; after a start of 15 the
+# read's has wrapped round and is past: nothing is tried again after five
+# minutes. A host slower than that stops at the start and fails the check.
+restart; scripted projects fail; echo 15 > "$FIX/start-slow"
+out="$("${scenv[@]}" SECONDS=$((9223372036854775807 - 314)) HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
 rm "$FIX/start-slow"
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ "$(reads projects)" = 1 ] && [ "$(pauses)" = 0 ] \
   && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
   && pass "a read is not tried again once five minutes have passed" \
   || fail "up past the deadline: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
-# The five minutes are the command's, not each list's: 305 seconds short of the
-# largest number, a deadline the logins read set for itself six seconds after
-# the start would have wrapped round; the one the first read set lies ahead.
+# The five minutes are the command's, not each list's: 314 short of the largest
+# number, the deadline the first read sets fits for 14 seconds, and one the
+# logins read set for itself after a failure of 15 would have wrapped round.
 restart; scripted projects slow; echo fail > "$FIX/logins-script"; : > "$FIX/logins-asked"
-out="$("${scenv[@]}" SECONDS=$((9223372036854775807 - 305)) HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
+out="$("${scenv[@]}" SECONDS=$((9223372036854775807 - 314)) HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads projects)" = 2 ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 2 ] \
   && pass "every try after the start shares one deadline" \
   || fail "up with one deadline: rc=$rc $(reads projects) and $(reads logins) reads, $(pauses) pauses $out"
+# An id that is none stops the start at once: an empty one would vanish from
+# the lines read, and one with a line break would split into two that look
+# like ids while the real one stays.
+restart; approval ""; : > "$FIX/sleep-calls"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api DELETE /api/permission' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "an approval with an empty id stops the unit at once, no credential is sent" \
+  || fail "up with an approval with an empty id: rc=$rc $out"
+restart; approval 'per_a\nper_b'; : > "$FIX/sleep-calls"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api DELETE /api/permission' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "an approval whose id holds a line break stops the unit at once, no credential is sent" \
+  || fail "up with an approval id with a line break: rc=$rc $out"
+echo '{"data":[]}' > "$FIX/saved"
+restart; sessions "[{\"id\":\"\",\"permissions\":$allow}]"; : > "$FIX/sleep-calls"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api PATCH /api/session' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "a session with rules and an empty id stops the unit at once, no credential is sent" \
+  || fail "up with a session with an empty id: rc=$rc $out"
+sessions '[]'
 # One answer is one list: a second one after it is not left unread.
 restart; printf '{"data":[]}{"data":[{"id":"cred_old1"}]}\n' > "$FIX/logins"; scripted logins
 out="$(sc up obs 2>&1)"; rc=$?
