@@ -2129,6 +2129,18 @@ ps_ "$work/ps-include-tags/bar"
 grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
   && pass "parse-include-tags-only: an included file that changed without a construct lists nothing" \
   || { fail "parse-include-tags-only"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A scan that stopped short says so and never claims the rest verbatim: an
+# include chain past depth 8 through files Factory has unchanged.
+psbar deep < /dev/null; printf '%%include bar-i1.inc\n' >> "$work/ps-deep/bar/bar.spec"
+for i in $(seq 1 10); do printf '%%include bar-i%d.inc\n' $((i + 1)) | tee "$work/ps-deep/bar/bar-i$i.inc" | put openSUSE:Factory/bar "bar-i$i.inc"; done
+printf '%%define bar_d 1\n' | tee "$work/ps-deep/bar/bar-i11.inc" | put openSUSE:Factory/bar bar-i11.inc
+ps_ "$work/ps-deep/bar"
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "incomplete: an %include past depth 8 was not read" <<<"$out" \
+  && grep -qF "note: the comparison with openSUSE:Factory/bar stopped short" <<<"$out" \
+  && ! grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
+  && pass "parse-incomplete: a scan stopped by a cap says so, no OK line" \
+  || { fail "parse-incomplete"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -f "$O"/openSUSE:Factory/bar/bar-i*.inc
 printf 'Name: zork\n%%define zork_v %%(echo 1)\n' | psdir new zork
 ps_ "$work/ps-new/zork"
 advisory parse-not-in-factory 'zork.spec:2: %define zork_v %(echo 1) — shell: new'

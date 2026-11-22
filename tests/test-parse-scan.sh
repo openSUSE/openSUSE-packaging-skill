@@ -227,6 +227,57 @@ out="$(python3 -I "$SCAN" scan "$work/t7" "$work/b7")"; rc=$?
 [ "$rc" = 1 ] && grep -qF 'inner.inc:1: %define n_x %(id) — shell: new' <<<"$out" \
   && pass "scan: a nested include named by the spec's macro is read in its place" \
   || { fail "scan nested include: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# The scanner reads nothing outside the checkout: an include through a directory
+# link, or a top-level link to a file outside, is not read and is reported.
+mkdir -p "$work/outside" "$work/t8" "$work/b8" "$work/t9" "$work/b9"
+printf '%%global s %%(echo secret-outside)\n' > "$work/outside/x.inc"
+printf 'Name: o\n%%include sub/x.inc\n' | tee "$work/t8/o.spec" > "$work/b8/o.spec"; ln -s "$work/outside" "$work/t8/sub"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t8" "$work/b8")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'o.spec:2: %include sub/x.inc — include: leaves the checkout' <<<"$out" && ! grep -q secret-outside <<<"$out" \
+  && pass "scan: an include through a directory link out of the checkout is not read, and reported" \
+  || { fail "scan directory link: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+printf 'Name: p\nSource1: link.inc\n%%include %%{SOURCE1}\n' | tee "$work/t9/p.spec" > "$work/b9/p.spec"
+ln -s "$work/outside/x.inc" "$work/t9/link.inc"
+out="$(timeout 30 python3 -I "$SCAN" needs "$work/t9")"
+[ "$out" = p.spec ] && pass "needs: a link out of the checkout is never fetched" || fail "needs link: '$out'"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t9" "$work/b9")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'p.spec:3: %include %{SOURCE1} — include: leaves the checkout' <<<"$out" && ! grep -q secret-outside <<<"$out" \
+  && pass "scan: a top-level link to a file outside the checkout is not read, and reported" \
+  || { fail "scan file link: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A macro defined twice names no file: rpm takes the definition in force at each
+# line, the scan cannot, so that %include is never "verbatim".
+mkdir -p "$work/t10" "$work/b10"
+printf 'Name: lw\n%%define inc a.inc\n%%include %%{inc}\n%%define inc b.inc\n%%include %%{inc}\n' | tee "$work/t10/lw.spec" > "$work/b10/lw.spec"
+printf '%%define lw_a 1\n' > "$work/b10/a.inc"; printf '%%define lw_a %%(id)\n' > "$work/t10/a.inc"
+printf '%%define lw_b 1\n' | tee "$work/t10/b.inc" > "$work/b10/b.inc"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t10" "$work/b10")"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'lw.spec:3: %include %{inc} — include: reads a file the text does not name' <<<"$out" \
+  && pass "scan: an %include through a macro defined twice is not verbatim" || { fail "scan redefined macro: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# Where a cap stops the scan, it says so and never claims the rest verbatim: a
+# chain of includes past depth 8, a macro that expands past 64 KiB, and more than
+# 8 MiB of included text; each returns within seconds.
+mkdir -p "$work/t11" "$work/b11"
+printf 'Name: deep\n%%include i1.inc\n' | tee "$work/t11/deep.spec" > "$work/b11/deep.spec"
+for i in $(seq 1 10); do printf '%%include i%d.inc\n' $((i + 1)) | tee "$work/t11/i$i.inc" > "$work/b11/i$i.inc"; done
+printf '%%define d 1\n' > "$work/b11/i11.inc"; printf '%%define d %%(id)\n' > "$work/t11/i11.inc"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t11" "$work/b11")"; rc=$?
+[ "$rc" = 4 ] && grep -qF 'incomplete: an %include past depth 8 was not read' <<<"$out" \
+  && pass "scan: an include chain past depth 8 is incomplete, not verbatim" || { fail "scan depth cap: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+mkdir -p "$work/t12" "$work/b12"
+{ echo 'Name: blow'
+  for x in aaa:bbb bbb:ccc ccc:ddd ddd:eee eee:fff fff:ggg ggg:hhh; do
+    printf '%%define %s ' "${x%:*}"; for _ in $(seq 30); do printf '%%{%s}' "${x#*:}"; done; echo; done
+  echo '%define hhh x'; echo '%global y %(echo %{aaa})'; } > "$work/t12/blow.spec"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t12" "$work/b12")"; rc=$?
+[ "$rc" != 124 ] && grep -qF 'incomplete: a macro expands past 64 KiB' <<<"$out" \
+  && pass "scan: a macro that expands past 64 KiB stops short within seconds, and says so" || { fail "scan expansion cap: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
+mkdir -p "$work/t13" "$work/b13"
+{ echo 'Name: fan'; echo 'Source1: big.inc'; for _ in $(seq 12); do echo '%include %{SOURCE1}'; done; } | tee "$work/t13/fan.spec" > "$work/b13/fan.spec"
+python3 -I -c 'import sys; open(sys.argv[1], "w").write("# padding line of a large included file\n" * 25000)' "$work/t13/big.inc"
+cp "$work/t13/big.inc" "$work/b13/big.inc"
+out="$(timeout 30 python3 -I "$SCAN" scan "$work/t13" "$work/b13")"; rc=$?
+[ "$rc" = 4 ] && grep -qF 'incomplete: more than 8 MiB of included text' <<<"$out" \
+  && pass "scan: more than 8 MiB of included text stops short within seconds, and says so" || { fail "scan size cap: rc=$rc"; printf '%s\n' "$out" | head -5 | sed 's/^/    /'; }
 out="$(python3 -I "$SCAN" scan "$work/t" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF "Usage:" <<<"$out" && pass "usage: exit 2" || fail "usage: rc=$rc"
 out="$(python3 -I "$SCAN" constructs "$work/no-such.spec" 2>&1)"; rc=$?

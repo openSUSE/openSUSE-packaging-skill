@@ -1794,11 +1794,13 @@ else
   fi
   if [ -z "$nocmp" ]; then
     timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
-    n=$(grep -c '^[^ ]' "$log/parse-added.txt")
+    n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
     case $src in
       0) echo "OK: every parse-time construct is in $pf verbatim" ;;
-      1) cat "$log/parse-added.txt"
-         echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text" ;;
+      1|4) cat "$log/parse-added.txt"
+         [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
+         ! grep -q '^incomplete: ' "$log/parse-added.txt" \
+           || echo "note: the comparison with $pf stopped short (incomplete: above): nothing past that point is known to be verbatim" ;;
       124) nocmp="the scan did not finish in 120 s" ;;
       *) nocmp="the scan failed (exit $src): $(head -n 1 "$log/parse-added.txt")" ;;
     esac >> "$log/parse-surface.txt"

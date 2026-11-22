@@ -51,12 +51,17 @@ Usage: python3 -I _parse_scan.py constructs FILE
          and each file it loads, against their copies in BASEDIR; any other file
          a construct names against its md5 in LISTING, OBS's expanded listing
          (no copy, no entry: Factory lacks it)
+  A file that leaves DIR once its links are followed is never read and is
+  reported; where a cap stops the scan (an %include deeper than 8, more than
+  64 files or 8 MiB of included text, a macro expanding past 64 KiB) an
+  "incomplete:" line says so, and nothing past it counts as verbatim.
 Exit: 0 = no construct found (constructs) or added (added, scan); needs: listed
       1 = found or added, 2 = usage, 3 = a file it cannot read, or an internal
-      error
+      error, 4 = nothing found, but the scan stopped short (incomplete:)
 """
 
 import fnmatch
+import functools
 import hashlib
 import os
 import re
@@ -96,13 +101,26 @@ EXPR = re.compile(r"%\[|%\{[?!]*expr[:\s]")
 DEFINE = re.compile(r"%%(?:define|global|undefine)\s+(%s)" % NAME)
 TAG = re.compile(r"\s*([A-Za-z]+)([0-9]*)(?:\([^)]*\))?\s*:")
 INCLUDE_ARG = re.compile(r"%(\{?)[?!]*(?:include|load)(?![A-Za-z0-9_])")
+SOURCE_KEY = re.compile(r"(source|patch)(?:url)?([0-9]+)")
+# what rpm's line reader counts: an escape, a macro that opens, a bracket
+TOKEN = re.compile(r"\\.?|%[{(\[%]|[{}()\[\]]")
+PLAIN_DEF = re.compile(r"\s*%%(?:define|global)\s+(%s)\s+(\S+)$" % NAME)
+FILE_TAG = re.compile(r"(?i)\s*(source|patch)([0-9]*)\s*:\s*(\S+)$")
+NEVR_TAG = re.compile(r"(?i)\s*(name|version|release)\s*:\s*(\S+)$")
+# how far a scan goes before it stops short and says so
+MAX_DEPTH, MAX_FILES, MAX_BYTES, MAX_EXPANSION = 8, 64, 8 << 20, 64 << 10
+
+
+def note(notes, why):
+    if why not in notes:
+        notes.append(why)
 
 
 def key(name):
     """The name rpm keeps a macro under: a tag's in either case (%{URL} is
     %{url}, %{SOURCEURL0} reads Source0), any other as written."""
     low = name.lower()
-    m = re.fullmatch(r"(source|patch)(?:url)?([0-9]+)", low)
+    m = SOURCE_KEY.fullmatch(low)
     if m:
         return "%s%d" % (m.group(1), int(m.group(2)))
     return low if low in TAGS else name
@@ -114,26 +132,25 @@ def logical(text):
     close = {"}": "{", ")": "(", "]": "["}
     for n, raw in enumerate(text.split("\n"), 1):
         line = raw.split("\0", 1)[0].rstrip()
+        if not cur and "%" not in line and not line.endswith("\\"):
+            out.append((n, line))  # no macro opens or continues on it
+            continue
         if not cur:
             first = n
         cur.append(line)
-        i, cont = 0, False
-        while i < len(line):
-            c = line[i]
-            if c == "\\":
-                cont = i == len(line) - 1
-                i += 2
-                continue
-            if c == "%" and line[i + 1 : i + 2] in ("{", "(", "[", "%"):
-                if line[i + 1] != "%":
-                    depth[line[i + 1]] += 1
-                i += 2
-                continue
-            if c in depth and depth[c]:
-                depth[c] += 1
-            elif c in close and depth[close[c]]:
-                depth[close[c]] -= 1
-            i += 1
+        cont = False
+        for m in TOKEN.finditer(line):
+            t = m.group()
+            if t[0] == "\\":
+                cont = t == "\\" and m.end() == len(line)
+            elif t[0] == "%":
+                if t != "%%":
+                    depth[t[1]] += 1
+            elif t in depth:
+                if depth[t]:
+                    depth[t] += 1
+            elif depth[close[t]]:
+                depth[close[t]] -= 1
         if not cont and not any(depth.values()):
             out.append((first, "\n".join(cur)))
             cur = []
@@ -146,6 +163,17 @@ def kinds(s, index=None):
     """What makes logical line s a parse-time construct; [] for nothing. With the
     index of its text, a lua: call that reaches an expression through a macro
     counts too (%define x lua:..., then %if %{x})."""
+    if "%" not in s:
+        return []
+    if index is not None and s in index.kinds:
+        return index.kinds[s]
+    found = _kinds(s, index)
+    if index is not None:
+        index.kinds[s] = found
+    return found
+
+
+def _kinds(s, index):
     bare = s.replace("%%", "\0")
     found = ["shell"] if "%(" in bare else []
     for m in CALL.finditer(bare):
@@ -196,14 +224,28 @@ def refs(s):
 class Index:
     """What a text's logical lines define, looked up once: each macro's
     defining lines (%define, %global, %undefine, or the tag rpm sets it from),
-    and the plain values a file name can be resolved with."""
+    and the plain values a file name can be resolved with. A macro given two
+    different values names no file: rpm takes the one in force at each line,
+    which text read whole cannot tell."""
 
     def __init__(self, lines):
-        self.lines = lines
-        self.have = {s for _, s in lines}
-        self.defs, self.refs = {}, {}
-        self.vals = {"_sourcedir": "."}
-        for _, d in lines:
+        self.lines, self.have, self.defs, self.refs = [], set(), {}, {}
+        self.vals, self.ambiguous, self.short = {"_sourcedir": "."}, set(), []
+        self.kinds, self.resolved, self.reads = {}, {}, {}  # worked out once each
+        self.extend(lines)
+
+    def value(self, name, v, first=False):
+        if name not in self.vals:
+            self.vals[name] = v
+        elif self.vals[name] != v and not first:
+            self.ambiguous.add(name)
+
+    def extend(self, lines):
+        for n, d in lines:
+            self.lines.append((n, d))
+            self.have.add(d)
+            if "%" not in d and ":" not in d:
+                continue
             for name in {key(n) for n in DEFINE.findall(d.replace("%%", "\0"))}:
                 self.defs.setdefault(name, []).append(d)
             m = TAG.match(d)
@@ -213,18 +255,18 @@ class Index:
                     self.defs.setdefault("%s%d" % (tag, int(num or 0)), []).append(d)
                 elif tag in TAGS and not num:
                     self.defs.setdefault(tag, []).append(d)
-            m = re.match(r"\s*%%(?:define|global)\s+(%s)\s+(\S+)$" % NAME, d)
+            m = PLAIN_DEF.match(d)
             if m:
-                self.vals[key(m.group(1))] = m.group(2)
+                self.value(key(m.group(1)), m.group(2))
                 continue
-            m = re.match(r"(?i)\s*(source|patch)([0-9]*)\s*:\s*(\S+)$", d)
+            m = FILE_TAG.match(d)
             if m:
                 f = m.group(3).split("#/")[-1].rsplit("/", 1)[-1]
-                self.vals["%s%d" % (m.group(1).lower(), int(m.group(2) or 0))] = f
+                self.value("%s%d" % (m.group(1).lower(), int(m.group(2) or 0)), f)
                 continue
-            m = re.match(r"(?i)\s*(name|version|release)\s*:\s*(\S+)$", d)
+            m = NEVR_TAG.match(d)
             if m:
-                self.vals.setdefault(m.group(1).lower(), m.group(2))
+                self.value(m.group(1).lower(), m.group(2), first=True)
 
     def uses(self, s):
         """Each macro line s uses, through the definitions this text gives."""
@@ -242,16 +284,30 @@ class Index:
     def resolve(self, s):
         """s with the macros this text gives a plain value, the Source and Patch
         file names and %_sourcedir (the tree) put in, as far as text can tell."""
+        if s not in self.resolved:
+            self.resolved[s] = self._resolve(s)
+        return self.resolved[s]
+
+    def _resolve(self, s):
 
         def put(m):
             name = m.group(1) or m.group(2)
             if m.group(3):
                 name = ("SOURCE" if m.group(3) == "S" else "PATCH") + m.group(4)
-            return self.vals.get(key(name), m.group(0))
+            name = key(name)
+            return (
+                m.group(0)
+                if name in self.ambiguous
+                else self.vals.get(name, m.group(0))
+            )
 
         rx = r"%%\{[?]?(%s)\}|%%(%s)|%%\{([SP]):\s*([0-9]+)\}" % (NAME, NAME)
+        first = s
         for _ in range(8):
             t = re.sub(rx, put, s)
+            if len(t) > MAX_EXPANSION:  # left as written, which names no file
+                note(self.short, "a macro expands past 64 KiB")
+                return first
             if t == s:
                 break
             s = t
@@ -282,10 +338,17 @@ def arg(line, end, braced):
     return line[end : i - 1].lstrip(" \t:") if not depth else ""
 
 
-def targets(line, index, names):
+def targets(line, index, names, found=None):
     """The files of names a running construct reads or names; None among them
-    for an %include or %load whose file the text cannot tell."""
-    if not READS & set(kinds(line, index)):
+    for an %include or %load whose file the text cannot tell. found: the
+    line's kinds, when known."""
+    if (line, names) not in index.reads:
+        index.reads[line, names] = _targets(line, index, names, found)
+    return set(index.reads[line, names])
+
+
+def _targets(line, index, names, found):
+    if not READS & set(kinds(line, index) if found is None else found):
         return set()
     out = set()
     for m in re.finditer(r"(/?)([A-Za-z0-9_.+~@*?\[\]-]+)", index.resolve(line)):
@@ -308,12 +371,12 @@ def include_targets(line, text, names=()):
     what an %include or %load opens, and any word of it once the macros text
     defines are put in. None among them: an %include or %load whose file text
     cannot tell (a macro left, a path out of the tree)."""
-    return targets(line, Index(logical(text)), set(names))
+    return targets(line, Index(logical(text)), frozenset(names))
 
 
 def moved(s, found, new, base, changed):
     """Why construct s, which base has verbatim, still counts as added."""
-    reads = targets(s, new, changed)
+    reads = targets(s, new, changed, found)
     if None in reads:
         return "reads a file the text does not name"
     if reads & changed:
@@ -335,24 +398,34 @@ def moved(s, found, new, base, changed):
     return ""
 
 
-def added_constructs(new_text, base_text, changed=frozenset()):
+def added_constructs(new_text, base_text, changed=frozenset(), notes=None):
     """(first line number, construct, why) of each construct new_text adds over
     base_text: one base_text lacks verbatim, or one it has that reads a file
     of changed (the files that differ from base's), uses a macro defined anew,
-    or defines a parametric macro a new line calls."""
-    new, base = Index(logical(new_text)), Index(logical(base_text))
-    out = []
+    or defines a parametric macro a new line calls. notes, a list, gets why the
+    comparison stopped short of the whole text."""
+    found = added(Index(logical(new_text)), Index(logical(base_text)), changed, notes)
+    return [(n, s, why) for n, s, _, why in found]
+
+
+def added(new, base, changed=frozenset(), notes=None):
+    """added_constructs() over two Index objects, each finding with its kinds."""
+    out, changed = [], frozenset(changed)
     for n, s in new.lines:
         found = kinds(s, new)
         if found:
-            why = (
-                "new"
-                if s not in base.have
-                else moved(s, found, new, base, set(changed))
-            )
+            why = "new" if s not in base.have else moved(s, found, new, base, changed)
             if why:
-                out.append((n, s, why))
+                out.append((n, s, found, why))
+    for why in new.short + base.short if notes is not None else ():
+        note(notes, why)
     return out
+
+
+@functools.lru_cache(maxsize=256)
+def file_lines(path):
+    """path's logical lines, read once per run however often it is included."""
+    return tuple(logical(read(path)))
 
 
 def read(path):
@@ -384,39 +457,66 @@ def listed(path):
 INCLUDE = re.compile(r"\s*%%?include(?![A-Za-z0-9_])")
 
 
-def units(d, f, names, limit=64):
+def inside(d, path):
+    """Whether path, below d, stays in d once every link in it is followed."""
+    root = os.path.realpath(d)
+    return os.path.realpath(os.path.join(d, path)).startswith(root + os.sep)
+
+
+def files_of(d):
+    """d's top-level files: those that stay in d, and links that leave it."""
+    names, out = set(), set()
+    for n in os.listdir(d):
+        if os.path.isfile(os.path.join(d, n)):
+            (names if inside(d, n) else out).add(n)
+    return frozenset(names), frozenset(out)
+
+
+def units(d, f, names):
     """f's logical lines as rpm reads them, each %include of a file of d put in
-    its place, as (file, line number, text, depth). An %include's file is named
-    with the macros of all the text read so far, the spec's and every included
-    file's alike; at most limit files go in, none deeper than 8."""
-    lines = [(f, n, s, 0) for n, s in logical(read(os.path.join(d, f)))]
-    done, count = set(), 0
-    while count < limit:
-        index = Index([(n, s) for _, n, s, _ in lines])
-        for k, (src, n, s, depth) in enumerate(lines):
-            if (src, n) in done or depth >= 8 or not INCLUDE.match(s):
+    its place, as (file, line number, text, depth); the %include lines whose
+    file leaves d, which are not read, as (file, line number, text, why); and
+    why the text could not be read whole. An %include's file is named with the
+    macros of all the text read so far, the spec's and every included file's."""
+    lines = [(f, n, s, 0) for n, s in file_lines(os.path.join(d, f))]
+    index = Index([((f, n), s) for _, n, s, _ in lines])
+    left, notes, count, size, k = [], [], 0, 0, 0
+    while k < len(lines):
+        src, n, s, depth = lines[k]
+        t = targets(s, index, names) if INCLUDE.match(s) else {None}
+        inc = t.pop() if len(t) == 1 and None not in t else None
+        if inc and not inside(d, inc):
+            left.append((src, n, s, "leaves the checkout"))
+        elif inc and os.path.isfile(os.path.join(d, inc)):
+            size += os.path.getsize(os.path.join(d, inc))
+            if depth >= MAX_DEPTH:
+                note(notes, "an %include past depth 8 was not read")
+            elif count >= MAX_FILES:
+                note(notes, "more than 64 included files")
+            elif size > MAX_BYTES:
+                note(notes, "more than 8 MiB of included text")
+            else:
+                sub = [
+                    (inc, m, x, depth + 1) for m, x in file_lines(os.path.join(d, inc))
+                ]
+                lines[k : k + 1] = sub
+                index.extend([((inc, m), x) for _, m, x, _ in sub])
+                count += 1
                 continue
-            t = targets(s, index, names)
-            inc = t.pop() if len(t) == 1 and None not in t else None
-            if inc and os.path.isfile(os.path.join(d, inc)):
-                text = read(os.path.join(d, inc))
-                sub = [(inc, m, x, depth + 1) for m, x in logical(text)]
-                lines, count = lines[:k] + sub + lines[k + 1 :], count + 1
-                break
-            done.add((src, n))
-        else:
-            break
-    return lines
+        k += 1
+    for why in index.short:
+        note(notes, why)
+    # the text as read, each %include put in its place, for the comparison;
+    # an %include line defines nothing, so the definitions stand as they are
+    index.lines = [((src, n), s) for src, n, s, _ in lines]
+    index.have = {s for _, s in index.lines}
+    return lines, left, notes, index
 
 
-def inline(d, f, names):
-    """f's physical lines as rpm reads them, each %include of a file of d put
-    in its place (units()), and the file and line each came from."""
-    out, where = [], []
-    for src, n, s, _ in units(d, f, names):
-        out += s.split("\n")
-        where += [(src, n + k) for k in range(s.count("\n") + 1)]
-    return out, where
+@functools.lru_cache(maxsize=64)
+def units_of(d, f, names):
+    """units(), worked out once per run for each file of each tree."""
+    return units(d, f, names)
 
 
 def tree(d):
@@ -424,25 +524,48 @@ def tree(d):
     scan (the specs, an included file read in its place, and the loaded
     ones), the ones to read from Factory as text, and every file a construct
     other than an %include names, each named with the macros of all the text
-    it is read with."""
-    names = {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
+    it is read with; then what leaves d (never read), and why the text could
+    not be read whole."""
+    names, out = files_of(d)
     specs = sorted(n for n in names if n.endswith(".spec"))
-    todo, seen, fetch, loaded, wanted = list(specs), set(), set(), set(), set()
-    while todo and len(seen) < 64:
+    left = [
+        (n, 0, "", "a link that leaves the checkout, not read")
+        for n in sorted(out)
+        if n.endswith(".spec")
+    ]
+    todo, seen, fetch, loaded, wanted, notes = (
+        list(specs),
+        set(),
+        set(),
+        set(),
+        set(),
+        [],
+    )
+    while todo:
         f = todo.pop()
         if f in seen:
             continue
+        if len(seen) >= MAX_FILES:
+            note(notes, "more than 64 loaded files")
+            break
         seen.add(f)
-        lines = units(d, f, names)
-        index = Index([(n, s) for _, n, s, _ in lines])
+        lines, gone, why, index = units_of(d, f, names)
+        left += gone
+        for w in why:
+            note(notes, w)
         read_in = {src for src, _, _, _ in lines}
         if len(read_in) > 1:
             fetch |= read_in
-        for src, _, s, _ in lines:
-            if not kinds(s, index):
+        gone = {(src, n) for src, n, _, _ in gone}
+        for src, n, s, _ in lines:
+            found = kinds(s, index)
+            if not found:
                 continue
             fetch |= {f, src}
-            reads = (targets(s, index, names) - {None}) & names
+            reads = targets(s, index, names | out, found) - {None}
+            if reads & out and (src, n) not in gone:
+                left.append((src, n, s, "names a link that leaves the checkout"))
+            reads &= names
             if INCLUDE_ARG.search(s):
                 fetch |= reads
             if re.search(r"%\{?[?!]*load(?![A-Za-z0-9_])", s):
@@ -450,7 +573,10 @@ def tree(d):
                 todo += sorted(reads)
             if not INCLUDE.match(s) or not reads <= read_in:
                 wanted |= reads
-    return specs + sorted(loaded - set(specs)), sorted(fetch & names), wanted
+        for w in index.short:
+            note(notes, w)
+    files = specs + sorted(loaded - set(specs))
+    return files, sorted(fetch & names), wanted, left, notes
 
 
 def show(f, n, s, why, found):
@@ -465,23 +591,24 @@ def show(f, n, s, why, found):
 
 
 def run(cmd, args):
-    """The lines to print, each (file, line number, construct, kinds, why)."""
+    """What to print: each finding as (file, line number, construct, kinds, why),
+    and why the scan stopped short of the whole text."""
+    notes = []
     if cmd == "constructs":
         text = read(args[0])
         index = Index(logical(text))
-        return [
+        found = [
             (args[0], n, s, kinds(s, index), "construct") for n, s in constructs(text)
         ]
+        return found, notes
     if cmd == "added":
         new = read(args[0])
         index = Index(logical(new))
         base = read(args[1]) if os.path.exists(args[1]) else ""
-        return [
-            (args[0], n, s, kinds(s, index), why)
-            for n, s, why in added_constructs(new, base)
-        ]
+        found = added_constructs(new, base, notes=notes)
+        return [(args[0], n, s, kinds(s, index), why) for n, s, why in found], notes
     d, b = args[:2]
-    files, _, wanted = tree(d)
+    files, _, wanted, left, notes = tree(d)
     sums = listed(args[2]) if len(args) > 2 else {}
     changed = set()
     for f in wanted:
@@ -490,15 +617,19 @@ def run(cmd, args):
             continue
         if md5(old) != md5(os.path.join(d, f)):
             changed.add(f)
-    names = {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
-    found = []
+    names = files_of(d)[0]
+    found = [(f, n, s, ["include"] if s else ["file"], why) for f, n, s, why in left]
     for f in files:
-        new, where = inline(d, f, names)
-        old = inline(b, f, names)[0] if os.path.exists(os.path.join(b, f)) else []
-        index = Index(logical("\n".join(new)))
-        for n, s, why in added_constructs("\n".join(new), "\n".join(old), changed):
-            found.append(where[n - 1] + (s, kinds(s, index), why))
-    return found
+        _, _, why, new = units_of(d, f, names)
+        base = Index([])
+        if os.path.exists(os.path.join(b, f)):
+            _, _, bwhy, base = units_of(b, f, names)
+            why = why + bwhy
+        for w in why:
+            note(notes, w)
+        for (src, n), s, kind, w in added(new, base, changed, notes):
+            found.append((src, n, s, kind, w))
+    return found, notes
 
 
 def main(argv):
@@ -522,16 +653,18 @@ def main(argv):
         if cmd == "needs":
             say("\n".join(tree(args[0])[1]))
             return 0
-        found = run(cmd, args)
+        found, notes = run(cmd, args)
         for f, n, s, kind, why in found:
-            say(show(f, n, s, why, kind))
+            say(show(f, n, s, why, kind) if n else "%s: %s" % (f, why))
+        for why in notes:
+            say("incomplete: %s" % why)
     except (OSError, UnicodeError, ET.ParseError) as e:
         say("cannot read %s: %s" % (getattr(e, "filename", None) or "a file", e))
         return 3
     except Exception as e:  # a bug here must not read as "nothing found"
         say("internal error: %s: %s" % (type(e).__name__, e))
         return 3
-    return 1 if found else 0
+    return 1 if found else 4 if notes else 0
 
 
 if __name__ == "__main__":
