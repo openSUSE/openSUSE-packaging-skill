@@ -8,7 +8,8 @@
     ".config/git/credentials",
     ".config/gh/hosts.yml",
     ".local/state/osc/cookiejar",
-    ".config/mcp-bugzilla/api-key"
+    ".config/mcp-bugzilla/api-key",
+    ".local/state/opencode/service.json"
   ],
   "links": {"cfg-link": ".config/tea/config.yml"}
 }

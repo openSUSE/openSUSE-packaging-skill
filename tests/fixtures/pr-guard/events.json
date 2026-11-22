@@ -10783,5 +10783,378 @@
     "cwd": "@PLAIN@",
     "agent_id": "a77e",
     "agent_type": "incoming-review"
+  },
+  "wrap-fakeroot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "fakeroot -- osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-strace": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "strace -f -o /var/tmp/x.trace osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-ltrace": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ltrace -o /var/tmp/x.trace osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-unshare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "unshare -r osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-flock": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "flock -w 5 /var/tmp/x.lock osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-flock-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "flock /var/tmp/x.lock -c \"osc rq accept -m 'ok' 1391011\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-taskset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "taskset 0x3 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-chrt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chrt -f 10 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-prlimit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "prlimit --nofile=1024 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-systemd-run": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "systemd-run --user --wait -p Nice=5 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-nsenter": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "nsenter -t 1 -m osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-setpriv": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "setpriv --reuid 1000 osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-script-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script -q -c \"osc rq accept -m 'ok' 1391011\" /dev/null"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-rpmquery": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmquery --specfile incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpm-query": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpm -q bash"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpmlint": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmlint incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpm-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/rpx -P incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-co-s": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co -s devel:inc incpass"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-co-cluster": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co -cs devel:inc incpass"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-up-long": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc up --source-service"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-co-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc co devel:inc incpass"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-bash-opts": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -euo pipefail @WORK@/gate.sh ."
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-pool-pr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@SKILL@/scripts/pool-pr.sh ."
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-leap-sync": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/leap-sync.sh"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-quilt-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/quilt-setup.sh incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-revoke": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq revoke -m 'x' 1391011"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-supersede": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq supersede -m 'x' 1391011 1391012"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "changes-review"
+  },
+  "reviewer-decline": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq decline -m 'no' 1391011"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-tea-close": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls close 5 --repo incorg/incgit"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "changes-review"
+  },
+  "reviewer-git-obs-close": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr close incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-api-revoke": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1391011?cmd=changestate&newstate=revoked'"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77f",
+    "agent_type": "incoming-review"
+  },
+  "accept-link-rev-moved": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391015"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-link-pinned": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391016"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-review-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review accept -m 'ok' 1391014"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-review-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1391014?cmd=changereviewstate&newstate=accepted&by_user=tester'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-hold-no-scmsync": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:inc incobs openSUSE:Factory -m 'Update incobs to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-hold-other-org": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:incgit incmis openSUSE:Factory -m 'Update incmis to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-opencode-service": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.local/state/opencode/service.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-opencode-xdg": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat \"$XDG_STATE_HOME/opencode/service.json\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-cp-hooks": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/x.py ~/.claude/hooks/_pr_guard.py"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-redirect-settings": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{}' > ~/.claude/settings.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-rm-claude": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rm -rf ~/.claude"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-mv-plugin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mv /var/tmp/p.ts ~/.config/opencode/plugins/pool-pr-guard.ts"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-sed-hooks": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sed -i s/a/b/ ~/.claude/hooks/_pr_guard.py"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-cd-rm": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd ~/.claude/hooks && rm pr-guard.py"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-write-tool": {
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "@HOME@/.config/opencode/plugins/x.ts",
+      "content": "x\n"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.claude/hooks/pr-guard.py"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-copy-out": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp ~/.claude/settings.json /var/tmp/settings.json"
+    },
+    "cwd": "@PLAIN@"
   }
 }

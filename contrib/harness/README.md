@@ -610,7 +610,7 @@ options. The Read tool stays with the snippets.
 | `scripts/pr-guard.py`, `scripts/_pr_guard.py` | `~/.claude/hooks/` | the guard: `pr-guard.py` runs the prefilter, and reads its rules from `_pr_guard.py` beside it only on a match |
 | `claude/pr-guard-hook.json` | its `hooks` entry into `~/.claude/settings.json` | a PreToolUse hook on `Bash\|Monitor\|Write\|Edit`; the deny rules of `claude/settings.json` keep the Edit and Write tools off the hook, the harness config and the state directory |
 | `opencode/pool-pr-guard.ts` | `~/.config/opencode/plugins/pool-pr-guard.ts` | the same guard for opencode 1.x: prefilters in TypeScript, spawns the guard only on a match, refuses the call when it exits non-zero or asks |
-| `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools), with the call's agent, judging every call of the incoming-review agent and handing a shell call the guard asks about to opencode's prompt |
+| `opencode-v2/pool-pr-guard.ts` | the same target, instead of the 1.x file | the same for opencode 2.x, on its plugin API (`execute.before` hook of the `shell`, `write` and `edit` tools), with the call's agent, judging every call of the incoming-review agent |
 | `opencode/opencode.jsonc` | merged into `~/.config/opencode/opencode.jsonc` | a pattern backstop: deny PR merges, ask on PR creates, each `git-obs` pattern also spelled `git obs` |
 | `opencode-v2/opencode.jsonc` | appended to the `permissions` array of the same file, instead of the 1.x block | the same backstop in 2.x's array form, plus `edit` denies for the guard, the harness configs and the stamps, and an `execute` deny |
 
@@ -803,16 +803,14 @@ create must be refused too, the `AI/zzz` create must run, and so must
   were both refused (measured). That refuses only calls that matched the prefilter; the
   rest never reach the guard. The 2.x plugin also refuses a `shell`, `write` or `edit`
   call whose input it cannot read.
-- The 1.x plugin cannot prompt, so a guard ask reaches the model as a refusal: on the
-  agent's own commit or request it names a missing step to take before retrying, the agent
-  never hands the user an osc, tea or git-obs command, and one that persists is reported as
-  a blocker (someone else's item: as waiting for the user's go). The 2.x plugin hands a
-  shell call the guard asks about to opencode's own prompt (measured on 2.2.7): it calls
-  `permission.assert` with the command and the guard's reason, a nonce in its metadata
-  that only its `evaluate` hook turns into an ask, and the answer holds for that call alone
-  (session, message, the command's sha256); a rejection or any error refuses, and so does
-  an opencode without that service. A non-interactive `opencode run` rejects the prompt,
-  and `--auto` would answer it: never run an agent with `--auto`.
+- Neither plugin hands a guard ask to opencode's own prompt, so it reaches the model as a
+  refusal: on the agent's own commit or request it names a missing step to take before
+  retrying, the agent never hands the user an osc, tea or git-obs command, and one that
+  persists is reported as a blocker (someone else's item: as waiting for the user's go, in
+  a Claude Code session). opencode 2.2.7's plugins can raise that prompt
+  (`permission.assert`), but an agent that reads the server's password from
+  `~/.local/state/opencode/service.json` answers it itself through the server's API, so
+  the guard treats that file as a credential and never relies on the prompt.
 
 ## Limits
 
@@ -915,6 +913,14 @@ create must be refused too, the `AI/zzz` create must run, and so must
   covers the direct writes it names, not every osc subcommand that writes: `rebuild`,
   `restartbuild`/`abortbuild`, `service remoterun` and `meta prjconf`/`attribute`/`pattern`
   are among those it does not judge.
+
+### Known limits of the contributor-review rules
+
+The guard catches an agent's mistakes, not a same-user agent bent on getting past it.
+It does not judge code an interpreter runs (a Python, Perl or Node subprocess, `import
+rpm`), shell aliases, or a stamp written through a path built at run time. A stamp forged
+so can let a comment post unasked or lift the FIXABLE hold. The go on an accept, an
+approval or a decline stays the user's, in a prompt only a Claude Code session raises.
 
 ## The bugzilla hand-back guard
 

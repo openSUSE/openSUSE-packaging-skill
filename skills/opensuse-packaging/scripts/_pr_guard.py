@@ -440,6 +440,30 @@ WRAPPERS = {  # each with the options that take a value
     "doas": "-u -C",
     "xargs": "-I -n -P -d -a -E -L -s",
     "busybox": "",
+    "fakeroot": "-l --lib --faked -s -i -b",
+    "strace": "-a -b -e -E -I -o -O -p -P -s -S -u -U -X --output --trace --user --env",
+    "ltrace": "-a -A -D -e -F -l -n -o -p -s -u -w -x --output --library --indent",
+    "unshare": "-S -G -R -w --setuid --setgid --root --wd --propagation --setgroups "
+    "--map-user --map-group --map-users --map-groups",
+    "prlimit": "-p --pid -o --output",
+    "systemd-run": "-u --unit -p --property --description --slice -E --setenv --uid "
+    "--gid --nice --working-directory -M --machine -H --host --on-active --on-boot "
+    "--on-startup --on-unit-active --on-unit-inactive --on-calendar --timer-property "
+    "--path-property --socket-property --service-type",
+    "nsenter": "-t --target -S --setuid -G --setgid",
+    "setpriv": "--reuid --regid --ruid --euid --rgid --egid --groups --inh-caps "
+    "--ambient-caps --bounding-set --securebits --pdeathsig --selinux-label "
+    "--apparmor-profile --landlock-access --landlock-rule",
+}
+# Wrappers that take an operand before the command they run (flock's lock file,
+# taskset's mask, chrt's priority), or run shell text (flock -c, script -c), each
+# with the options that take a value.
+OPERAND_WRAPPERS = {
+    "flock": "-w --wait --timeout -E --conflict-exit-code -c --command",
+    "taskset": "",
+    "chrt": "-T --sched-runtime -P --sched-period -D --sched-deadline",
+    "script": "-c --command -E --echo -I --log-in -O --log-out -B --log-io -T "
+    "--log-timing -m --logging-format -o --output-limit",
 }
 # Per interpreter, the letters of a short-option cluster: code = inline program
 # (attached to the cluster, or the next word), module = runs no file, noexec =
@@ -630,10 +654,11 @@ MESSAGES = {
     "pr review approve --commit SHA OWNER/REPO#N, once {s}/incoming-review.sh "
     "recorded PASS or FIXABLE at that head, in the devel organisation of a package "
     "the user maintains and may move unattended, and then only on the user's go. "
-    "The bot merges it; agents never merge.",
-    "incoming-comment": "{0}: the comment its incoming review recorded was posted "
-    "already. One review, one comment: a new one needs a new review record or the "
-    "user's own post.",
+    "The bot merges it; agents never merge. tea pulls approve and an API review "
+    "POST ask the user too, without the review's facts.",
+    "harness": "{0}: the installed guard, Claude Code's settings and the opencode "
+    "plugins are the user's to change, by hand; no agent command writes, moves or "
+    "deletes them.",
     "incoming-hold": "{0}: an accepted FIXABLE review holds the Factory forward "
     "until the user's follow-up is in devel, and devel still holds exactly what "
     "was accepted. Commit the fix to devel, gate it, then forward.",
@@ -2013,6 +2038,8 @@ def supersedes(run, ctx, cwd):
         if k in ("-s", "--supersede")
         for r in spellings(v, ctx, cwd, False) or [""]
     ]
+    if ids:
+        reviewer_acts(ctx, f"osc {sub} -s")
     obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
     for rid in ids:
         others_request(rid, f"osc {sub} -s", ctx)
@@ -2030,6 +2057,8 @@ def request_verbs(sub, args, ctx, cwd):
     ids = [r for w in pos[1:] for r in spellings(w, ctx, cwd, False) or [""]]
     for verb in verbs:
         closed = ids[:1] if verb == "supersede" else ids  # supersede ID BY_ID
+        if verb in CLOSING_VERBS:
+            reviewer_acts(ctx, f"osc {sub} {verb}")
         if verb in CLOSING_VERBS or verb in ("accept", "approve") and forced:
             flag = "" if verb in CLOSING_VERBS else f" {forced[0]}"
             what = f"osc {sub} {verb}{flag}"
@@ -2053,7 +2082,7 @@ def request_verbs(sub, args, ctx, cwd):
         elif verb in ("accept", "approve"):
             obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
             for rid in ids or [""]:  # a word that is no id is refused
-                accept_one(rid, ctx, forced[0] if forced else "")
+                accept_one(rid, ctx, forced[0] if forced else "", sub == "review")
 
 
 def api_changestate(args, ctx, cwd):
@@ -2091,8 +2120,11 @@ def api_changestate(args, ctx, cwd):
                 "a decline through osc api: a decline is the user's call",
             )
         if "accepted" in states:
-            accept_one(m.group(1), ctx, forced)
+            review = "changestate" not in q.get("cmd", [])  # changereviewstate alone
+            accept_one(m.group(1), ctx, forced, review)
         closing = sorted(states & {"revoked", "superseded", "new", "review", "deleted"})
+        if closing:
+            reviewer_acts(ctx, f"osc api newstate={closing[0]}")
         if "force" in q and "accepted" in states:
             closing.append("accepted with force")
         for state in closing:
@@ -2130,12 +2162,17 @@ def sources(words, ctx, cwd):
     return [(s, p) for s in srcs for p in pkgs]
 
 
-def accept_one(rid, ctx, forced=""):
+def accept_one(rid, ctx, forced="", review=False):
     """accept_forward's rules on one request id (forced: the option or
-    parameter that forces it). One someone else filed goes to
-    foreign_accept(); one whose creator cannot be told is refused, since it
-    may be someone else's."""
+    parameter that forces it). A request accept of one someone else filed
+    goes to foreign_accept(), and one whose creator cannot be told is refused,
+    since it may be someone else's; the user's own, and a review accept
+    (review: the user as a reviewer, on Factory's packages too), are asked
+    unless autoforward-gate.sh's ELIGIBLE holds (accept_eligible())."""
     reviewer_acts(ctx, f"accepting request {rid}")
+    if review:
+        accept_eligible(rid, ctx)
+        return
     if not rid.isdigit():
         block(
             "incoming-accept",
@@ -2151,7 +2188,21 @@ def accept_one(rid, ctx, forced=""):
     if req.get("creator") != user:
         foreign_accept(rid, req, forced, ctx)
         return
-    if not req.findall("action"):
+    accept_eligible(rid, ctx)
+
+
+def accept_eligible(rid, ctx):
+    """An accept asked unless each action is a plain submit to a package
+    this account maintains and autoforward-gate.sh would call ELIGIBLE."""
+    if not rid.isdigit():
+        ask(ctx, "accept-forward", "cannot tell which request osc request accept takes")
+        return
+    ok, text = obs_get(f"/request/{rid}", ctx)
+    req = xml_root(text) if ok and text else None
+    if req is None:
+        ask(ctx, "accept-forward", f"cannot read request {rid}")
+        return
+    if req.tag != "request" or not req.findall("action"):
         ask(ctx, "accept-forward", f"request {rid} has no action")
         return
     for a in req.findall("action"):
@@ -2183,15 +2234,20 @@ OBS_REV = Rx(r"\d+|[0-9a-f]{32}")
 OBS_ID = Rx(r"\d{1,10}")
 # A recorded time as the recorder writes it, printed in an ask.
 RECORDED = Rx(r"[0-9T:.+Z-]{10,40}")
-# What parses or runs a submission's code: a spec's macros, a build, a source
-# service, and the skill's scripts that do one of these.
-PARSERS = {"rpmspec", "rpmbuild"}
-RPM_PARSES = Rx(
-    r"--(?:specfile|eval|load|macros|rcfile)\b.*|-[A-Za-z]*E.*|.*\.spec\b.*"
-)
+# What parses or runs a submission's code: the rpm family by name or through a
+# link (rpmlint runs rpm -q --specfile), a build, a checkout or update that runs
+# the source services, a source service, quilt setup, and the skill's scripts
+# that do one of these.
+RPM_FAMILY = Rx(r"rpm[\w.+-]*")
 OSC_BUILDS = {"build", "chroot", "shell", "wipe"}
-PARSER_SCRIPTS = ("gate.sh", "target-gate.sh", "quilt-prep.sh")
-PARSER_SCRIPTS += ("quilt-test-series.sh", "scm-snapshot.sh")
+OSC_CHECKOUTS = {"co", "checkout", "up", "update"}
+OSC_CO_LONG = ("--source-service-files", "--server-side-source-service-files")
+OSC_CO_LONG += ("--revision", "--linkrev", "--expand-link", "--deleted", "--meta")
+OSC_CO_LONG += ("--unexpand-link", "--current-dir", "--output-dir", "--limit-size")
+OSC_CO_LONG += ("--native-obs-package",)
+PARSER_SCRIPTS = ("gate.sh", "target-gate.sh", "scm-snapshot.sh", "pool-pr.sh")
+PARSER_SCRIPTS += ("leap-sync.sh",)
+QUILT_SCRIPT = Rx(r"(?<![\w.-])quilt-[\w.-]*\.sh\b")
 
 
 def reviewer_acts(ctx, what):
@@ -2203,24 +2259,22 @@ def reviewer_acts(ctx, what):
 
 def reviewer_runs(name, run, ctx, cwd):
     """Refuse, in the incoming-review agent, what parses or runs a submission:
-    rpmspec, rpmbuild, rpm with a spec (or --eval, --load), quilt setup, osc
-    build (chroot, shell, wipe), osc service but wait, and the skill's scripts
-    that do one of these; a command or osc subcommand only the shell knows too.
-    Its review reads the submission as text; gate.sh parses it in its sandbox
-    once the user said go."""
+    the rpm family, quilt setup, osc build (chroot, shell, wipe), osc checkout
+    or update with -s, osc service but wait, and the skill's scripts that parse
+    a spec, run a service or build (gate.sh, target-gate.sh, scm-snapshot.sh,
+    pool-pr.sh, leap-sync.sh, quilt-*.sh); a command, osc subcommand or osc
+    checkout argument only the shell knows too. Its review reads the
+    submission as text; gate.sh parses it in its sandbox once the user said go."""
     if ctx.agent != INCOMING_AGENT:
         return
-    names = substitute(run[0], ctx, cwd) if VARIABLE.search(run[0]) else [run[0]]
-    names = {os.path.basename(n) for n in names or ()}
-    words = [a for a in run[1:] if a[:1] != "-"]
-    what = "a command only the shell knows" if not names else None
-    if names & PARSERS:
-        what = sorted(names & PARSERS)[0]
-    elif "rpm" in names:
-        args = [w for a in run[1:] for w in substitute(a, ctx, cwd) or [None]]
-        if any(a is None or RPM_PARSES.fullmatch(a) for a in args):
-            what = "rpm with a spec, --eval or --load"
-    elif "quilt" in names and "setup" in words:
+    names = resolved(run[0], ctx, cwd)
+    what = None if names else "a command only the shell knows"
+    names = names or set()
+    family = sorted(n for n in names or () if RPM_FAMILY.fullmatch(n))
+    if family:
+        what = os.path.basename(run[0])
+        what += "" if RPM_FAMILY.fullmatch(what) else f" ({family[0]})"
+    elif "quilt" in names and "setup" in [a for a in run[1:] if a[:1] != "-"]:
         what = "quilt setup"
     elif "osc" in names:
         for one in osc_runs(run, ctx, cwd):
@@ -2230,13 +2284,78 @@ def reviewer_runs(name, run, ctx, cwd):
                 what = "an osc subcommand only the shell knows"
             elif sub in OSC_BUILDS or sub == "service" and pos[:1] != ["wait"]:
                 what = f"osc {sub}" + (f" {pos[0]}" if sub == "service" and pos else "")
-    word = words[0] if (names & SHELLS or names & {"source", "."}) and words else run[0]
-    for script in PARSER_SCRIPTS if not what else ():
+            elif sub in OSC_CHECKOUTS and services_run(args, ctx, cwd):
+                what = f"osc {sub} with the source services"
+    if names & SHELLS:
+        word = shell_script(run)
+    elif names & {"source", "."}:
+        word = run[1] if len(run) > 1 else None
+    else:
+        word = run[0]
+    for script in PARSER_SCRIPTS if word and not what else ():
         rx = Rx(rf"(?<![\w.-]){re.escape(script)}\b")
         if runs_script(word, ctx, cwd, script, rx):
             what = script
+    texts = [word, *held(word, ctx), *(resolved(word, ctx, cwd) or ())] if word else []
+    if not what and any(QUILT_SCRIPT.search(t) for t in texts):
+        what = QUILT_SCRIPT.search(" ".join(texts)).group()
     if what:
         block("incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-parse")
+
+
+def resolved(word, ctx, cwd):
+    """The names a command word stands for: each spelling the call gives it,
+    and what that resolves to through links, by its path or on PATH; None when
+    only the shell knows it."""
+    import shutil
+
+    spelled = substitute(word, ctx, cwd) if VARIABLE.search(word) else [word]
+    if spelled is None:
+        return None
+    out = set()
+    for w in spelled:
+        out.add(os.path.basename(w))
+        found = (locate(w, ctx, cwd)[0] or []) if "/" in w else [shutil.which(w)]
+        out.update(os.path.basename(os.path.realpath(p)) for p in found if p)
+    return out
+
+
+def shell_script(run):
+    """The script a shell's argv runs, past its options (-o and -O take a
+    value, so do --rcfile and --init-file); None for -c code or stdin, which
+    are judged as text."""
+    i = 1
+    while i < len(run) and run[i][:1] in "-+" and run[i] not in ("-", "+", "--"):
+        a, i = run[i], i + 1
+        if a in ("--rcfile", "--init-file"):
+            i += 1
+        elif a[:2] != "--" and set(a[1:]) & set("cs"):
+            return None
+        elif a[:2] != "--" and a[-1] in "oO":
+            i += 1
+    i += run[i : i + 1] == ["--"]
+    return run[i] if i < len(run) else None
+
+
+def services_run(args, ctx, cwd):
+    """Whether osc checkout or update arguments run the source services: -s
+    (in a cluster too, before a valued letter), --source-service-files or a
+    prefix of it, or an argument only the shell knows."""
+    for a in args:
+        if a == "--":
+            break
+        if VARIABLE.search(a) and substitute(a, ctx, cwd) is None:
+            return True
+        if a[:2] == "--":
+            if long_prefix(a, OSC_CO_LONG).split("=")[0] == OSC_CO_LONG[0]:
+                return True
+        elif a[:1] == "-":
+            for ch in a[1:]:
+                if ch == "s":
+                    return True
+                if ch in "rol":
+                    break
+    return False
 
 
 def load_stamp(path, kind):
@@ -2337,7 +2456,7 @@ def foreign_accept(rid, req, forced, ctx):
     """Someone else's request: its accept asks the user, with the review and
     the facts checked again, only when all hold; anything else refuses. One
     submit action, no option but sourceupdate, no force, a source revision (a
-    _link's a srcmd5), a target outside home: that this account maintains and
+    _link's its expanded srcmd5), a target outside home: that this account maintains and
     may move unattended and that is Factory's devel project of the package,
     and incoming-review.sh's PASS or FIXABLE stamp of this request, by its
     creator, whose source and target srcmd5 are still OBS's."""
@@ -2397,8 +2516,10 @@ def foreign_accept(rid, req, forced, ctx):
     ok, root, ssrc = listing_srcmd5(spath, ctx)
     if not ok or root is None:
         refuse(f"cannot read the source ({ssrc or spath})")
-    if root.find("linkinfo") is not None and not HEX32.fullmatch(rev):
-        refuse(f"its source is a _link and rev {rev} no srcmd5, so it can still move")
+    if root.find("linkinfo") is not None and rev != ssrc:
+        refuse(
+            f"its source is a _link and rev {rev} not its expanded srcmd5, so it can move"
+        )
     if ssrc != field(act, "source", "srcmd5"):
         refuse("its source is not the one reviewed (srcmd5 moved)")
     ok, _, tsrc = listing_srcmd5(tpath, ctx)
@@ -2510,10 +2631,10 @@ def fixable_pending(prj, pkg, ctx):
     """Refuse a forward of prj/pkg to Factory while an accepted FIXABLE review
     holds it: devel's expanded files (but _link) still equal the stamp's
     source files, or, for a devel PR, the tree of the commit OBS synced
-    (_scmsync.obsinfo) still equals the stamp's head files. A stamp file that
-    is not a valid record, or a lookup that fails, refuses too."""
-    import glob
-
+    (_scmsync.obsinfo) still equals the stamp's head files. A stamps
+    directory that cannot be listed, a stamp file that is not a valid record,
+    or a lookup that fails, refuses too; a directory that does not exist holds
+    none."""
     key = ("hold", prj, pkg)
     if key in ctx.devel:
         return
@@ -2522,7 +2643,14 @@ def fixable_pending(prj, pkg, ctx):
     held = {"obs": [], "gitea": []}
     for kind in held:
         top = os.path.join(os.path.expanduser(INCOMING_STAMPS), kind)
-        for path in sorted(glob.glob(os.path.join(glob.escape(top), "*.json"))):
+        try:
+            names = sorted(os.listdir(top))
+        except FileNotFoundError:
+            names = []
+        except OSError as e:
+            block("incoming-hold", f"{what}: cannot list {tilde(top)} ({e.strerror})")
+        for name in (n for n in names if n.endswith(".json") and n[:1] != "."):
+            path = os.path.join(top, name)
             st, why = load_stamp(path, kind)
             if st is None:
                 block("incoming-hold", f"{what}: {os.path.basename(path)}: {why}")
@@ -2555,8 +2683,12 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
     """fixable_pending()'s check of FIXABLE devel PR reviews: those of the
     repository the package's <scmsync> names hold while the tree of the commit
     OBS synced equals their head's files. git_obs_approve() approves only a
-    repository named as the package, so no other review can hold it."""
-    if not any(str(field(st, "gitea", "repo")).lower() == pkg.lower() for st in stamps):
+    repository named as the package; one such review whose repository the
+    package does not sync from, or names none, refuses, as does a failed read."""
+    stamps = [
+        st for st in stamps if str(field(st, "gitea", "repo")).lower() == pkg.lower()
+    ]
+    if not stamps:
         return
     ok, text = obs_get(f"/source/{prj}/{pkg}/_meta", ctx)
     meta = xml_root(text) if ok and text else None
@@ -2565,11 +2697,14 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
     m = PROJECT_GIT.fullmatch((meta.findtext("scmsync") or "").strip())
     here = f"{m.group(1)}/{m.group(2)}".lower() if m else None
     names = [(field(st, "gitea", "owner"), field(st, "gitea", "repo")) for st in stamps]
-    mine = [
-        st for st, n in zip(stamps, names) if here and f"{n[0]}/{n[1]}".lower() == here
-    ]
-    if not mine:
-        return
+    mine = [st for st, n in zip(stamps, names) if f"{n[0]}/{n[1]}".lower() == here]
+    if len(mine) != len(stamps):
+        other = next(st for st in stamps if st not in mine)
+        block(
+            "incoming-hold",
+            f"{what}: PR {other['id']} may hold it, and {prj}/{pkg} syncs from "
+            f"{here or 'no repository'}",
+        )
     ok, info = obs_get(f"/source/{prj}/{pkg}/_scmsync.obsinfo", ctx)
     commit = re.search(r"^commit: ([0-9a-f]{40})$", info or "", re.M) if ok else None
     if not commit:
@@ -3139,6 +3274,7 @@ def close_rules(name, args, ctx, cwd):
         return vals[0] if len(vals) == 1 else ""
 
     def judge_item(what, o, r, n):
+        reviewer_acts(ctx, what)
         known = o and r and n.isdigit()
         why = others_pr(o, r, n, ctx) if known else "cannot tell which PR"
         if why:
@@ -5322,6 +5458,25 @@ def unwrap(argv):
             )
             text = PLACEHOLDER.sub("$__arg", " ".join(rest[:end]))
             return [], text, changes, chdir
+        elif base in OPERAND_WRAPPERS:
+            valued, opts, j = OPERAND_WRAPPERS[base].split(), [], i + 1
+            while j < n and argv[j].startswith("-") and argv[j] != "-":
+                if argv[j] == "--":
+                    j += 1
+                    break
+                take = argv[j] in valued and j + 1 < n
+                opts.append(
+                    (argv[j], argv[j + 1] if take else argv[j].partition("=")[2])
+                )
+                j += 2 if take else 1
+            code = [v for k, v in opts if k.split("=")[0] in ("-c", "--command")]
+            if code and base in ("flock", "script"):
+                return [], code[-1], changes, chdir
+            if base == "script" or {k.split("=")[0] for k, _ in opts} & {"-p", "--pid"}:
+                return [], None, changes, chdir  # no command of its own runs
+            i = j + 1  # past the lock file, mask or priority
+            if base == "flock" and argv[i : i + 1] in (["-c"], ["--command"]):
+                return [], " ".join(argv[i + 1 : i + 2]), changes, chdir
         elif base in WRAPPERS:
             if base in ("sudo", "doas"):
                 changes.append(base)
@@ -6285,6 +6440,73 @@ def reader(name, run):
     return name in READERS or name in LOOKERS
 
 
+# The harness's own files: the installed guard, Claude Code's settings and the
+# opencode plugins, below the home directory; the user changes them by hand.
+HARNESS = (".claude/hooks", ".claude/settings.json", ".config/opencode/plugins")
+HARNESS_TEXT = Rx(r"\.claude/+(?:hooks|settings\.json)|opencode/+plugins(?![\w.-])")
+# Commands that change the files they name in place.
+HARNESS_WRITERS = {"sed", "perl", "chmod", "chown", "chgrp", "touch", "truncate"}
+HARNESS_WRITERS |= {"shred", "unlink", "rmdir", "setfacl", "chattr", "patch"}
+
+
+def in_harness(path, parents=False):
+    """Whether a placed path lies in the harness's files, as written or through
+    its links; parents: or is a directory above them."""
+    roots = {
+        os.path.normpath(q)
+        for h in homes()
+        for r in HARNESS
+        for q in (os.path.join(h, r), os.path.realpath(os.path.join(h, r)))
+    }
+    for p in {os.path.normpath(path), os.path.realpath(path)}:
+        for root in roots:
+            if p == root or p.startswith(root + "/"):
+                return True
+            if parents and root.startswith(p.rstrip("/") + "/"):
+                return True
+    return False
+
+
+def harness_word(word, ctx, cwd, parents=False, unplaced=True):
+    """Whether a word a command writes to lands in the harness's files: placed
+    in each directory of a loop, each brace alternative and an option's value
+    after its = included; one only the shell can place counts (unplaced) when
+    the agent's command names those files."""
+    words = [word] + ([word.partition("=")[2]] if word[:1] == "-" else [])
+    for w in filter(None, words):
+        for alt in braces(w) or [w]:
+            for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
+                paths = locate(alt, ctx, d)[0]
+                if (
+                    paths is None
+                    and unplaced
+                    and HARNESS_TEXT.search(flat(ctx.command or ""))
+                ):
+                    return True
+                if any(in_harness(p, parents) for p in paths or ()):
+                    return True
+    return False
+
+
+def harness_touch(name, run, ctx, cwd):
+    """The word a command writes, moves or deletes the harness's files by, or
+    None: the targets of cp, mv, install, mkdir, rm, tar, tee, ln, dd, sort -o,
+    rsync and git (of rm and mv, a directory above them too), and the words of
+    a command that changes files in place (sed -i, chmod, touch ...)."""
+    if reads_only(name, run, ctx, cwd) or name in LOOKERS:
+        return None
+    words = git_paths(run) if name == "git" else write_words(name, run[1:])
+    if words is not None:
+        parents = name in ("rm", "mv")
+        return next((w for w in words if harness_word(w, ctx, cwd, parents)), None)
+    if name in HARNESS_WRITERS:
+        args = [a for a in run[1:] if a[:1] != "-"]
+        return next(
+            (w for w in args if harness_word(w, ctx, cwd, unplaced=False)), None
+        )
+    return None
+
+
 UNPLACED = "a write the guard cannot place, in a call naming the state directory"
 
 
@@ -6469,6 +6691,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             block("stamp", "a redirection into the stamp directory")
         if state_target(">", t, ctx, cwd):
             state_block(ctx, "a redirection into the state directory")
+        if harness_word(t, ctx, cwd):
+            block("harness-write", f"a redirection to {shown(t)}", "harness")
         if ctx.state_named and unplaced(t, ctx, cwd):
             state_block(ctx, f"{UNPLACED} (a redirection)", "state-unplaced")
         note_written(t, ctx, cwd)
@@ -6556,6 +6780,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         block("stamp", "a command touching the stamp directory")
     wrapped = argv[: len(argv) - len(run)]
     xargs = "xargs" in map(os.path.basename, wrapped)
+    hit = harness_touch(name, run, ctx, here)
+    if hit is not None:
+        block("harness-write", f"{name} {shown(hit)}", "harness")
     touched = state_touch(name, run, ctx, here, xargs)
     if touched:
         state_block(ctx, *touched)
@@ -6894,9 +7121,11 @@ def lit_output(argv, redirs, out, lit):
 
 # Credential files, as a normalised path (the file, or anything below the
 # directory): tea (git-obs reads it too), osc, gh, netrc, git's two stores, osc's
-# cookie jar, an MCP server's key, an SSH private key (id_*, not its .pub).
+# cookie jar, an MCP server's key, an SSH private key (id_*, not its .pub), the
+# opencode server's password (service.json).
 CRED_PATH = Rx(
     r"/\.config/(?:tea|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
+    r"|/\.local/state/opencode/service\.json$"
     r"|/\.(?:netrc|oscrc|git-credentials|config/git/credentials)$"
     r"|/\.config/mcp-[^/]*/api-key$"
     r"|/\.ssh/id_[^/.]*$"
@@ -6904,13 +7133,15 @@ CRED_PATH = Rx(
 # The same as a word spells them, for a path the guard cannot place.
 CRED_WORD = Rx(
     r"(?<![\w.\\-])\.(?:config\}?/+(?:tea|osc|gh|git/+credentials|mcp-[^/]*/+api-key)"
-    r"|local/+state/+osc|netrc|oscrc|git-credentials|ssh/+id_[\w-]+)(?![\w.-])"
+    r"|local/+state/+osc|local/+state/+opencode/+service\.json|netrc|oscrc"
+    r"|git-credentials|ssh/+id_[\w-]+)(?![\w.-])"
     r"|\$\{?XDG_CONFIG_HOME\}?/+(?:tea|osc|gh|git/+credentials)(?![\w.-])"
+    r"|\$\{?XDG_STATE_HOME\}?/+opencode/+service\.json(?![\w.-])"
 )
 # The same below $HOME, for a recursive read of a directory above them.
 CRED_ROOTS = ("/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc")
 CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/git/credentials")
-CRED_ROOTS += ("/.config/mcp-", "/.ssh/id_")
+CRED_ROOTS += ("/.config/mcp-", "/.ssh/id_", "/.local/state/opencode/service.json")
 # Names that are credential files wherever they sit.
 CRED_NAMES = {"oscrc", "cookiejar"}
 # Commands that look at a file without reading it; commands that read a tree.
@@ -7306,6 +7537,8 @@ def check_write(path, content, ctx):
     placed = os.path.join(ctx.cwd or "/", os.path.expanduser(path))
     if STATE_WORD.search(path) or state_path(os.path.normpath(placed)):
         block("stamp-write", f"a write to {path}", "state")
+    if in_harness(os.path.normpath(placed)):
+        block("harness-write", f"a write to {path}", "harness")
     # Docs quote the wrong forms on purpose; scripts are where a POST hides.
     if not path.lower().endswith(DOCS):
         lines = "\n".join(code_lines(content))

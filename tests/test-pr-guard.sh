@@ -291,6 +291,7 @@ for c in s["obs"]:
     pkg, rid, rev, T = c["pkg"], c["id"], c.get("rev", "5"), c.get("target", D)
     sfiles, tfiles = {f"{pkg}.spec": md5("new " + pkg)}, {f"{pkg}.spec": md5("old " + pkg)}
     ssrc, tsrc = md5("src " + pkg), md5("tgt " + pkg)
+    rev = ssrc if rev == "@srcmd5" else rev  # a _link pinned by its expanded srcmd5
     opts = "".join(f"<{o}>true</{o}>" for o in c.get("options", []))
     act = (f'<action type="submit"><source project="{S}" package="{pkg}"' + (f' rev="{rev}"' if rev else "")
            + f'/><target project="{T}" package="{pkg}"/>' + (f"<options>{opts}</options>" if opts else "") + "</action>")
@@ -301,6 +302,10 @@ for c in s["obs"]:
     stub(f"/source/{T}/{pkg}?expand=1", f'<directory name="{pkg}" srcmd5="{tsrc}">{entries(now)}</directory>')
     stub(f"/source/{T}/{pkg}/_meta", f'<package name="{pkg}" project="{T}"><person userid="tester" role="maintainer"/></package>')
     factory(pkg, D)
+    if T == "openSUSE:Factory":  # the account as a reviewer of Factory's own package
+        stub(f"/source/{T}/{pkg}/_meta", f'<package name="{pkg}" project="{T}"><devel project="{D}" package="{pkg}"/>'
+             f'<person userid="{c["maintainer"]}" role="maintainer"/></package>')
+        stub(f"/source/{T}/_meta", f'<project name="{T}"/>')
     if c["verdict"]:
         part = {"obs": {"actions": c.get("actions", 1), "action": {
             "type": "submit", "options": c.get("options", []),
@@ -319,8 +324,9 @@ stub(f"/source/{GD}/_meta", f'<project name="{GD}"><scmsync>https://src.opensuse
 gstub(f"repos/{O}/_ObsPrj/raw/_maintainership.json", g["maintainers"])
 for pkg in g["maintainers"]:
     role = f'<person userid="{g["reviewer"][pkg]}" role="reviewer"/>' if pkg in g["reviewer"] else ""
+    org = g["scmsync_owner"].get(pkg, O)
     stub(f"/source/{GD}/{pkg}/_meta",
-         f'<package name="{pkg}" project="{GD}"><scmsync>https://src.opensuse.org/{O}/{pkg}#factory</scmsync>{role}</package>')
+         f'<package name="{pkg}" project="{GD}"><scmsync>https://src.opensuse.org/{org}/{pkg}#factory</scmsync>{role}</package>')
     factory(pkg, GD)
 for p in g["prs"]:
     o, r, n = p.get("owner", O), p["repo"], p["number"]
@@ -340,7 +346,10 @@ for p in g["prs"]:
         stamp("gitea", f"{o}_{r}_{n}", f"{o}/{r}#{n}", p["author"], p["verdict"], part, p.get("comment", ""))
 for rel, text in s["files"].items():
     put(os.path.join(scripts, rel), text)
+for name, target in s["links"].items():
+    os.symlink(os.path.join(scripts, target), os.path.join(scripts, name))
 put(os.path.join(work, "badhome", sd, "incoming", "obs", "1391099.json"), "{")
+put(os.path.join(work, "listless", sd, "incoming", "obs"), "not a directory\n")
 PY
 
 # ev <name>: the fixture event, placeholders filled in.
@@ -1722,7 +1731,7 @@ case_ accept-user-option        2 incoming-accept "accepting request 1390007 by 
 case_ accept-verb-variable      2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 case_ accept-approve            2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 ask_ accept-approvenew          accept-forward "osc rq approvenew"
-case_ accept-review-alias       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+ask_ accept-review-alias        accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
 case_ accept-review-own-eligible 0 - ""
 ask_ accept-review-decline      accept-forward "osc review decline"
 ask_ accept-decline             accept-forward "osc rq decline"
@@ -1930,12 +1939,20 @@ ask_ accept-pass                incoming-accept "accepting request 1391001 by co
 ask_ accept-pass                incoming-accept "source and target srcmd5 as reviewed, devel:inc is Factory's devel project"
 ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then waits until your follow-up is in devel"
 ask_ accept-api-pass            incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
-ask_ accept-review-accept-pass  incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
+# A review accept is the user as a reviewer: asked as before unless ELIGIBLE, on
+# Factory's packages too, whoever filed the request.
+case_ accept-review-accept-pass 0 - ""
+ask_ accept-review-factory      accept-forward "accepting request 1391014: openSUSE:Factory/incfac is maintained by boss"
+ask_ accept-api-review-factory  accept-forward "accepting request 1391014: openSUSE:Factory/incfac is maintained by boss"
 case_ accept-block              2 incoming-accept "accepting request 1391003 by contrib: its review says BLOCK"
 case_ accept-files-moved        2 incoming-accept "accepting request 1391004 by contrib: its source is not the one reviewed (srcmd5 moved)"
 case_ accept-target-moved       2 incoming-accept "accepting request 1391005 by contrib: the target is not as reviewed"
 case_ accept-no-rev             2 incoming-accept "accepting request 1391006 by contrib: its source names no revision"
-case_ accept-link-rev           2 incoming-accept "accepting request 1391007 by contrib: its source is a _link and rev 5 no srcmd5"
+case_ accept-link-rev           2 incoming-accept "accepting request 1391007 by contrib: its source is a _link and rev 5 not its expanded srcmd5"
+# A _link source is pinned only by its expanded srcmd5 at that rev: another srcmd5 may
+# be the link's own, whose expansion moves with the package it links to.
+case_ accept-link-rev-moved     2 incoming-accept "accepting request 1391015 by contrib: its source is a _link and rev 0123456789abcdef0123456789abcdef not its expanded srcmd5"
+ask_ accept-link-pinned         incoming-accept "accepting request 1391016 by contrib into devel:inc/inclinkok: review PASS"
 case_ accept-multi-action       2 incoming-accept "accepting request 1391008 by contrib: it holds 2 actions, not one submit"
 case_ accept-options            2 incoming-accept "accepting request 1391009 by contrib: it sets updatelink"
 case_ accept-home-target        2 incoming-accept "accepting request 1391010 by contrib: it targets home"
@@ -1979,7 +1996,7 @@ case_ incoming-record-unread    2 incoming-self "incoming-review.sh with an argu
 case_ reviewer-rpmspec          2 incoming-self "rpmspec from agent incoming-review"
 # Its calls reach the rules whatever they say: a bare rpmspec names no path.
 case_ reviewer-rpmspec-bare     2 incoming-self "rpmspec from agent incoming-review"
-case_ reviewer-rpm-specfile     2 incoming-self "rpm with a spec, --eval or --load from agent incoming-review"
+case_ reviewer-rpm-specfile     2 incoming-self "rpm from agent incoming-review"
 case_ reviewer-rpmbuild         2 incoming-self "rpmbuild from agent incoming-review"
 case_ reviewer-quilt            2 incoming-self "quilt setup from agent incoming-review"
 case_ reviewer-osc-build        2 incoming-self "osc build from agent incoming-review"
@@ -1989,6 +2006,49 @@ case_ reviewer-target-gate      2 incoming-self "target-gate.sh from agent incom
 case_ reviewer-reads            0 - ""
 case_ reviewer-rpmspec-main     0 - ""
 case_ reviewer-osc-build-main   0 - ""
+# The whole rpm family by name or through a link (rpmlint runs rpm -q --specfile), a
+# checkout or update that runs the source services, a shell's options before its script,
+# and the skill's scripts that build or sync.
+case_ reviewer-rpmquery         2 incoming-self "rpmquery from agent incoming-review"
+case_ reviewer-rpm-query        2 incoming-self "rpm from agent incoming-review"
+case_ reviewer-rpmlint          2 incoming-self "rpmlint from agent incoming-review"
+case_ reviewer-rpm-link         2 incoming-self "rpx (rpmspec) from agent incoming-review"
+case_ reviewer-osc-co-s         2 incoming-self "osc co with the source services from agent incoming-review"
+case_ reviewer-osc-co-cluster   2 incoming-self "osc co with the source services from agent incoming-review"
+case_ reviewer-osc-up-long      2 incoming-self "osc up with the source services from agent incoming-review"
+case_ reviewer-osc-co-plain     0 - ""
+case_ reviewer-bash-opts        2 incoming-self "gate.sh from agent incoming-review"
+case_ reviewer-pool-pr          2 incoming-self "pool-pr.sh from agent incoming-review"
+case_ reviewer-leap-sync        2 incoming-self "leap-sync.sh from agent incoming-review"
+case_ reviewer-quilt-script     2 incoming-self "quilt-setup.sh from agent incoming-review"
+# The reviewing agents decline nothing: no revoke, supersede, decline or close either.
+case_ reviewer-revoke           2 incoming-self "osc rq revoke from agent incoming-review"
+case_ reviewer-supersede        2 incoming-self "osc rq supersede from agent changes-review"
+case_ reviewer-decline          2 incoming-self "osc rq decline from agent incoming-review"
+case_ reviewer-tea-close        2 incoming-self "tea pulls close from agent changes-review"
+case_ reviewer-git-obs-close    2 incoming-self "git-obs pr close from agent incoming-review"
+case_ reviewer-api-revoke       2 incoming-self "osc api newstate=revoked from agent incoming-review"
+# A review of a repository named like the package holds its forward unless it is shown
+# not to: a package that syncs from no repository, or from another one, refuses it.
+case_ forward-hold-no-scmsync   2 incoming-hold "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository"
+case_ forward-hold-other-org    2 incoming-hold "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
+case_ forward-after-followup    2 incoming-hold "cannot list" HOME="$work/listless"
+
+echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
+for n in fakeroot strace ltrace unshare flock flock-c taskset chrt prlimit systemd-run nsenter setpriv script-c; do
+  case_ "wrap-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+done
+
+echo "--- the harness's own files are the user's: no agent command writes, moves or deletes them"
+case_ harness-cp-hooks          2 harness-write "cp ~/.claude/hooks/_pr_guard.py"
+case_ harness-redirect-settings 2 harness-write "a redirection to ~/.claude/settings.json"
+case_ harness-rm-claude         2 harness-write "rm ~/.claude"
+case_ harness-mv-plugin         2 harness-write "mv ~/.config/opencode/plugins/pool-pr-guard.ts"
+case_ harness-sed-hooks         2 harness-write "sed ~/.claude/hooks/_pr_guard.py"
+case_ harness-cd-rm             2 harness-write "rm pr-guard.py"
+case_ harness-write-tool        2 harness-write "a write to $HOME/.config/opencode/plugins/x.ts"
+case_ harness-read              0 - ""
+case_ harness-copy-out          0 - ""
 
 echo "--- a change review is recorded by the changes-review agent that ran it"
 ask_ review-main-session        review-self "gate.sh --review from the main session"
@@ -2331,6 +2391,9 @@ case_ cred-xdg-git-dir-cwd       2 credential-read "head reads ~/.config/git/cre
 case_ cred-xdg-default-form      2 credential-read "cat reads \${XDG_CONFIG_HOME:-\$HOME/.config}/git/credentials"
 case_ cred-xdg-git-config-ok     0 - ""
 case_ cred-mcp-api-key           2 credential-read "cat reads ~/.config/mcp-bugzilla/api-key"
+# The opencode server's password: whoever reads it answers that server's prompts.
+case_ cred-opencode-service      2 credential-read "cat reads ~/.local/state/opencode/service.json"
+case_ cred-opencode-xdg          2 credential-read "opencode/service.json"
 case_ cred-redirect              2 credential-read "a redirection reads ~/.netrc"
 case_ cred-subst-redirect        2 credential-read "a redirection reads ~/.netrc"
 case_ cred-bash-c                2 credential-read "head reads ~/.git-credentials"
@@ -2734,17 +2797,22 @@ grep -qF 'if (tool !== "shell" && tool !== "write" && tool !== "edit") return' "
   && grep -qF 'const body = tool === "write" ? args.content : args.newString' "$V2PLUGIN" \
   && grep -qF 'throw new Error(`pool-pr-guard: ${tool} call without input`)' "$V2PLUGIN" \
   && grep -qF 'const file_path = resolve(dir, home(path))' "$V2PLUGIN" \
-  && grep -qF 'if ("refuse" in verdict) throw new Error(verdict.refuse)' "$V2PLUGIN" \
+  && grep -qF 'if (why !== undefined) throw new Error(why)' "$V2PLUGIN" \
   && grep -qxF 'import type { Plugin } from "@opencode/plugin"' "$V2PLUGIN" \
   && pass "opencode-v2: the plugin judges shell, write and edit by their 2.x fields and throws to refuse" \
   || fail "opencode-v2: the plugin's tool ids, input fields or refusal changed"
-# The 1.x plugin cannot prompt, so the guard's ask reaches the user as a refusal; the 2.x
-# one hands it to opencode's prompt where there is one, and refuses it where there is none.
+# Neither plugin hands the guard's ask to opencode's prompt: an agent can answer that
+# through the opencode server (service.json), so the ask reaches the model as a refusal
+# and the go stays in a Claude Code session.
 grep -qF 'done(code === 0 ? asked(out) :' "$V2PLUGIN" && grep -qF 'd?.permissionDecision !== "ask"' "$V2PLUGIN" \
-  && grep -qF 'if (tool !== "shell" || !prompts || !perm) throw new Error(cannot(verdict.ask))' "$V2PLUGIN" \
   && grep -qF 'if (d?.permissionDecision === "ask")' "$V1PLUGIN" \
-  && pass "opencode: both plugins refuse a call the guard asks about, but the user's own prompt" \
+  && pass "opencode: both plugins refuse a call the guard asks about" \
   || fail "opencode: a plugin lets the guard's ask through"
+! grep -qE 'permission\.(assert|hook)' "$V2PLUGIN" "$V1PLUGIN" \
+  && grep -qF 'waits for the user in a Claude Code session' "$V2PLUGIN" \
+  && grep -qF 'waits for the user in a Claude Code session' "$V1PLUGIN" \
+  && pass "opencode: no plugin raises opencode's own prompt, and the refusal sends the go to a Claude Code session" \
+  || fail "opencode: a plugin raises opencode's prompt, or its refusal does not name where the go is given"
 # As pr-guard.py, the 2.x plugin judges every call of the incoming-review agent.
 grep -qF 'const READER = "incoming-review"' "$V2PLUGIN" && grep -qF '&& event.agent !== READER) return' "$V2PLUGIN" \
   && pass "opencode-v2: the plugin judges every call of the incoming-review agent" \
@@ -2793,10 +2861,9 @@ JS
   out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"
   [ "${out%% *}" = refused ] && pass "opencode-v2: the plugin refuses a guarded call when python3 is missing" \
     || fail "opencode-v2: with no python3 the plugin gave '$out'"
-  # With opencode's permission service (2.2.7): the guard's ask is the user's prompt, raised
-  # by a nonce only this plugin's evaluate hook turns into an ask, its reason shown; the
-  # call runs on "once", is refused on a rejection, and an ask with no call to bind to is
-  # refused unasked. A refusal never reaches the prompt, nor does the tool's own check.
+  # With opencode's permission service at hand (2.2.7), the guard's ask is still refused,
+  # the service is never asked and no hook is set on it; the incoming-review agent's bare
+  # rpmspec reaches the guard.
   cat >"$work/drive-ask.mjs" <<'JS'
 const [plugin, loc, answer] = process.argv.slice(-3)
 let fire, evaluate
@@ -2815,28 +2882,19 @@ await (await import(plugin)).default.setup({ location: { directory: loc }, permi
 const call = { sessionID: "ses_1", messageID: "msg_1", id: "call_1" }
 const run = async (e) => { try { await Promise.resolve(fire({ ...call, ...e })); return "run" } catch { return "refused" } }
 const comment = ["osc", "comment", "create", "-c", "ok", "request", "1"].join(" ")
-const own = { action: "shell", resources: ["ls"], effect: "allow", metadata: {} }
-await evaluate(own)
 console.log([
   await run({ tool: "shell", input: { command: comment } }),
   await run({ tool: "shell", agent: "incoming-review", input: { command: "rpmspec -P x.spec" } }),
   await run({ tool: "shell", input: { command: "ls" } }),
-  await run({ tool: "shell", messageID: undefined, input: { command: comment } }),
-  own.effect,
+  evaluate ? "hooked" : "unhooked",
   prompts.length,
-  prompts[0]?.startsWith("pr-guard: ASK [comment]") ? "reason" : "no-reason",
 ].join(" "))
 JS
   # shellcheck disable=SC2086  # tsrun is a command line
   out="$($tsrun "$work/drive-ask.mjs" "$work/v2.mts" "$work/v2-AI" once 2>&1)"
-  [ "$out" = "run refused run refused allow 1 reason" ] \
-    && pass "opencode-v2: the guard's ask goes to the user's prompt with its reason, and runs on their go" \
-    || fail "opencode-v2: the ask route on a go gave '$out'"
-  # shellcheck disable=SC2086  # tsrun is a command line
-  out="$($tsrun "$work/drive-ask.mjs" "$work/v2.mts" "$work/v2-AI" reject 2>&1)"
-  [ "$out" = "refused refused run refused allow 1 reason" ] \
-    && pass "opencode-v2: a rejected prompt refuses the call" \
-    || fail "opencode-v2: the ask route on a rejection gave '$out'"
+  [ "$out" = "refused refused run unhooked 0" ] \
+    && pass "opencode-v2: with opencode's prompt at hand the guard's ask is still refused, the prompt never raised" \
+    || fail "opencode-v2: with a permission service the plugin gave '$out'"
 fi
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
 miss="$(sed -n 's/^ *"\(git-obs [^"]*\)": "\([a-z]*\)",\{0,1\}$/\1\t\2/p' "$PERMS" | while IFS=$'\t' read -r pat act; do
