@@ -1800,7 +1800,7 @@ else
       1|4) cat "$log/parse-added.txt"
          [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
          ! grep -q '^incomplete: ' "$log/parse-added.txt" \
-           || echo "note: the comparison with $pf stopped short (incomplete: above): nothing past that point is known to be verbatim" ;;
+           || echo "note: the comparison with $pf is incomplete (incomplete: above): what it could not tell is not known to be verbatim" ;;
       124) nocmp="the scan did not finish in 120 s" ;;
       *) nocmp="the scan failed (exit $src): $(head -n 1 "$log/parse-added.txt")" ;;
     esac >> "$log/parse-surface.txt"

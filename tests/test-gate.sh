@@ -2136,7 +2136,7 @@ for i in $(seq 1 10); do printf '%%include bar-i%d.inc\n' $((i + 1)) | tee "$wor
 printf '%%define bar_d 1\n' | tee "$work/ps-deep/bar/bar-i11.inc" | put openSUSE:Factory/bar bar-i11.inc
 ps_ "$work/ps-deep/bar"
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "incomplete: an %include past depth 8 was not read" <<<"$out" \
-  && grep -qF "note: the comparison with openSUSE:Factory/bar stopped short" <<<"$out" \
+  && grep -qF "note: the comparison with openSUSE:Factory/bar is incomplete" <<<"$out" \
   && ! grep -qF "OK: every parse-time construct is in openSUSE:Factory/bar verbatim" <<<"$out" \
   && pass "parse-incomplete: a scan stopped by a cap says so, no OK line" \
   || { fail "parse-incomplete"; printf '%s\n' "$out" | sed 's/^/    /'; }
