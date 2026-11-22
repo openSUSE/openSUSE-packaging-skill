@@ -38,8 +38,9 @@
 # submit, an option but sourceupdate; a target package that does not exist;
 # parse-time code the scanner finds added over the target's files, or a scan
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
-# .gitmodules, symlink or submodule; control, bidi or zero-width characters in
-# a changed text; a Source or Patch line the text cannot read, a URL with a
+# .gitmodules, symlink or submodule; control (a CR before LF ends a line),
+# bidi or zero-width characters in a changed text; a Source or Patch line the
+# text cannot read, a URL with a
 # macro the text cannot expand or that does not parse, a Source or Patch host
 # the target's spec does not use, a Source URL changed beyond its version
 # numbers, a changed file whose bytes differ from its Source URL's (fetched
@@ -595,7 +596,8 @@ def verify(f, src, name, spec, tag, url, tmp, lfs):
 # ---------------------------------------------------------------- what the change holds
 def hidden(f, name, data):
     """A finding for each kind of character the sanitized view would hide."""
-    text = data.decode("utf-8", "surrogateescape")
+    # a CR right before LF is a line ending (upstream CRLF patches); any other CR hides text
+    text = data.decode("utf-8", "surrogateescape").replace("\r\n", "\n")
     for rx, what in ((HIDDEN, "a control character"), (INVISIBLE, "a bidi or zero-width character")):
         m = rx.search(text)
         if m:
