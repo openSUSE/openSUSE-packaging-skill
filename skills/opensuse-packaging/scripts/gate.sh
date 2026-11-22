@@ -140,8 +140,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Its Python reads and writes no __pycache__ beside the scripts: a directory under
 # /dev/null cannot exist, so no compiled module can be planted there either.
 export PYTHONPYCACHEPREFIX=/dev/null/opensuse-packaging
-# bwrap from the system alone, never one found on PATH
+# bwrap, and the env and timeout that start it, from the system alone, never
+# ones found on PATH
 BWRAP=/usr/bin/bwrap
+ENVCMD=/usr/bin/env TIMEOUTCMD=/usr/bin/timeout
 read -r -d '' PY <<'PYEOF'
 import calendar
 import difflib
@@ -1854,17 +1856,25 @@ sandbox() {   # sandbox [writable dir]: the bwrap arguments, in sbx (the parses'
 # fresh directory holding its copy of the spec the only place to write. Without
 # bwrap, or where it is denied user namespaces (a container), the specs parse
 # unsandboxed, as before, and rpmspec says so; any other failure to start it is
-# red and nothing parses, so a caller's environment cannot switch it off.
-USERNS='No permissions to create (a )?new namespace|Creating new namespace failed|setting up uid map|Can.t mount proc|max_user_namespaces|loopback: Failed|Failed to make / slave'
+# red and nothing parses, so a caller's environment cannot switch it off. The
+# denials, in bubblewrap's words: no user namespaces in the kernel (EINVAL) or
+# for this user (EPERM, "creating" in older releases), none left (ENOSPC, as
+# user.max_user_namespaces=0 leaves it), and a container refusing the uid map,
+# /proc, lo or a slave /. Its generic "Creating new namespace failed: <error>"
+# (EAGAIN under a process limit, ENOMEM) is no denial.
+USERNS='Creating new namespace failed, likely because the kernel does not support user namespaces'
+USERNS+='|No permissions to (create a|creating) new namespace'
+USERNS+='|Creating new namespace failed: nesting depth or /proc/sys/user/max_\*_namespaces exceeded \(ENOSPC\)'
+USERNS+='|setting up uid map|Can.t mount proc|loopback: Failed|Failed to make / slave'
 nosbx=""; sbxbad=""
 if [ ! -x "$BWRAP" ]; then
   nosbx="bwrap is not installed"
-elif ! { sandbox; perr=$(env -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" true 2>&1); }; then
+elif ! { sandbox; perr=$("$ENVCMD" -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" true 2>&1); }; then
   perr=$(printf '%s' "$perr" | python3 -I "$HERE/_sanitize.py")
   if grep -qE "$USERNS" <<<"$perr"; then nosbx=${perr%%$'\n'*}
   else sbxbad=${perr%%$'\n'*}; sbxbad=${sbxbad:-bwrap exited without a word}; fi
 else
-  pre=(env -i PATH="$PATH" HOME=/tmp/home)
+  pre=("$ENVCMD" -i PATH="$PATH" HOME=/tmp/home)
   [ -z "${LANG:-}" ] || pre+=(LANG="$LANG"); [ -z "${LC_ALL:-}" ] || pre+=(LC_ALL="$LC_ALL")
   GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" "$BWRAP" "${sbx[@]}"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
 fi
@@ -1946,7 +1956,7 @@ else
     cp "$rs" "$bp/rpm.spec"; t0=$SECONDS
     # in the background, so a signal can kill its process group (the EXIT trap)
     sandbox "$bp"
-    timeout -k 30 "$tmo" env -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+    "$TIMEOUTCMD" -k 30 "$tmo" "$ENVCMD" -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
       "$bp/rpm.spec" > "$log/prep.$s.log" 2>&1 &
     prep_pid=$!; wait "$prep_pid"; prc=$?; prep_pid=""
     chmod -R u+w "$bp"; rm -rf "$bp"; bp=""
