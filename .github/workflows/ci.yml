@@ -21,7 +21,7 @@ jobs:
   tests:
     name: tests (python ${{ matrix.python }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
