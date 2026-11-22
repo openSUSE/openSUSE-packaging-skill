@@ -33,6 +33,7 @@ export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 unset PR_GUARD_SKILL_DIR
 mkdir -p "$HOME/lua/lua-x" "$HOME/work" "$work/plain" "$work/scripts" "$work/links" && ln -s "$HOME" "$work/links/home"
 cp -r "$FX/prs" "$work/prs"; cp -r "$FX/meta" "$work/meta"
+cp -r "$FX/gitea" "$work/gitea"; export PR_GUARD_GITEA_DIR="$work/gitea"
 python3 -c 'import json, sys
 prs = [{"number": n, "head": {"ref": "b%d" % n, "repo": {"owner": {"login": "x"}}}} for n in range(50)]
 json.dump(prs, open(sys.argv[1], "w"))' "$work/prs/many-prs.json"
@@ -251,6 +252,95 @@ for key in ("checkouts", "unstamped", "edited", "obs_checkouts"):
             open(os.path.join(d, pkg + ".spec"), "a").write("Version: 2\n")
 # A link into the state directory, which a write through it reaches.
 os.symlink(os.path.join(home, s["state_dir"]), os.path.join(work, "links", "state"))
+PY
+# Contributors' requests and devel PRs, the incoming reviews recorded of them and
+# what OBS and Gitea answer, from fixtures/pr-guard/incoming.json; the scripts the
+# recording cases run; and a HOME whose one review record does not parse.
+python3 - "$FX/incoming.json" "$FX/stamped.json" "$work" "$HOME" "$W" <<'PY'
+import hashlib, json, os, sys
+spec, stamped, work, home, scripts = sys.argv[1:]
+s = json.load(open(spec))
+sd = json.load(open(stamped))["state_dir"]
+state = os.path.join(home, sd)
+api, meta, gitea = (os.path.join(work, d) for d in ("meta/api", "meta", "gitea"))
+def put(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write(text)
+def stub(path, text):
+    put(os.path.join(api, path.translate(str.maketrans("/?&=", "____"))), text)
+def gstub(path, obj):
+    put(os.path.join(gitea, path.replace("/", "_")), json.dumps(obj))
+def md5(t):
+    return hashlib.md5(t.encode()).hexdigest()
+def entries(files):
+    return "".join(f'<entry name="{n}" md5="{m}"/>' for n, m in files.items())
+def factory(pkg, devel):
+    text = f'<package name="{pkg}" project="openSUSE:Factory"><devel project="{devel}" package="{pkg}"/></package>'
+    put(os.path.join(meta, pkg + ".xml"), text)
+    stub(f"/source/openSUSE:Factory/{pkg}/_meta", text)
+def stamp(kind, name, sid, creator, verdict, part, comment="", build=""):
+    st = {"v": 1, "kind": kind, "id": sid, "creator": creator, "verdict": verdict,
+          "key": "0123456789ab", "recorded": "2026-11-22T10:00:00Z", "scan": {"exit": 0, "lines": []},
+          "build": {"project": build, "results": {}, "srcmd5": "", "green": bool(build)},
+          "findings": [], "comment": comment,
+          "comment_sha256": hashlib.sha256(comment.encode()).hexdigest() if comment else ""}
+    put(os.path.join(state, "incoming", kind, name + ".json"), json.dumps(dict(st, **part)))
+S, D = s["source_project"], "devel:inc"
+stub(f"/source/{D}/_meta", f'<project name="{D}"><person userid="tester" role="maintainer"/></project>')
+for c in s["obs"]:
+    pkg, rid, rev, T = c["pkg"], c["id"], c.get("rev", "5"), c.get("target", D)
+    sfiles, tfiles = {f"{pkg}.spec": md5("new " + pkg)}, {f"{pkg}.spec": md5("old " + pkg)}
+    ssrc, tsrc = md5("src " + pkg), md5("tgt " + pkg)
+    opts = "".join(f"<{o}>true</{o}>" for o in c.get("options", []))
+    act = (f'<action type="submit"><source project="{S}" package="{pkg}"' + (f' rev="{rev}"' if rev else "")
+           + f'/><target project="{T}" package="{pkg}"/>' + (f"<options>{opts}</options>" if opts else "") + "</action>")
+    stub(f"/request/{rid}", f'<request id="{rid}" creator="contrib">{act * c.get("actions", 1)}<state name="new"/></request>')
+    link = f'<linkinfo project="{D}" package="{pkg}"/>' if c.get("link") else ""
+    stub(f"/source/{S}/{pkg}?expand=1&rev={rev}", f'<directory name="{pkg}" srcmd5="{ssrc}">{link}{entries(sfiles)}</directory>')
+    now = {"source": sfiles, "followup": {f"{pkg}.spec": md5("fix " + pkg)}}.get(c.get("devel"), tfiles)
+    stub(f"/source/{T}/{pkg}?expand=1", f'<directory name="{pkg}" srcmd5="{tsrc}">{entries(now)}</directory>')
+    stub(f"/source/{T}/{pkg}/_meta", f'<package name="{pkg}" project="{T}"><person userid="tester" role="maintainer"/></package>')
+    factory(pkg, D)
+    if c["verdict"]:
+        part = {"obs": {"actions": c.get("actions", 1), "action": {
+            "type": "submit", "options": c.get("options", []),
+            "source": {"project": S, "package": pkg, "rev": rev,
+                       "srcmd5": md5("other") if c.get("stamp_src") else ssrc, "files": sfiles},
+            "target": {"project": T, "package": pkg,
+                       "srcmd5": md5("other") if c.get("stamp_tgt") else tsrc, "files": tfiles}}}}
+        stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S)
+    if c.get("devel") == "followup":  # the follow-up, gated and reviewed, as a forward needs it
+        put(os.path.join(state, "gate", "obs", pkg, D + ".json"), json.dumps({
+            "project": D, "package": pkg, "verdict": "GREEN", "files": now, "tree": "0" * 64,
+            "review": {"verdict": "PASS"}, "build": {"verdict": "GREEN", "kind": "log"}}))
+g = s["gitea"]
+GD, O = g["devel"], g["owner"]
+stub(f"/source/{GD}/_meta", f'<project name="{GD}"><scmsync>https://src.opensuse.org/{O}/_ObsPrj</scmsync></project>')
+gstub(f"repos/{O}/_ObsPrj/raw/_maintainership.json", g["maintainers"])
+for pkg in g["maintainers"]:
+    role = f'<person userid="{g["reviewer"][pkg]}" role="reviewer"/>' if pkg in g["reviewer"] else ""
+    stub(f"/source/{GD}/{pkg}/_meta",
+         f'<package name="{pkg}" project="{GD}"><scmsync>https://src.opensuse.org/{O}/{pkg}#factory</scmsync>{role}</package>')
+    factory(pkg, GD)
+for p in g["prs"]:
+    o, r, n = p.get("owner", O), p["repo"], p["number"]
+    gstub(g["pr_path"].format(o=o, r=r, n=n), {"number": n, "state": "open", "user": {"login": p["author"]},
+          "head": {"sha": p["head"]}, "base": {"sha": "b" * 40, "repo": {"full_name": f"{o}/{r}"}}})
+    gstub(f"repos/{o}/{r}/issues/{n}", {"number": n, "user": {"login": p["author"]},
+          "repository": {"full_name": f"{o}/{r}"}})
+    files = {f"{r}.spec": p["head"][:39] + "f"}
+    if p.get("hold"):  # the commit OBS synced holds what the PR's head held
+        stub(f"/source/{GD}/{r}/_scmsync.obsinfo", f"mtime: 1\ncommit: {g['synced']}\n")
+        gstub(f"repos/{o}/{r}/git/trees/{g['synced']}?recursive=true&per_page=1000",
+              {"sha": g["synced"], "truncated": False,
+               "tree": [{"path": f, "type": "blob", "mode": "100644", "sha": h} for f, h in files.items()]})
+    if p["verdict"]:
+        part = {"gitea": {"owner": o, "repo": r, "number": n, "head": p["head"], "base": "b" * 40,
+                          "merge_base": "b" * 40, "files": files}}
+        stamp("gitea", f"{o}_{r}_{n}", f"{o}/{r}#{n}", p["author"], p["verdict"], part, p.get("comment", ""))
+for rel, text in s["files"].items():
+    put(os.path.join(scripts, rel), text)
+put(os.path.join(work, "badhome", sd, "incoming", "obs", "1391099.json"), "{")
 PY
 
 # ev <name>: the fixture event, placeholders filled in.
@@ -1470,20 +1560,21 @@ ask_ comment-osc-create         comment "osc comment create: request 1390007: sc
 case_ comment-osc-list          0 - ""
 ask_ comment-osc-api-post       comment "osc api POST"
 case_ comment-osc-api-get       0 - ""
-# A comment on a request whose every target package the account maintains runs, whoever filed it.
-case_ comment-request-own-pkg     0 - ""
-case_ comment-request-git-pkg     0 - ""
+# A comment on someone else's request to a package the account maintains asks unless its
+# incoming review recorded that comment (the cases of contributors' submissions, below).
+ask_ comment-request-own-pkg      comment "osc comment create: request 1390002 by other: no incoming review is recorded"
+ask_ comment-request-git-pkg      comment "osc comment create: request 1390020 by other: no incoming review is recorded"
 case_ comment-request-own-req     0 - ""
-case_ comment-api-own-pkg         0 - ""
+ask_ comment-api-own-pkg          comment "osc api POST /comments/request/1390002"
 ask_ comment-request-unreadable   comment "osc comment create: cannot read request 1390005"
-ask_ comment-request-two-mixed    comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
+ask_ comment-request-two-mixed    comment "osc comment create: request 1390002 by other: no incoming review is recorded"
 ask_ comment-request-id-unknown   comment "osc comment create: cannot tell which request it comments on"
 ask_ comment-api-package-own      comment "osc api POST"
 ask_ comment-package-create       comment "osc comment create"
 ask_ comment-request-group        comment "osc comment create: request 1390009: devel:g/grp is maintained by ml-team"
 ask_ comment-request-no-action    comment "osc comment create: request 1390008 has no action"
 ask_ comment-api-full-host        comment "osc api POST"
-case_ comment-api-query           0 - ""
+ask_ comment-api-query            comment "osc api POST /comments/request/1390002?parent_id=5"
 # The requester replies to its reviewers on a request it filed, whoever maintains the target.
 case_ comment-reply-own-request   0 - ""
 case_ comment-api-own-request     0 - ""
@@ -1504,9 +1595,9 @@ done
 # maintains -- judged only in the plain form: --login src.opensuse.org and a literal
 # --repo owner/name that is no local path.
 case_ comment-tea-own-item        0 - ""
-case_ comment-tea-maintained-pkg  0 - ""
-case_ comment-tea-maintained-prj  0 - ""
-case_ comment-tea-pool-maintained 0 - ""
+ask_ comment-tea-maintained-pkg   comment "tea comment: perl/perl-Foo#2 by other: no incoming review is recorded"
+ask_ comment-tea-maintained-prj   comment "tea comment: lua/lua-x#4 by other: no incoming review is recorded"
+ask_ comment-tea-pool-maintained  comment "tea comment: pool/foo4#9 was opened by other"
 case_ comment-tea-api-own         0 - ""
 ask_ comment-tea-others-item      comment "tea comment: AI has no _maintainership.json"
 ask_ comment-tea-pkg-other        comment "tea comment: lua/lua-y is maintained by other"
@@ -1514,7 +1605,7 @@ ask_ comment-tea-prj-not-pkg      comment "tea comment: perl/perl-Bar is maintai
 ask_ comment-tea-pool-other       comment "tea comment: pool/dlib: science:machinelearning/dlib is maintained by other"
 # A devel project kept in git (devel:openSUSE:Factory) has stub package _meta: its
 # project git's _maintainership.json decides, never the OBS persons.
-case_ comment-tea-pool-git        0 - ""
+ask_ comment-tea-pool-git         comment "tea comment: pool/hwgit#9 was opened by other"
 ask_ comment-tea-pool-git-group   comment "tea comment: pool/hwgrp: devel:gitprj/hwgrp is maintained by @team (gitprj/_ObsPrj)"
 ask_ comment-tea-pool-git-other   comment "tea comment: pool/hwother: devel:gitprj/hwother is maintained by other (gitprj/_ObsPrj)"
 ask_ comment-tea-pool-git-unreadable comment "tea comment: pool/hwbad: cannot read repos/gitbad/_ObsPrj/raw/_maintainership.json"
@@ -1551,7 +1642,7 @@ ask_ comment-tea-api-header       comment "tea api: tea's option -H is not judge
 ask_ comment-tea-pr-approve     comment "tea pulls approve"
 ask_ comment-tea-api            comment "tea api: it names no --login src.opensuse.org"
 ask_ comment-git-obs-pr         comment "git-obs pr comment"
-ask_ comment-git-obs-review     comment "git-obs pr review approve"
+case_ comment-git-obs-review    2 incoming-approve "approving AI/mistral-vibe#3: it names no --commit SHA"
 case_ comment-git-obs-pr-list   0 - ""
 case_ comment-gh-pr              0 - ""
 case_ comment-gh-issue           0 - ""
@@ -1604,18 +1695,19 @@ ask_ comment-git-obs-close-plain others-request "git-obs pr close AI/mistral-vib
 
 echo "--- an accept or a forward is unattended only where autoforward-gate.sh says ELIGIBLE"
 case_ accept-own-eligible       0 - ""
-case_ accept-git-eligible       0 - ""
+case_ accept-git-eligible       2 incoming-accept "accepting request 1390020 by other: no incoming review is recorded: review it first"
 case_ accept-own-var            0 - ""
-# Who filed it does not matter: a maintainer accepts contributions to their package.
-case_ accept-others-request     0 - ""
+# Someone else's request is accepted only through its incoming review (the cases of
+# contributors' submissions, below), and one the guard cannot read may be someone else's.
+case_ accept-others-request     2 incoming-accept "accepting request 1390002 by other: openSUSE:Factory develops foo in no project, not devel:x"
 ask_ accept-not-yours-package   accept-forward "science:machinelearning/dlib is maintained by other"
 ask_ accept-reviewer            accept-forward "a reviewer role is set (qa-team)"
-ask_ accept-unreadable          accept-forward "cannot read request 1390005"
-ask_ accept-no-action           accept-forward "request 1390008 has no action"
-ask_ accept-api-no-action       accept-forward "request 1390008 has no action"
-ask_ accept-group-maintained    accept-forward "accepting request 1390009: devel:g/grp is maintained by ml-team"
+case_ accept-unreadable         2 incoming-accept "cannot read request 1390005, nor who filed it"
+case_ accept-no-action          2 incoming-accept "accepting request 1390008 by other: it holds 0 actions"
+case_ accept-api-no-action      2 incoming-accept "accepting request 1390008 by other: it holds 0 actions"
+case_ accept-group-maintained   2 incoming-accept "accepting request 1390009 by other: devel:g/grp is maintained by ml-team"
 ask_ accept-delete-request      accept-forward "request 1390006 is no plain submit"
-ask_ accept-unknown-id          accept-forward "which request"
+case_ accept-unknown-id         2 incoming-accept "cannot tell which request osc request accept takes"
 ask_ forward-not-yours          accept-forward "science:machinelearning/dlib is maintained by other"
 ask_ forward-wrong-devel        accept-forward "openSUSE:Factory develops foo2 in devel:y"
 case_ forward-link-into-here    0 - ""
@@ -1624,17 +1716,17 @@ case_ forward-unowned-project   0 - ""
 ask_ forward-meta-fails         accept-forward "cannot read /source/devel:x/foo6/_meta"
 case_ forward-from-checkout     0 - ""
 # osc's own option table: -i and -G, --user are no request ids; the verb, as the call sets it.
-ask_ accept-interactive-flag    accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ accept-group-option        accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ accept-user-option         accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ accept-verb-variable       accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ accept-approve             accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+case_ accept-interactive-flag   2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ accept-group-option       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ accept-user-option        2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ accept-verb-variable      2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ accept-approve            2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 ask_ accept-approvenew          accept-forward "osc rq approvenew"
-ask_ accept-review-alias        accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+case_ accept-review-alias       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 case_ accept-review-own-eligible 0 - ""
 ask_ accept-review-decline      accept-forward "osc review decline"
 ask_ accept-decline             accept-forward "osc rq decline"
-ask_ accept-api-accepted        accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+case_ accept-api-accepted       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 case_ accept-api-own            0 - ""
 ask_ accept-api-declined        accept-forward "a decline through osc api"
 case_ accept-revoke             0 - ""
@@ -1649,14 +1741,14 @@ ask_ reopen-others              others-request "osc rq reopen 1390007: filed by 
 ask_ sr-s-others                others-request "osc sr -s 1390002: filed by other"
 ask_ sr-supersede-long-others   others-request "osc sr -s 1390007: filed by other"
 ask_ revoke-api-others          others-request "osc api newstate=revoked 1390002: filed by other"
-ask_ accept-force-others        others-request "osc rq accept --force 1390002: filed by other"
+case_ accept-force-others       2 incoming-accept "accepting request 1390002 by other: --force would skip its open reviews"
 case_ accept-force-own          0 - ""
-ask_ accept-or-revoke-others    others-request "osc rq accept --or-revoke 1390002: filed by other"
+case_ accept-or-revoke-others   2 incoming-accept "accepting request 1390002 by other: --or-revoke would skip its open reviews"
 ask_ mr-s-others                others-request "osc mr -s 1390002: filed by other"
 # The API takes its parameters from the body too, and a ; separates them.
 ask_ revoke-api-body            others-request "osc api newstate=revoked 1390002: filed by other"
 ask_ revoke-api-semicolon       others-request "osc api newstate=revoked 1390002: filed by other"
-ask_ accept-api-body            accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+case_ accept-api-body           2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 ask_ decline-api-body           accept-forward "a decline through osc api"
 # Closing, or any API write to, a PR someone else opened; your own PRs run.
 ask_ pr-close-others-tea        others-request "tea pulls close perl/perl-Foo#2: opened by other"
@@ -1830,6 +1922,74 @@ PY
 [ -n "$agree" ] && [ "${agree#* }" = "" ] && pass "the guard's ELIGIBLE matches autoforward-gate.sh's (${agree%% *} fixtures)" \
   || fail "the guard and autoforward-gate.sh disagree: ${agree#* }"
 
+echo "--- a contributor's submission: accepted or approved through its incoming review, on the user's go"
+# Without a review recorded, refused; with PASS or FIXABLE of what OBS holds now, asked,
+# the review and the facts checked again in the ask.
+case_ accept-others-unreviewed  2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded: review it first"
+ask_ accept-pass                incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS (key 0123456789ab"
+ask_ accept-pass                incoming-accept "source and target srcmd5 as reviewed, devel:inc is Factory's devel project"
+ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then waits until your follow-up is in devel"
+ask_ accept-api-pass            incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
+ask_ accept-review-accept-pass  incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
+case_ accept-block              2 incoming-accept "accepting request 1391003 by contrib: its review says BLOCK"
+case_ accept-files-moved        2 incoming-accept "accepting request 1391004 by contrib: its source is not the one reviewed (srcmd5 moved)"
+case_ accept-target-moved       2 incoming-accept "accepting request 1391005 by contrib: the target is not as reviewed"
+case_ accept-no-rev             2 incoming-accept "accepting request 1391006 by contrib: its source names no revision"
+case_ accept-link-rev           2 incoming-accept "accepting request 1391007 by contrib: its source is a _link and rev 5 no srcmd5"
+case_ accept-multi-action       2 incoming-accept "accepting request 1391008 by contrib: it holds 2 actions, not one submit"
+case_ accept-options            2 incoming-accept "accepting request 1391009 by contrib: it sets updatelink"
+case_ accept-home-target        2 incoming-accept "accepting request 1391010 by contrib: it targets home"
+case_ accept-from-reviewer-agent 2 incoming-self "accepting request 1391001 from agent changes-review"
+# A devel PR: git-obs pr review approve --commit of the head reviewed, in the devel
+# organisation the project git syncs from; tea's approve keeps asking as a comment.
+ask_ approve-git-obs-pass       incoming-approve "approving incorg/incgit#5 by contrib at 555555555555: review PASS"
+ask_ approve-git-obs-pass       incoming-approve "no build of this head"
+case_ approve-no-commit         2 incoming-approve "approving incorg/incgit#5: it names no --commit SHA"
+case_ approve-head-moved        2 incoming-approve "approving incorg/incgit#5: its head is not 444444444444"
+case_ approve-reviewer-flag     2 incoming-approve "approving incorg/incgit#5: --reviewer approves for someone else"
+case_ approve-two-ids           2 incoming-approve "it names no one literal OWNER/REPO#N"
+case_ approve-pool              2 incoming-approve "approving pool/incgit#5: a pool PR is never an agent's to approve"
+case_ approve-not-devel-org     2 incoming-approve "approving other/incgit#5: other is not the organisation devel:incgit syncs from"
+case_ approve-own-pr            2 incoming-approve "approving incorg/incgit#6: it is your own PR"
+case_ approve-reviewer-role     2 incoming-approve "approving incorg/increv#7: a reviewer role is set (qa)"
+case_ approve-from-reviewer-agent 2 incoming-self "git-obs pr review approve from agent incoming-review"
+ask_ approve-tea-asks           comment "tea pulls approve"
+# A comment on a contributor's item in a package the user maintains runs when its text is
+# the one the review recorded (its sha256), and asks otherwise.
+case_ comment-foreign-stamped   0 - ""
+case_ comment-tea-foreign-stamped 0 - ""
+ask_ comment-foreign-unstamped  comment "osc comment create: request 1391011 by contrib: no incoming review is recorded"
+ask_ comment-foreign-other-text comment "osc comment create: request 1391001 by contrib: not the comment its review recorded"
+ask_ comment-tea-foreign-other-text comment "tea comment: incorg/incgit#5 by contrib: not the comment its review recorded"
+case_ comment-from-reviewer-agent 2 incoming-self "osc comment create from agent incoming-review"
+# An accepted FIXABLE review holds the Factory forward until devel holds the follow-up.
+case_ forward-fixable-pending   2 incoming-hold "forwarding devel:inc/incheld to Factory: request 1391012 by contrib"
+case_ forward-fixable-pending-git 2 incoming-hold "forwarding devel:incgit/incgit to Factory: PR incorg/incgit#8 by contrib"
+case_ forward-after-followup    0 - ""
+case_ forward-after-followup    2 incoming-hold "1391099.json: its review record does not parse" HOME="$work/badhome"
+# Only the incoming-review agent records a review; a suite hands the recorder its option
+# from a fixture file, which only the agent's own command line may not do.
+case_ incoming-record-main      2 incoming-self "incoming-review.sh --record from the main session"
+case_ incoming-record-agent     0 - ""
+case_ incoming-record-copy      2 incoming-self "incoming-review.sh --record from the main session" PR_GUARD_SKILL_DIR="$W/skill-inc"
+case_ incoming-record-real      2 incoming-self "incoming-review.sh --record from agent osc-update-build"
+case_ incoming-record-test-copy 0 - ""
+case_ incoming-record-unread    2 incoming-self "incoming-review.sh with an argument only the shell knows from the main session"
+# The incoming-review agent reads a submission as text: nothing of it is parsed or run.
+case_ reviewer-rpmspec          2 incoming-self "rpmspec from agent incoming-review"
+# Its calls reach the rules whatever they say: a bare rpmspec names no path.
+case_ reviewer-rpmspec-bare     2 incoming-self "rpmspec from agent incoming-review"
+case_ reviewer-rpm-specfile     2 incoming-self "rpm with a spec, --eval or --load from agent incoming-review"
+case_ reviewer-rpmbuild         2 incoming-self "rpmbuild from agent incoming-review"
+case_ reviewer-quilt            2 incoming-self "quilt setup from agent incoming-review"
+case_ reviewer-osc-build        2 incoming-self "osc build from agent incoming-review"
+case_ reviewer-osc-service      2 incoming-self "osc service runall from agent incoming-review"
+case_ reviewer-gate             2 incoming-self "gate.sh from agent incoming-review"
+case_ reviewer-target-gate      2 incoming-self "target-gate.sh from agent incoming-review"
+case_ reviewer-reads            0 - ""
+case_ reviewer-rpmspec-main     0 - ""
+case_ reviewer-osc-build-main   0 - ""
+
 echo "--- a change review is recorded by the changes-review agent that ran it"
 ask_ review-main-session        review-self "gate.sh --review from the main session"
 ask_ review-author-agent        review-self "gate.sh --review from agent osc-update-build"
@@ -1927,8 +2087,8 @@ case_ ci-after-review            2 gate-sequence "osc commit of devel:tools/x: t
 case_ ci-after-review            2 gate-sequence "osc commit alone in the next"
 case_ ci-unstamped-after-gate    2 gate-sequence "osc commit of devel:tools/y: this call also runs bash"
 case_ ci-redirect-devnull       0 - ""
-ask_ accept-api-approve         accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ accept-api-slash           accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
+case_ accept-api-approve        2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ accept-api-slash          2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
 ask_ comment-git-obs-reopen     comment "git-obs pr reopen with a comment"
 # A reopen without a comment is no comment; of a PR someone else opened, it asks as a reopen.
 ask_ comment-git-obs-reopen-plain others-request "git-obs pr reopen AI/mistral-vibe#3: opened by other"
@@ -1993,8 +2153,8 @@ used="$used accept-others-maintained accept-two-own sr-devel-target-live "
 whois_() { ev "$1" | env -u PR_GUARD_OBS_USER HOME="$work/whois/home" PATH="$work/whois/bin:$PATH" \
   python3 "$GUARD" 2>&1; }
 out="$(whois_ accept-others-maintained)"
-grep -qF "ASK [accept-forward] accepting request 1390007: science:machinelearning/dlib is maintained by other" <<<"$out" \
-  && pass "an account written to a file is not taken: the accept of another maintainer's package asks" \
+grep -qF "BLOCKED [incoming-accept] accepting request 1390007 by other: science:machinelearning/dlib is maintained by other" <<<"$out" \
+  && pass "an account written to a file is not taken: the accept of another maintainer's package is refused" \
   || fail "a planted account was taken: $out"
 touch "$work/whois/mark"; sleep 1
 out="$(whois_ accept-two-own)"
@@ -2574,15 +2734,21 @@ grep -qF 'if (tool !== "shell" && tool !== "write" && tool !== "edit") return' "
   && grep -qF 'const body = tool === "write" ? args.content : args.newString' "$V2PLUGIN" \
   && grep -qF 'throw new Error(`pool-pr-guard: ${tool} call without input`)' "$V2PLUGIN" \
   && grep -qF 'const file_path = resolve(dir, home(path))' "$V2PLUGIN" \
-  && grep -qF 'if (why !== undefined) throw new Error(why)' "$V2PLUGIN" \
+  && grep -qF 'if ("refuse" in verdict) throw new Error(verdict.refuse)' "$V2PLUGIN" \
   && grep -qxF 'import type { Plugin } from "@opencode/plugin"' "$V2PLUGIN" \
   && pass "opencode-v2: the plugin judges shell, write and edit by their 2.x fields and throws to refuse" \
   || fail "opencode-v2: the plugin's tool ids, input fields or refusal changed"
-# Neither plugin can prompt, so the guard's ask reaches the user as a refusal.
+# The 1.x plugin cannot prompt, so the guard's ask reaches the user as a refusal; the 2.x
+# one hands it to opencode's prompt where there is one, and refuses it where there is none.
 grep -qF 'done(code === 0 ? asked(out) :' "$V2PLUGIN" && grep -qF 'd?.permissionDecision !== "ask"' "$V2PLUGIN" \
+  && grep -qF 'if (tool !== "shell" || !prompts || !perm) throw new Error(cannot(verdict.ask))' "$V2PLUGIN" \
   && grep -qF 'if (d?.permissionDecision === "ask")' "$V1PLUGIN" \
-  && pass "opencode: both plugins refuse a call the guard asks about" \
+  && pass "opencode: both plugins refuse a call the guard asks about, but the user's own prompt" \
   || fail "opencode: a plugin lets the guard's ask through"
+# As pr-guard.py, the 2.x plugin judges every call of the incoming-review agent.
+grep -qF 'const READER = "incoming-review"' "$V2PLUGIN" && grep -qF '&& event.agent !== READER) return' "$V2PLUGIN" \
+  && pass "opencode-v2: the plugin judges every call of the incoming-review agent" \
+  || fail "opencode-v2: the plugin skips incoming-review calls the prefilter misses"
 grep -qF 'setTimeout(() => child.kill("SIGKILL"), 60_000)' "$V2PLUGIN" \
   && pass "opencode-v2: the guard is killed at 60 s, and a kill refuses" || fail "opencode-v2: the 60 s kill changed"
 # The 2.x plugin run, where bun or a node that strips types is at hand, with a fake ctx as
@@ -2627,6 +2793,50 @@ JS
   out="$(PATH=/nonexistent $tsrun "$work/drive.mjs" "$work/v2.mts" "$work/v2-AI" "$work/v2-pool" 2>&1 | head -1)"
   [ "${out%% *}" = refused ] && pass "opencode-v2: the plugin refuses a guarded call when python3 is missing" \
     || fail "opencode-v2: with no python3 the plugin gave '$out'"
+  # With opencode's permission service (2.2.7): the guard's ask is the user's prompt, raised
+  # by a nonce only this plugin's evaluate hook turns into an ask, its reason shown; the
+  # call runs on "once", is refused on a rejection, and an ask with no call to bind to is
+  # refused unasked. A refusal never reaches the prompt, nor does the tool's own check.
+  cat >"$work/drive-ask.mjs" <<'JS'
+const [plugin, loc, answer] = process.argv.slice(-3)
+let fire, evaluate
+const prompts = []
+const permission = {
+  hook: async (_n, f) => { evaluate = f },
+  assert: async (req) => {
+    const ev = { action: req.action, resources: req.resources, effect: "allow", metadata: req.metadata }
+    await evaluate(ev)
+    prompts.push(ev.effect === "ask" ? ev.message : "-")
+    if (ev.effect === "ask" && answer !== "once") throw new Error("Permission.DeclinedError")
+  },
+}
+await (await import(plugin)).default.setup({ location: { directory: loc }, permission,
+  tool: { hook: async (_n, f) => { fire = f } } })
+const call = { sessionID: "ses_1", messageID: "msg_1", id: "call_1" }
+const run = async (e) => { try { await Promise.resolve(fire({ ...call, ...e })); return "run" } catch { return "refused" } }
+const comment = ["osc", "comment", "create", "-c", "ok", "request", "1"].join(" ")
+const own = { action: "shell", resources: ["ls"], effect: "allow", metadata: {} }
+await evaluate(own)
+console.log([
+  await run({ tool: "shell", input: { command: comment } }),
+  await run({ tool: "shell", agent: "incoming-review", input: { command: "rpmspec -P x.spec" } }),
+  await run({ tool: "shell", input: { command: "ls" } }),
+  await run({ tool: "shell", messageID: undefined, input: { command: comment } }),
+  own.effect,
+  prompts.length,
+  prompts[0]?.startsWith("pr-guard: ASK [comment]") ? "reason" : "no-reason",
+].join(" "))
+JS
+  # shellcheck disable=SC2086  # tsrun is a command line
+  out="$($tsrun "$work/drive-ask.mjs" "$work/v2.mts" "$work/v2-AI" once 2>&1)"
+  [ "$out" = "run refused run refused allow 1 reason" ] \
+    && pass "opencode-v2: the guard's ask goes to the user's prompt with its reason, and runs on their go" \
+    || fail "opencode-v2: the ask route on a go gave '$out'"
+  # shellcheck disable=SC2086  # tsrun is a command line
+  out="$($tsrun "$work/drive-ask.mjs" "$work/v2.mts" "$work/v2-AI" reject 2>&1)"
+  [ "$out" = "refused refused run refused allow 1 reason" ] \
+    && pass "opencode-v2: a rejected prompt refuses the call" \
+    || fail "opencode-v2: the ask route on a rejection gave '$out'"
 fi
 # git runs "git obs" as git-obs: every git-obs pattern of the backstop has its twin.
 miss="$(sed -n 's/^ *"\(git-obs [^"]*\)": "\([a-z]*\)",\{0,1\}$/\1\t\2/p' "$PERMS" | while IFS=$'\t' read -r pat act; do

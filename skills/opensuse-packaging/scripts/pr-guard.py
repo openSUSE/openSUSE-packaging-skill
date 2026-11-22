@@ -33,7 +33,21 @@ session's tools), only says it forwards, or cannot be read, open a PR with tea o
 git-obs, on any repository, whose title or description breaks the same rules
 (the title one headline), write into a *:Update or *:Maintenance:* project outside
 home: (commit, api, and osc's other writes) or one it cannot place, or osc commit
-in a scmsync checkout (its sources come from git, by pull request). A -h/--help
+in a scmsync checkout (its sources come from git, by pull request). It refuses
+the accept of a request someone else filed (or one it cannot read) and git-obs
+pr review approve unless incoming-review.sh recorded PASS or FIXABLE for that
+request's source and target srcmd5, or for the PR head its commit option
+names, into Factory's devel project of a package the user maintains and may
+move unattended: then it asks, showing the review and the facts it checked
+again; a submit to openSUSE:Factory while devel still holds the files an
+accepted FIXABLE review saw; incoming-review.sh's record option outside the
+incoming-review agent (an argument it cannot read there counts on the agent's
+own command line); any accept, approval, comment or decline from the
+incoming-review or changes-review agent; and in the incoming-review agent,
+every call judged, whatever parses or runs a submission: rpmspec, rpmbuild,
+rpm with a spec or its eval option, quilt setup, osc build (chroot, shell,
+wipe), osc service but wait, gate.sh, target-gate.sh and the skill's other
+scripts that parse a spec or run a service. A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.
@@ -53,17 +67,18 @@ decision on stdout; a refusal anywhere in the call still wins): a comment or
 review posted with osc, tea or git-obs (a close carrying one included; a tea
 comment with no subcommand and no body also says how to read them), or
 an API write to OBS or Gitea comments or reviews (gh, on GitHub, is not
-judged; a comment on an OBS request the user filed, or whose every target
-package the user maintains, runs, and so does a tea comment on a
-src.opensuse.org issue or PR the user opened or in a repository they
-maintain, as the call's only command naming the src.opensuse.org login
-and a literal owner/name repository); an osc request (rq, review) accept or
-approve, or the API's changestate to accepted, or a submit to openSUSE:Factory
-from a devel project, unless autoforward-gate.sh would call the package
-ELIGIBLE (no reviewer, the user's package or an unowned one in a project
-they maintain, Factory's devel project; for a project kept in git, its
-project git's _maintainership.json and workflow.config Reviewers; whoever
-filed the request), and every
+judged; a comment on an OBS request the user filed runs, and so does one on
+a request someone else filed whose every target package the user maintains
+when its text's sha256 is the one its incoming review recorded, and a tea
+comment on a src.opensuse.org issue or PR the user opened, or, with the same
+review, one in a repository they maintain outside pool, as the call's only
+command naming the src.opensuse.org login and a literal owner/name
+repository); an osc request (rq, review) accept or approve of a request the
+user filed, or the API's changestate to accepted, or a submit to
+openSUSE:Factory from a devel project, unless autoforward-gate.sh would call
+the package ELIGIBLE (no reviewer, the user's package or an unowned one in a
+project they maintain, Factory's devel project; for a project kept in git, its
+project git's _maintainership.json and workflow.config Reviewers), and every
 decline and approvenew; a revoke, supersede, reopen or wipe of a request
 someone else filed (a submit superseding it too), or its accept with osc's
 force option, and a close, reopen or edit (tea's issues verbs too) of, or an
@@ -142,11 +157,12 @@ import sys
 # match; the suite compares them. Any path matches, because a file a command
 # runs is where a POST hides; so does anything that can name a path or a
 # program without one: ~, .., a variable, a substitution, $'...', cd; and the
-# names the credential rules need where no path shows (gh, a netrc, curl -u).
+# names the credential rules need where no path shows (gh, a netrc, curl -u);
+# the recorder of contributor reviews, by its name alone from PATH.
 PREFILTER = re.compile(
     r"\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b"
     r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm|find)\b|-delete\b"
-    r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b"
+    r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|\bincoming-review\b"
     r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
     r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
 )
@@ -229,11 +245,21 @@ def watched(cwd):
     return False
 
 
+# The agent that reviews a contributor's submission as text: each of its calls is
+# judged, since a bare rpmspec, rpmbuild or quilt names no path.
+READER = "incoming-review"
+
+
 def skip(ev, text):
-    """True when the rules cannot refuse the call: no prefilter match."""
+    """True when the rules cannot refuse the call: no prefilter match, and no
+    call of the incoming-review agent."""
     cwd = ev.get("cwd") if isinstance(ev, dict) else None
+    reader = isinstance(ev, dict) and ev.get("agent_type") == READER
     return text is None or not (
-        PREFILTER.search(text) or PREFILTER.search(unquoted(text)) or watched(cwd)
+        PREFILTER.search(text)
+        or PREFILTER.search(unquoted(text))
+        or watched(cwd)
+        or reader
     )
 
 
