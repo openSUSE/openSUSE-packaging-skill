@@ -24,6 +24,7 @@ case "$1 ${2:-}" in
   "api /search/project"*) f=projects.xml ;;
   "api /search/package"*) f=packages.xml ;;
   "api /search/request"*) f=requests.xml ;;
+  "api /source/"*) f="$(printf %s "$2" | tr '/' '_')" ;;
   *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
 esac
 [ -f "$FIX/obs/$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
@@ -49,14 +50,17 @@ put "$B/obs/whois" 'tester: "Tester"'
 put "$B/obs/maintainer" ''
 put "$B/obs/projects.xml" '<collection><project name="devel:example"/></collection>'
 put "$B/obs/packages.xml" '<collection/>'
+put "$B/obs/_source_devel:example__meta" '<project name="devel:example"><person userid="tester" role="maintainer"/></project>'
+put "$B/obs/_source_devel:example_foo__meta" '<package name="foo" project="devel:example"/>'
 put "$B/obs/requests.xml" '<collection>
-  <request id="100"><action type="submit"><source project="devel:other" package="foo"/>
+  <request id="100" creator="someone-else"><action type="submit"><source project="devel:other" package="foo"/>
     <target project="devel:example" package="foo"/></action>
     <state name="new" when="2026-09-20T10:00:00"/><description>update foo</description></request>
 </collection>'
-put "$B/gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50" \
-  '[{"number": 7, "title": "Update bar", "created_at": "2026-09-21T10:00:00Z", "repository": {"full_name": "pool/bar"}}]'
-put "$B/gitea/repos/pool/bar/pulls/7" '{"number": 7, "requested_reviewers": [{"login": "tester"}], "requested_reviewers_teams": []}'
+PRS="gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50"
+put "$B/$PRS" \
+  '[{"number": 7, "title": "Update bar", "created_at": "2026-09-21T10:00:00Z", "repository": {"full_name": "pool/bar"}, "user": {"login": "someone-else"}}]'
+put "$B/gitea/repos/pool/bar/pulls/7" '{"number": 7, "requested_reviewers": [{"login": "tester"}], "requested_reviewers_teams": [], "user": {"login": "someone-else"}}'
 
 # case_ <name> <expected rc> <expected message> <mutation> [incoming-requests args...]
 # XENV holds extra environment for the run; SHORT=("$work/short.py") runs the
@@ -135,6 +139,87 @@ out="$(PATH="$work/py-only" HOME="$work" python3 "$IR" 2>&1)"; rc=$?
 case_ nothing-pending 0 "no requests or PRs need 'tester' personally right now" \
   "put \$B/obs/requests.xml '<collection/>' &&
    put \$B/gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50 '[]'"
+
+# Your own SR or PR is not incoming, whoever is asked to review it.
+SR101='<request id="101" creator="tester"><action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action><state name="new" when="2026-09-22T10:00:00"/><description>my update</description></request>'
+case_ drops-own-sr 0 "100	submit	devel:example/foo	new" \
+  "sed -i 's#</collection>#$SR101</collection>#' \$B/obs/requests.xml" --format plain
+! grep -q "^101	" <<<"$LAST" && pass "drops-own-sr: your own SR is not listed" || fail "drops-own-sr: $LAST"
+case_ drops-own-pr 0 "pool/bar#7	PR" \
+  "put \$B/$PRS '[{\"number\": 7, \"title\": \"Update bar\", \"created_at\": \"2026-09-21T10:00:00Z\", \"repository\": {\"full_name\": \"pool/bar\"}, \"user\": {\"login\": \"someone-else\"}},
+    {\"number\": 8, \"title\": \"Update baz\", \"created_at\": \"2026-09-21T11:00:00Z\", \"repository\": {\"full_name\": \"pool/baz\"}, \"user\": {\"login\": \"tester\"}}]' &&
+   put \$B/gitea/repos/pool/baz/pulls/8 '{\"number\": 8, \"requested_reviewers\": [{\"login\": \"tester\"}], \"user\": {\"login\": \"tester\"}}'" --format plain
+! grep -qF "pool/baz#8" <<<"$LAST" && pass "drops-own-pr: your own PR is not listed" || fail "drops-own-pr: $LAST"
+# A description or title is third-party text: an escape sequence (ESC or C1)
+# and a bidi override are stripped, the words kept.
+case_ sanitizes-desc 0 "update foo evil" \
+  "printf '<collection><request id=\"100\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\" when=\"2026-09-20T10:00:00\"/><description>update \\xc2\\x9b31mfoo \\xe2\\x80\\xaeevil</description></request></collection>\\n' > \$B/obs/requests.xml &&
+   put \$B/$PRS '[{\"number\": 7, \"title\": \"Update \\u001b[31mbar\\u202e\", \"created_at\": \"2026-09-21T10:00:00Z\", \"repository\": {\"full_name\": \"pool/bar\"}, \"user\": {\"login\": \"someone-else\"}}]'" \
+  --format plain
+python3 -I -c 'import sys; t = sys.stdin.read(); sys.exit(any(c in t for c in "\x1b\x9b‮") or "Update bar" not in t)' <<<"$LAST" \
+  && pass "sanitizes-desc: no escape or bidi character survives" || fail "sanitizes-desc: $(printf '%s' "$LAST" | od -c | head -20)"
+
+# The guard's maintainer rule: a project maintainer's package that names
+# another maintainer, person or group, is not theirs.
+case_ others-package-in-my-project 0 "100	submit	devel:example/foo	new" \
+  "put \$B/obs/_source_devel:example_bar__meta '<package name=\"bar\" project=\"devel:example\"><person userid=\"someone\" role=\"maintainer\"/></package>' &&
+   put \$B/obs/_source_devel:example_baz__meta '<package name=\"baz\" project=\"devel:example\"><group groupid=\"team\" role=\"maintainer\"/></package>' &&
+   sed -i 's#</collection>#<request id=\"102\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"bar\"/><target project=\"devel:example\" package=\"bar\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request><request id=\"103\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"baz\"/><target project=\"devel:example\" package=\"baz\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request></collection>#' \$B/obs/requests.xml" \
+  --format plain
+! grep -qE "^10[23]	" <<<"$LAST" && pass "others-package-in-my-project: not listed" || fail "others-package-in-my-project: $LAST"
+case_ maintainer-meta-unreadable 2 "/source/devel:example/foo/_meta did not parse" "put \$B/obs/_source_devel:example_foo__meta '<package'" --format plain
+# _incoming.maintains() mirrors _pr_guard.maintains(): both judge each case
+# from the same answers (the guard's offline stand-ins, a fake run for ours).
+out="$(python3 -I - "$REPO/skills/opensuse-packaging/scripts" "$work/parity" 2>&1 <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+scripts, root = sys.argv[1:3]
+sys.path.insert(0, scripts)
+import _incoming  # noqa: E402
+
+os.environ["PR_GUARD_OBS_USER"] = "tester"
+guard = {"__name__": "_pr_guard", "__file__": scripts + "/_pr_guard.py"}
+exec(compile(open(guard["__file__"]).read(), guard["__file__"], "exec"), guard)
+me, other = '<person userid="tester" role="maintainer"/>', '<person userid="other" role="maintainer"/>'
+grp, scm = '<group groupid="t" role="maintainer"/>', "<scmsync>https://src.opensuse.org/o/P#main</scmsync>"
+cases = [  # package _meta (None: absent), project _meta, _maintainership.json (None: absent)
+    (me, "", None), (other, me, None), (grp, me, None), (grp + me, "", None), ("", me, None),
+    ("", other, None), (None, me, None), ("", scm, {"foo": ["tester"]}), ("", scm, {"": ["tester"]}),
+    ("", scm, {"foo": ["other"], "": ["tester"]}), ("", scm, {"foo": [], "": ["tester"]}),
+    (me, scm, {"": ["other"]}), ("", scm, None),
+]
+bad = []
+for n, (pkg, prj, git) in enumerate(cases):
+    ans = {"/source/d:p/_meta": f'<project name="d:p">{prj}</project>'}
+    if pkg is not None:
+        ans["/source/d:p/foo/_meta"] = f'<package name="foo">{pkg}</package>'
+    if git is not None:
+        ans["/repos/o/P/raw/_maintainership.json?ref=main"] = json.dumps(git)
+    d = f"{root}/{n}"  # PR_GUARD_META_DIR/api/<path, /?&= as _>, PR_GUARD_GITEA_DIR/<path, / as _>
+    os.makedirs(f"{d}/api")
+    os.environ.update(PR_GUARD_META_DIR=d, PR_GUARD_GITEA_DIR=d)
+    for p, text in ans.items():
+        name = f"api/{p.translate(str.maketrans('/?&=', '____'))}" if p[:2] == "/s" else p[1:].replace("/", "_")
+        with open(f"{d}/{name}", "w") as fh:
+            fh.write(text)
+
+    def fake(cmd):
+        p = cmd[-1]
+        if p in ans:
+            return subprocess.CompletedProcess(cmd, 0, ans[p], "")
+        return subprocess.CompletedProcess(cmd, 1, "", "HTTP Error 404 | ERROR: 404 Not Found")
+
+    want = guard["maintains"]("d:p", "foo", guard["Ctx"]("/"))[0]
+    if _incoming.maintains("tester", "d:p", "foo", fake)[0] != want:
+        bad.append(f"case {n}: the guard says {want}")
+print(f"{len(cases)} cases" if not bad else "; ".join(bad))
+sys.exit(1 if bad else 0)
+PY
+)"; rc=$?
+[ "$rc" = 0 ] && pass "maintainer-rule-matches-guard ($out)" || fail "maintainer-rule-matches-guard: $out"
 
 echo "---"; [ "$fails" = 0 ] && echo "all incoming-requests checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

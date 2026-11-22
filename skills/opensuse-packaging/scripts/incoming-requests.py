@@ -4,10 +4,15 @@ action — excludes anything gated only on a group/team you belong to (unlike
 `osc request list --incoming -U` or the Gitea inbox, both full of group/team
 items you can't act on alone).
 
+Your own requests and PRs (you are the creator or author) are not listed.
+
 Buckets:
   A. SR state=new, no <review> yet — bare maintainer decision, nobody assigned
-     a reviewer. Target: explicit person `role="maintainer"` (project or
-     package; project role inherits to its packages).
+     a reviewer. Target: a package you maintain by pr-guard's rule
+     (_pr_guard.py maintains(), mirrored in _incoming.py): you are its
+     maintainer, or it names no maintainer (person or group) and you maintain
+     its project; a project kept in git by its _maintainership.json. A target
+     with no package is not listed.
   B. SR state=review, pending review by_user==you OR by_project/by_package you
      maintain. by_group reviews SKIPPED even if you're a member.
   C. Gitea PR, state=open, you're in `requested_reviewers` by exact login.
@@ -19,7 +24,10 @@ Maintainership (A/B) = OBS `_meta` person search UNION `osc maintainer -U
 <user>` (the latter catches git/scmsync packages the OBS index can't see —
 `references/git-workflow.md` "Maintainership lives in git"). One global
 `/search/request` call regardless of package count (expect a multi-hundred-KB
-response). Bucket C: one issues/search + one PR-detail call per candidate.
+response); a target matched only through its project is then checked against
+the package's and project's _meta (and the project git's _maintainership.json).
+Bucket C: one issues/search + one PR-detail call per candidate. Descriptions
+and titles are third-party text, printed through _sanitize.py.
 
 Gitea (bucket C) is read through `git-obs -G src.opensuse.org api`. git-obs
 reads its login itself (shared with tea by default); this script never reads
@@ -38,14 +46,21 @@ Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
   --no-prs   skip bucket C
 
 Exit: 0 on success (empty result isn't an error); 2 on a usage error or an
-OBS query/parse failure (never read as "nothing pending"). Gitea leg fails soft.
+OBS query/parse failure, or a maintainer lookup that fails or does not parse
+(never read as "nothing pending"). Gitea leg fails soft.
 """
 
+import os
 import sys
 import argparse
 import subprocess
 import json
 import xml.etree.ElementTree as ET
+
+sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _incoming  # noqa: E402  # the guard's maintainer rule
+import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
 # seconds per osc / git-obs call: both have hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first
@@ -152,12 +167,6 @@ def targets_of(req_el):
     return out
 
 
-def is_direct(project, package, my_projects, my_packages):
-    if package and (project, package) in my_packages:
-        return True
-    return project in my_projects
-
-
 def first_line(text):
     if not text:
         return ""
@@ -179,8 +188,32 @@ def fetch_incoming_srs(user, verbose):
         "request search response",
     )
 
+    cache, known = {}, {}
+
+    def mine(project, package):
+        """pr-guard's maintains() of project/package. The indexes list every
+        package it can pass: a package one names is yours, one in a project
+        it names is looked up. A target with no package is not yours."""
+        if not package or (project, package) in my_packages:
+            return bool(package)
+        if project not in my_projects:
+            return False
+        if (project, package) not in known:
+            try:
+                ok, why = _incoming.maintains(user, project, package, run, cache)
+            except _incoming.Unknown as e:
+                sys.stderr.write(
+                    f"ERROR: cannot tell who maintains {project}/{package}: {e}\n"
+                )
+                sys.exit(2)
+            if verbose and not ok:
+                sys.stderr.write(f"note: skipped {project}/{package}: {why}\n")
+            known[project, package] = ok
+        return known[project, package]
+
     scanned = 0
     group_gated_skipped = 0
+    own_skipped = 0
     rows = []
 
     for req in root.findall("request"):
@@ -189,11 +222,14 @@ def fetch_incoming_srs(user, verbose):
         state_el = req.find("state")
         state = state_el.get("name") if state_el is not None else "?"
         created = state_el.get("when") if state_el is not None else "?"
-        desc = first_line(req.findtext("description"))
+        desc = first_line(_sanitize.sanitize(req.findtext("description")))
+        if req.get("creator") == user:
+            own_skipped += 1
+            continue
 
         matched_target = None
         for project, package in targets_of(req):
-            if project and is_direct(project, package, my_projects, my_packages):
+            if project and mine(project, package):
                 matched_target = (project, package)
                 break
         if not matched_target:
@@ -243,7 +279,8 @@ def fetch_incoming_srs(user, verbose):
     if verbose:
         sys.stderr.write(
             f"note: scanned {scanned} open OBS request(s); "
-            f"{group_gated_skipped} skipped as gated solely on a group review\n"
+            f"{group_gated_skipped} skipped as gated solely on a group review, "
+            f"{own_skipped} as your own\n"
         )
     return rows
 
@@ -289,11 +326,15 @@ def fetch_review_prs(user, verbose):
 
     rows = []
     team_gated_skipped = 0
+    own_skipped = 0
     for it in issues:
         repo = (it.get("repository") or {}).get("full_name", "?")
         num = it.get("number")
-        title = it.get("title", "")
+        title = first_line(_sanitize.sanitize(it.get("title", "")))
         created = it.get("created_at", "?")
+        if (it.get("user") or {}).get("login") == user:
+            own_skipped += 1
+            continue
 
         pr = gitea_get(f"/repos/{repo}/pulls/{num}")
         if pr is None:
@@ -312,6 +353,9 @@ def fetch_review_prs(user, verbose):
             )
             continue
 
+        if (pr.get("user") or {}).get("login") == user:
+            own_skipped += 1
+            continue
         reviewers = {
             (r.get("login") or "") for r in (pr.get("requested_reviewers") or [])
         }
@@ -335,7 +379,7 @@ def fetch_review_prs(user, verbose):
                 "state": "open",
                 "created": created,
                 "why": why,
-                "desc": first_line(title),
+                "desc": title,
                 "url": f"https://src.opensuse.org/{repo}/pulls/{num}",
             }
         )
@@ -343,7 +387,8 @@ def fetch_review_prs(user, verbose):
     if verbose:
         sys.stderr.write(
             f"note: scanned {len(issues)} review-requested PR(s); "
-            f"{team_gated_skipped} skipped as gated solely on a team review\n"
+            f"{team_gated_skipped} skipped as gated solely on a team review, "
+            f"{own_skipped} as your own\n"
         )
     return rows
 

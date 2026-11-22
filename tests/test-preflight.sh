@@ -73,7 +73,7 @@ case_() {
   # shellcheck disable=SC2030  # rebinding B to the copy is the point; the parent's B stays the pristine tree
   (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   mkdir -p "$dir/tmp"
-  out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" "${PKG:-foo}" "$@" 2>&1)"; got=$?
+  out="$(cd "$dir" && FIX=$dir HOME=$dir/home TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" "${PKG:-foo}" "$@" 2>&1)"; got=$?
   LAST=$out
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -157,7 +157,7 @@ case_ scm-no-prs 4 "open PRs:       none" "$SCM && echo '[]' > \$B/$PULLS"
 no_curl() { ! grep -q '^curl ' "$work/$1/calls" && pass "$1: git-obs, not curl" || fail "$1: curl was called"; }
 no_curl scm-no-prs
 case_ scm-pr-open 3 "VERDICT: STOP - already in flight: PR #5 -> factory: Update foo to 1.2" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
 case_ scm-pr-lookup-failed 2 "CHECK FAILED: could not query open PRs on example/foo: ERROR: 404 Not Found" "$SCM"
 grep -qF "VERDICT: CHECK-FAILED" <<<"$LAST" && ! grep -qF "open PRs:       none" <<<"$LAST" \
   && pass "scm-pr-lookup-failed: not read as none" || fail "scm-pr-lookup-failed: $LAST"
@@ -179,6 +179,49 @@ case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: git-
   "$SCM && echo @HANG > \$B/$PULLS"
 XPATH=""
 ! grep -qF "open PRs:       none" <<<"$LAST" && pass "scm-pr-hang: not read as none" || fail "scm-pr-hang: $LAST"
+case_ scm-pr-no-author 2 "unparseable PR list for example/foo" \
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+
+# A contributor's open SR or devel PR on a package you maintain is reviewed
+# before your update: INCOMING (5), each item annotated from its review stamp,
+# a BLOCK one too, as it still waits. Your own request in flight still STOPs
+# (3), a failed check still beats both (2), and an incoming item beats a
+# stranded update (4). Someone else's forward to the target is in flight, not
+# yours to review, and so is a contributor's SR on a package you do not
+# maintain. The stamps sit under the suite's HOME, the state directory read
+# from a fixture: pr-guard reads this suite.
+STAMPS="home/$(cat "$HERE/fixtures/gate/state-dir")/incoming"
+# shellcheck disable=SC2031,SC2317  # called by case_'s mutations, where B is the case's copy
+stamp() { mkdir -p "$B/$STAMPS/$1" && printf '%s\n' "$3" > "$B/$STAMPS/$1/$2.json"; }
+INQ="\$B/obs/*states_new_review_project_devel*"
+MAINT="echo '<package name=\"foo\" project=\"devel:example\"><person userid=\"tester\" role=\"maintainer\"/></package>' > \$B/obs/_source_devel:example_foo__meta"
+SR_C='<request id="2000010" creator="someone-else"><action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action><state name="review"/></request>'
+SR_OWN='<request id="2000011" creator="tester"><action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action><state name="new"/></request>'
+SR_FWD='<request id="2000012" creator="someone-else"><action type="submit"><source project="devel:example" package="foo"/><target project="openSUSE:Factory" package="foo"/></action><state name="new"/></request>'
+CONTRIB="echo '<collection>$SR_C</collection>' > $INQ"
+case_ incoming-only 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB" 1.2
+grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "incoming-only: the item and its creator" || fail "incoming-only: $LAST"
+case_ own-and-incoming 3 "VERDICT: STOP - already in flight: SR 2000011 [new] devel:other/foo -> devel:example by tester" \
+  "$MAINT && echo '<collection>$SR_C$SR_OWN</collection>' > $INQ"
+grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "own-and-incoming: the contributor's SR is listed" || fail "own-and-incoming: $LAST"
+case_ incoming-pr 5 "example/foo#5 by someone-else: not reviewed" \
+  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+grep -qF "VERDICT: INCOMING" <<<"$LAST" && pass "incoming-pr: INCOMING" || fail "incoming-pr: $LAST"
+case_ others-forward 3 "VERDICT: STOP - already in flight: SR 2000012 [new] devel:example/foo -> openSUSE:Factory by someone-else" \
+  "$MAINT && echo '<collection>$SR_FWD</collection>' > $INQ && echo '<collection>$SR_FWD</collection>' > \$B/obs/*states_new_review_project_openSUSE*"
+! grep -qF "sr#2000012" <<<"$LAST" && pass "others-forward: a forward is no contributor's submission" || fail "others-forward: $LAST"
+case_ incoming-and-ahead 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB"
+case_ incoming-not-mine 3 "VERDICT: STOP - already in flight: SR 2000010" "$CONTRIB"
+case_ check-failed-wins 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
+  "echo '<collection>$SR_C$SR_OWN</collection>' > $INQ && echo @500 > \$B/obs/_source_devel:example_foo__meta"
+case_ incoming-owner-unknown 2 "CHECK FAILED: could not tell whose requests are open" "$MAINT && $CONTRIB && : > \$B/no-whois"
+case_ incoming-empty-answer 2 "unparseable SR collection (incoming)" ": > $INQ"
+case_ incoming-second-action 5 "sr#2000013 by someone-else: not reviewed" \
+  "$MAINT && echo '<collection><request id=\"2000013\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"devel:example\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > $INQ"
+case_ incoming-blocked-stamp 5 "sr#2000010 by someone-else: reviewed: BLOCK (key 0123456789ab)" \
+  "$MAINT && $CONTRIB && stamp obs 2000010 '{\"v\": 1, \"kind\": \"obs\", \"id\": \"2000010\", \"creator\": \"someone-else\", \"verdict\": \"BLOCK\", \"key\": \"0123456789ab\"}'"
+case_ incoming-bad-stamp 5 "sr#2000010 by someone-else: not reviewed" "$MAINT && $CONTRIB && stamp obs 2000010 '{\"v\": 1, \"verdict\": '"
 
 # The version slot takes a version: a project name there compared as one and
 # printed PROCEED (seen twice with `preflight.sh <pkg> <project>`).

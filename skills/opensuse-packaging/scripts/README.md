@@ -7,7 +7,7 @@ exit code is in `references/script-usage.md` (guarded against the scripts, so an
 no `--help` call); this file carries the *why* and the traps.
 
 Every runnable script prints usage with `-h`/`--help` (`_anitya.py`, `_forges.py`,
-`_parse_scan.py` and `_pr_guard.py` are modules, not commands); the user-scoped ones (`my-packages`, `my-requests`, `sr-status`,
+`_incoming.py`, `_parse_scan.py` and `_pr_guard.py` are modules, not commands); the user-scoped ones (`my-packages`, `my-requests`, `sr-status`,
 `preflight`) default the OBS account to `osc whois` unless `--user` is given
 (`factory-report.py` uses `--highlight` for the same purpose).
 
@@ -21,7 +21,7 @@ Your submit requests as a plain list (now a thin wrapper over `sr-status.py --br
 
 ## `incoming-requests.py`
 
-Incoming OBS requests **and** src.opensuse.org PRs needing **you personally**, unlike `osc request list --incoming -U` (surfaces group-review noise too). Restricted to explicit person `role="maintainer"` targets / PRs where you're individually in `requested_reviewers` (both maintainer indexes, item 11); `by_group`/team-only items are skipped even if you're a member. `--verbose` counts what was skipped; `--no-prs` drops the Gitea leg. The Gitea leg reads through `git-obs -G src.opensuse.org api` (git-obs reads its login itself, shared with tea by default; the script never reads it); when it fails, the output says the PRs are UNKNOWN (a line under the table, or instead of "nothing pending"). Every osc / git-obs call times out after 60s and counts as a failed query.
+Incoming OBS requests **and** src.opensuse.org PRs needing **you personally**, unlike `osc request list --incoming -U` (surfaces group-review noise too). Restricted to explicit person `role="maintainer"` targets / PRs where you're individually in `requested_reviewers` (both maintainer indexes, item 11); `by_group`/team-only items are skipped even if you're a member. `--verbose` counts what was skipped; `--no-prs` drops the Gitea leg. Your own requests and PRs are dropped (creator or author is you), and a target matched only through a project you maintain is kept only when pr-guard's maintainer rule holds (`_incoming.py`): a package that names another maintainer, person or group, is not yours, and a target with no package never is; a maintainer lookup that fails or does not parse exits 2. Descriptions and titles go through `_sanitize.py`. The Gitea leg reads through `git-obs -G src.opensuse.org api` (git-obs reads its login itself, shared with tea by default; the script never reads it); when it fails, the output says the PRs are UNKNOWN (a line under the table, or instead of "nothing pending"). Every osc / git-obs call times out after 60s and counts as a failed query.
 
 ## `sr-status.py`
 
@@ -51,7 +51,7 @@ Per-candidate date-based latest-upstream verdict (CURRENT / UPDATE-CANDIDATE / S
 
 ## `preflight.sh`
 
-Block-2 step 0: is the update already done or in flight? exit 0/3/4 = proceed/stop/forward. For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none". `--from PRJ` names the project about to be branched: it must be the devel project, or the project the devel package links to, else STOP (sr#1392134 branched hardware's stale copy of a devel:languages:python package and its SR deleted that project's newer entries). A target-version that is no version — a project name typed into that slot — is a usage error, not a version that compares as PROCEED. Its last check is a target-agnostic `/search/request` sweep on the package as action target: the anchored queries are filtered to devel sources and two projects, so without it an SR filed straight at the target from a non-devel source — or aimed at another target entirely — reads as "none in flight".
+Block-2 step 0: is the update already done or in flight? exit 0/3/5/4 = proceed/stop/incoming/forward. Exit 5, INCOMING: on a package you maintain (pr-guard's rule, `_incoming.py`), a contributor's open SR to the devel package or PR on its devel repo is reviewed before your update; each is listed as `sr#ID` or `owner/repo#N` with its creator and what its `incoming-review.sh` stamp recorded, so a BLOCKed one is not reviewed again (it still counts). Your own request in flight, a forward to the target by anyone and a sweep hit still STOP, and so does a contributor's item on a package you do not maintain; a failed check beats them all, and INCOMING beats FORWARD and the "nothing to do" STOP. Every action of a request is read, not only the first, and a request without a creator, an empty answer, or a PR without a number or an author is CHECK-FAILED, never "nothing incoming". For a git devel project it reads the open PRs through `git-obs -G src.opensuse.org api`; a failed or unreadable answer exits 2, never "none". `--from PRJ` names the project about to be branched: it must be the devel project, or the project the devel package links to, else STOP (sr#1392134 branched hardware's stale copy of a devel:languages:python package and its SR deleted that project's newer entries). A target-version that is no version — a project name typed into that slot — is a usage error, not a version that compares as PROCEED. Its last check is a target-agnostic `/search/request` sweep on the package as action target: the anchored queries are filtered to devel sources and two projects, so without it an SR filed straight at the target from a non-devel source — or aimed at another target entirely — reads as "none in flight".
 
 ## `devel-of.sh`
 
@@ -242,6 +242,10 @@ Shared release-monitoring.org (Anitya) lookup + version-normalize/compare module
 ## `_forges.py`
 
 Shared GitHub/GitLab/PyPI/npm/crates.io probe helpers imported by `upstream-probe.py` and `outdated.py`; not directly runnable — do not prune it.
+
+## `_incoming.py`
+
+Contributors' submissions, shared by `preflight.sh` (run as `_incoming.py maintains|stamp`) and `incoming-requests.py` (imported): `maintains()` is `_pr_guard.py`'s rule, copied rather than imported as `autoforward-gate.sh` copies `eligible()` (`tests/test-incoming-requests.sh` runs both on the same cases), except that a lookup that fails or does not parse raises instead of answering "not yours"; `stamp()` reads only the verdict and key of an `incoming-review.sh` stamp, and a missing, malformed or mismatched one is "not reviewed". It holds the stamp path so that `preflight.sh` never names the state directory: pr-guard refuses every write it cannot place in a script that does. Not a command of its own.
 
 ## `_obs_scope.py`
 
