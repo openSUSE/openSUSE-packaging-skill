@@ -28,6 +28,15 @@
 #      already listed and deduped out below. Any other hit is printed for
 #      the report — for a fix leg it names a tree the fixes may have to
 #      ride on — and does not change the verdict.
+#   7. whose each open request and PR is (every action of a request is read):
+#      when you maintain the devel package (pr-guard's maintainer rule) and a
+#      contributor — a creator other than you — has an SR to it or a PR on its
+#      devel repo, that is INCOMING: review it before your update. Each one is
+#      listed with its creator and what its incoming-review.sh stamp recorded
+#      ("reviewed: BLOCK" is not reviewed again, yet still waits). On a package
+#      you do not maintain it is in flight, as before. A lookup that fails, or
+#      an answer that is empty or malformed, is CHECK-FAILED, never "nothing
+#      incoming".
 #
 # Usage: preflight.sh <pkg> [target-version] [--target-project PRJ] [--user U] [--from PRJ]
 #   target-version    the version you intend to package (optional; without it
@@ -47,6 +56,8 @@
 #      nothing to do because devel and the target project already carry the same
 #      version (the update landed; forwarding it would file an empty SR), or
 #      --from names a project that is not where the package is developed
+#   5  VERDICT: INCOMING — a contributor's SR or devel PR on your package waits
+#      for review (check 7); your own request in flight still wins (3)
 #   4  VERDICT: FORWARD  — stranded devel update: devel is ahead but no Factory
 #      SR was ever filed (openmopac/pspg case); prints the exact osc sr command
 #   2  a check FAILED (network/auth) — a failed check must NEVER print PROCEED
@@ -195,41 +206,52 @@ if [ "$newpkg" = 0 ]; then
 fi
 
 # ---- 3+4. SRs in flight, both directions ------------------------------------
-parse_srs() { # stdin: request collection XML; args: filter-source-project (optional)
+parse_srs() { # stdin: request collection XML; args: source project, target project, target package ("": any)
   python3 -I -c '
 import sys, xml.etree.ElementTree as ET
-flt = sys.argv[1] if len(sys.argv) > 1 else ""
+sp_f, tp_f, tk_f = (sys.argv[1:] + ["", "", ""])[:3]
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(2)  # OBS answers an empty <collection/>, never nothing
 try:
-    root = ET.fromstring(sys.stdin.read() or "<collection/>")
+    root = ET.fromstring(raw)
 except ET.ParseError:
     sys.exit(2)
+seen = set()
 for r in root.findall("request"):
-    a = r.find("action")
-    # Only a submit moves code: a set_bugowner/add_role/delete request is
-    # not an update in flight, whatever the query returned.
-    if a is None or a.get("type") != "submit": continue
-    s = a.find("source")
-    t = a.find("target") if a is not None else None
     st = r.find("state")
-    sp = s.get("project") if s is not None else "?"
-    if flt and sp != flt: continue
     sname = st.get("name") if st is not None else "?"
-    spkg = s.get("package") if s is not None else "?"
-    tprj = t.get("project") if t is not None else "?"
-    rid = r.get("id"); who = r.get("creator") or "?"
-    print(f"SR {rid} [{sname}] {sp}/{spkg} -> {tprj} by {who}")
+    rid, who = r.get("id"), r.get("creator") or ""
+    # Every action: the submit of a multi-action request may be its second.
+    for a in r.findall("action"):
+        # Only a submit moves code: a set_bugowner/add_role/delete request is
+        # not an update in flight, whatever the query returned.
+        if a.get("type") != "submit": continue
+        s, t = a.find("source"), a.find("target")
+        sp = s.get("project") if s is not None else "?"
+        spkg = s.get("package") if s is not None else "?"
+        tprj = t.get("project") if t is not None else "?"
+        tpkg = (t.get("package") if t is not None else None) or spkg
+        if sp_f and sp != sp_f or tp_f and tprj != tp_f or tk_f and tpkg != tk_f: continue
+        if len(who.split()) != 1: sys.exit(2)  # whose it is decides STOP or INCOMING
+        line = f"SR {rid} [{sname}] {sp}/{spkg} -> {tprj} by {who}"
+        if line not in seen:
+            seen.add(line)
+            print(line)
 ' "$@"
 }
+# The last oapi answer as a request collection: a 404 is an answer, none.
+coll() { if [ "$O_404" = 1 ]; then printf '<collection/>'; else printf '%s' "$O_OUT"; fi; }
 
 incoming=""
 if [ -n "$devel" ]; then
   oapi "/request?view=collection&types=submit&states=new,review&project=$devel&package=$epkg" \
     || fail "could not query incoming SRs for $devel/$pkg"
-  incoming="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (incoming)"
+  incoming="$(coll | parse_srs "" "$devel" "$pkg")" || fail "unparseable SR collection (incoming)"
 fi
 oapi "/request?view=collection&types=submit&states=new,review&project=$target&package=$epkg" \
   || fail "could not query $target SRs for $pkg"
-outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (outgoing)"
+outgoing="$(coll | parse_srs "${devel:-}" "$target" "$pkg")" || fail "unparseable SR collection (outgoing)"
 
 # A DECLINED request is terminal but NOT gone: `osc sr` still lists it as
 # "already open" and prompts to supersede it (y/n/c), which an unattended run
@@ -240,9 +262,9 @@ outgoing="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable
 # id with -s; someone else's is theirs to revoke.
 oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$epkg" \
   || fail "could not query declined $target SRs for $pkg"
-declined="$(printf '%s' "$O_OUT" | parse_srs "${devel:-}")" || fail "unparseable SR collection (declined)"
+declined="$(coll | parse_srs "${devel:-}" "$target" "$pkg")" || fail "unparseable SR collection (declined)"
 
-[ -n "$incoming" ] && { echo "incoming SR(s) at $devel (a maintainer staging the bump — already handled):"; printf '%s\n' "$incoming" | sed 's/^/    /'; } \
+[ -n "$incoming" ] && { echo "incoming SR(s) at $devel:"; printf '%s\n' "$incoming" | sed 's/^/    /'; } \
                    || echo "incoming SRs:   none"
 [ -n "$outgoing" ] && { echo "outgoing devel->$target SR(s):"; printf '%s\n' "$outgoing" | sed 's/^/    /'; } \
                    || echo "outgoing SRs:   none"
@@ -260,7 +282,7 @@ if [ -n "$declined" ]; then
 fi
 
 # ---- 5. Gitea leg (MANDATORY for scmsync devel projects) ---------------------
-prs=""
+prs="" ; prs_by=""
 if [ -n "$devel" ]; then
   oapi "/source/$devel/_meta" || fail "could not read $devel/_meta"
   scm="$(printf '%s' "$O_OUT" | grep -oE '<scmsync>[^<]+' | sed 's/<scmsync>//' | head -1)" || scm=""
@@ -272,19 +294,26 @@ if [ -n "$devel" ]; then
     err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
     [ "$grc" = 124 ] && err="git-obs timed out after 30s"
     [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
-    prs="$(printf '%s' "$resp" | python3 -I -c '
-import sys, json
+    # "<author>\t<line>" per PR; a PR without a number or an author is no list
+    prs_by="$(printf '%s' "$resp" | python3 -I -c '
+import re, sys, json
 raw = sys.stdin.read()
 if raw.startswith("Response:"): raw = raw.split("\n", 1)[1] if "\n" in raw else ""
 try: d = json.loads(raw)
 except Exception: sys.exit(2)
+if not isinstance(d, list): sys.exit(2)
 for p in d:
     num = p.get("number"); base = (p.get("base") or {}).get("ref")
-    title = p.get("title"); url = p.get("html_url")
-    print(f"PR #{num} -> {base}: {title} ({url})")
+    who = (p.get("user") or {}).get("login")
+    if type(num) is not int or not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
+        sys.exit(2)
+    # one line each: a newline in a title could forge another PR
+    title, url = (" ".join(str(x).split()) for x in (p.get("title"), p.get("html_url")))
+    print(f"{who}\tPR #{num} -> {base}: {title} ({url}) by {who}")
 ')" || fail "unparseable PR list for $org/$pkg"
     # PR titles are foreign-authored; sanitize AFTER the rc-gated capture above
-    prs="$(sanitize "$prs")"
+    prs_by="$(sanitize "$prs_by")"
+    prs="$(printf '%s\n' "$prs_by" | cut -f2- | grep -v '^$')"
     [ -n "$prs" ] && { echo "open PR(s) on the devel repo:"; printf '%s\n' "$prs" | sed 's/^/    /'; } \
                   || echo "open PRs:       none"
   fi
@@ -300,7 +329,7 @@ fi
 # time: a set_bugowner request (sr#1383747, for runc) is not in flight.
 oapi "/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27$epkg%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
   || fail "could not query other SRs targeting $pkg"
-sweep="$(printf '%s' "$O_OUT" | parse_srs)" || fail "unparseable SR collection (sweep)"
+sweep="$(coll | parse_srs "" "" "$pkg")" || fail "unparseable SR collection (sweep)"
 seen=" $(printf '%s\n%s\n' "$incoming" "$outgoing" | awk '{print $2}' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')"
 sweep_blocking="" ; sweep_other=""
 while IFS= read -r line; do
@@ -322,15 +351,63 @@ done <<< "$sweep"
 [ -n "$sweep_other" ] && { echo "sweep: SR(s) targeting $pkg in other projects (report them — a fix leg may have to ride on one):"; printf '%s\n' "$sweep_other" | sed 's/^/    /'; }
 [ -z "$sweep_blocking" ] && [ -z "$sweep_other" ] && echo "sweep SRs:      none"
 
+# ---- 7. contributors' submissions --------------------------------------------
+# A contributor's SR to the devel package or PR on its repo, on a package you
+# maintain, is reviewed before your update. Maintainership and the review
+# stamps are _incoming.py's: pr-guard's rule, and the state directory this
+# script must not name (pr-guard refuses its writes when it does).
+own_in="" ; foreign_in="" ; own_prs="" ; foreign_prs="" ; contrib=""
+if [ -n "$incoming$prs_by" ]; then
+  [ -n "$user" ] || fail "could not tell whose requests are open (osc whois failed): pass --user"
+  own_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF == u')"
+  foreign_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF != u')"
+  own_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 == u { sub(/^[^\t]*\t/, ""); print }')"
+  foreign_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 != u')"
+fi
+if [ -n "$foreign_in$foreign_prs" ]; then
+  why="$(python3 -I "$SDIR/_incoming.py" maintains "$user" "$devel" "$pkg" 2>"$errf")"; mrc=$?
+  case $mrc in
+    0) items=""
+       while IFS= read -r line; do
+         [ -n "$line" ] || continue
+         sid="${line#SR }" ; sid="${sid%% *}"
+         items="${items}sr#$sid ${line##* }"$'\n'
+       done <<< "$foreign_in"
+       while IFS=$'\t' read -r who line; do
+         [ -n "$who" ] || continue
+         num="${line#PR #}" ; num="${num%% *}"
+         items="${items}$org/$pkg#$num $who"$'\n'
+       done <<< "$foreign_prs"
+       while read -r item who; do
+         [ -n "$item" ] || continue
+         note="$(python3 -I "$SDIR/_incoming.py" stamp "$item" 2>"$errf")" \
+           || fail "could not read the review stamp of $item: $(head -n 1 "$errf" 2>/dev/null)"
+         contrib="${contrib:+$contrib
+}$item by $who: $note"
+       done <<< "$items"
+       echo "contributors' submissions to review before your update (you maintain $devel/$pkg):"
+       printf '%s\n' "$contrib" | sed 's/^/    /' ;;
+    1) echo "contributors' submissions: in flight, not yours to review ($why)" ;;
+    *) fail "could not tell whether you maintain $devel/$pkg: ${why:-$(head -n 1 "$errf" 2>/dev/null)}" ;;
+  esac
+fi
+
 # ---- verdict -----------------------------------------------------------------
 if [ "$newpkg" = 1 ] && [ -z "$devel" ]; then
   echo "VERDICT: PROCEED (new package — absent from $target and no devel project; package it from scratch, see references/update-build.md \"New package from scratch\")"
   exit 0
 fi
-if [ -n "$incoming" ] || [ -n "$outgoing" ] || [ -n "$prs" ] || [ -n "$sweep_blocking" ]; then
-  first="$(printf '%s\n%s\n%s\n%s\n' "$outgoing" "$incoming" "$prs" "$sweep_blocking" | grep -m1 .)"
+# Your own request, a forward and a sweep hit are in flight; so is a
+# contributor's item on a package you do not maintain.
+if [ -n "$contrib" ]; then stop_in="$own_in"; stop_prs="$own_prs"; else stop_in="$incoming"; stop_prs="$prs"; fi
+if [ -n "$outgoing$stop_in$stop_prs$sweep_blocking" ]; then
+  first="$(printf '%s\n%s\n%s\n%s\n' "$outgoing" "$stop_in" "$stop_prs" "$sweep_blocking" | grep -m1 .)"
   echo "VERDICT: STOP - already in flight: $first"
   exit 3
+fi
+if [ -n "$contrib" ]; then
+  echo "VERDICT: INCOMING - review the contributors' submissions before your update: ${contrib//$'\n'/; }"
+  exit 5
 fi
 # devel ahead of the target version / of the target project, with no SR/PR = stranded
 # ahead=1 -> stranded, forward it;  ahead=2 -> devel and the target project are
