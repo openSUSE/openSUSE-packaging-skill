@@ -8,16 +8,19 @@ maintainer (person or group) and the project _meta does; a project whose
 _meta has <scmsync> is judged by its project git's _maintainership.json (the
 package's list, else the project's ""). The guard is the harness hook's rule
 set, installed pinned on its own, so it is mirrored here rather than
-imported; tests/test-incoming-requests.sh runs both on the same cases. Where
-the guard answers "no" to a lookup that failed or did not parse, this raises
-Unknown: a caller listing submissions must not read it as "not yours".
+imported; tests/test-preflight.sh runs both on the same cases. Where the
+guard answers "no" to a lookup that failed or did not parse, this raises
+Unknown: preflight.sh must not read it as "not yours".
 
-stamp() reads the verdict incoming-review.sh recorded for a submission. Only
-its verdict and key are read, and a stamp that is missing, unreadable or
+stamp() reads the verdict incoming-review.sh recorded for a submission:
+<id>.json for an OBS request, <owner>_<repo>_<N>.json for a PR (owner and
+repo lowercased, each % written %25 and each _ %5F). Only its verdict and
+key (64 hex) are read, and a stamp that is missing, unreadable or
 malformed, or names another submission, is "not reviewed".
 
-Imported by incoming-requests.py; preflight.sh runs it:
-  _incoming.py maintains USER PRJ PKG   exit 0 yes, 1 no (why on stdout),
+preflight.sh runs it, and reads anything but 0 or 3 from maintains as a
+failed check (an uncaught exception is 2 too, never "no"):
+  _incoming.py maintains USER PRJ PKG   exit 0 yes, 3 no (why on stdout),
                                         2 unknown (why on stdout)
   _incoming.py stamp sr#N|OWNER/REPO#N  prints the annotation; 2 bad item
 """
@@ -155,7 +158,7 @@ def maintains(user, prj, pkg, run=run, cache=None):
             return False, f"{owner}/{repo}{at} has no _maintainership.json"
         try:
             m = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             m = None
         lists = [m.get(k, []) for k in (pkg, "")] if isinstance(m, dict) else None
         if lists is None or not all(
@@ -204,7 +207,10 @@ def stamp(item):
         m = PR_ITEM.fullmatch(item)
         if not m:
             raise ValueError(f"not an sr#N or OWNER/REPO#N item: {item!r}")
-        kind, name, ident = "gitea", "_".join(m.groups()), item
+        owner, repo = (
+            x.lower().replace("%", "%25").replace("_", "%5F") for x in m.groups()[:2]
+        )
+        kind, name, ident = "gitea", f"{owner}_{repo}_{m.group(3)}", item.lower()
     path = os.path.join(
         os.path.expanduser("~"),
         ".local",
@@ -216,39 +222,38 @@ def stamp(item):
     try:
         with open(os.path.join(path, name + ".json"), encoding="utf-8") as fh:
             st = json.loads(fh.read(1 << 20))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return "not reviewed"
     if not (
         isinstance(st, dict)
         and st.get("v") == 1
         and st.get("kind") == kind
-        and st.get("id") == ident
+        and isinstance(st.get("id"), str)
+        and (st["id"] if kind == "obs" else st["id"].lower()) == ident
         and st.get("verdict") in VERDICTS
         and isinstance(st.get("key"), str)
-        and re.fullmatch(r"[0-9a-f]{12}", st["key"])
+        and re.fullmatch(r"[0-9a-f]{64}", st["key"])
     ):
         return "not reviewed"
     return f"reviewed: {st['verdict']} (key {st['key']})"
 
 
 def main(argv):
-    if argv[1:2] == ["maintains"] and len(argv) == 5:
-        try:
+    """Any failure is 2: Python's own exit 1 must not pass for an answer."""
+    try:
+        if argv[1:2] == ["maintains"] and len(argv) == 5:
             ok, why = maintains(*argv[2:5])
-        except Unknown as e:
-            print(e)
-            return 2
-        if why:
-            print(why)
-        return 0 if ok else 1
-    if argv[1:2] == ["stamp"] and len(argv) == 3:
-        try:
+            if why:
+                print(why)
+            return 0 if ok else 3
+        if argv[1:2] == ["stamp"] and len(argv) == 3:
             print(stamp(argv[2]))
-        except ValueError as e:
-            sys.stderr.write(f"{e}\n")
-            return 2
-        return 0
-    sys.stderr.write(__doc__.split("\n\n")[-1])
+            return 0
+        sys.stderr.write(__doc__.split("\n\n")[-1])
+    except Unknown as e:
+        print(e)
+    except Exception as e:
+        sys.stderr.write(f"{type(e).__name__}: {e}\n")
     return 2
 
 

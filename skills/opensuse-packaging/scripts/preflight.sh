@@ -33,8 +33,10 @@
 #      contributor — a creator other than you — has an SR to it or a PR on its
 #      devel repo, that is INCOMING: review it before your update. Each one is
 #      listed with its creator and what its incoming-review.sh stamp recorded
-#      ("reviewed: BLOCK" is not reviewed again, yet still waits). On a package
-#      you do not maintain it is in flight, as before. A lookup that fails, or
+#      ("reviewed: BLOCK" is not reviewed again, yet still waits), and the
+#      verdict line adds when devel already has the version or it already
+#      landed, so nobody repackages it after the review. On a package you do
+#      not maintain it is in flight, as before. A lookup that fails, or
 #      an answer that is empty or malformed, is CHECK-FAILED, never "nothing
 #      incoming".
 #
@@ -330,15 +332,15 @@ fi
 oapi "/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27$epkg%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
   || fail "could not query other SRs targeting $pkg"
 sweep="$(coll | parse_srs "" "" "$pkg")" || fail "unparseable SR collection (sweep)"
-seen=" $(printf '%s\n%s\n' "$incoming" "$outgoing" | awk '{print $2}' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')"
 sweep_blocking="" ; sweep_other=""
 while IFS= read -r line; do
   [ -n "$line" ] || continue
-  sid="${line#SR }" ; sid="${sid%% *}"
-  case "$seen" in *" $sid "*) continue ;; esac
+  # By the action's line, not the request id: a request that submits to
+  # devel and to the target is listed above for its devel action only.
+  printf '%s\n%s\n' "$incoming" "$outgoing" | grep -qxF -- "$line" && continue
   tgt="$(printf '%s' "$line" | sed 's/.* -> \([^ ]*\) by .*/\1/')"
   # No $devel arm: a submit to devel/$pkg is check 2's incoming SR, already
-  # in $seen and deduped above, so only the target project can block here.
+  # listed and deduped above, so only the target project can block here.
   if [ "$tgt" = "$target" ]; then
     sweep_blocking="${sweep_blocking:+$sweep_blocking
 }$line"
@@ -387,27 +389,25 @@ if [ -n "$foreign_in$foreign_prs" ]; then
        done <<< "$items"
        echo "contributors' submissions to review before your update (you maintain $devel/$pkg):"
        printf '%s\n' "$contrib" | sed 's/^/    /' ;;
-    1) echo "contributors' submissions: in flight, not yours to review ($why)" ;;
+    3) echo "contributors' submissions: in flight, not yours to review ($why)" ;;
+    # 2, or anything else (a crash): no answer, never "not yours"
     *) fail "could not tell whether you maintain $devel/$pkg: ${why:-$(head -n 1 "$errf" 2>/dev/null)}" ;;
   esac
 fi
 
 # ---- verdict -----------------------------------------------------------------
-if [ "$newpkg" = 1 ] && [ -z "$devel" ]; then
-  echo "VERDICT: PROCEED (new package — absent from $target and no devel project; package it from scratch, see references/update-build.md \"New package from scratch\")"
-  exit 0
-fi
 # Your own request, a forward and a sweep hit are in flight; so is a
-# contributor's item on a package you do not maintain.
+# contributor's item on a package you do not maintain. Before the new-package
+# PROCEED: an open SR to the target for a new package is in flight too.
 if [ -n "$contrib" ]; then stop_in="$own_in"; stop_prs="$own_prs"; else stop_in="$incoming"; stop_prs="$prs"; fi
 if [ -n "$outgoing$stop_in$stop_prs$sweep_blocking" ]; then
   first="$(printf '%s\n%s\n%s\n%s\n' "$outgoing" "$stop_in" "$stop_prs" "$sweep_blocking" | grep -m1 .)"
   echo "VERDICT: STOP - already in flight: $first"
   exit 3
 fi
-if [ -n "$contrib" ]; then
-  echo "VERDICT: INCOMING - review the contributors' submissions before your update: ${contrib//$'\n'/; }"
-  exit 5
+if [ "$newpkg" = 1 ] && [ -z "$devel" ]; then
+  echo "VERDICT: PROCEED (new package — absent from $target and no devel project; package it from scratch, see references/update-build.md \"New package from scratch\")"
+  exit 0
 fi
 # devel ahead of the target version / of the target project, with no SR/PR = stranded
 # ahead=1 -> stranded, forward it;  ahead=2 -> devel and the target project are
@@ -425,6 +425,16 @@ if [ -n "$develver" ]; then
   elif [ -n "$targetprjver" ] && [ "$develver" != "$targetprjver" ]; then
     [ "$(printf '%s\n%s\n' "$targetprjver" "$develver" | sort -V | tail -1)" = "$develver" ] && ahead=1
   fi
+fi
+if [ -n "$contrib" ]; then
+  # what comes after the review: an agent going on must not repackage
+  case $ahead in
+    1) after=" — after it: devel already has ${targetver:-a newer version than $target}, forward it, do not repackage" ;;
+    2) after=" — after it: nothing to package, $devel and $target are both at $develver" ;;
+    *) after="" ;;
+  esac
+  echo "VERDICT: INCOMING - review the contributors' submissions before your update: ${contrib//$'\n'/; }$after"
+  exit 5
 fi
 if [ "$ahead" = 2 ]; then
   echo "VERDICT: STOP - nothing to do: $devel and $target are both at $develver (this update already landed)"
