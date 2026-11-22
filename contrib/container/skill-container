@@ -394,7 +394,8 @@ saved() {
 			api GET "/api/permission/saved?projectID=$id" || return 1
 		done
 	} | jq -rs --argjson n "$((${#ids[@]} + 1))" \
-		"$isid"'if length == $n then map(.data[].id) | unique[] | isid else error("an answer is missing") end' || return 1
+		"$isid"'if length == $n and all(.[]; (.data | type) == "array") then map(.data[].id) | unique[] | isid
+			else error("an answer is missing or holds no list") end' || return 1
 }
 # The session list is paged and ends with an empty page. Fails with 1 when a
 # page could not be read, with 2 when the list does not end.
@@ -432,10 +433,16 @@ retried() {
 	return 1
 }
 # Into forget's approvals and sessions; fails as saved and ruled do, and with 2
-# when an approval's or a session's id is none.
+# when an approval's or a session's id is none. A failed read leaves no part of
+# its lists, ! among them, for the next round to remove.
 readperms() {
-	approvals=$(saved) || return
-	sessions=$(ruled) || return
+	local rc=0
+	approvals=$(saved) || rc=$?
+	[ "$rc" != 0 ] || sessions=$(ruled) || rc=$?
+	if [ "$rc" != 0 ]; then
+		approvals='' sessions=''
+		return "$rc"
+	fi
 	{ onlyids "$approvals" && onlyids "$sessions"; } || return 2
 }
 # One round: removes what forget's lists hold and reads them again. A removal
@@ -473,7 +480,10 @@ logins() {
 }
 # Into relogin's creds, as readperms.
 readlogins() {
-	creds=$(logins) || return 1
+	creds=$(logins) || {
+		creds=''
+		return 1
+	}
 	onlyids "$creds" || return 2
 }
 # The server answers the removal of a login it does not hold like any other:
@@ -481,6 +491,7 @@ readlogins() {
 clearlogins() {
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
+		[[ $id =~ ^[A-Za-z0-9_]+$ ]] || die "a model login of $ctr has an unexpected id: $reset"
 		api DELETE "/api/credential/$id" >/dev/null || true
 	done <<<"$creds"
 	readlogins && [ -z "$creds" ]
