@@ -143,9 +143,19 @@ case "$1 $2" in
 "exec "*)
   # Every call into the container is one the launcher bounds in time.
   [ -n "${FAKE_TIMEOUT-}" ] || printf '%s\n' "$*" >> "$FIX/untimed"
-  # Counts the calls of list $1; true for one $FIX/$1-silent names by its number,
-  # which gets no answer, as from a podman another container keeps busy.
-  silent() { echo >> "$FIX/$1-asked"; grep -qx "$(wc -l < "$FIX/$1-asked")" "$FIX/$1-silent" 2>/dev/null; }
+  # Counts the calls of $1. Line N of $FIX/$1-script says how call N goes, as
+  # with a podman another container keeps busy: silent answers nothing, fail is
+  # podman's own error, slow the same six seconds later, exit2 answers and ends
+  # with status 2; else it answers.
+  busy() {
+    echo >> "$FIX/$1-asked"
+    case $(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null) in
+    silent) exit 0 ;;
+    slow) sleep 6; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
+    fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
+    exit2) trap 'exit 2' EXIT ;;
+    esac
+  }
   # With $FIX/exec-escape whatever runs in the container tries the terminal on its error stream.
   [ ! -e "$FIX/exec-escape" ] || printf 'inside says\033]52;c;QUFB\007\033[2J\n' >&2
   case "$*" in
@@ -153,7 +163,7 @@ case "$1 $2" in
   *"plugin list"*)
     n=$(cat "$FIX/plugins-late" 2>/dev/null || echo 0)
     if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FIX/plugins-late"; echo "ID  VERSION"; else cat "$FIX/plugins"; fi ;;
-  *"auth import"*) cat > "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
+  *"auth import"*) busy import; cat > "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
   # A session the container imports from a pipe: stdin is the export.
   *"session import"*)
     cat > "$FIX/imported-session"
@@ -161,9 +171,10 @@ case "$1 $2" in
   # The model logins the state volume keeps; the answer holds their keys.
   # A client that repeats the answer on its error stream is the worst case.
   # With $FIX/logins-next the next answer differs.
-  *"api GET /api/credential "*) silent logins && exit 0; cat "$FIX/logins"; cat "$FIX/logins" >&2
+  *"api GET /api/credential "*) busy logins; cat "$FIX/logins"; cat "$FIX/logins" >&2
     [ ! -e "$FIX/logins-next" ] || mv "$FIX/logins-next" "$FIX/logins" ;;
   *"api DELETE /api/credential/"*)
+    busy logindel
     all="$*"; id=${all#*/api/credential/}; id=${id%% *}
     # With $FIX/login-stays the server refuses.
     [ ! -e "$FIX/login-stays" ] || exit 1
@@ -171,7 +182,7 @@ case "$1 $2" in
     [ ! -e "$FIX/login-ghost" ] || exit 0
     jq -c --arg id "$id" '.data |= map(select(.id != $id))' "$FIX/logins" > "$FIX/logins.new" \
       && mv "$FIX/logins.new" "$FIX/logins" ;;
-  *"api GET /api/project "*) silent projects || cat "$FIX/projects" ;;
+  *"api GET /api/project "*) busy projects; cat "$FIX/projects" ;;
   # The approvals of the server's project, of every project (an empty id), or
   # of the one named. What is no list is answered as it is.
   *"api GET /api/permission/saved"[?\ ]*)
@@ -189,6 +200,7 @@ case "$1 $2" in
       fi
     fi ;;
   *"api DELETE /api/permission/saved/"*)
+    busy deletes
     all="$*"; id=${all#*/api/permission/saved/}; id=${id%% *}
     # With $FIX/keeps the server answers and removes nothing.
     [ -e "$FIX/keeps" ] || { jq -c --arg id "$id" '.data |= map(select(.id != $id))' "$FIX/saved" \
@@ -196,7 +208,7 @@ case "$1 $2" in
   # The session list, two to a page whatever the limit; the cursor is the offset
   # and never null. What is no list is answered as it is.
   *"api GET /api/session?limit=1000"*)
-    silent sessions && exit 0
+    busy sessions
     all="$*"; off=0
     [[ $all != *"cursor="* ]] || { off=${all#*cursor=}; off=${off%%[& ]*}; }
     next=$((off + 2)); [ ! -e "$FIX/bad-cursor" ] || next="$next&directory=/x"
@@ -207,6 +219,7 @@ case "$1 $2" in
       jq -c --argjson o "$off" --arg n "$next" '{data: .[$o:$o + 2], cursor: {next: $n}}' "$FIX/sessions"
     else cat "$FIX/sessions"; fi ;;
   *"api PATCH /api/session/"*)
+    busy patches
     all="$*"; id=${all#*/api/session/}; id=${id%% *}
     [[ $all == *' -d {"permissions":[]} '* ]] || exit 96
     # With $FIX/keeps-rules the server answers and clears nothing.
@@ -277,6 +290,8 @@ case "$1" in
 daemon-reload) [ ! -e "$FIX/reload-fails" ] || exit 1 ;;
 disable | reset-failed) ;;
 start) [ ! -e "$FIX/start-fails" ] || exit 1; [ ! -e "$FIX/run-fails" ] || exit 125
+  # With $FIX/start-slow holding N, the start takes N seconds.
+  [ ! -e "$FIX/start-slow" ] || sleep "$(cat "$FIX/start-slow")"
   [ -e "$FIX/stops" ] || echo true > "$FIX/running" ;;
 stop) echo false > "$FIX/running" ;;
 restart) [ ! -e "$FIX/start-fails" ] || exit 1; [ ! -e "$FIX/run-fails" ] || exit 125
@@ -438,7 +453,8 @@ leakfiles() {
   } | xargs -r -d '\n' grep -lE -- 'SECRET[-_][0-9]|TEA-OTHER' 2> /dev/null | grep -vxF -f <(printf '%s\n' "${fixtures[@]}") | mine
 }
 # Another launcher suite running at the same time keeps its fixtures in a
-# directory like ours, with fix/envcheck in it: those are its logins, not a leak.
+# directory like ours, with fix/envcheck in it, and its commands in one like
+# $tools: those are its logins, not a leak.
 mine() {
   local f d rest top
   while IFS= read -r f; do
@@ -449,6 +465,8 @@ mine() {
       top=$d/${rest%%/*}
     done
     [ -n "$top" ] && [ "$top" != "$work" ] && [ -e "$top/fix/envcheck" ] && continue
+    [ -n "$top" ] && [ "$top" != "$tools" ] && [ -f "$top/bin/podman" ] && [ -d "$top/userbin" ] \
+      && [ -d "$top/evilbin" ] && continue
     printf '%s\n' "$f"
   done
 }
@@ -458,6 +476,15 @@ stored() { cat "$FIX/secrets/"* | sha256sum; }
 stopped() { grep -qx "stop $N-agent@obs.service" "$FIX/systemctl-calls"; }
 # No made-up secret may reach the terminal or a command line.
 leaks() { grep -E 'SECRET[-_][0-9]|TEA-OTHER' "$@" 2>/dev/null; }
+# What the launcher says when it tries again.
+again="skill-container: could not read or change what $N-obs-agent keeps; trying again for up to 5 minutes"
+# $1: what the fake podman counts, $2...: how its calls go in turn (see busy
+# there). No other call is scripted, and the pauses start anew.
+scripted() { rm -f "${FIX:?}"/*-script; printf '%s\n' "${@:2}" > "$FIX/$1-script"; : > "$FIX/$1-asked"; : > "$FIX/sleep-calls"; }
+# Every call of $1 after the first ${3:-0} goes as $2.
+never() { scripted "$1"; { yes ok | head -n "${3:-0}"; yes "$2" | head -n 100; } > "$FIX/$1-script"; }
+reads() { wc -l < "$FIX/$1-asked"; }
+pauses() { wc -l < "$FIX/sleep-calls"; }
 
 out="$(sc install obs --workdir "$work/ws" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "secrets" <<<"$out" && ! grep -q '^run ' "$FIX/podman-calls" \
@@ -1237,7 +1264,7 @@ out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses a session list that does not end" \
   || fail "run with an endless session list: rc=$rc $out"
 # It is an answer: asking again would page through it as long.
-[ ! -s "$FIX/sleep-calls" ] && ! grep -qF "did not answer" <<<"$out" \
+[ ! -s "$FIX/sleep-calls" ] && ! grep -qxF "$again" <<<"$out" \
   && pass "a session list that does not end is not asked for again" \
   || fail "an endless session list asked for again: $(wc -l < "$FIX/sleep-calls") pauses"
 rm "$FIX/endless"; sessions '[]'
@@ -1374,12 +1401,14 @@ out="$(sc up obs 2>&1)"; rc=$?
   && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" \
   && pass "a kept model login with an unexpected id: no call is made with it, no credential is sent" \
   || fail "up with a model login id: rc=$rc $out"
-restart; kept_login cred_old1; touch "$FIX/login-stays"
+restart; kept_login cred_old1; touch "$FIX/login-stays"; scripted logins
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ -z "$(leaks <<<"$out")" ] \
-  && grep -qF "podman volume rm" <<<"$out" \
-  && pass "a kept model login that stays: the unit is stopped, no credential is sent" \
-  || fail "up with a model login that stays: rc=$rc $out"
+  && grep -qF "podman volume rm" <<<"$out" && grep -qF "the model logins $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && [ "$(reads logins)" = 61 ] && [ "$(pauses)" = 59 ] \
+  && [ "$(grep -c 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls")" = 60 ] \
+  && pass "a kept model login that stays: the unit is stopped after 60 rounds of removal, no credential is sent" \
+  || fail "up with a model login that stays: rc=$rc $(reads logins) reads, $(pauses) pauses $out"
 rm "$FIX/login-stays"
 # An id is one value in the answer; split into lines, a line break in it makes two.
 for id in 'cred_x\ncred_y' 'cred_a\n' ''; do
@@ -1438,72 +1467,155 @@ out="$(sc up obs 2>&1)"; rc=$?
   && pass "a slow start probes each second for 30 probes, then every five seconds" \
   || fail "the pace of a slow start: rc=$rc $(sort "$FIX/sleep-calls" | uniq -c | tr '\n' ' ') $out"
 rm -f "$FIX/plugins-late"
-# podman answers nothing while another container holds its storage lock: a read
-# after the start that gets no answer is asked again, with one line to say so.
-busy="skill-container: $N-obs-agent did not answer; asking again for up to 5 minutes"
-# $1: the list, $2...: the calls of it that get no answer.
-silence() { printf '%s\n' "${@:2}" > "$FIX/$1-silent"; : > "$FIX/$1-asked"; : > "$FIX/sleep-calls"; }
-restart; silence projects 1 2 3
+# podman answers nothing, or an error of its own, while another container holds
+# its storage lock: what follows a start is tried again, with one line to say so
+# and the errors of the first failure alone.
+restart; scripted projects fail fail fail
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && ! stopped && [ -e "$FIX/imported" ] && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] \
-  && [ "$(wc -l < "$FIX/projects-asked")" = 4 ] && [ "$(grep -cx 5 "$FIX/sleep-calls")" = 3 ] \
-  && [ "$(wc -l < "$FIX/sleep-calls")" = 3 ] && [ "$(grep -c 'jq: error' <<<"$out")" = 0 ] \
-  && pass "up asks again for the permissions while podman does not answer" \
-  || fail "up with a busy podman: rc=$rc $(wc -l < "$FIX/projects-asked") reads $out"
-# One that never comes stops the unit, after 60 reads five seconds apart; only
-# the last one's errors show.
-restart; silence projects {1..100}
+[ "$rc" = 0 ] && ! stopped && [ -e "$FIX/imported" ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+  && [ "$(reads projects)" = 4 ] && [ "$(grep -cx 5 "$FIX/sleep-calls")" = 3 ] && [ "$(pauses)" = 3 ] \
+  && [ "$(grep -c BUSY-MARK <<<"$out")" = 1 ] \
+  && pass "up asks again for the projects while podman fails, and shows the first failure alone" \
+  || fail "up with a busy podman: rc=$rc $(reads projects) reads $out"
+# One that never comes stops the unit after 60 reads.
+restart; never projects silent
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
-  && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] && [ "$(wc -l < "$FIX/projects-asked")" = 60 ] \
-  && [ "$(grep -cx 5 "$FIX/sleep-calls")" = 59 ] && [ "$(wc -l < "$FIX/sleep-calls")" = 59 ] \
-  && [ "$(grep -c 'jq: error' <<<"$out")" = 1 ] \
-  && pass "permissions podman never answers for: the unit is stopped after five minutes, no credential is sent" \
-  || fail "up with a podman that never answers: rc=$rc $(wc -l < "$FIX/projects-asked") reads $out"
-# So is the list read after the removal; a rule that stays once it comes stops
-# the unit at once.
-restart; approval per_v1; silence projects 2 3 4
+  && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] && [ "$(reads projects)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "permissions podman never answers for: the unit is stopped after 60 reads, no credential is sent" \
+  || fail "up with a podman that never answers: rc=$rc $(reads projects) reads $out"
+# The pages of the session list, too.
+restart; scripted sessions fail fail fail
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] && [ -e "$FIX/imported" ] \
-  && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] && [ "$(wc -l < "$FIX/projects-asked")" = 5 ] \
-  && [ "$(wc -l < "$FIX/sleep-calls")" = 3 ] \
-  && pass "up asks again for the permissions after their removal while podman does not answer" \
-  || fail "up with a busy podman after the removal: rc=$rc $(wc -l < "$FIX/projects-asked") reads $out"
-restart; approval per_v2; touch "$FIX/keeps"; silence projects 2 3
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+  && [ "$(reads sessions)" = 4 ] && [ "$(pauses)" = 3 ] \
+  && pass "up asks again for the session list while podman fails" \
+  || fail "up with a busy podman and the session list: rc=$rc $(reads sessions) reads $out"
+# Status 2 from the command in the container is not a list without an end.
+restart; scripted logins exit2
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] \
-  && grep -qF "the permissions $N-obs-agent keeps cannot be removed" <<<"$out" \
-  && [ "$(wc -l < "$FIX/projects-asked")" = 4 ] && [ "$(wc -l < "$FIX/sleep-calls")" = 2 ] \
-  && pass "an approval still listed once podman answers again stops the unit at once" \
-  || fail "up with an approval that stays after a busy podman: rc=$rc $(wc -l < "$FIX/projects-asked") reads $out"
-rm "$FIX/keeps" "$FIX/projects-silent"; echo '{"data":[]}' > "$FIX/saved"
-# A session list that gets no answer is not an empty one either.
-restart; silence sessions 1 2 3
-out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] \
-  && [ "$(wc -l < "$FIX/sessions-asked")" = 4 ] && [ "$(wc -l < "$FIX/sleep-calls")" = 3 ] \
-  && pass "up asks again for the session list while podman does not answer" \
-  || fail "up with a busy podman and the session list: rc=$rc $(wc -l < "$FIX/sessions-asked") reads $out"
-rm "$FIX/sessions-silent"
-# And the model logins: the first three reads, or the three after the removal.
-for first in 1 2; do
-  restart; kept_login cred_old1; silence logins "$first" $((first + 1)) $((first + 2))
-  out="$(sc up obs 2>&1)"; rc=$?
-  [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -q 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls" \
-    && [ "$(jq -c .data "$FIX/logins")" = "[]" ] && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] \
-    && [ "$(wc -l < "$FIX/logins-asked")" = 5 ] && [ "$(wc -l < "$FIX/sleep-calls")" = 3 ] \
-    && pass "up asks again for the model logins while podman does not answer (from read $first)" \
-    || fail "up with a busy podman and model logins (from read $first): rc=$rc $(wc -l < "$FIX/logins-asked") reads $out"
-done
-# No answer is no list of them: one that never comes stops the unit.
-restart; kept_login cred_old1; silence logins {1..100}
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 1 ] \
+  && pass "an answer that ends with status 2 is asked for again" \
+  || fail "up with an answer that ends with status 2: rc=$rc $(reads logins) reads $out"
+# bash takes SECONDS from the environment. Five seconds short of the largest
+# number the start's deadline still fits; six seconds later the read's has
+# wrapped round and is past: nothing is tried again after five minutes.
+restart; scripted projects fail; echo 6 > "$FIX/start-slow"
+out="$("${scenv[@]}" SECONDS=9223372036854775502 HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
+rm "$FIX/start-slow"
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ "$(reads projects)" = 1 ] && [ "$(pauses)" = 0 ] \
+  && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && pass "a read is not tried again once five minutes have passed" \
+  || fail "up past the deadline: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+# The five minutes are the command's, not each list's: 305 seconds short of the
+# largest number, a deadline the logins read set for itself six seconds after
+# the start would have wrapped round; the one the first read set lies ahead.
+restart; scripted projects slow; echo fail > "$FIX/logins-script"; : > "$FIX/logins-asked"
+out="$("${scenv[@]}" SECONDS=$((9223372036854775807 - 305)) HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads projects)" = 2 ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 2 ] \
+  && pass "every try after the start shares one deadline" \
+  || fail "up with one deadline: rc=$rc $(reads projects) and $(reads logins) reads, $(pauses) pauses $out"
+# One answer is one list: a second one after it is not left unread.
+restart; printf '{"data":[]}{"data":[{"id":"cred_old1"}]}\n' > "$FIX/logins"; scripted logins
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the model logins $N-obs-agent keeps" <<<"$out" \
-  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ "$(grep -cxF "$busy" <<<"$out")" = 1 ] \
-  && [ "$(wc -l < "$FIX/logins-asked")" = 60 ] && [ "$(wc -l < "$FIX/sleep-calls")" = 59 ] \
-  && pass "model logins podman never answers for: the unit is stopped after five minutes, no credential is sent" \
-  || fail "up with model logins that never come: rc=$rc $(wc -l < "$FIX/logins-asked") reads $out"
-rm "$FIX/logins-silent"; echo '{"data":[]}' > "$FIX/logins"
+  && pass "two lists of model logins in one answer: the unit is stopped, no credential is sent" \
+  || fail "up with two lists of model logins: rc=$rc $out"
+echo '{"data":[]}' > "$FIX/logins"
+restart; printf '%s\n' '[{"id":"prj_main"}][{"id":"prj_evil"}]' > "$FIX/projects"; scripted projects
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && pass "two lists of projects in one answer: the unit is stopped, no credential is sent" \
+  || fail "up with two lists of projects: rc=$rc $out"
+echo '[{"id":"prj_main"}]' > "$FIX/projects"
+# The read of a removal round is asked again as well.
+restart; approval per_v1; scripted projects ok silent silent silent
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] && [ -e "$FIX/imported" ] \
+  && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] && [ "$(reads projects)" = 5 ] && [ "$(pauses)" = 3 ] \
+  && pass "up asks again for the permissions after their removal while podman does not answer" \
+  || fail "up with a busy podman after the removal: rc=$rc $(reads projects) reads $out"
+# One that never answers again stops the unit after 60 rounds.
+restart; approval per_v2; never projects silent 1
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the permissions $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && grep -q 'api DELETE /api/permission/saved/per_v2' "$FIX/podman-calls" && [ "$(reads projects)" = 61 ] \
+  && [ "$(pauses)" = 59 ] \
+  && pass "approvals podman stops answering for once removed: the unit is stopped after 60 rounds" \
+  || fail "up with a podman silent after the removal: rc=$rc $(reads projects) reads $out"
+echo '{"data":[]}' > "$FIX/saved"
+restart; kept_login cred_old1; never logins silent 1
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the model logins $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && grep -q 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls" && [ "$(reads logins)" = 61 ] \
+  && [ "$(pauses)" = 59 ] \
+  && pass "model logins podman stops answering for once removed: the unit is stopped after 60 rounds" \
+  || fail "up with a podman silent after the login removal: rc=$rc $(reads logins) reads $out"
+echo '{"data":[]}' > "$FIX/logins"
+# A removal the busy podman lost leaves its item listed: the next round removes
+# it. One that stays stops the unit after 60 rounds.
+restart; approval per_r1; scripted deletes fail
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] && [ -e "$FIX/imported" ] && [ "$(reads deletes)" = 2 ] \
+  && [ "$(pauses)" = 1 ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+  && pass "an approval whose removal failed once is removed in the next round" \
+  || fail "up with a lost approval removal: rc=$rc $(reads deletes) removals $out"
+restart; approval per_r2; touch "$FIX/keeps"; scripted deletes
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the permissions $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && [ "$(reads deletes)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "an approval that stays: the unit is stopped after 60 rounds of removal, no credential is sent" \
+  || fail "up with an approval that stays: rc=$rc $(reads deletes) removals, $(pauses) pauses $out"
+rm "$FIX/keeps"; echo '{"data":[]}' > "$FIX/saved"
+restart; sessions "[{\"id\":\"ses_r1\",\"permissions\":$allow}]"; scripted patches fail
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -c 'map(.permissions)' "$FIX/sessions")" = "[[]]" ] && [ -e "$FIX/imported" ] \
+  && [ "$(reads patches)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "session rules whose removal failed once are removed in the next round" \
+  || fail "up with a lost rule removal: rc=$rc $(reads patches) removals $out"
+restart; sessions "[{\"id\":\"ses_r2\",\"permissions\":$allow}]"; touch "$FIX/keeps-rules"; scripted patches
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the permissions $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && [ "$(reads patches)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "session rules that stay: the unit is stopped after 60 rounds of removal, no credential is sent" \
+  || fail "up with rules that stay: rc=$rc $(reads patches) removals, $(pauses) pauses $out"
+rm "$FIX/keeps-rules"; sessions '[]'
+restart; kept_login cred_old1; scripted logindel fail
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/logins")" = "[]" ] && [ -e "$FIX/imported" ] \
+  && [ "$(reads logindel)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "a model login whose removal failed once is removed in the next round" \
+  || fail "up with a lost login removal: rc=$rc $(reads logindel) removals $out"
+restart; scripted import fail
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "a model credential whose import failed once is imported on the next try" \
+  || fail "up with a lost import: rc=$rc $(reads import) imports $out"
+restart; scripted import exit2
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "an import that ends with status 2 is tried again" \
+  || fail "up with an import that ends with status 2: rc=$rc $(reads import) imports $out"
+# And the model logins: the first three reads, or the three after the removal.
+for first in 1 2; do
+  restart; kept_login cred_old1
+  if [ "$first" = 1 ]; then scripted logins silent silent silent; else scripted logins ok silent silent silent; fi
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -q 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls" \
+    && [ "$(jq -c .data "$FIX/logins")" = "[]" ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+    && [ "$(reads logins)" = 5 ] && [ "$(pauses)" = 3 ] \
+    && pass "up asks again for the model logins while podman does not answer (from read $first)" \
+    || fail "up with a busy podman and model logins (from read $first): rc=$rc $(reads logins) reads $out"
+done
+# No answer is no list of them: one that never comes stops the unit.
+restart; kept_login cred_old1; never logins silent
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the model logins $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+  && [ "$(reads logins)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "model logins podman never answers for: the unit is stopped after 60 reads, no credential is sent" \
+  || fail "up with model logins that never come: rc=$rc $(reads logins) reads $out"
+rm -f "${FIX:?}"/*-script; echo '{"data":[]}' > "$FIX/logins"
 
 # Each instance keeps its server password across restarts: it is created
 # once, on the first start, and never rotated by up or update.
@@ -1671,12 +1783,12 @@ rm "$FIX/exec-escape"
   && pass "update restarts a quiet instance on a new image, keeps its password, no pull for a local image" \
   || fail "update: rc=$rc $out"
 # After its restart it asks again while podman does not answer, as up does.
-silence projects 1 2 3; : > "$FIX/systemctl-calls"
+scripted projects fail fail fail; : > "$FIX/systemctl-calls"
 out="$(sc update nol 2>&1)"; rc=$?
-rm "$FIX/projects-silent"
+rm "$FIX/projects-script"
 [ "$rc" = 0 ] && grep -qxF "nol is updated" <<<"$out" && grep -qx "restart $N-agent@nol.service" "$FIX/systemctl-calls" \
   && ! grep -q '^stop ' "$FIX/systemctl-calls" && [ "$(wc -l < "$FIX/sleep-calls")" = 3 ] \
-  && [ "$(grep -cxF "skill-container: $N-nol-agent did not answer; asking again for up to 5 minutes" <<<"$out")" = 1 ] \
+  && [ "$(grep -cxF "${again/$N-obs-agent/$N-nol-agent}" <<<"$out")" = 1 ] && [ "$(reads projects)" = 4 ] \
   && pass "update asks again for the permissions while podman does not answer after the restart" \
   || fail "update with a busy podman: rc=$rc $out"
 rm "$FIX/image-new"
@@ -1891,11 +2003,14 @@ rm "$FIX/want-locale"
 [ ! -e "$FIX/secret-leak" ] && pass "no login is in the arguments or the environment of a command" \
   || fail "a login reached: $(sort -u "$FIX/secret-leak" | tr '\n' ' ')"
 sib="$(mktemp -d -p /tmp)"; mkdir "$sib/fix"; : > "$sib/fix/envcheck"; echo OBS-SECRET-1 > "$sib/fix/imported"
+# Its commands, the caller's opencode with a login in it among them, lie apart.
+sibtools="$(mktemp -d -p /tmp)"; mkdir "$sibtools/bin" "$sibtools/userbin" "$sibtools/evilbin"
+cp "$tools/bin/podman" "$sibtools/bin/"; cp "$tools/userbin/opencode" "$sibtools/userbin/"
 stray="$(mktemp -p /tmp)"; echo OBS-SECRET-1 > "$stray"
 left="$(leakfiles)"
 [ "$left" = "$stray" ] && pass "the leak scan passes over another suite's run and still finds a stray login" \
   || fail "the leak scan with another suite's run: $left"
-rm -rf "$sib" "$stray"
+rm -rf "$sib" "$sibtools" "$stray"
 left="$(leakfiles)"
 [ -z "$left" ] && pass "no login is left in a file" || fail "a login is in: $left"
 [ ! -e "$FIX/cwd-leak" ] && pass "no command starts in the work directory" \
