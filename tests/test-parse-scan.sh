@@ -365,6 +365,10 @@ capped() {  # capped <dir> <note> <what>
 capped onepass 'a macro expands past 64 KiB' "a 1 MiB value put in 2000 times stops short"
 capped many 'more than 32 MiB of macro text resolved' "10000 lines of 60 KiB each stop short"
 capped huge 'a file past 8 MiB was not read: huge.spec' "a spec past 8 MiB is not read"
+# needs carries that cap: no list from a spec it did not read is "nothing to fetch".
+out="$(timeout 30 python3 -I "$SCAN" needs "$work/huge")"; rc=$?
+[ "$rc" = 4 ] && grep -qxF 'incomplete: a file past 8 MiB was not read: huge.spec' <<<"$out" \
+  && pass "needs: a spec past 8 MiB is incomplete (exit 4), never an empty list" || { fail "needs huge: rc=$rc"; printf '%s\n' "$out" | head -3 | sed 's/^/    /'; }
 out="$(python3 -I "$SCAN" scan "$work/t" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF "Usage:" <<<"$out" && pass "usage: exit 2" || fail "usage: rc=$rc"
 out="$(python3 -I "$SCAN" constructs "$work/no-such.spec" 2>&1)"; rc=$?
