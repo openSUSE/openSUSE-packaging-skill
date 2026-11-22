@@ -278,13 +278,13 @@ def factory(pkg, devel):
     text = f'<package name="{pkg}" project="openSUSE:Factory"><devel project="{devel}" package="{pkg}"/></package>'
     put(os.path.join(meta, pkg + ".xml"), text)
     stub(f"/source/openSUSE:Factory/{pkg}/_meta", text)
-def stamp(kind, name, sid, creator, verdict, part, comment="", build=""):
+def stamp(kind, name, sid, creator, verdict, part, comment="", build="", key="0123456789ab" + "0" * 52, root=state):
     st = {"v": 1, "kind": kind, "id": sid, "creator": creator, "verdict": verdict,
-          "key": "0123456789ab", "recorded": "2026-11-22T10:00:00Z", "scan": {"exit": 0, "lines": []},
+          "key": key, "recorded": "2026-11-22T10:00:00Z", "scan": {"exit": 0, "lines": []},
           "build": {"project": build, "results": {}, "srcmd5": "", "green": bool(build)},
           "findings": [], "comment": comment,
           "comment_sha256": hashlib.sha256(comment.encode()).hexdigest() if comment else ""}
-    put(os.path.join(state, "incoming", kind, name + ".json"), json.dumps(dict(st, **part)))
+    put(os.path.join(root, "incoming", kind, name + ".json"), json.dumps(dict(st, **part)))
 S, D = s["source_project"], "devel:inc"
 stub(f"/source/{D}/_meta", f'<project name="{D}"><person userid="tester" role="maintainer"/></project>')
 for c in s["obs"]:
@@ -313,7 +313,9 @@ for c in s["obs"]:
                        "srcmd5": md5("other") if c.get("stamp_src") else ssrc, "files": sfiles},
             "target": {"project": T, "package": pkg,
                        "srcmd5": md5("other") if c.get("stamp_tgt") else tsrc, "files": tfiles}}}}
-        stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S)
+        # the 48-bit key of old, under a HOME of its own: as no valid record, it holds every forward
+        key = {"key": "0123456789ab", "root": os.path.join(work, "oldkey", sd)} if c.get("key12") else {}
+        stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S, **key)
     if c.get("devel") == "followup":  # the follow-up, gated and reviewed, as a forward needs it
         put(os.path.join(state, "gate", "obs", pkg, D + ".json"), json.dumps({
             "project": D, "package": pkg, "verdict": "GREEN", "files": now, "tree": "0" * 64,
@@ -343,7 +345,8 @@ for p in g["prs"]:
     if p["verdict"]:
         part = {"gitea": {"owner": o, "repo": r, "number": n, "head": p["head"], "base": "b" * 40,
                           "merge_base": "b" * 40, "files": files}}
-        stamp("gitea", f"{o}_{r}_{n}", f"{o}/{r}#{n}", p["author"], p["verdict"], part, p.get("comment", ""))
+        name = "_".join(x.lower().replace("%", "%25").replace("_", "%5F") for x in (o, r))
+        stamp("gitea", f"{name}_{n}", f"{o}/{r}#{n}", p["author"], p["verdict"], part, p.get("comment", ""))
 for rel, text in s["files"].items():
     put(os.path.join(scripts, rel), text)
 for name, target in s["links"].items():
@@ -1956,6 +1959,8 @@ ask_ accept-link-pinned         incoming-accept "accepting request 1391016 by co
 case_ accept-multi-action       2 incoming-accept "accepting request 1391008 by contrib: it holds 2 actions, not one submit"
 case_ accept-options            2 incoming-accept "accepting request 1391009 by contrib: it sets updatelink"
 case_ accept-home-target        2 incoming-accept "accepting request 1391010 by contrib: it targets home"
+# The stamp's key is the whole sha256: the 48-bit key of old is no key.
+case_ accept-key12              2 incoming-accept "accepting request 1391018 by contrib: its review record holds a malformed field" HOME="$work/oldkey"
 case_ accept-from-reviewer-agent 2 incoming-self "accepting request 1391001 from agent changes-review"
 # A devel PR: git-obs pr review approve --commit of the head reviewed, in the devel
 # organisation the project git syncs from; tea's approve keeps asking as a comment.
@@ -1969,6 +1974,8 @@ case_ approve-pool              2 incoming-approve "approving pool/incgit#5: a p
 case_ approve-not-devel-org     2 incoming-approve "approving other/incgit#5: other is not the organisation devel:incgit syncs from"
 case_ approve-own-pr            2 incoming-approve "approving incorg/incgit#6: it is your own PR"
 case_ approve-reviewer-role     2 incoming-approve "approving incorg/increv#7: a reviewer role is set (qa)"
+# A gitea stamp's file name: owner and repo lowercased, % as %25 and _ as %5F.
+ask_ approve-underscore-name    incoming-approve "approving incorg/inc_under#11 by contrib at 111111111111: review PASS"
 case_ approve-from-reviewer-agent 2 incoming-self "git-obs pr review approve from agent incoming-review"
 ask_ approve-tea-asks           comment "tea pulls approve"
 # A comment on a contributor's item in a package the user maintains runs when its text is
@@ -2035,9 +2042,19 @@ case_ forward-hold-other-org    2 incoming-hold "PR incorg/incmis#10 may hold it
 case_ forward-after-followup    2 incoming-hold "cannot list" HOME="$work/listless"
 
 echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
-for n in fakeroot strace ltrace unshare flock flock-c taskset chrt prlimit systemd-run nsenter setpriv script-c; do
+# script's -c in a cluster, attached, by a prefix of --command or after its file; chrt's
+# policy option without a priority.
+for n in fakeroot strace ltrace unshare flock flock-c taskset chrt prlimit systemd-run nsenter setpriv script-c \
+  script-qc script-attached script-long-prefix script-after-file chrt-policy; do
   case_ "wrap-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
 done
+case_ reviewer-script-qc        2 incoming-self "rpmspec from agent incoming-review"
+# A script of the agent's named like a wrapper, run by its path, is read as a script:
+# only a bare name or an ELF binary unwraps.
+for n in flock script nohup; do
+  case_ "wrapname-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+done
+case_ wrapname-strace           2 incoming-self "rpmspec from agent incoming-review"
 
 echo "--- the harness's own files are the user's: no agent command writes, moves or deletes them"
 case_ harness-cp-hooks          2 harness-write "cp ~/.claude/hooks/_pr_guard.py"
@@ -2049,6 +2066,14 @@ case_ harness-cd-rm             2 harness-write "rm pr-guard.py"
 case_ harness-write-tool        2 harness-write "a write to $HOME/.config/opencode/plugins/x.ts"
 case_ harness-read              0 - ""
 case_ harness-copy-out          0 - ""
+# Claude Code's settings in any directory (a project's settings.local.json can switch the
+# hooks off), and a tree written into ~/.claude or ~/.config/opencode or deleted below them.
+case_ harness-project-settings  2 harness-write "a redirection to /var/tmp/proj/.claude/settings.local.json"
+case_ harness-user-settings-local 2 harness-write "cp ~/.claude/settings.local.json"
+case_ harness-parent-cp         2 harness-write "cp ~/.claude/"
+case_ harness-parent-tar        2 harness-write "tar ~/.config/opencode"
+case_ harness-find-delete       2 harness-write "find ~/.claude"
+case_ harness-claude-md         0 - ""
 
 echo "--- a change review is recorded by the changes-review agent that ran it"
 ask_ review-main-session        review-self "gate.sh --review from the main session"
@@ -2394,6 +2419,7 @@ case_ cred-mcp-api-key           2 credential-read "cat reads ~/.config/mcp-bugz
 # The opencode server's password: whoever reads it answers that server's prompts.
 case_ cred-opencode-service      2 credential-read "cat reads ~/.local/state/opencode/service.json"
 case_ cred-opencode-xdg          2 credential-read "opencode/service.json"
+case_ cred-opencode-service-version 2 credential-read "cat reads ~/.local/state/opencode/service-2.2.7.json"
 case_ cred-redirect              2 credential-read "a redirection reads ~/.netrc"
 case_ cred-subst-redirect        2 credential-read "a redirection reads ~/.netrc"
 case_ cred-bash-c                2 credential-read "head reads ~/.git-credentials"

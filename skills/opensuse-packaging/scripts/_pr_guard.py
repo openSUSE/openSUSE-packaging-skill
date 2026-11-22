@@ -456,15 +456,24 @@ WRAPPERS = {  # each with the options that take a value
     "--apparmor-profile --landlock-access --landlock-rule",
 }
 # Wrappers that take an operand before the command they run (flock's lock file,
-# taskset's mask, chrt's priority), or run shell text (flock -c, script -c), each
-# with the options that take a value.
+# taskset's mask, chrt's priority), or run shell text (flock -c), each with the
+# options that take a value.
 OPERAND_WRAPPERS = {
     "flock": "-w --wait --timeout -E --conflict-exit-code -c --command",
     "taskset": "",
     "chrt": "-T --sched-runtime -P --sched-period -D --sched-deadline",
-    "script": "-c --command -E --echo -I --log-in -O --log-out -B --log-io -T "
-    "--log-timing -m --logging-format -o --output-limit",
 }
+# util-linux script's long options, those that take a value, and the short
+# letters that do.
+SCRIPT_LONG = ("--append", "--command", "--echo", "--return", "--flush", "--force")
+SCRIPT_LONG += ("--log-in", "--log-out", "--log-io", "--log-timing", "--quiet")
+SCRIPT_LONG += ("--logging-format", "--output-limit", "--timing", "--version", "--help")
+SCRIPT_VALUED = {"--echo", "--log-in", "--log-out", "--log-io", "--log-timing"}
+SCRIPT_VALUED |= {"--logging-format", "--output-limit"}
+SCRIPT_SHORT_VALUED = "EIOBTmo"
+# Every word unwrap() may take for a wrapper.
+WRAPPER_NAMES = {"rtk", "env", "uv", "timeout", "watch", "parallel", "script"}
+WRAPPER_NAMES |= set(WRAPPERS) | set(OPERAND_WRAPPERS)
 # Per interpreter, the letters of a short-option cluster: code = inline program
 # (attached to the cluster, or the next word), module = runs no file, noexec =
 # runs nothing, stdin = program on stdin, valued = takes the rest of the cluster
@@ -2226,7 +2235,6 @@ def accept_eligible(rid, ctx):
 INCOMING_STAMPS = os.path.join("~", ".local", "state", "opensuse-packaging", "incoming")
 STAMP_KEYS = ("v", "kind", "id", "creator", "verdict", "key", "recorded", "scan")
 STAMP_KEYS += ("build", "findings", "comment_sha256")
-HEX12 = Rx(r"[0-9a-f]{12}")
 HEX32 = Rx(r"[0-9a-f]{32}")
 HEX40 = Rx(r"[0-9a-f]{40}")
 HEX64 = Rx(r"[0-9a-f]{64}")
@@ -2390,7 +2398,7 @@ def load_stamp(path, kind):
         or not (OBS_ID if kind == "obs" else GIT_OBS_ID).fullmatch(sid),
         not isinstance(creator, str) or not GIT_NAME.fullmatch(creator),
         st["verdict"] not in ("PASS", "FIXABLE", "BLOCK"),
-        not isinstance(st["key"], str) or not HEX12.fullmatch(st["key"]),
+        not isinstance(st["key"], str) or not HEX64.fullmatch(st["key"]),
         not isinstance(st["recorded"], str) or not RECORDED.fullmatch(st["recorded"]),
         not isinstance(sha, str) or sha and not HEX64.fullmatch(sha),
         not isinstance(st["findings"], list),
@@ -2402,14 +2410,23 @@ def load_stamp(path, kind):
 
 
 def incoming_stamp(kind, item):
-    """load_stamp() of the review of item (obs: a request id; gitea:
-    owner/repo#N, its file owner_repo_N), matched by the stamp's id."""
-    stem = item if kind == "obs" else re.sub(r"[/#]", "_", item)
+    """load_stamp() of the review of item (obs: a request id, its file
+    <id>.json; gitea: owner/repo#N, its file <owner>_<repo>_<N>.json, owner
+    and repo lowercased with % written %25 and _ written %5F), matched by the
+    stamp's id (a Gitea owner and repository in any case)."""
+    stem = item
+    if kind == "gitea":
+        o, r, n = GIT_OBS_ID.fullmatch(item).groups()
+        stem = "_".join(
+            x.lower().replace("%", "%25").replace("_", "%5F") for x in (o, r)
+        )
+        stem += f"_{n}"
     path = os.path.join(os.path.expanduser(INCOMING_STAMPS), kind, stem + ".json")
     st, why = load_stamp(path, kind)
-    if st is not None and st["id"] != item:
-        return None, "its review record is of another item"
-    return st, why
+    if st is None:
+        return st, why
+    same = st["id"].lower() == item.lower() if kind == "gitea" else st["id"] == item
+    return (st, "") if same else (None, "its review record is of another item")
 
 
 def field(value, *keys):
@@ -2432,7 +2449,7 @@ def review_facts(st, nobuild):
         else ""
     )
     return (
-        f"review {st['verdict']} (key {st['key']}, recorded {st['recorded']}, "
+        f"review {st['verdict']} (key {st['key'][:12]}, recorded {st['recorded']}, "
         f"{found} finding{'' if found == 1 else 's'}); {build}{hold}"
     )
 
@@ -5373,9 +5390,11 @@ def assign(word, lword, ctx):
     return k
 
 
-def unwrap(argv):
+def unwrap(argv, cwd=None):
     """Strip keywords, assignments and command wrappers: (argv, shell string or
-    None, environment changes, the directory env -C moves to)."""
+    None, environment changes, the directory env -C moves to). A word named
+    like a wrapper is one only as a bare name or a path to an ELF binary (cwd
+    places a relative one): any other is a script, read as such."""
     changes, chdir, i, n = [], None, 0, len(argv)
 
     def skip(j, valued):
@@ -5396,6 +5415,10 @@ def unwrap(argv):
         elif ASSIGN.match(w):
             changes.append(w.split("=", 1)[0].rstrip("+"))
             i += 1
+        elif "/" in w and base in WRAPPER_NAMES and not binary(w, cwd):
+            break
+        elif base == "script":  # util-linux permutes its options: -c anywhere
+            return [], script_command(argv[i + 1 :]), changes, chdir
         elif base == "rtk":
             i = skip(i + 1, ())
             if i < n and argv[i] == "run":
@@ -5470,11 +5493,14 @@ def unwrap(argv):
                 )
                 j += 2 if take else 1
             code = [v for k, v in opts if k.split("=")[0] in ("-c", "--command")]
-            if code and base in ("flock", "script"):
+            if code and base == "flock":
                 return [], code[-1], changes, chdir
-            if base == "script" or {k.split("=")[0] for k, _ in opts} & {"-p", "--pid"}:
+            if {k.split("=")[0] for k, _ in opts} & {"-p", "--pid"}:
                 return [], None, changes, chdir  # no command of its own runs
-            i = j + 1  # past the lock file, mask or priority
+            # past the lock file or mask, and chrt's priority unless a policy
+            # option stands without one
+            numeric = re.fullmatch(r"\d+", argv[j] if j < n else "")
+            i = j + (base != "chrt" or bool(numeric))
             if base == "flock" and argv[i : i + 1] in (["-c"], ["--command"]):
                 return [], " ".join(argv[i + 1 : i + 2]), changes, chdir
         elif base in WRAPPERS:
@@ -5484,6 +5510,54 @@ def unwrap(argv):
         else:
             break
     return argv[i:], None, changes, chdir
+
+
+def binary(word, cwd=None):
+    """Whether a command word is a program rather than a script: a bare name,
+    or a path (placed in cwd when relative) whose target is an ELF file."""
+    if "/" not in word:
+        return True
+    p = os.path.expanduser(word)
+    if re.search(r"[$`*?\[]", p) or not os.path.isabs(p) and not isinstance(cwd, str):
+        return False
+    real = os.path.realpath(os.path.join(cwd or "/", p))
+    try:
+        if not regular(real):
+            return False
+        with open(real, "rb") as fh:
+            return fh.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+def script_command(args):
+    """The shell text util-linux script runs, wherever its -c stands: a
+    cluster ending in c (-qc CMD), -cCMD, --command and any prefix of it; None
+    when it runs no command of its own (an interactive shell)."""
+    cmd, i = None, 0
+    while i < len(args):
+        a, i = args[i], i + 1
+        if a == "--":
+            break
+        if a[:2] == "--":
+            k, eq, v = long_prefix(a, SCRIPT_LONG).partition("=")
+            if k == "--command":
+                cmd, i = (v, i) if eq else ((args[i : i + 1] or [""])[0], i + 1)
+            elif k in SCRIPT_VALUED and not eq:
+                i += 1
+        elif a[:1] == "-" and len(a) > 1:
+            for j, ch in enumerate(a[1:], 2):
+                if ch == "c":
+                    cmd, i = (
+                        (a[j:], i) if a[j:] else ((args[i : i + 1] or [""])[0], i + 1)
+                    )
+                    break
+                if ch in SCRIPT_SHORT_VALUED:
+                    i += 0 if a[j:] else 1
+                    break
+                if ch == "t":  # -t[FILE]: its value attached, if any
+                    break
+    return cmd
 
 
 def note_env(run, ctx):
@@ -6443,22 +6517,39 @@ def reader(name, run):
 # The harness's own files: the installed guard, Claude Code's settings and the
 # opencode plugins, below the home directory; the user changes them by hand.
 HARNESS = (".claude/hooks", ".claude/settings.json", ".config/opencode/plugins")
-HARNESS_TEXT = Rx(r"\.claude/+(?:hooks|settings\.json)|opencode/+plugins(?![\w.-])")
+# The directories that hold them: a tree written into one lands among them.
+HARNESS_PARENTS = (".claude", ".config/opencode")
+# Claude Code's settings in any directory: a project's settings.local.json with
+# "disableAllHooks" switches the guard off.
+CLAUDE_SETTINGS = Rx(r"/\.claude/+settings(?:\.local)?\.json$")
+HARNESS_TEXT = Rx(
+    r"\.claude/+(?:hooks|settings(?:\.local)?\.json)|opencode/+plugins(?![\w.-])"
+)
 # Commands that change the files they name in place.
 HARNESS_WRITERS = {"sed", "perl", "chmod", "chown", "chgrp", "touch", "truncate"}
 HARNESS_WRITERS |= {"shred", "unlink", "rmdir", "setfacl", "chattr", "patch"}
 
 
-def in_harness(path, parents=False):
-    """Whether a placed path lies in the harness's files, as written or through
-    its links; parents: or is a directory above them."""
-    roots = {
-        os.path.normpath(q)
-        for h in homes()
-        for r in HARNESS
-        for q in (os.path.join(h, r), os.path.realpath(os.path.join(h, r)))
-    }
+def in_harness(path, parents=False, into=False, under=False):
+    """Whether a placed path lies in the harness's files or is a .claude
+    settings file anywhere, as written or through its links; parents: or is a
+    directory above them, a .claude directory too; into: or is ~/.claude or
+    ~/.config/opencode itself, which a tree lands in; under: or lies there."""
+
+    def placed(rels):
+        return {
+            os.path.normpath(q)
+            for h in homes()
+            for r in rels
+            for q in (os.path.join(h, r), os.path.realpath(os.path.join(h, r)))
+        }
+
+    roots, tops = placed(HARNESS), placed(HARNESS_PARENTS)
     for p in {os.path.normpath(path), os.path.realpath(path)}:
+        if CLAUDE_SETTINGS.search(p) or parents and p.endswith("/.claude"):
+            return True
+        if into and p in tops or under and any(within(p, t) for t in tops):
+            return True
         for root in roots:
             if p == root or p.startswith(root + "/"):
                 return True
@@ -6467,11 +6558,12 @@ def in_harness(path, parents=False):
     return False
 
 
-def harness_word(word, ctx, cwd, parents=False, unplaced=True):
+def harness_word(word, ctx, cwd, parents=False, unplaced=True, **where):
     """Whether a word a command writes to lands in the harness's files: placed
     in each directory of a loop, each brace alternative and an option's value
     after its = included; one only the shell can place counts (unplaced) when
-    the agent's command names those files."""
+    the agent's command names those files. where: in_harness()'s into and
+    under."""
     words = [word] + ([word.partition("=")[2]] if word[:1] == "-" else [])
     for w in filter(None, words):
         for alt in braces(w) or [w]:
@@ -6483,22 +6575,36 @@ def harness_word(word, ctx, cwd, parents=False, unplaced=True):
                     and HARNESS_TEXT.search(flat(ctx.command or ""))
                 ):
                     return True
-                if any(in_harness(p, parents) for p in paths or ()):
+                if any(in_harness(p, parents, **where) for p in paths or ()):
                     return True
     return False
 
 
 def harness_touch(name, run, ctx, cwd):
     """The word a command writes, moves or deletes the harness's files by, or
-    None: the targets of cp, mv, install, mkdir, rm, tar, tee, ln, dd, sort -o,
-    rsync and git (of rm and mv, a directory above them too), and the words of
-    a command that changes files in place (sed -i, chmod, touch ...)."""
+    None: the targets of cp, mv, install, mkdir, rm, tar, tee, ln, dd, sort -o
+    and rsync (of rm and mv, a directory above them too; ~/.claude or
+    ~/.config/opencode itself, which a tree lands in) and git, the start of a
+    find that deletes or runs a command at or below those two, and the words
+    of a command that changes files in place (sed -i, chmod, touch ...)."""
     if reads_only(name, run, ctx, cwd) or name in LOOKERS:
         return None
+    if name == "find":
+        args, starts = run[1:], []
+        while args and (args[0] in ("-H", "-L", "-P") or args[0][:2] == "-O"):
+            args = args[1:]
+        for a in args[2:] if args[:1] == ["-D"] else args:
+            if a[:1] in ("-", "(", "!"):
+                break
+            starts.append(a)
+        starts = starts or ["."]
+        return next((w for w in starts if harness_word(w, ctx, cwd, under=True)), None)
     words = git_paths(run) if name == "git" else write_words(name, run[1:])
     if words is not None:
-        parents = name in ("rm", "mv")
-        return next((w for w in words if harness_word(w, ctx, cwd, parents)), None)
+        parents, into = name in ("rm", "mv"), name != "git"
+        return next(
+            (w for w in words if harness_word(w, ctx, cwd, parents, into=into)), None
+        )
     if name in HARNESS_WRITERS:
         args = [a for a in run[1:] if a[:1] != "-"]
         return next(
@@ -6703,7 +6809,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         if depth == 0 and op.lstrip("0123456789") in ("<", "<>"):
             for w in braced([t], "a redirection"):
                 cred_word(w, "a redirection", False, ctx, cwd)
-    run, shell, env, chdir = unwrap(argv)
+    run, shell, env, chdir = unwrap(argv, cwd)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.
@@ -7122,10 +7228,10 @@ def lit_output(argv, redirs, out, lit):
 # Credential files, as a normalised path (the file, or anything below the
 # directory): tea (git-obs reads it too), osc, gh, netrc, git's two stores, osc's
 # cookie jar, an MCP server's key, an SSH private key (id_*, not its .pub), the
-# opencode server's password (service.json).
+# opencode server's password (service.json, service-<version>.json).
 CRED_PATH = Rx(
     r"/\.config/(?:tea|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
-    r"|/\.local/state/opencode/service\.json$"
+    r"|/\.local/state/opencode/service[^/]*\.json$"
     r"|/\.(?:netrc|oscrc|git-credentials|config/git/credentials)$"
     r"|/\.config/mcp-[^/]*/api-key$"
     r"|/\.ssh/id_[^/.]*$"
@@ -7133,15 +7239,15 @@ CRED_PATH = Rx(
 # The same as a word spells them, for a path the guard cannot place.
 CRED_WORD = Rx(
     r"(?<![\w.\\-])\.(?:config\}?/+(?:tea|osc|gh|git/+credentials|mcp-[^/]*/+api-key)"
-    r"|local/+state/+osc|local/+state/+opencode/+service\.json|netrc|oscrc"
+    r"|local/+state/+osc|local/+state/+opencode/+service[\w.-]*\.json|netrc|oscrc"
     r"|git-credentials|ssh/+id_[\w-]+)(?![\w.-])"
     r"|\$\{?XDG_CONFIG_HOME\}?/+(?:tea|osc|gh|git/+credentials)(?![\w.-])"
-    r"|\$\{?XDG_STATE_HOME\}?/+opencode/+service\.json(?![\w.-])"
+    r"|\$\{?XDG_STATE_HOME\}?/+opencode/+service[\w.-]*\.json(?![\w.-])"
 )
 # The same below $HOME, for a recursive read of a directory above them.
 CRED_ROOTS = ("/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc")
 CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/git/credentials")
-CRED_ROOTS += ("/.config/mcp-", "/.ssh/id_", "/.local/state/opencode/service.json")
+CRED_ROOTS += ("/.config/mcp-", "/.ssh/id_", "/.local/state/opencode/service")
 # Names that are credential files wherever they sit.
 CRED_NAMES = {"oscrc", "cookiejar"}
 # Commands that look at a file without reading it; commands that read a tree.
