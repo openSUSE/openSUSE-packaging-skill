@@ -10389,5 +10389,399 @@
       "command": "tea comment 7 --login src.opensuse.org --repo AI/mistral-vibe '1. merge ok'"
     },
     "cwd": "@PLAIN@"
+  },
+  "accept-others-unreviewed": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-fixable": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391002"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-block": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391003"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-files-moved": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-target-moved": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391005"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-no-rev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391006"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-link-rev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391007"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-multi-action": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391008"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-options": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391009"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-home-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391010"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-api-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc api -X POST '/request/1391001?cmd=changestate&newstate=accepted'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-review-accept-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc review accept -m ok 1391001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-from-reviewer-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391001"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "changes-review"
+  },
+  "approve-git-obs-pass": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 5555555555555555555555555555555555555555 incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-no-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-head-moved": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 4444444444444444444444444444444444444444 incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-reviewer-flag": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --reviewer qa --commit 5555555555555555555555555555555555555555 incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-two-ids": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 5555555555555555555555555555555555555555 incorg/incgit#5 incorg/incgit#6"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-pool": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 5555555555555555555555555555555555555555 pool/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-not-devel-org": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 5555555555555555555555555555555555555555 other/incgit#5"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-own-pr": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 6666666666666666666666666666666666666666 incorg/incgit#6"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-reviewer-role": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 7777777777777777777777777777777777777777 incorg/increv#7"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-tea-asks": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea pulls approve 5 --repo incorg/incgit"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-from-reviewer-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 5555555555555555555555555555555555555555 incorg/incgit#5"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "comment-foreign-stamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Thanks, the update looks good.' request 1391001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-foreign-unstamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Thanks.' request 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-foreign-other-text": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Looks fine.' request 1391001"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-foreign-stamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 5 --login src.opensuse.org --repo incorg/incgit 'Thanks, applied.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-foreign-other-text": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 5 --login src.opensuse.org --repo incorg/incgit 'Thanks!'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-from-reviewer-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c 'Thanks, the update looks good.' request 1391001"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "forward-fixable-pending": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:inc incheld openSUSE:Factory -m 'Update incheld to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-after-followup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:inc incdone openSUSE:Factory -m 'Update incdone to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-fixable-pending-git": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:incgit incgit openSUSE:Factory -m 'Update incgit to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "incoming-record-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/incoming-review.sh --record 1391001 /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "incoming-record-agent": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/incoming-review.sh --record 1391001 /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "incoming-record-copy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/irv-copy --record 1391001 /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "incoming-record-real": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/inc-suite/tests/record-real.sh"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "osc-update-build"
+  },
+  "incoming-record-test-copy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash @WORK@/inc-suite/tests/record-suite.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "incoming-record-unread": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/incoming-review.sh \"$(cat @WORK@/inc-suite/tests/fixtures/record-flag)\" 1391001 /var/tmp/x-review/verdict.txt"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-rpmspec": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmspec -P /var/tmp/x-review/incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpmspec-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmspec -P /var/tmp/x-review/incpass.spec"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-rpm-specfile": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpm -q --specfile incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpmbuild": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmbuild -bp incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-quilt": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "quilt setup incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc build openSUSE_Tumbleweed aarch64"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-build-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc build openSUSE_Tumbleweed aarch64"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-osc-service": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc service runall"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-gate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/gate.sh ."
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-target-gate": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/target-gate.sh ."
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-reads": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rpmspec-bare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rpmspec -P incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a77e",
+    "agent_type": "incoming-review"
   }
 }

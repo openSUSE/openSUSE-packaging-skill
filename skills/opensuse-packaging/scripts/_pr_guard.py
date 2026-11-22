@@ -611,6 +611,32 @@ MESSAGES = {
     "scm-commit": "{0}: a scmsync checkout, whose sources OBS syncs from git. A "
     "change goes by a pull request to that repository, never osc commit; its "
     "gate.sh stamp still lets the forward (osc sr) through.",
+    "incoming-self": "{0}: only the incoming-review agent records its review of a "
+    "contributor's submission ({s}/incoming-review.sh --record), and a verdict "
+    "another session wrote is no review. Start that agent, or stop and report.",
+    "incoming-reviewer": "{0}: the incoming-review and changes-review agents review "
+    "and record; accepting, approving, commenting and declining are their caller's "
+    "steps, on the user's go. Report the verdict instead.",
+    "incoming-parse": "{0}: the incoming review reads a contributor's submission as "
+    "text, and a spec's macros, a build or a source service run the contributor's "
+    "code. gate.sh parses it in its sandbox once the user said go; record the "
+    "review from the text alone.",
+    "incoming-accept": "{0}. A contributor's request is accepted only once "
+    "{s}/incoming-review.sh recorded PASS or FIXABLE for exactly what it holds now, "
+    "one plain submit into Factory's devel project of a package the user maintains "
+    "and may move unattended, and then only on the user's go: run the incoming "
+    "review first, or leave the request to the user.",
+    "incoming-approve": "{0}. A contributor's devel PR is approved only by git-obs "
+    "pr review approve --commit SHA OWNER/REPO#N, once {s}/incoming-review.sh "
+    "recorded PASS or FIXABLE at that head, in the devel organisation of a package "
+    "the user maintains and may move unattended, and then only on the user's go. "
+    "The bot merges it; agents never merge.",
+    "incoming-comment": "{0}: the comment its incoming review recorded was posted "
+    "already. One review, one comment: a new one needs a new review record or the "
+    "user's own post.",
+    "incoming-hold": "{0}: an accepted FIXABLE review holds the Factory forward "
+    "until the user's follow-up is in devel, and devel still holds exactly what "
+    "was accepted. Commit the fix to devel, gate it, then forward.",
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
@@ -640,6 +666,10 @@ ASKS = {
     "it (agents/changes-review.md runs {s}/gate.sh --review itself), and a PASS the "
     "author wrote is no review. Without such an agent, stop at REVIEW-PENDING and "
     "leave this command to the user.",
+    "incoming-accept": "{0}. A contributor's request: accept it only on the user's "
+    "go, given with this review and these facts in front of them.",
+    "incoming-approve": "{0}. A contributor's PR: approve it only on the user's go, "
+    "given with this review and these facts in front of them; the bot then merges it.",
 }
 # The read a tea comment with no subcommand and no body may have meant.
 COMMENT_READ = (
@@ -751,6 +781,7 @@ class Ctx:
         self.state_named = False  # the call's text names the state directory
         self.unread = []  # the skill scripts being read that run unread as merged
         self.made = set()  # what the call's writers made, which may lead anywhere
+        self.reading = []  # the scripts being read, innermost last
 
 
 def git(cwd, gargs, *args):
@@ -1907,11 +1938,10 @@ def accept_forward(run, ctx, cwd):
     """An accept, approve or decline of a request (osc request, rq or review,
     or the API's changestate), or a forward of a devel package to Factory,
     that autoforward-gate.sh would not call ELIGIBLE: a reviewer set, a
-    package someone else (or a group) maintains. Who filed the request does not
-    matter to an accept; the skill still wants the user's go for someone else's
-    request (core directive 10), and the guard leaves that go to the agent. A
-    decline is always the user's call, and so is closing, reopening or forcing
-    a request someone else filed (others_request())."""
+    package someone else (or a group) maintains. A request someone else filed
+    is accepted only through its incoming review and the user's go
+    (foreign_accept()). A decline is always the user's call, and so is closing,
+    reopening or forcing a request someone else filed (others_request())."""
     for one in osc_runs(run, ctx, cwd):
         if one is None:
             ask(
@@ -2007,12 +2037,14 @@ def request_verbs(sub, args, ctx, cwd):
             for rid in closed or [""]:
                 others_request(rid, what, ctx)
         if verb == "decline":
+            reviewer_acts(ctx, f"osc {sub} decline")
             ask(
                 ctx,
                 "accept-forward",
                 f"osc {sub} decline: a decline is the user's call",
             )
         elif verb == "approvenew":
+            reviewer_acts(ctx, f"osc {sub} approvenew")
             ask(
                 ctx,
                 "accept-forward",
@@ -2020,8 +2052,8 @@ def request_verbs(sub, args, ctx, cwd):
             )
         elif verb in ("accept", "approve"):
             obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
-            for rid in ids or [""]:  # a word that is no id asks
-                accept_one(rid, ctx)
+            for rid in ids or [""]:  # a word that is no id is refused
+                accept_one(rid, ctx, forced[0] if forced else "")
 
 
 def api_changestate(args, ctx, cwd):
@@ -2045,19 +2077,21 @@ def api_changestate(args, ctx, cwd):
             continue
         params = "&".join([m.group(2) or "", *bodies]).replace(";", "&")
         q = urllib.parse.parse_qs(params, keep_blank_values=True)
+        forced = "force" if "force" in q else ""
         if "approve" in q.get("cmd", []):  # staged, then accepted by OBS
-            accept_one(m.group(1), ctx)
+            accept_one(m.group(1), ctx, forced)
         if not set(q.get("cmd", [])) & {"changestate", "changereviewstate"}:
             continue
         states = set(q.get("newstate", []))
         if "declined" in states:
+            reviewer_acts(ctx, "a decline through osc api")
             ask(
                 ctx,
                 "accept-forward",
                 "a decline through osc api: a decline is the user's call",
             )
         if "accepted" in states:
-            accept_one(m.group(1), ctx)
+            accept_one(m.group(1), ctx, forced)
         closing = sorted(states & {"revoked", "superseded", "new", "review", "deleted"})
         if "force" in q and "accepted" in states:
             closing.append("accepted with force")
@@ -2080,6 +2114,7 @@ def forwards(run, ctx, cwd):
             if not src or not pkg or not PKG_NAME.fullmatch(pkg):
                 ask(ctx, "accept-forward", f"cannot tell what osc {sub} forwards")
                 continue
+            fixable_pending(src, pkg, ctx)
             ok, why = eligible(src, pkg, ctx)
             if not ok:
                 ask(ctx, "accept-forward", f"osc {sub} {src}/{pkg} to Factory: {why}")
@@ -2095,17 +2130,28 @@ def sources(words, ctx, cwd):
     return [(s, p) for s in srcs for p in pkgs]
 
 
-def accept_one(rid, ctx):
-    """accept_forward's rules on one request id."""
+def accept_one(rid, ctx, forced=""):
+    """accept_forward's rules on one request id (forced: the option or
+    parameter that forces it). One someone else filed goes to
+    foreign_accept(); one whose creator cannot be told is refused, since it
+    may be someone else's."""
+    reviewer_acts(ctx, f"accepting request {rid}")
     if not rid.isdigit():
-        ask(ctx, "accept-forward", "cannot tell which request osc request accept takes")
-        return
+        block(
+            "incoming-accept",
+            "cannot tell which request osc request accept takes, nor who filed it",
+        )
     ok, text = obs_get(f"/request/{rid}", ctx)
     req = xml_root(text) if ok and text else None
-    if req is None:
-        ask(ctx, "accept-forward", f"cannot read request {rid}")
+    if req is None or req.tag != "request":
+        block("incoming-accept", f"cannot read request {rid}, nor who filed it")
+    user = obs_user(ctx)
+    if not user:
+        block("incoming-accept", f"request {rid}: the account is unknown (osc whois)")
+    if req.get("creator") != user:
+        foreign_accept(rid, req, forced, ctx)
         return
-    if req.tag != "request" or not req.findall("action"):
+    if not req.findall("action"):
         ask(ctx, "accept-forward", f"request {rid} has no action")
         return
     for a in req.findall("action"):
@@ -2123,6 +2169,427 @@ def accept_one(rid, ctx):
             ask(ctx, "accept-forward", f"accepting request {rid}: {why}")
 
 
+# Contributors' submissions. incoming-review.sh records its review of someone
+# else's request or devel PR as a stamp; accepting, approving or commenting on
+# one goes through that stamp, and the incoming-review agent only reads.
+INCOMING_STAMPS = os.path.join("~", ".local", "state", "opensuse-packaging", "incoming")
+STAMP_KEYS = ("v", "kind", "id", "creator", "verdict", "key", "recorded", "scan")
+STAMP_KEYS += ("build", "findings", "comment_sha256")
+HEX12 = Rx(r"[0-9a-f]{12}")
+HEX32 = Rx(r"[0-9a-f]{32}")
+HEX40 = Rx(r"[0-9a-f]{40}")
+HEX64 = Rx(r"[0-9a-f]{64}")
+OBS_REV = Rx(r"\d+|[0-9a-f]{32}")
+OBS_ID = Rx(r"\d{1,10}")
+# A recorded time as the recorder writes it, printed in an ask.
+RECORDED = Rx(r"[0-9T:.+Z-]{10,40}")
+# What parses or runs a submission's code: a spec's macros, a build, a source
+# service, and the skill's scripts that do one of these.
+PARSERS = {"rpmspec", "rpmbuild"}
+RPM_PARSES = Rx(
+    r"--(?:specfile|eval|load|macros|rcfile)\b.*|-[A-Za-z]*E.*|.*\.spec\b.*"
+)
+OSC_BUILDS = {"build", "chroot", "shell", "wipe"}
+PARSER_SCRIPTS = ("gate.sh", "target-gate.sh", "quilt-prep.sh")
+PARSER_SCRIPTS += ("quilt-test-series.sh", "scm-snapshot.sh")
+
+
+def reviewer_acts(ctx, what):
+    """Refuse an accept, approval, comment or decline from an agent that
+    reviews and records: incoming-review or changes-review."""
+    if ctx.agent in (INCOMING_AGENT, REVIEWER):
+        block("incoming-self", f"{what} from agent {ctx.agent}", "incoming-reviewer")
+
+
+def reviewer_runs(name, run, ctx, cwd):
+    """Refuse, in the incoming-review agent, what parses or runs a submission:
+    rpmspec, rpmbuild, rpm with a spec (or --eval, --load), quilt setup, osc
+    build (chroot, shell, wipe), osc service but wait, and the skill's scripts
+    that do one of these; a command or osc subcommand only the shell knows too.
+    Its review reads the submission as text; gate.sh parses it in its sandbox
+    once the user said go."""
+    if ctx.agent != INCOMING_AGENT:
+        return
+    names = substitute(run[0], ctx, cwd) if VARIABLE.search(run[0]) else [run[0]]
+    names = {os.path.basename(n) for n in names or ()}
+    words = [a for a in run[1:] if a[:1] != "-"]
+    what = "a command only the shell knows" if not names else None
+    if names & PARSERS:
+        what = sorted(names & PARSERS)[0]
+    elif "rpm" in names:
+        args = [w for a in run[1:] for w in substitute(a, ctx, cwd) or [None]]
+        if any(a is None or RPM_PARSES.fullmatch(a) for a in args):
+            what = "rpm with a spec, --eval or --load"
+    elif "quilt" in names and "setup" in words:
+        what = "quilt setup"
+    elif "osc" in names:
+        for one in osc_runs(run, ctx, cwd):
+            sub, args = osc_sub(one) if one else (None, [])
+            pos = [a for a in args if a[:1] != "-"]
+            if one is None:
+                what = "an osc subcommand only the shell knows"
+            elif sub in OSC_BUILDS or sub == "service" and pos[:1] != ["wait"]:
+                what = f"osc {sub}" + (f" {pos[0]}" if sub == "service" and pos else "")
+    word = words[0] if (names & SHELLS or names & {"source", "."}) and words else run[0]
+    for script in PARSER_SCRIPTS if not what else ():
+        rx = Rx(rf"(?<![\w.-]){re.escape(script)}\b")
+        if runs_script(word, ctx, cwd, script, rx):
+            what = script
+    if what:
+        block("incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-parse")
+
+
+def load_stamp(path, kind):
+    """(stamp, "") for a review record incoming-review.sh wrote, (None, why)
+    when the file is missing, unreadable, over 1 MiB, or not schema v1 with
+    each field the guard reads: v, kind, id, creator, verdict, key, recorded,
+    scan, build, findings, comment_sha256, and the kind's own part."""
+    import stat
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None, "no incoming review is recorded"
+    except OSError as e:
+        return None, f"its review record cannot be read ({e.strerror})"
+    if not stat.S_ISREG(info.st_mode) or info.st_size > 1 << 20:
+        return None, "its review record is no regular file of at most 1 MiB"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError, RecursionError) as e:
+        return None, f"its review record does not parse ({type(e).__name__})"
+    if not isinstance(st, dict) or type(st.get("v")) is not int or st["v"] != 1:
+        return None, "its review record is not schema v1"
+    missing = [k for k in (*STAMP_KEYS, kind) if k not in st]
+    if missing:
+        return None, f"its review record lacks {', '.join(missing)}"
+    sid, creator, sha = st["id"], st["creator"], st["comment_sha256"]
+    faults = [
+        st["kind"] != kind,
+        not isinstance(sid, str)
+        or not (OBS_ID if kind == "obs" else GIT_OBS_ID).fullmatch(sid),
+        not isinstance(creator, str) or not GIT_NAME.fullmatch(creator),
+        st["verdict"] not in ("PASS", "FIXABLE", "BLOCK"),
+        not isinstance(st["key"], str) or not HEX12.fullmatch(st["key"]),
+        not isinstance(st["recorded"], str) or not RECORDED.fullmatch(st["recorded"]),
+        not isinstance(sha, str) or sha and not HEX64.fullmatch(sha),
+        not isinstance(st["findings"], list),
+        not isinstance(st["build"], dict) or not isinstance(st[kind], dict),
+    ]
+    if any(faults):
+        return None, "its review record holds a malformed field"
+    return st, ""
+
+
+def incoming_stamp(kind, item):
+    """load_stamp() of the review of item (obs: a request id; gitea:
+    owner/repo#N, its file owner_repo_N), matched by the stamp's id."""
+    stem = item if kind == "obs" else re.sub(r"[/#]", "_", item)
+    path = os.path.join(os.path.expanduser(INCOMING_STAMPS), kind, stem + ".json")
+    st, why = load_stamp(path, kind)
+    if st is not None and st["id"] != item:
+        return None, "its review record is of another item"
+    return st, why
+
+
+def field(value, *keys):
+    """value[keys[0]][keys[1]]..., or None where one is missing."""
+    for k in keys:
+        value = value.get(k) if isinstance(value, dict) else None
+    return value
+
+
+def review_facts(st, nobuild):
+    """What an ask shows of a stamp: its verdict, key, time and findings."""
+    found = len(st["findings"])
+    built = field(st, "build", "green") is True
+    where = field(st, "build", "project")
+    named = isinstance(where, str) and re.fullmatch(r"[A-Za-z0-9][\w.:+-]*", where)
+    build = f"built green in {where}" if built and named else nobuild
+    hold = (
+        "; FIXABLE: the Factory forward then waits until your follow-up is in devel"
+        if st["verdict"] == "FIXABLE"
+        else ""
+    )
+    return (
+        f"review {st['verdict']} (key {st['key']}, recorded {st['recorded']}, "
+        f"{found} finding{'' if found == 1 else 's'}); {build}{hold}"
+    )
+
+
+def listing_srcmd5(path, ctx):
+    """(True, root, srcmd5) for an OBS directory listing, (True, None, "") for a
+    404, (False, None, why) for a failed lookup or one with no srcmd5."""
+    ok, text = obs_get(path, ctx)
+    if not ok:
+        return False, None, text
+    if text is None:
+        return True, None, ""
+    root = xml_root(text)
+    srcmd5 = root.get("srcmd5") if root is not None and root.tag == "directory" else ""
+    if not srcmd5 or not HEX32.fullmatch(srcmd5):
+        return False, None, f"{path} (no srcmd5)"
+    return True, root, srcmd5
+
+
+def foreign_accept(rid, req, forced, ctx):
+    """Someone else's request: its accept asks the user, with the review and
+    the facts checked again, only when all hold; anything else refuses. One
+    submit action, no option but sourceupdate, no force, a source revision (a
+    _link's a srcmd5), a target outside home: that this account maintains and
+    may move unattended and that is Factory's devel project of the package,
+    and incoming-review.sh's PASS or FIXABLE stamp of this request, by its
+    creator, whose source and target srcmd5 are still OBS's."""
+    creator = req.get("creator") or "no one named"
+    what = f"accepting request {rid} by {creator}"
+
+    def refuse(why):
+        block("incoming-accept", f"{what}: {why}")
+
+    if forced:
+        refuse(f"{forced} would skip its open reviews")
+    actions = req.findall("action")
+    if len(actions) != 1 or actions[0].get("type") != "submit":
+        refuse(f"it holds {len(actions)} actions, not one submit")
+    src, dst, opts = (actions[0].find(t) for t in ("source", "target", "options"))
+    sp, spkg = (src.get("project"), src.get("package")) if src is not None else ("", "")
+    rev = src.get("rev") if src is not None else None
+    tp = dst.get("project") if dst is not None else None
+    tpkg = (dst.get("package") if dst is not None else None) or spkg
+    if not sp or not tp or not all(p and PKG_NAME.fullmatch(p) for p in (spkg, tpkg)):
+        refuse("it names no source and target package")
+    extra = sorted({o.tag for o in opts} - {"sourceupdate"}) if opts is not None else []
+    if extra:
+        refuse(f"it sets {', '.join(extra)}")
+    if not rev or not OBS_REV.fullmatch(rev):
+        refuse("its source names no revision, so what it carries can still change")
+    if tp.startswith("home:"):
+        refuse(f"it targets {tp}, a home project")
+    spath, tpath = (
+        f"/source/{sp}/{spkg}?expand=1&rev={rev}",
+        f"/source/{tp}/{tpkg}?expand=1",
+    )
+    obs_batch(
+        [spath, tpath, f"/source/{tp}/{tpkg}/_meta", f"/source/{tp}/_meta"]
+        + [f"/source/openSUSE:Factory/{tpkg}/_meta"],
+        ctx,
+    )
+    for check in (maintains, eligible):
+        ok, why = check(tp, tpkg, ctx)
+        if not ok:
+            refuse(why)
+    devel = factory_devel(tpkg, ctx)
+    if devel != tp or (ctx.devel.get(("develpkg", tpkg)) or tpkg) != tpkg:
+        refuse(f"openSUSE:Factory develops {tpkg} in {devel or 'no project'}, not {tp}")
+    st, why = incoming_stamp("obs", rid)
+    if st is None:
+        refuse(f"{why}: review it first")
+    if st["verdict"] not in ("PASS", "FIXABLE"):
+        refuse(f"its review says {st['verdict']}")
+    act = field(st, "obs", "action")
+    seen = [field(act, *k) for k in (("type",), ("source", "project"))]
+    seen += [field(act, *k) for k in (("source", "package"), ("source", "rev"))]
+    seen += [field(act, "target", k) for k in ("project", "package")]
+    filed = [creator, 1, "submit", sp, spkg, rev, tp, tpkg]
+    if [st["creator"], field(st, "obs", "actions"), *seen] != filed:
+        refuse("its review is of another request than the one filed now")
+    ok, root, ssrc = listing_srcmd5(spath, ctx)
+    if not ok or root is None:
+        refuse(f"cannot read the source ({ssrc or spath})")
+    if root.find("linkinfo") is not None and not HEX32.fullmatch(rev):
+        refuse(f"its source is a _link and rev {rev} no srcmd5, so it can still move")
+    if ssrc != field(act, "source", "srcmd5"):
+        refuse("its source is not the one reviewed (srcmd5 moved)")
+    ok, _, tsrc = listing_srcmd5(tpath, ctx)
+    want = field(act, "target", "srcmd5")
+    if not ok or not isinstance(want, str) or tsrc != want:
+        refuse("the target is not as reviewed (srcmd5 moved or unread)")
+    facts = review_facts(st, "no green build recorded")
+    ask(
+        ctx,
+        "incoming-accept",
+        f"{what} into {tp}/{tpkg}: {facts}; checked again now: one submit of "
+        f"{sp}/{spkg} rev {rev}, source and target srcmd5 as reviewed, {tp} is "
+        "Factory's devel project, yours, no reviewer role",
+    )
+
+
+def git_obs_approve(rest, ctx, cwd):
+    """git-obs pr review approve: asks the user, with the review and the facts
+    checked again, only when all hold; anything else refuses. One literal
+    owner/repo#N, no --reviewer, --commit SHA of its head; an open PR someone
+    else opened, outside pool, in the organisation whose project git Factory's
+    devel project of the package syncs from; maintains() and eligible() pass;
+    incoming-review.sh's PASS or FIXABLE stamp of this PR at that head."""
+    reviewer_acts(ctx, "git-obs pr review approve")
+    opts, pos = split_args(rest, None, "m", GIT_OBS_PR_LONG[:3], GIT_OBS_PR_LONG)
+    pos = unlit(pos)[3:]
+
+    def one(w):
+        vals = spellings(w, ctx, cwd, False)
+        return vals[0] if len(vals) == 1 else ""
+
+    ids = [one(w) for w in pos]
+    shas = [one(v) for k, v in opts if k == "--commit"]
+    item = ids[0] if len(ids) == 1 else ""
+    what = f"approving {item or 'a PR'}"
+
+    def refuse(why):
+        block("incoming-approve", f"{what}: {why}")
+
+    m = GIT_OBS_ID.fullmatch(item)
+    if not m:
+        refuse("it names no one literal OWNER/REPO#N")
+    if any(k == "--reviewer" for k, _ in opts):
+        refuse("--reviewer approves for someone else")
+    if len(shas) != 1 or not HEX40.fullmatch(shas[0]):
+        refuse("it names no --commit SHA of the head reviewed")
+    owner, repo, n = m.groups()
+    if owner.lower() == "pool":
+        refuse("a pool PR is never an agent's to approve")
+    user = obs_user(ctx)
+    if not user:
+        refuse("the account is unknown (osc whois failed)")
+    ok, pr = gitea_get(f"repos/{owner}/{repo}/pulls/{n}", ctx)
+    full = field(pr, "base", "repo", "full_name")
+    if not ok or not isinstance(full, str) or full.lower() != f"{owner}/{repo}".lower():
+        refuse(f"cannot read the PR ({pr if not ok else 'no such PR'})")
+    author = field(pr, "user", "login")
+    if pr.get("state") != "open":
+        refuse("it is not open")
+    if author == user:
+        refuse("it is your own PR")
+    if field(pr, "head", "sha") != shas[0]:
+        refuse(f"its head is not {shas[0][:12]} any more")
+    devel = factory_devel(repo, ctx)
+    ok, text = obs_get(f"/source/{devel}/_meta", ctx) if devel else (True, None)
+    pmeta = xml_root(text) if ok and text else None
+    git = project_git(pmeta, text) if pmeta is not None else None
+    if not git or not git[0] or git[0].lower() != owner.lower():
+        refuse(f"{owner} is not the organisation {devel or 'no project'} syncs from")
+    for check in (maintains, eligible):
+        ok, why = check(devel, repo, ctx)
+        if not ok:
+            refuse(why)
+    st, why = incoming_stamp("gitea", f"{owner}/{repo}#{n}")
+    if st is None:
+        refuse(f"{why}: review it first")
+    if st["verdict"] not in ("PASS", "FIXABLE"):
+        refuse(f"its review says {st['verdict']}")
+    g = st["gitea"]
+    seen = [st["creator"], field(g, "head"), field(g, "number")]
+    if seen != [author, shas[0], int(n)]:
+        refuse("its review is of another head or author")
+    facts = review_facts(st, "no build of this head")
+    ask(
+        ctx,
+        "incoming-approve",
+        f"{what} by {author} at {shas[0][:12]}: {facts}; checked again now: the "
+        f"head as reviewed, {devel} syncs from {owner}, yours, no reviewer role",
+    )
+
+
+def stamped_comment(kind, item, creator, text):
+    """Why a comment on someone else's item needs the user's go; "" when text,
+    the one text it posts, has the sha256 its incoming review recorded."""
+    import hashlib
+
+    st, why = incoming_stamp(kind, item)
+    if st is None:
+        return f"{item} by {creator}: {why}"
+    if st["creator"] != creator:
+        return f"{item}: its review is of a submission by {st['creator']}"
+    got = hashlib.sha256(text.encode("utf-8")).hexdigest() if text is not None else ""
+    if not st["comment_sha256"] or got != st["comment_sha256"]:
+        return f"{item} by {creator}: not the comment its review recorded"
+    return ""
+
+
+def fixable_pending(prj, pkg, ctx):
+    """Refuse a forward of prj/pkg to Factory while an accepted FIXABLE review
+    holds it: devel's expanded files (but _link) still equal the stamp's
+    source files, or, for a devel PR, the tree of the commit OBS synced
+    (_scmsync.obsinfo) still equals the stamp's head files. A stamp file that
+    is not a valid record, or a lookup that fails, refuses too."""
+    import glob
+
+    key = ("hold", prj, pkg)
+    if key in ctx.devel:
+        return
+    ctx.devel[key] = True
+    what = f"forwarding {prj}/{pkg} to Factory"
+    held = {"obs": [], "gitea": []}
+    for kind in held:
+        top = os.path.join(os.path.expanduser(INCOMING_STAMPS), kind)
+        for path in sorted(glob.glob(os.path.join(glob.escape(top), "*.json"))):
+            st, why = load_stamp(path, kind)
+            if st is None:
+                block("incoming-hold", f"{what}: {os.path.basename(path)}: {why}")
+            if st["verdict"] == "FIXABLE":
+                held[kind].append(st)
+    obs = [
+        st
+        for st in held["obs"]
+        if [field(st, "obs", "action", "target", k) for k in ("project", "package")]
+        == [prj, pkg]
+    ]
+    if obs:
+        ok, text = obs_get(f"/source/{prj}/{pkg}?expand=1", ctx)
+        root = xml_root(text) if ok and text else None
+        if root is None:
+            block("incoming-hold", f"{what}: cannot read its files")
+        now = {e.get("name"): e.get("md5") for e in root.findall("entry")}
+        now.pop("_link", None)
+        for st in obs:
+            want = field(st, "obs", "action", "source", "files")
+            if not isinstance(want, dict) or now == {
+                k: v for k, v in want.items() if k != "_link"
+            }:
+                block("incoming-hold", f"{what}: request {st['id']} by {st['creator']}")
+    if held["gitea"]:
+        gitea_hold(prj, pkg, held["gitea"], what, ctx)
+
+
+def gitea_hold(prj, pkg, stamps, what, ctx):
+    """fixable_pending()'s check of FIXABLE devel PR reviews: those of the
+    repository the package's <scmsync> names hold while the tree of the commit
+    OBS synced equals their head's files. git_obs_approve() approves only a
+    repository named as the package, so no other review can hold it."""
+    if not any(str(field(st, "gitea", "repo")).lower() == pkg.lower() for st in stamps):
+        return
+    ok, text = obs_get(f"/source/{prj}/{pkg}/_meta", ctx)
+    meta = xml_root(text) if ok and text else None
+    if meta is None:
+        block("incoming-hold", f"{what}: cannot read its _meta")
+    m = PROJECT_GIT.fullmatch((meta.findtext("scmsync") or "").strip())
+    here = f"{m.group(1)}/{m.group(2)}".lower() if m else None
+    names = [(field(st, "gitea", "owner"), field(st, "gitea", "repo")) for st in stamps]
+    mine = [
+        st for st, n in zip(stamps, names) if here and f"{n[0]}/{n[1]}".lower() == here
+    ]
+    if not mine:
+        return
+    ok, info = obs_get(f"/source/{prj}/{pkg}/_scmsync.obsinfo", ctx)
+    commit = re.search(r"^commit: ([0-9a-f]{40})$", info or "", re.M) if ok else None
+    if not commit:
+        block("incoming-hold", f"{what}: cannot read the commit OBS synced")
+    path = f"repos/{m.group(1)}/{m.group(2)}/git/trees/{commit.group(1)}"
+    ok, tree = gitea_get(path + "?recursive=true&per_page=1000", ctx)
+    entries = field(tree, "tree")
+    if not ok or not isinstance(entries, list) or tree.get("truncated") is not False:
+        block("incoming-hold", f"{what}: cannot read the tree OBS synced")
+    files = {
+        e.get("path"): e.get("sha")
+        for e in entries
+        if isinstance(e, dict) and e.get("type") in ("blob", "commit")
+    }
+    for st in mine:
+        want = field(st, "gitea", "files")
+        if not isinstance(want, dict) or files == want:
+            block("incoming-hold", f"{what}: PR {st['id']} by {st['creator']}")
+
+
 # Where comments and reviews are posted: OBS's /comments/..., Gitea's
 # .../comments and .../reviews.
 COMMENT_API = Rx(r"/(?:comments?|reviews)(?=[/?#\s\"']|$)")
@@ -2132,10 +2599,11 @@ COMMENT_API = Rx(r"/(?:comments?|reviews)(?=[/?#\s\"']|$)")
 REQUEST_COMMENT = Rx(r"^/*comments/request/(\d+)/*(?:[?#]|$)")
 
 
-def maintained_requests(ids, ctx):
+def maintained_requests(ids, ctx, comment=None):
     """Why a comment on these requests needs the user's go; empty when each id
     names a request this account filed (a reply to its reviewers), or one
-    whose every action targets a package it maintains (maintains())."""
+    whose every action targets a package it maintains (maintains()) and whose
+    incoming review recorded this comment (stamped_comment())."""
     if not ids or not all(r.isdigit() for r in ids):
         return "cannot tell which request it comments on"
     obs_batch([f"/request/{r}" for r in ids], ctx)
@@ -2161,6 +2629,9 @@ def maintained_requests(ids, ctx):
             ok, why = maintains(prj, pkg, ctx)
             if not ok:
                 return f"request {rid}: {why}"
+        why = stamped_comment("obs", rid, req.get("creator") or "no one named", comment)
+        if why:
+            return f"request {why}"
     return ""
 
 
@@ -2217,11 +2688,12 @@ def gitea_get(path, ctx, raw=False):
     return got
 
 
-def tea_item(owner, repo, n, ctx):
+def tea_item(owner, repo, n, ctx, text=None):
     """Why a comment on src.opensuse.org issue or PR owner/repo#n needs the
-    user's go; empty when this account opened it, or maintains the repository:
-    in its project's _maintainership.json, or for pool in Factory's devel
-    project of the package (maintains())."""
+    user's go; empty when this account opened it, or maintains the repository
+    (its project's _maintainership.json) and the item's incoming review
+    recorded this comment, text (stamped_comment()). Someone else's on pool
+    always asks, after the maintainer check of Factory's devel project."""
     user = obs_user(ctx)
     if not user:
         return "the account is unknown (osc whois failed)"
@@ -2236,22 +2708,29 @@ def tea_item(owner, repo, n, ctx):
         return f"cannot tell which repository {owner}/{repo}#{n} is in"
     owner, repo = full.split("/")
     poster = item.get("user")
-    if isinstance(poster, dict) and poster.get("login") == user:
+    login = poster.get("login") if isinstance(poster, dict) else None
+    if login == user:
         return ""
     if owner == "pool":
-        ok, text = obs_get(f"/source/openSUSE:Factory/{repo}/_meta", ctx)
-        root = xml_root(text) if ok and text else None
+        ok, meta = obs_get(f"/source/openSUSE:Factory/{repo}/_meta", ctx)
+        root = xml_root(meta) if ok and meta else None
         dev = root.find("devel") if root is not None else None
         if dev is None or not dev.get("project"):
             return f"pool/{repo} has no Factory devel project to read"
         ok, why = maintains(dev.get("project"), dev.get("package") or repo, ctx)
-        return "" if ok else f"pool/{repo}: {why}"
+        if not ok:
+            return f"pool/{repo}: {why}"
+        return f"pool/{repo}#{n} was opened by {login or 'no one named'}"
     ok, maints = git_maintainers(owner, "_ObsPrj", repo, ctx)
     if not ok:
         return maints
-    if user in maints:
-        return ""
-    return f"{owner}/{repo} is maintained by {', '.join(sorted(maints)) or 'nobody'}"
+    if user not in maints:
+        return (
+            f"{owner}/{repo} is maintained by {', '.join(sorted(maints)) or 'nobody'}"
+        )
+    return stamped_comment(
+        "gitea", f"{owner}/{repo}#{n}", login or "no one named", text
+    )
 
 
 # A login or reviewer as the project git may name one ("@" a group): nothing
@@ -2424,13 +2903,14 @@ def lone_tea(text):
     )
 
 
-def tea_comment(args, ctx, cwd, api=False):
+def tea_comment(args, ctx, cwd, api=False, text=None):
     """Why a tea comment, or a tea api POST to an issue's comments, needs the
     user's go; empty when the item passes tea_item(). Only the plain form is
     judged -- --login src.opensuse.org and a --repo owner/name that is no local
     path (tea reads one as a checkout), or the API's literal endpoint -- since
     tea's own remote and login choice is not the guard's to replay. The call
-    must be the tea command alone (lone_tea())."""
+    must be the tea command alone (lone_tea()). text: the comment it posts,
+    when the guard reads it."""
 
     def one(w):
         vals = spellings(w, ctx, cwd, False)
@@ -2478,14 +2958,15 @@ def tea_comment(args, ctx, cwd, api=False):
         os.path.lexists(os.path.join(d, m.group(0))) for d in here
     ):
         return f"--repo {m.group(0)} may be a local checkout"
-    return tea_item(m.group(1), m.group(2), n, ctx)
+    return tea_item(m.group(1), m.group(2), n, ctx, text)
 
 
-def comment_rules(name, run, ctx, cwd):
+def comment_rules(name, run, ctx, cwd, lit=None):
     """A command that posts a comment or a review on OBS or src.opensuse.org:
     osc comment create, tea comment, git-obs pr comment|review, a close with a
     comment (git-obs -m), and an API write to comments or reviews. gh is not
-    judged: GitHub is outside the packaging forges, as for merges."""
+    judged: GitHub is outside the packaging forges, as for merges. lit: the
+    argv as literal-aware text, which comment_text() reads."""
     args = run[1:]
     if name == "osc":
         for one in osc_runs(run, ctx, cwd):
@@ -2508,13 +2989,16 @@ def comment_rules(name, run, ctx, cwd):
                         f"cannot tell what osc comment {shown(words[0])} does",
                     )
                 for v in verbs:
+                    if v in ("create", "delete"):
+                        reviewer_acts(ctx, f"osc comment {v}")
                     if v == "create" and words[1:2] == ["request"]:
                         ids = [
                             r
                             for w in words[2:]
                             for r in spellings(w, ctx, cwd, False) or [""]
                         ]
-                        why = maintained_requests(ids, ctx)
+                        text = comment_text("osc", run, lit, ctx, cwd)
+                        why = maintained_requests(ids, ctx, text)
                         if why:
                             ask(ctx, "comment", f"osc comment create: {why}")
                     elif v in ("create", "delete"):
@@ -2532,6 +3016,7 @@ def comment_rules(name, run, ctx, cwd):
                 if method.upper() not in ("GET", "HEAD") and any(
                     COMMENT_API.search(u) for u in urls
                 ):
+                    reviewer_acts(ctx, f"osc api {method} to comments")
                     on = [REQUEST_COMMENT.search(u) for u in urls]
                     mine = all(on) and not maintained_requests(
                         [m.group(1) for m in on], ctx
@@ -2549,7 +3034,9 @@ def comment_rules(name, run, ctx, cwd):
             ["list"],
             ["ls"],
         ):
-            why = tea_comment(args, ctx, cwd)
+            reviewer_acts(ctx, f"tea {words[0]}")
+            text = comment_text("tea", run, lit, ctx, cwd)
+            why = tea_comment(args, ctx, cwd, text=text)
             if why:
                 # No subcommand and no body: tea still adds one, but a read was meant.
                 verb = words[1:2] in (
@@ -2561,27 +3048,33 @@ def comment_rules(name, run, ctx, cwd):
         if words[:1] in (["pr"], ["pulls"], ["pull"]) and words[1:2] in (
             [w] for w in ("review", "approve", "lgtm", "a", "reject", "reply")
         ):
+            reviewer_acts(ctx, f"tea {words[0]} {words[1]}")
             ask(ctx, "comment", f"tea {words[0]} {words[1]}")
         api, reads = words[:1] == ["api"], only_reads("tea", args)
     elif name == "git-obs":
         rest = git_obs_rest(args)
         words = [a for a in rest if a[:1] != "-"]
-        if (
+        if words[:3] == ["pr", "review", "approve"]:
+            git_obs_approve(rest, ctx, cwd)
+        elif (
             words[:2] == ["pr", "comment"]
             or words[:2] == ["pr", "review"]
-            and words[2:3] in (["approve"], ["decline"], ["interactive"])
+            and words[2:3] in (["decline"], ["interactive"])
         ):
+            reviewer_acts(ctx, "git-obs " + " ".join(words[:3]))
             ask(ctx, "comment", "git-obs " + " ".join(words[:3]))
         if words[:2] in (["pr", "close"], ["pr", "reopen"]) and any(
             long_prefix(a, ("--message",)).split("=")[0] in ("-m", "--message")
             or a[:2] == "-m"
             for a in rest
         ):
+            reviewer_acts(ctx, f"git-obs pr {words[1]} with a comment")
             ask(ctx, "comment", f"git-obs pr {words[1]} with a comment")
         api, reads = words[:1] == ["api"], git_obs_reads(args)
     if api and not reads:
         text = " ".join([*args, *expansions(args, ctx, cwd)])
         if COMMENT_API.search(text):
+            reviewer_acts(ctx, f"a {name} api write to comments or reviews")
             why = (
                 tea_comment(args, ctx, cwd, api=True)
                 if name == "tea"
@@ -2589,6 +3082,18 @@ def comment_rules(name, run, ctx, cwd):
             )
             if why:
                 ask(ctx, "comment", f"{name} api: {why}")
+
+
+def comment_text(name, run, lit, ctx, cwd):
+    """The one text an osc comment create -c or a plain tea comment posts, as
+    the shell passes it; None when it carries none, several, a file's, or one
+    the guard cannot read now."""
+    largs = lit[1:] if lit and len(lit) == len(run) else None
+    bodies = comment_bodies(name, run[1:], largs, ctx, cwd)
+    if len(bodies) != 1 or bodies[0][2]:
+        return None
+    texts = lit_texts(bodies[0][1], ctx, cwd)
+    return texts[0] if texts and len(texts) == 1 else None
 
 
 # An API path to one issue or PR itself, and a git-obs "owner/repo#N" id.
@@ -3189,6 +3694,8 @@ def gate_submit(run, ctx, cwd):
             if not src or not pkg or not PKG_NAME.fullmatch(pkg):
                 ask(ctx, "gate-stamp", f"cannot tell what osc {sub} sends")
                 continue
+            if factory and not src.startswith("home:"):
+                fixable_pending(src, pkg, ctx)
             ok, text = obs_get(f"/source/{src}/{pkg}{query}", ctx)
             root = xml_root(text) if ok and text else None
             if root is None:
@@ -3382,19 +3889,19 @@ GATE_VALUED = {
     "--cleaner-deviation",
     "--no-entry",
 }
-REVIEW_WORD = Rx(r"(?<![\w-])--review(?![\w-])")
 # expansions that make several words, quoted or not
 SPLITS = Rx(r"\$[@*]|\$\{[@*!#]|\[[@*]\]")
 
 
-def runs_gate(word, ctx, cwd):
-    """Whether word runs gate.sh: by name in any spelling, by the text this call
-    assigned it, through a link, or as a byte copy of the skill's own; None
-    when only the shell knows (a stdin program, a value it cannot read)."""
+def runs_script(word, ctx, cwd, script="gate.sh", rx=GATE_NAME):
+    """Whether word runs the skill's script (gate.sh; rx spells its name): by
+    name in any spelling, by the text this call assigned it, through a link, or
+    as a byte copy of the skill's own; None when only the shell knows (a stdin
+    program, a value it cannot read)."""
     if word is None:
         return None
     names = substitute(word, ctx, cwd) if VARIABLE.search(word) else [word]
-    if names and "gate.sh" in {os.path.basename(w) for w in names}:
+    if names and script in {os.path.basename(w) for w in names}:
         return True
     texts = [word, *held(word, ctx)]
     for t in list(texts):  # what a substitution in them runs, as written
@@ -3403,13 +3910,13 @@ def runs_gate(word, ctx, cwd):
             for n in SUB_WORD.findall(t)
             if int(n) < len(ctx.sub_bodies)
         ]
-    if any(GATE_NAME.search(t) for t in texts):
+    if any(rx.search(t) for t in texts):
         return True
     skill = skill_dir()
-    mine = os.path.join(skill, "scripts", "gate.sh") if skill else ""
+    mine = os.path.join(skill, "scripts", script) if skill else ""
     for p in (locate(word, ctx, cwd)[0] or ()) if names else ():
         real = os.path.realpath(p)
-        if os.path.basename(real) == "gate.sh":
+        if os.path.basename(real) == script:
             return True
         try:
             if mine and os.path.getsize(real) == os.path.getsize(mine) < MAX_BYTES:
@@ -3433,8 +3940,25 @@ def review_record(word, args, ctx, cwd, via="", label=""):
     agent_type, the opencode 2.x plugin's agent), which the model cannot set."""
     if ctx.agent == REVIEWER:
         return
+    review, unread = option_given(args, ctx, cwd, "--review", GATE_VALUED, via)
+    if not review and not unread:
+        return
+    gate = runs_script(word, ctx, cwd)
+    who = f"agent {ctx.agent}" if ctx.agent else "the main session"
+    if review and gate is not False:
+        what = "gate.sh" if gate else label or shown(word)
+        ask(ctx, "review-self", f"{what} --review from {who}")
+    elif unread and gate:
+        ask(ctx, "gate-args", f"gate.sh from {who} with {unread}")
+
+
+def option_given(args, ctx, cwd, opt, valued, via=""):
+    """(whether an argument spells option opt, why one the guard cannot read
+    could): review_record()'s reading of a script's arguments, valued the
+    options whose next word is their value."""
+    rx = re.compile(rf"(?<![\w-]){re.escape(opt)}(?![\w-])")
     ifs = "IFS" in ctx.values or "IFS" in ctx.exported
-    review, unread, value = False, via, False
+    given, unread, value = False, via, False
     for k, a in enumerate(args):
         for w in braces(a) or [None]:
             vals = (
@@ -3449,24 +3973,42 @@ def review_record(word, args, ctx, cwd, via="", label=""):
                 for n in SUB_WORD.findall(w or "")
                 if int(n) < len(ctx.sub_bodies)
             ]
-            if any(REVIEW_WORD.search(b) for b in bodies):  # $(echo --review F)
-                review = True
+            if any(rx.search(b) for b in bodies):  # $(echo --review F)
+                given = True
             elif vals is None or ifs and VARIABLE.search(w):
                 several = w is None or ifs or SPLITS.search(w)
                 if not value and (several or k + 1 < len(args)):
                     unread = unread or "an argument only the shell knows"
-            elif any(t.split("=", 1)[0] == "--review" for v in vals for t in v.split()):
-                review = True
-        value = a in GATE_VALUED
-    if not review and not unread:
+            elif any(t.split("=", 1)[0] == opt for v in vals for t in v.split()):
+                given = True
+        value = a in valued
+    return given, unread
+
+
+# The contributor review's recorder, and the agent that alone runs it to record.
+INCOMING_AGENT = "incoming-review"
+INCOMING_NAME = Rx(r"(?<![\w.-])incoming-review\.sh\b")
+INCOMING_VALUED = {"--show"}
+
+
+def incoming_record(word, args, ctx, cwd, via="", label=""):
+    """incoming-review.sh run with --record outside the incoming-review agent,
+    read as review_record() reads gate.sh --review: refused, never asked, so no
+    prompt waits on it. An argument the guard cannot read where --record could
+    stand counts on the agent's own command line, not in a script it reads: a
+    test suite hands the recorder its option from a fixture file."""
+    if ctx.agent == INCOMING_AGENT:
         return
-    gate = runs_gate(word, ctx, cwd)
+    record, unread = option_given(args, ctx, cwd, "--record", INCOMING_VALUED, via)
+    if not record and (not unread or ctx.reading):
+        return
+    runs = runs_script(word, ctx, cwd, "incoming-review.sh", INCOMING_NAME)
+    if runs is False if record else not runs:
+        return
     who = f"agent {ctx.agent}" if ctx.agent else "the main session"
-    if review and gate is not False:
-        what = "gate.sh" if gate else label or shown(word)
-        ask(ctx, "review-self", f"{what} --review from {who}")
-    elif unread and gate:
-        ask(ctx, "gate-args", f"gate.sh from {who} with {unread}")
+    what = "incoming-review.sh" if runs else label or shown(word)
+    how = " --record" if record else f" with {unread}"
+    block("incoming-self", f"{what}{how} from {who}")
 
 
 def factory_devel(pkg, ctx):
@@ -4651,7 +5193,11 @@ def read_script(path, real, raw, kind, ctx, cwd, depth):
     # guarded here): its tool rules apply per parsed command, not per line.
     api_rules("\n".join(code_lines(text)), ctx, cwd)
     if depth < MAX_DEPTH:
-        shell_pass(text, ctx, cwd, depth + 1)
+        ctx.reading.append(real)
+        try:
+            shell_pass(text, ctx, cwd, depth + 1)
+        finally:
+            ctx.reading.pop()
 
 
 def shell_assigned(name, args):
@@ -4878,18 +5424,14 @@ def interpreter(run, lang, stdin, env, ctx, cwd, depth, via=""):
                 block("interpreter", f"{os.path.basename(run[0])} {word}{held_as}")
         if lang == "shell":
             review_record(word, operands[1:], ctx, cwd, via)
+            incoming_record(word, operands[1:], ctx, cwd, via)
         scan_file(word, kind, ctx, cwd, depth, env, run=True)
     else:
         if lang == "shell":  # the program on stdin may be gate.sh
             label = f"{os.path.basename(run[0])} reading stdin"
-            review_record(
-                None,
-                operands[from_stdin and operands[:1] == ["-"] :],
-                ctx,
-                cwd,
-                via,
-                label,
-            )
+            rest = operands[from_stdin and operands[:1] == ["-"] :]
+            review_record(None, rest, ctx, cwd, via, label)
+            incoming_record(None, rest, ctx, cwd, via, label)
         feed(stdin, kind, os.path.basename(run[0]), ctx, cwd, depth)
 
 
@@ -5989,6 +6531,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     if name in ctx.wrappers and len(run) > 1:  # a function that runs "$@"
         one_command(run[1:], redirs, stdin, ctx, here, depth)
     note_writer(name, run, ctx, here)
+    reviewer_runs(name, run, ctx, here)
     for k in shell_assigned(name, run[1:]):
         ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
     out = ("unknown", name)
@@ -6020,8 +6563,10 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     via = "the arguments xargs adds" if xargs else ""
     if name in ("source", ".") and len(run) > 1:
         review_record(run[1], run[2:], ctx, here, via)
+        incoming_record(run[1], run[2:], ctx, here, via)
     elif name not in SHELLS:
         review_record(run[0], run[1:], ctx, here, via)
+        incoming_record(run[0], run[1:], ctx, here, via)
     gparts = None
     if name in DECLARE or name == "set":
         note_env(run, ctx)
@@ -6053,7 +6598,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         if TEA_API.search(wide) and "pulls" in wide and not reads:
             if pool_or_unknown(wide, ctx, here, cmd=True):
                 block("create-tea-api", "a tea api write to pool pulls")
-        comment_rules("tea", ["tea", *args], ctx, here)
+        comment_rules("tea", ["tea", *args], ctx, here, ltea)
     elif name == "git-obs":
         tool_rules(joined, ctx, here)
         pr_message("git-obs", run[1:], lrun and lrun[1:], ctx, here)
@@ -6061,7 +6606,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         close_rules("git-obs", run[1:], ctx, here)
         wide = " ".join([joined, *expansions(run[1:], ctx, here)])
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
-        comment_rules("git-obs", run, ctx, here)
+        comment_rules("git-obs", run, ctx, here, lrun)
     elif name == "git":
         gparts = git_command(run, ctx, here, lrun)
     elif name == "osc":
@@ -6079,7 +6624,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         request_cleanup(run, ctx, here)
         osc_deletes(run, ctx, here)
         osc_prompt(run, stdin)
-        comment_rules("osc", run, ctx, here)
+        comment_rules("osc", run, ctx, here, lrun)
         accept_forward(run, ctx, here)
         gate_commit(run, ctx, here)
         gate_submit(run, ctx, here)
