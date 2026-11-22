@@ -146,11 +146,14 @@ case "$1 $2" in
   # Counts the calls of $1. Line N of $FIX/$1-script says how call N goes, as
   # with a podman another container keeps busy: silent answers nothing, fail is
   # podman's own error, slow the same 15 seconds later, exit2 answers and ends
-  # with status 2; else it answers.
+  # with status 2, cut answers half, badexit answers with an id that is none
+  # and then podman's error status; else it answers.
   busy() {
     echo >> "$FIX/$1-asked"
     case $(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null) in
     silent) exit 0 ;;
+    cut) printf '{"data":[{"id":"per_'; exit 0 ;;
+    badexit) echo '{"data":[{"id":"x/y"}]}'; exit 125 ;;
     slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
@@ -163,7 +166,8 @@ case "$1 $2" in
   *"plugin list"*)
     n=$(cat "$FIX/plugins-late" 2>/dev/null || echo 0)
     if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FIX/plugins-late"; echo "ID  VERSION"; else cat "$FIX/plugins"; fi ;;
-  *"auth import"*) busy import; cat > "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
+  # The login is read first, as opencode does, whether the import then fails or not.
+  *"auth import"*) cat > "$FIX/import-in"; busy import; mv "$FIX/import-in" "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
   # A session the container imports from a pipe: stdin is the export.
   *"session import"*)
     cat > "$FIX/imported-session"
@@ -186,6 +190,7 @@ case "$1 $2" in
   # The approvals of the server's project, of every project (an empty id), or
   # of the one named. What is no list is answered as it is.
   *"api GET /api/permission/saved"[?\ ]*)
+    busy approvals
     all="$*"
     if ! jq -e '.data | type == "array"' "$FIX/saved" > /dev/null 2>&1; then cat "$FIX/saved"
     elif [[ $all != *"saved?projectID="* ]]; then jq -c '.data |= map(select(.projectID == "prj_main"))' "$FIX/saved"
@@ -1234,6 +1239,16 @@ for projects in '{"error":"no"}' '' '[{"id":"../x"}]'; do
     && pass "run refuses when the projects cannot be listed ($n)" \
     || fail "run without a list of projects ($n): rc=$rc $out"
 done
+# Nor do the pieces of one with a line break or a NUL, or a value that is no
+# text, reach a query: the list stops at once.
+for projects in '[{"id":"prj_x\nprj_y"}]' '[{"id":"prj_\u0000x"}]' '[{"id":5}]' '[{"id":true}]' '[{"id":null}]'; do
+  printf '%s' "$projects" > "$FIX/projects"; : > "$FIX/client-calls"; : > "$FIX/sleep-calls"; : > "$FIX/podman-calls"
+  out="$(sc run obs hello 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -q "projectID=" "$FIX/podman-calls" \
+    && [ ! -s "$FIX/sleep-calls" ] \
+    && pass "run refuses the project id in $projects at once, without a query" \
+    || fail "run with the projects $projects: rc=$rc $(grep -o 'projectID=[^ ]*' "$FIX/podman-calls" | tr '\n' ' ') $out"
+done
 echo '[{"id":"prj_main"},{"id":"prj_sub"}]' > "$FIX/projects"; touch "$FIX/id-answers-nothing"
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses when a project's approvals do not come" \
@@ -1255,6 +1270,20 @@ out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -qF "PATCH /api/session/.." "$FIX/podman-calls" \
   && [ ! -s "$FIX/sleep-calls" ] \
   && pass "run refuses a session whose id is not one, at once" || fail "run with a made-up session id: rc=$rc $out"
+for id in 5 '{"k":1}'; do
+  printf '{"data":[{"id":%s,"projectID":"prj_main","action":"shell","resource":"*"}]}\n' "$id" > "$FIX/saved"
+  sessions '[]'; : > "$FIX/sleep-calls"; : > "$FIX/podman-calls"
+  out="$(sc run obs hello 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -q "DELETE /api/permission/saved/" "$FIX/podman-calls" \
+    && [ ! -s "$FIX/sleep-calls" ] \
+    && pass "run refuses a saved approval whose id is $id, at once" || fail "run with the approval id $id: rc=$rc $out"
+  echo '{"data":[]}' > "$FIX/saved"; sessions "[{\"id\":$id,\"permissions\":$allow}]"; : > "$FIX/sleep-calls"; : > "$FIX/podman-calls"
+  out="$(sc run obs hello 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && ! grep -q "PATCH /api/session/" "$FIX/podman-calls" \
+    && [ ! -s "$FIX/sleep-calls" ] \
+    && pass "run refuses a session whose id is $id, at once" || fail "run with the session id $id: rc=$rc $out"
+done
+sessions '[]'
 sessions '{"error":"no"}'
 out="$(sc run obs hello 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$FIX/client-calls" ] && pass "run refuses when the sessions cannot be listed" \
@@ -1617,14 +1646,51 @@ out="$(sc up obs 2>&1)"; rc=$?
   || fail "up with a lost login removal: rc=$rc $(reads logindel) removals $out"
 restart; scripted import fail
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
-  && pass "a model credential whose import failed once is imported on the next try" \
+[ "$rc" = 0 ] && grep -qF MODEL-SECRET-6 "$FIX/imported" && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "a model credential whose import failed once is imported on the next try, the login piped anew" \
   || fail "up with a lost import: rc=$rc $(reads import) imports $out"
 restart; scripted import exit2
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
   && pass "an import that ends with status 2 is tried again" \
   || fail "up with an import that ends with status 2: rc=$rc $(reads import) imports $out"
+# A failed read leaves no part of its list for the next round: here a ! for an
+# id that is none, in an answer podman then failed.
+restart; kept_login cred_old1; scripted logins ok badexit
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && ! grep -qF 'api DELETE /api/credential/! ' "$FIX/podman-calls" \
+  && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 1 ] \
+  && pass "a failed read of the model logins leaves nothing for the next round to remove" \
+  || fail "up with a failed login read that left a part: rc=$rc $(reads logins) reads $out"
+restart; approval per_c1; scripted approvals ok ok ok ok ok badexit
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] \
+  && [ "$(reads approvals)" = 9 ] && [ "$(pauses)" = 1 ] \
+  && pass "a failed read of the approvals leaves nothing for the next round to remove" \
+  || fail "up with a failed approval read that left a part: rc=$rc $(reads approvals) reads $out"
+# An answer cut short is asked for again.
+restart; scripted approvals cut
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads approvals)" = 6 ] && [ "$(pauses)" = 1 ] \
+  && pass "an approvals answer cut short is asked for again" \
+  || fail "up with an approvals answer cut short: rc=$rc $(reads approvals) reads $out"
+# An empty page is no end of the list: the rules on the page after it are found.
+restart; sessions "[{\"id\":\"ses_e1\",\"permissions\":null},{\"id\":\"ses_e2\",\"permissions\":null},{\"id\":\"ses_e3\",\"permissions\":$allow}]"
+scripted sessions ok silent
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -c 'map(.permissions)' "$FIX/sessions")" = "[null,null,[]]" ] && [ "$(pauses)" = 1 ] \
+  && pass "an empty page of the session list is asked for again, not taken for its end" \
+  || fail "up with an empty page of sessions: rc=$rc $(jq -c 'map(.permissions)' "$FIX/sessions") $out"
+sessions '[]'
+# An approvals answer whose data is no list is no list of them.
+for data in '{}' '"x"'; do
+  restart; printf '{"data":%s}\n' "$data" > "$FIX/saved"; scripted approvals
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+    && pass "approvals answered with the data $data: the unit is stopped, no credential is sent" \
+    || fail "up with approvals answered with the data $data: rc=$rc $out"
+done
+echo '{"data":[]}' > "$FIX/saved"
 # And the model logins: the first three reads, or the three after the removal.
 for first in 1 2; do
   restart; kept_login cred_old1
