@@ -388,12 +388,28 @@ ruled() {
 		cursor=$(jq -r '.cursor.next // ""' <<<"$page") || return 1
 		[[ $cursor =~ ^[A-Za-z0-9_-]+$ ]] || return 1
 	done
-	return 1
+	# A list without an end is an answer all the same: asking again pages as long.
+	return 2
 }
+# podman answers nothing while another container holds its storage lock: a read
+# that fails is asked again for five minutes, and only the last one's errors show.
+# One that fails with 2 had an answer and is not asked again.
+retried() {
+	local try rc
+	for try in $(seq 59); do
+		if "$@" 2>/dev/null; then return 0; else rc=$?; fi
+		[ "$rc" != 2 ] || return 2
+		[ "$try" != 1 ] || echo "skill-container: $ctr did not answer; asking again for up to 5 minutes" >&2
+		sleep 5
+	done
+	"$@"
+}
+# Into forget's approvals and sessions.
+readperms() { approvals=$(saved) && sessions=$(ruled); }
 # Removes those it finds, and stops when one stays.
 forget() {
 	local approvals sessions id reset="'podman volume rm $name-$inst-state' removes them, with the sessions"
-	{ approvals=$(saved) && sessions=$(ruled); } || die "cannot read the permissions $ctr keeps: $reset"
+	retried readperms || die "cannot read the permissions $ctr keeps: $reset"
 	[ -n "$approvals$sessions" ] || return 0
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
@@ -405,30 +421,33 @@ forget() {
 		[[ $id =~ ^[A-Za-z0-9_]+$ ]] || die "a session of $ctr has an unexpected id: $reset"
 		api PATCH "/api/session/$id" -d '{"permissions":[]}' >/dev/null || true
 	done <<<"$sessions"
-	{ approvals=$(saved) && sessions=$(ruled) && [ -z "$approvals$sessions" ]; } ||
+	{ retried readperms && [ -z "$approvals$sessions" ]; } ||
 		die "the permissions $ctr keeps cannot be removed: $reset"
 	echo "skill-container: removed the saved approvals and session rules of $ctr" >&2
 }
 # The model login is the secret's alone: one the state volume keeps from an
 # earlier secret would stay the active one. The server's list holds the keys.
 # An id is checked where it is still one value: a line break inside it makes two.
+# No answer is no list: without -s jq takes it for an empty one.
 logins() {
 	{
 		api GET /api/credential |
-			jq -r 'if (.data | type) == "array" then .data[].id else error("no list") end |
+			jq -rs 'if length == 1 and (.[0].data | type) == "array" then .[0].data[].id else error("no list") end |
 				if type == "string" and length > 0 and (test("[^A-Za-z0-9_]") | not) then . else error("id") end'
 	} 2>/dev/null
 }
+# Into relogin's creds.
+readlogins() { creds=$(logins); }
 # The server answers the removal of a login it does not hold like any other:
 # the list, read again, says what is left.
 relogin() {
-	local ids id reset="'podman volume rm $name-$inst-state' removes them, with the sessions; the unit is stopped"
-	ids=$(logins) || die "cannot read the model logins $ctr keeps: $reset"
+	local creds id reset="'podman volume rm $name-$inst-state' removes them, with the sessions; the unit is stopped"
+	retried readlogins || die "cannot read the model logins $ctr keeps: $reset"
 	while IFS= read -r id; do
 		[ -n "$id" ] || continue
 		api DELETE "/api/credential/$id" >/dev/null || true
-	done <<<"$ids"
-	{ ids=$(logins) && [ -z "$ids" ]; } || die "the model logins $ctr keeps cannot be removed: $reset"
+	done <<<"$creds"
+	{ retried readlogins && [ -z "$creds" ]; } || die "the model logins $ctr keeps cannot be removed: $reset"
 	# Its input is the login: what it says about a failure is not shown.
 	secret model | timeout 60 podman exec -i "$ctr" opencode auth import --server "$inner" >/dev/null 2>&1 ||
 		die "the model credential was not imported; the unit is stopped"

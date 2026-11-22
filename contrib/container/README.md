@@ -280,7 +280,8 @@ boundary between the agent and what is inside the container.
   session's history can be rewritten before `--continue` loads it. `up`, `attach`, `run`
   and `password`, and `update` after its restart,
   remove the session rules they find and the saved approvals of every project the server
-  lists, and stop when a list cannot be read or a rule stays. An approval of a project
+  lists, and stop when a list cannot be read, after asking again for up to five minutes,
+  or a rule stays. An approval of a project
   the server does not list is found only by a query opencode does not document. That
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.
