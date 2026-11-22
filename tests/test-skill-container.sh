@@ -1674,13 +1674,14 @@ out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads approvals)" = 6 ] && [ "$(pauses)" = 1 ] \
   && pass "an approvals answer cut short is asked for again" \
   || fail "up with an approvals answer cut short: rc=$rc $(reads approvals) reads $out"
-# An empty page is no end of the list: the rules on the page after it are found.
+# A session page that comes back with no output at all is asked for again, not
+# taken for the end of the list: the rules on the page after it are found.
 restart; sessions "[{\"id\":\"ses_e1\",\"permissions\":null},{\"id\":\"ses_e2\",\"permissions\":null},{\"id\":\"ses_e3\",\"permissions\":$allow}]"
 scripted sessions ok silent
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ "$(jq -c 'map(.permissions)' "$FIX/sessions")" = "[null,null,[]]" ] && [ "$(pauses)" = 1 ] \
-  && pass "an empty page of the session list is asked for again, not taken for its end" \
-  || fail "up with an empty page of sessions: rc=$rc $(jq -c 'map(.permissions)' "$FIX/sessions") $out"
+  && pass "a session page with no output is asked for again, not taken for the end of the list" \
+  || fail "up with a session page with no output: rc=$rc $(jq -c 'map(.permissions)' "$FIX/sessions") $out"
 sessions '[]'
 # An approvals answer whose data is no list is no list of them.
 for data in '{}' '"x"'; do
