@@ -99,10 +99,10 @@
 # runs the package's code. Both run in a sandbox of /usr/bin/bwrap: no network,
 # only /usr and /etc of the host, HOME=/tmp/home, the checkout read-only, a
 # fresh directory (a copy of the spec, %prep's scratch) the only place to write,
-# no environment but PATH, the locale and HOME. Without bwrap, or where it is
-# denied user namespaces (a container), the specs parse unsandboxed, as before,
-# and rpmspec says so, while %prep does not run; any other failure to start it
-# is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
+# no environment but PATH=/usr/bin:/bin, the locale and HOME. Without bwrap, or
+# where it is denied user namespaces (a container), the specs parse unsandboxed,
+# as before, and rpmspec says so, while %prep does not run; any other failure to
+# start it is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
 # openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
 # %{load:, %% and the forms that rebuild one), as information, never red; a
 # lookup that fails says the comparison was not possible. A contributor's
@@ -1853,30 +1853,33 @@ sandbox() {   # sandbox [writable dir]: the bwrap arguments, in sbx (the parses'
 }
 # Every rpm parse here (rpmspec -P of each flavour and of spec-cleaner's output,
 # rpmspec -q --buildrequires, rpm --eval of a BuildRequires value) runs in that
-# sandbox under env -i, with PATH, the locale and HOME=/tmp/home: a spec's %(...)
-# and Lua see no network, nothing of $HOME, and the checkout read-only, with a
-# fresh directory holding its copy of the spec the only place to write. Without
-# bwrap, or where it is denied user namespaces (a container), the specs parse
-# unsandboxed, as before, and rpmspec says so; any other failure to start it is
-# red and nothing parses, so a caller's environment cannot switch it off. The
-# denials, in bubblewrap's words: no user namespaces in the kernel (EINVAL) or
-# for this user (EPERM, "creating" in older releases), none left (ENOSPC, as
-# user.max_user_namespaces=0 leaves it), and a container refusing the uid map,
-# /proc, lo or a slave /. Its generic "Creating new namespace failed: <error>"
-# (EAGAIN under a process limit, ENOMEM) is no denial.
-USERNS='Creating new namespace failed, likely because the kernel does not support user namespaces'
+# sandbox under env -i, with PATH=/usr/bin:/bin (the caller's could name the
+# checkout, as an empty or . entry does), the locale and HOME=/tmp/home: a spec's
+# %(...) and Lua see no network, nothing of $HOME, and the checkout read-only,
+# with a fresh directory holding its copy of the spec the only place to write.
+# Without bwrap, or where it is denied user namespaces (a container), the specs
+# parse unsandboxed, as before, and rpmspec says so; any other failure to start
+# it is red and nothing parses, so a caller's environment cannot switch it off.
+# The denials, in bubblewrap's words on a line of its own ("bwrap: ..."): no user
+# namespaces in the kernel (EINVAL) or for this user (EPERM, "creating" in older
+# releases), none left (ENOSPC, as user.max_user_namespaces=0 leaves it), and a
+# container refusing the uid map, /proc, lo or a slave / with EPERM or EACCES.
+# Its generic "Creating new namespace failed: <error>" (EAGAIN under a process
+# limit, ENOMEM), and those container steps failing otherwise, are no denial.
+USERNS='^bwrap: (Creating new namespace failed, likely because the kernel does not support user namespaces'
 USERNS+='|No permissions to (create a|creating) new namespace'
 USERNS+='|Creating new namespace failed: nesting depth or /proc/sys/user/max_\*_namespaces exceeded \(ENOSPC\)'
-USERNS+='|setting up uid map|Can.t mount proc|loopback: Failed|Failed to make / slave'
+USERNS+='|(setting up uid map|Can.t mount proc on .*|loopback: Failed .*|Failed to make / slave)'
+USERNS+=': (Operation not permitted|Permission denied)$)'
 nosbx=""; sbxbad=""
 if [ ! -x "$BWRAP" ]; then
   nosbx="bwrap is not installed"
-elif ! { sandbox; perr=$("$ENVCMD" -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" true 2>&1); }; then
+elif ! { sandbox; perr=$("$ENVCMD" -i PATH=/usr/bin:/bin HOME=/tmp/home "$BWRAP" "${sbx[@]}" true 2>&1); }; then
   perr=$(printf '%s' "$perr" | python3 -I "$HERE/_sanitize.py")
   if grep -qE "$USERNS" <<<"$perr"; then nosbx=${perr%%$'\n'*}
   else sbxbad=${perr%%$'\n'*}; sbxbad=${sbxbad:-bwrap exited without a word}; fi
 else
-  pre=("$ENVCMD" -i PATH="$PATH" HOME=/tmp/home)
+  pre=("$ENVCMD" -i PATH=/usr/bin:/bin HOME=/tmp/home)
   [ -z "${LANG:-}" ] || pre+=(LANG="$LANG"); [ -z "${LC_ALL:-}" ] || pre+=(LC_ALL="$LC_ALL")
   GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" "$BWRAP" "${sbx[@]}"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
 fi
@@ -1914,7 +1917,7 @@ fi
 # script from its tarball, others ./autogen.sh or ./configure), so rpmbuild -bp
 # runs in a bwrap sandbox: no network, only /usr and /etc of the host, $HOME
 # empty, the checkout read-only, only the scratch directory under /var/tmp
-# writable, no environment but PATH and HOME. Without a sandbox that starts it
+# writable, no environment but PATH=/usr/bin:/bin and HOME. Without a sandbox that starts it
 # does not run at all. A pass is cached by the hash of the spec, the sources and
 # rpm's version. What only the
 # build root has (a missing BuildRequires' file, tool or module, a source a
@@ -1958,7 +1961,7 @@ else
     cp "$rs" "$bp/rpm.spec"; t0=$SECONDS
     # in the background, so a signal can kill its process group (the EXIT trap)
     sandbox "$bp"
-    "$TIMEOUTCMD" -k 30 "$tmo" "$ENVCMD" -i PATH="$PATH" HOME=/tmp/home "$BWRAP" "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
+    "$TIMEOUTCMD" -k 30 "$tmo" "$ENVCMD" -i PATH=/usr/bin:/bin HOME=/tmp/home "$BWRAP" "${sbx[@]}" rpmbuild -bp --nodeps --define "_topdir $bp" --define "_sourcedir $PWD" --define "_builddir $bp/BUILD" \
       "$bp/rpm.spec" > "$log/prep.$s.log" 2>&1 &
     prep_pid=$!; wait "$prep_pid"; prc=$?; prep_pid=""
     chmod -R u+w "$bp"; rm -rf "$bp"; bp=""

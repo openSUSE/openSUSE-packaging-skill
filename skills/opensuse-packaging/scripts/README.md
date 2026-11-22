@@ -398,10 +398,10 @@ Parsing a spec runs its %(...), Lua and the files it includes as you, and %prep
 runs the package's code. Both run in a sandbox of /usr/bin/bwrap: no network,
 only /usr and /etc of the host, HOME=/tmp/home, the checkout read-only, a
 fresh directory (a copy of the spec, %prep's scratch) the only place to write,
-no environment but PATH, the locale and HOME. Without bwrap, or where it is
-denied user namespaces (a container), the specs parse unsandboxed, as before,
-and rpmspec says so, while %prep does not run; any other failure to start it
-is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
+no environment but PATH=/usr/bin:/bin, the locale and HOME. Without bwrap, or
+where it is denied user namespaces (a container), the specs parse unsandboxed,
+as before, and rpmspec says so, while %prep does not run; any other failure to
+start it is red, and nothing parses. parse-surface lists the parse-time code a spec adds over
 openSUSE:Factory/<pkg>'s (_parse_scan.py: %(, %{lua:, %{expand:, %include,
 %{load:, %% and the forms that rebuild one), as information, never red; a
 lookup that fails says the comparison was not possible. A contributor's

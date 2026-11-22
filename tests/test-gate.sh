@@ -2198,6 +2198,18 @@ grep -qF "## rpmspec: rc=1" <<<"$out" \
   && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
   && pass "sandbox-clone-failed: bwrap's generic clone failure is red and nothing parses" \
   || { fail "sandbox-clone-failed"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# A denial counts only as bwrap's own line, and a container step only with EPERM
+# or EACCES: the uid map failing otherwise, or the words further into a line, are red.
+while IFS='|' read -r name msg; do
+  bwstub "$name" "$msg"
+  PSGATE="$work/sk-bw-$name/gate.sh" ps_ "$work/ps-same/bar" < /dev/null
+  grep -qF "## rpmspec: rc=1" <<<"$out" && grep -qF "RED: the sandbox does not start ($msg)" <<<"$out" \
+    && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
+    && pass "sandbox-red-$name: red, no fallback" || { fail "sandbox-red-$name"; printf '%s\n' "$out" | sed 's/^/    /'; }
+done <<'EOF'
+uidmap-emfile|bwrap: setting up uid map: Too many open files
+not-line-start|prefix bwrap: No permissions to create a new namespace
+EOF
 while IFS='|' read -r name msg; do
   bwstub "$name" "$msg"
   PSGATE="$work/sk-bw-$name/gate.sh" ps_ "$work/ps-same/bar" < /dev/null
@@ -2254,6 +2266,17 @@ sbxrun "sandbox, HOME empty" "$work/sb/sbx" HOME=
 sbxrun "sandbox, HOME=/" "$work/sb/sbx" HOME=/
 sbxrun "sandbox, a failing bwrap first on PATH" "$work/sb/sbx" PATH="$work/psbin:$PATH"
 sbxrun "sandbox, an env that drops bwrap first on PATH" "$work/sb/sbx" PATH="$work/unbw:$PATH"
+# Inside the sandbox PATH is /usr/bin:/bin, never the caller's: with a . first on
+# it, an rpmspec and an rpmbuild planted in the checkout still do not run. The
+# spec differs by a comment, so %prep is not the cached pass of the runs above.
+mkdir -p "$work/dot/sbx"; { cat "$work/sb/sbx/sbx.spec"; echo '# dot'; } > "$work/dot/sbx/sbx.spec"
+for t in rpmspec rpmbuild; do printf '#!/bin/sh\necho "Summary: PLANTED"\n' > "$work/dot/sbx/$t"; chmod +x "$work/dot/sbx/$t"; done
+sbxrun "sandbox, a . first on PATH and an rpmspec in the checkout" "$work/dot/sbx" PATH=".:$PATH"
+if [ -n "$sbxok" ]; then
+  [ -e "$work/gate-sbx/prep.sbx.spec.log" ] && ! grep -q PLANTED "$work/gate-sbx/prep.sbx.spec.log" \
+    && pass "sandbox, a . first on PATH: %prep runs /usr/bin's rpmbuild" \
+    || { fail "sandbox, a . first on PATH: %prep"; sed 's/^/    /' "$work/gate-sbx/prep.sbx.spec.log" 2>/dev/null; printf '%s\n' "$out" | grep -F '## prep' | sed 's/^/    /'; }
+fi
 
 echo "---"; [ "$fails" = 0 ] && echo "all gate checks passed" || echo "$fails FAILED"
 exit $((fails > 0))
