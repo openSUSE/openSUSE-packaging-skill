@@ -49,10 +49,13 @@ submission: the rpm family by name or through a link (rpmlint too), quilt
 setup, osc build (chroot, shell, wipe), an osc checkout or update that runs the
 source services, osc service but wait, gate.sh, target-gate.sh and the skill's
 other scripts that parse a spec, run a service or build; and a write, move or
-delete of the installed guard (~/.claude/hooks), Claude Code's settings.json or
-the opencode plugins (~/.config/opencode/plugins), which the user changes by
-hand. A command run through fakeroot, strace, ltrace, unshare, flock, taskset,
-chrt, prlimit, systemd-run, nsenter, setpriv or script is judged as itself. A -h/--help
+delete of the installed guard (~/.claude/hooks), Claude Code's settings (a
+.claude/settings.json or settings.local.json anywhere) or the opencode plugins
+(~/.config/opencode/plugins), which the user changes by hand, a tree into
+~/.claude or ~/.config/opencode included. A command run through fakeroot,
+strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter,
+setpriv or script is judged as itself; a wrapper is one by a bare name or an
+ELF binary, and a script named like one is read. A -h/--help
 call of tea, git-obs, git or osc is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.

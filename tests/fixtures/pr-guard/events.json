@@ -11156,5 +11156,142 @@
       "command": "cp ~/.claude/settings.json /var/tmp/settings.json"
     },
     "cwd": "@PLAIN@"
+  },
+  "wrapname-flock": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/wrapnames/flock"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapname-script": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/wrapnames/script"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapname-nohup": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/wrapnames/nohup"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrapname-strace": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "@WORK@/wrapnames/strace"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a780",
+    "agent_type": "incoming-review"
+  },
+  "wrap-script-qc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script -qc \"osc rq accept -m 'ok' 1391011\" /dev/null"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-script-attached": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script -c\"osc rq accept -m 'ok' 1391011\" /dev/null"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-script-long-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script --comm \"osc rq accept -m 'ok' 1391011\" /dev/null"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "wrap-script-after-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script /dev/null -c \"osc rq accept -m 'ok' 1391011\""
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-script-qc": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "script -qc 'rpmspec -P incpass.spec' /dev/null"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a780",
+    "agent_type": "incoming-review"
+  },
+  "wrap-chrt-policy": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "chrt -b osc rq accept -m 'ok' 1391011"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "cred-opencode-service-version": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ~/.local/state/opencode/service-2.2.7.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-project-settings": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo '{\"disableAllHooks\": true}' > /var/tmp/proj/.claude/settings.local.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-user-settings-local": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/x.json ~/.claude/settings.local.json"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-parent-cp": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp -r /var/tmp/hooks ~/.claude/"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-parent-tar": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tar -C ~/.config/opencode -xf /var/tmp/p.tar"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-find-delete": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "find ~/.claude -name '*.py' -delete"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "harness-claude-md": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cp /var/tmp/x.md ~/.claude/CLAUDE.md"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-key12": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391018"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "approve-underscore-name": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 1111111111111111111111111111111111111111 incorg/inc_under#11"
+    },
+    "cwd": "@PLAIN@"
   }
 }
