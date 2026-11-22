@@ -40,21 +40,24 @@
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
 # .gitmodules, symlink or submodule; control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
-# text cannot read, a URL with a
-# macro the text cannot expand or that does not parse, a Source or Patch host
-# the target's spec does not use, a Source URL changed beyond its version
-# numbers, a changed file whose bytes differ from its Source URL's (fetched
-# only from a host the target's spec names, redirects followed over https to
-# public addresses alone), a changed binary with no Source URL; a service-made
+# text cannot read, a preamble line a macro of the spec, an expression or a
+# conditional body writes, a URL with a macro the text cannot expand (a name
+# with a define beside its tag is one) or that does not parse, a Source or
+# Patch host the target's spec does not use or that is not ASCII, a Source URL
+# changed beyond its version numbers (Source00 is Source0), a changed file
+# whose bytes differ from its Source URL's (fetched only from a host the
+# target's spec names, redirects followed over https to public ASCII hosts
+# alone, curl's address checked), a changed binary with no Source URL; a service-made
 # vendor or obscpio archive; a diff over 128 KiB, or fetched files over 64 MiB;
 # for an SR, a source package whose sources moved since the request, or whose
 # build is not green from them: each Tumbleweed and Leap 16 repo on x86_64 and
 # aarch64 that the target builds, present in the source project with a path to
 # the target project, enabled, and succeeded. A PR's build is reported, never
 # required: PRs build only where the devel project builds them. The comment:
-# no URL but an https build, src or bugzilla.opensuse.org one (Markdown links,
-# //host, scheme: without slashes and e-mail addresses count, entities
-# decoded), no @-mention but of the creator, no internal tag (VERDICT, keys,
+# no URL but an https build, src or bugzilla.opensuse.org one (Markdown links
+# and reference links, href= and src=, //host, backslash forms, scheme:
+# without slashes and e-mail addresses count, entities decoded), no @-mention
+# but of the creator, no internal tag (VERDICT, keys,
 # gate names), no bot directive, 1500 characters at most.
 # Exit: 0 = recorded (--show: shown); 1 = refused; 2 = usage; 3 = key moved;
 #       5 = lookup failed
@@ -151,13 +154,16 @@ REDS = {"failed", "unresolvable", "broken"}
 # bot directive; WORK_NOTE as it reads a work note in a request message.
 ALLOWED_HOSTS = {"build.opensuse.org", "src.opensuse.org", "bugzilla.opensuse.org"}
 URLISH = re.compile(
-    r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\"'`]*|(?<![\w:/])//[a-z0-9-]+(?:\.[a-z0-9-]+)+[^\s<>\"'`]*"
+    r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\"'`]*|(?<![\w:/])//[a-z0-9-]+(?:\.[a-z0-9-]+)*[^\s<>\"'`]*"
     r"|\bwww\.[^\s<>\"'`]*|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s<>\"'`]*"
 )
 BARE_SCHEME = re.compile(
     r"(?i)\b(?:https?|ftps?|sftp|file|javascript|vbscript|data|mailto|ssh|git|svn|ircs?|wss?|news|telnet|gopher):(?!//)\S+"
 )
 MD_LINK = re.compile(r"\]\s*\(")
+MD_REF = re.compile(r"(?m)^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S")
+HTML_ATTR = re.compile(r"(?i)\b(?:href|src)\s*=")
+BACKSLASH = re.compile(r"(?:^|(?<=[\s(<\"'`]))(?:/\\|\\\\)\S")
 EMAIL = re.compile(r"(?i)(?<![\w.+-])[\w.+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}")
 MENTION = re.compile(r"(?<![\w.@/+-])@([A-Za-z0-9_][\w.-]*)")
 LINE_START = r"(?i)(?:[^\w@]|_)*(?:\d+[.)]\s+)?"
@@ -411,17 +417,40 @@ SPEC_TAG = re.compile(r"^\s*(Name|Version|URL|Source\d*|Patch\d*)\s*:\s*(\S+)", 
 UNTAKEN = re.compile(r"(?i)^\s*(?:%\S*\s*)+(?:source|patch)\d*\s*:")
 SPEC_USE = re.compile(r"%%|%\{(\??)(\w+)\}|%(\w+)")
 PLAIN = re.compile(r"(?:[^%\\]|%%|%\{\w+\}|%\w+)*")
+# A line's leading macro: %{?!name:...}, %name, or an expression or shell %[ %(.
+HEAD = re.compile(r"\s*%(?:\{([?!]*)(\w+)(:?)|[?!]*(\w+)|([\[(]))")
+SECTIONS = {"description", "package", "prep", "build", "install", "check", "clean", "files", "changelog"}
+SECTIONS |= {"pre", "post", "preun", "postun", "pretrans", "posttrans", "preuntrans", "postuntrans"}
+SECTIONS |= {"triggerin", "triggerun", "triggerpostun", "triggerprein", "filetriggerin", "filetriggerun"}
+SECTIONS |= {"filetriggerpostun", "transfiletriggerin", "transfiletriggerun", "transfiletriggerpostun"}
+SECTIONS |= {"verifyscript", "sepolicy", "generate_buildrequires", "conf", "patchlist", "sourcelist"}
+DIRECTIVES = {"if", "ifarch", "ifnarch", "ifos", "ifnos", "elif", "elifarch", "elifos", "else", "endif"}
+DIRECTIVES |= {"define", "global", "undefine", "include"}
 
 
 def spec_lines(text):
     """(tag, value, line) of each Source and Patch line, the spec's own plain
-    %define/%global and Name, Version and URL put in as text, and the line
+    %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
-    (one behind a macro). A name with a definition that is not plain -- with
-    arguments, inside %if, conditional, expanded, undefined, or two different
-    values -- stays unexpanded, and so does every name the spec does not define."""
-    defs, tags, out, untaken, depth = {}, {}, [], [], 0
-    for n, line in enumerate(text.split("\n"), 1):
+    (one behind a macro); and those of preamble lines whose text a macro of the
+    spec's own, an expression or a conditional body writes, where rpm may read
+    a tag this reading never sees (a call of a macro the spec does not define
+    is the host's, and passes). A name with a definition that is not plain --
+    with arguments, inside %if, conditional, expanded, undefined, two different
+    values, or a define beside its tag -- stays unexpanded, and so does every
+    name the spec does not define."""
+    lines = text.split("\n")
+    own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m}
+    defs, tags, out, untaken, made, depth, pre, cont = {}, {}, [], [], [], 0, True, False
+    for n, line in enumerate(lines, 1):
+        was, cont = cont, line.rstrip().endswith("\\")
+        h = None if was else HEAD.match(line)
+        name = h and (h.group(2) or h.group(4))
+        if h and name in SECTIONS:
+            pre = name == "package"
+        elif h and pre and not (name in DIRECTIVES or (name or "").startswith("bcond")):
+            if h.group(5) or name in ("expand", "lua", "load") or name in own or h.group(3):
+                made.append(n)
         if re.match(r"\s*%if", line):
             depth += 1
         elif re.match(r"\s*%endif\b", line):
@@ -444,9 +473,8 @@ def spec_lines(text):
         if UNTAKEN.match(line):
             untaken.append(n)
     for k, vs in tags.items():
-        defs.setdefault(k, vs.pop() if len(vs) == 1 else None)
-        if len(vs) > 1:
-            defs[k] = None
+        # a define beside the tag: rpm takes whichever comes last, so neither is sure
+        defs[k] = vs.pop() if len(vs) == 1 and k not in defs else None
 
     def sub(m):
         k = m.group(2) or m.group(3)
@@ -465,7 +493,7 @@ def spec_lines(text):
                 break
             v = new
         done.append((tag, v, n))
-    return done, untaken
+    return done, untaken, made
 
 
 def is_url(v):
@@ -502,7 +530,7 @@ def host_of(url):
 
 def tag_key(tag):
     m = re.fullmatch(r"(source|patch)(\d*)", tag.lower())
-    return (m.group(1), m.group(2) or "0")
+    return (m.group(1), int(m.group(2) or "0"))  # Source00 is Source0
 
 
 def digits(url):
@@ -542,6 +570,8 @@ def download(url, path):
             return "a redirect to %s, not https" % url
         if scheme not in ("http", "https", "ftp") or not host:
             return "%s is no http, https or ftp URL" % url
+        if not host.isascii():
+            return "%s is a host that is not ASCII" % clean(host)
         addrs, why = resolve(host)
         if why:
             return why
@@ -553,13 +583,15 @@ def download(url, path):
             [
                 "curl", "-q", "-sS", "--globoff", "--proto", "=" + scheme, "--resolve", pin,
                 "--max-time", str(DOWNLOAD_TIME), "--max-filesize", str(MAX_FILESIZE), "-A", UA,
-                "-o", path, "-w", "%{http_code} %{redirect_url}", "--url", url,
+                "-o", path, "-w", "%{http_code} %{remote_ip} %{redirect_url}", "--url", url,
             ],
             timeout=DOWNLOAD_TIME + 30,
         )
         if rc != 0:
             return "curl %d: %s" % (rc, last(err))
-        code, _, nxt = out.decode("utf-8", "replace").strip().partition(" ")
+        code, ip, nxt = (out.decode("utf-8", "replace").strip().split(" ", 2) + ["", ""])[:3]
+        if ip not in addrs:
+            return "curl reached %s, not an address %s resolves to" % (clean(ip) or "no address", host)
         if scheme == "ftp" or code == "200":
             return None if os.path.isfile(path) else "no file came"
         if code in ("301", "302", "303", "307", "308") and nxt.strip():
@@ -689,9 +721,11 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     # version numbers, and the bytes of each changed file one names
     news, hosts, olds = [], set(), {}
     for n in specs(src):
-        found, untaken = spec_lines((src.real(n) or b"").decode("utf-8", "surrogateescape"))
+        found, untaken, made = spec_lines((src.real(n) or b"").decode("utf-8", "surrogateescape"))
         for ln in untaken:
             f.find("content: %s line %d: a Source or Patch tag behind a macro, which this reading cannot take" % (n, ln))
+        for ln in made:
+            f.find("content: %s line %d: a preamble line a macro of the spec, an expression or a conditional body writes, where rpm may read a tag this reading cannot" % (n, ln))
         for tag, v, ln in found:
             u = is_url(v)
             if u is None:
@@ -707,6 +741,8 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     for spec, tag, v in news:
         if "%" in v:
             f.find("content: %s %s uses a macro the text cannot expand: %s" % (spec, tag, v))
+        if host_of(v) and not host_of(v).isascii():
+            f.find("content: %s %s names a host that is not ASCII: %s" % (spec, tag, host_of(v)))
         if not target_exists:
             continue
         h = host_of(v)
@@ -742,15 +778,20 @@ def scan(f, src, base, tmp, specs):
     new, old = os.path.join(tmp, "new"), os.path.join(tmp, "old")
     short = ["%s is over the %d MiB fetch cap" % (shown(n), FETCH_CAP >> 20) for n in specs(src) if src.real(n) is None]
     # one round per include level: the scanner reads 8 deep
+    capped = []
     for _ in range(12):
         src.write(new)
         rc, out, err = run([sys.executable, "-I", SCAN, "needs", new])
-        if rc != 0:
+        # needs: 0 listed, 4 listed but a cap kept a file unread (its incomplete: lines)
+        if rc not in (0, 4):
             f.scan = {"exit": 3, "lines": ["needs failed (%d): %s" % (rc, last(err) or last(out))]}
             f.find("content: the parse scan failed: %s" % f.scan["lines"][0])
             return
-        more = False
+        more, capped = False, []
         for n in out.decode("utf-8", "replace").splitlines():
+            if n.startswith("incomplete: "):
+                capped.append(clean(n[len("incomplete: "):]))
+                continue
             for t in (src, base):
                 if n in t.files and n not in t.data:
                     if t.real(n) is not None:
@@ -761,6 +802,7 @@ def scan(f, src, base, tmp, specs):
             break
     else:
         short.append("the files it reads did not settle in 12 rounds")
+    short += [c for c in capped if c not in short]
     src.write(new)
     base.write(old)
     rc, out, err = run([sys.executable, "-I", SCAN, "scan", new, old], timeout=120)
@@ -1127,6 +1169,12 @@ def comment_faults(c, creator):
     d = html.unescape(c)  # what a forge renders
     if MD_LINK.search(d):
         out.append("a Markdown link")
+    if MD_REF.search(d):
+        out.append("a Markdown reference link")
+    if HTML_ATTR.search(d):
+        out.append("an HTML link attribute")
+    if BACKSLASH.search(d):
+        out.append("a backslash link form")
     for m in BARE_SCHEME.finditer(d):
         out.append("a URL with no slashes: %s" % m.group(0)[:80])
     for m in EMAIL.finditer(d):

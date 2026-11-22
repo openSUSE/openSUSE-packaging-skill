@@ -49,21 +49,23 @@ f="$FIX/gitea/$(printf %s "$5" | tr -c 'A-Za-z0-9._:-' '_')"
 [ -f "$f" ] || { echo "*** Error: 404 Not Found" >&2; exit 1; }
 cat "$f"
 EOF
-# curl as the recorder runs it: one request, its status and redirect target on
-# stdout (-w), the body in -o; net/<url>.redirect answers 302 to what it holds.
+# curl as the recorder runs it: one request, its status, the address it reached
+# (the --resolve pin, or net/<url>.ip) and the redirect target on stdout (-w),
+# the body in -o; net/<url>.redirect answers 302 to what it holds.
 cat > "$work/bin/curl" <<'EOF'
 #!/bin/bash
 echo "curl $*" >> "$FIX/calls"
-out="" url=""
+out="" url="" ip=""
 while [ $# -gt 0 ]; do
-  case "$1" in -o) out=${2:-}; shift ;; --url) url=${2:-}; shift ;; esac
+  case "$1" in -o) out=${2:-}; shift ;; --url) url=${2:-}; shift ;; --resolve) ip=${2##*:}; shift ;; esac
   shift
 done
 [ -n "$out" ] && [ -n "$url" ] || { echo "fake curl: no -o or --url" >&2; exit 2; }
 f="$FIX/net/$(printf %s "$url" | tr -c 'A-Za-z0-9._:-' '_')"
-if [ -f "$f.redirect" ]; then : > "$out"; printf '302 %s' "$(cat "$f.redirect")"
-elif [ -f "$f" ]; then cp "$f" "$out"; printf '200 '
-else : > "$out"; printf '404 '
+[ ! -f "$f.ip" ] || ip=$(cat "$f.ip")
+if [ -f "$f.redirect" ]; then : > "$out"; printf '302 %s %s' "$ip" "$(cat "$f.redirect")"
+elif [ -f "$f" ]; then cp "$f" "$out"; printf '200 %s ' "$ip"
+else : > "$out"; printf '404 %s ' "$ip"
 fi
 EOF
 cat > "$work/bin/getent" <<'EOF'
@@ -485,6 +487,27 @@ fresh record-malformed-url; sed -i '/^Source0:/a Source1:        https://[evil/x
 refused record-malformed-url PASS "Source1: a URL that does not parse: https://[evil/x.tar.gz"
 recorded record-malformed-url BLOCK
 
+# A preamble line a macro of the spec or an expression writes can be a tag rpm reads
+# (rpmspec -P shows the Source1 of both); a call of a host macro passes.
+fresh record-macro-line; sed -i '/^Version:/a %global s Source1: https://evil.example/extra.txt\n%{s}' "$D/src/foo.spec"; fix
+refused record-macro-line PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-macro-line-expr; sed -i '/^Version:/a %[1 ? "Source1: https://evil.example/x" : ""]' "$D/src/foo.spec"; fix
+refused record-macro-line-expr PASS "foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-macro-line-host
+for s in src tgt; do sed -i '/^Version:/a %{?sle15_python_module_pythons}\n%python_subpackages' "$D/$s/foo.spec"; done; fix
+recorded record-macro-line-host PASS
+
+# A name both defined and set by its tag is not sure: rpm takes the later one.
+fresh record-define-and-tag
+sed -i -e '/^Version:/a %global url https://example.org/foo' -e 's|^URL:.*|URL:            https://evil.example/foo|' \
+  -e 's|^Source0:.*|Source0:        %{url}/releases/%{name}-%{version}.tar.gz|' "$D/src/foo.spec"; fix
+refused record-define-and-tag PASS "Source0 uses a macro the text cannot expand: %{url}/releases/foo-1.1.tar.gz"
+
+# Tag numbers compare as numbers: Source00 is Source0.
+fresh record-source00; sed -i 's|^Source0:        https://example.org/releases/|Source00:       https://example.org/forks/|' "$D/src/foo.spec"
+cp "$D/net/$(fk "$TARURL")" "$D/net/$(fk https://example.org/forks/foo-1.1.tar.gz)"; fix
+refused record-source00 PASS "Source00 changed beyond its version numbers"
+
 # Redirects are followed here, not by curl: https only, public addresses only.
 fresh record-redirect-ok; printf 'https://cdn.example.org/foo-1.1.tar.gz' > "$D/net/$(fk "$TARURL").redirect"
 cp "$D/net/$(fk "$TARURL")" "$D/net/$(fk https://cdn.example.org/foo-1.1.tar.gz)"; fix
@@ -499,6 +522,12 @@ fresh record-redirect-loop; printf '%s' "$TARURL" > "$D/net/$(fk "$TARURL").redi
 refused record-redirect-loop PASS "more than 5 redirects"
 fresh record-resolve-loopback; printf '127.0.0.1\n' > "$D/dns/example.org"; fix
 refused record-resolve-loopback PASS "example.org resolves to 127.0.0.1, not a public address"
+# No hop to a host that is not ASCII, and curl must reach an address the host resolved to.
+fresh record-idn-host; printf 'https://cdn.exämple.org/foo-1.1.tar.gz' > "$D/net/$(fk "$TARURL").redirect"
+printf '93.184.215.18\n' > "$D/dns/cdn.exämple.org"; cp "$D/net/$(fk "$TARURL")" "$D/net/$(fk https://cdn.exämple.org/foo-1.1.tar.gz)"; fix
+refused record-idn-host PASS "cdn.exämple.org is a host that is not ASCII"
+fresh record-remote-ip; printf '10.9.9.9' > "$D/net/$(fk "$TARURL").ip"; fix
+refused record-remote-ip PASS "curl reached 10.9.9.9, not an address example.org resolves to"
 
 fresh record-vendor-archive; printf 'zstd\0vendor\n' > "$D/src/vendor.tar.zst"
 sed -i '/^Source0:/a Source1:        vendor.tar.zst' "$D/src/foo.spec"; fix
@@ -564,6 +593,15 @@ refused record-comment-url PASS "a URL other than an https build, src or bugzill
   "Thanks, see https&#58;&#47;&#47;evil.example for it."
 refused record-comment-url PASS "an e-mail address: someone@evil.example" "Thanks, write to someone@evil.example about it."
 recorded record-comment-url PASS "$(printf 'Thanks @contrib.\n- See https://bugzilla.opensuse.org/show_bug.cgi?id=1 and https://build.opensuse.org/request/show/1001.')"
+# Link forms a forge renders even with an allowed target, and a //host with no dot.
+fresh record-comment-links; fix
+refused record-comment-links PASS "a Markdown reference link" "$(printf 'Thanks, see [the request].\n\n[the request]: https://build.opensuse.org/request/show/1001')"
+refused record-comment-links PASS "an HTML link attribute" 'Thanks, see <a href="https://build.opensuse.org/request/show/1001">it</a>.'
+refused record-comment-links PASS "an HTML link attribute" 'Thanks, <img src="https://build.opensuse.org/x.png">.'
+refused record-comment-links PASS "a backslash link form" 'Thanks, see /\evil.example for it.'
+refused record-comment-links PASS "a backslash link form" 'Thanks, see \\intranet\share for it.'
+refused record-comment-links PASS "a URL other than an https build, src or bugzilla.opensuse.org one: //intranet:8080/x" \
+  "Thanks, see //intranet:8080/x for it."
 
 fresh record-comment-merge-ok; fix
 refused record-comment-merge-ok PASS 'a bot directive ("merge ok")' "$(printf 'Thanks.\nmerge ok')"
