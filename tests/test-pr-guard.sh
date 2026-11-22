@@ -2055,6 +2055,17 @@ for n in flock script nohup; do
   case_ "wrapname-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
 done
 case_ wrapname-strace           2 incoming-self "rpmspec from agent incoming-review"
+# A wrapper by a variable's path is the real one once the call's value places it: unwrapped
+# when it is an ELF binary; one only the shell can place is refused, in a script too.
+ask_ wrapvar-nice-decline        accept-forward "osc rq decline: a decline is the user's call"
+for n in timeout nohup-quoted env-braced in-script script-qc; do
+  case_ "wrapvar-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+done
+case_ wrapvar-nice-approve       2 incoming-approve "approving incorg/incgit#5: it names no --commit SHA"
+case_ wrapvar-push               2 push-pr-head "pool/tesseract-ocr#3"
+case_ wrapvar-merge              2 merge-tea "tea PR merge"
+case_ wrapvar-reviewer-flock     2 incoming-self "rpmspec from agent incoming-review"
+case_ wrapvar-unset-in-script    2 exec-unresolved "UNSET_DIR/flock"
 
 echo "--- the harness's own files are the user's: no agent command writes, moves or deletes them"
 case_ harness-cp-hooks          2 harness-write "cp ~/.claude/hooks/_pr_guard.py"
