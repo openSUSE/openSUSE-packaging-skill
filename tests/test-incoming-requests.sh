@@ -50,6 +50,7 @@ put "$B/obs/whois" 'tester: "Tester"'
 put "$B/obs/maintainer" ''
 put "$B/obs/projects.xml" '<collection><project name="devel:example"/></collection>'
 put "$B/obs/packages.xml" '<collection/>'
+# _meta answers for a maintainer lookup, which the list must not make
 put "$B/obs/_source_devel:example__meta" '<project name="devel:example"><person userid="tester" role="maintainer"/></project>'
 put "$B/obs/_source_devel:example_foo__meta" '<package name="foo" project="devel:example"/>'
 put "$B/obs/requests.xml" '<collection>
@@ -156,70 +157,25 @@ case_ sanitizes-desc 0 "update foo evil" \
   "printf '<collection><request id=\"100\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\" when=\"2026-09-20T10:00:00\"/><description>update \\xc2\\x9b31mfoo \\xe2\\x80\\xaeevil</description></request></collection>\\n' > \$B/obs/requests.xml &&
    put \$B/$PRS '[{\"number\": 7, \"title\": \"Update \\u001b[31mbar\\u202e\", \"created_at\": \"2026-09-21T10:00:00Z\", \"repository\": {\"full_name\": \"pool/bar\"}, \"user\": {\"login\": \"someone-else\"}}]'" \
   --format plain
-python3 -I -c 'import sys; t = sys.stdin.read(); sys.exit(any(c in t for c in "\x1b\x9b‮") or "Update bar" not in t)' <<<"$LAST" \
+python3 -I -c 'import sys; t = sys.stdin.read(); sys.exit(any(c in t for c in "\x1b\x9b" + chr(0x202E)) or "Update bar" not in t)' <<<"$LAST" \
   && pass "sanitizes-desc: no escape or bidi character survives" || fail "sanitizes-desc: $(printf '%s' "$LAST" | od -c | head -20)"
 
-# The guard's maintainer rule: a project maintainer's package that names
-# another maintainer, person or group, is not theirs.
-case_ others-package-in-my-project 0 "100	submit	devel:example/foo	new" \
-  "put \$B/obs/_source_devel:example_bar__meta '<package name=\"bar\" project=\"devel:example\"><person userid=\"someone\" role=\"maintainer\"/></package>' &&
-   put \$B/obs/_source_devel:example_baz__meta '<package name=\"baz\" project=\"devel:example\"><group groupid=\"team\" role=\"maintainer\"/></package>' &&
-   sed -i 's#</collection>#<request id=\"102\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"bar\"/><target project=\"devel:example\" package=\"bar\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request><request id=\"103\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"baz\"/><target project=\"devel:example\" package=\"baz\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request></collection>#' \$B/obs/requests.xml" \
+# The list is who should look at a request, not who may accept it (pr-guard's
+# stricter check): a new package in your project, a review assigned to you on
+# another maintainer's package there, and a project-level request are listed,
+# and no package _meta is read for it.
+case_ lists-new-package 0 "104	submit	devel:example/newpkg	new" \
+  "sed -i 's#</collection>#<request id=\"104\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"newpkg\"/><target project=\"devel:example\" package=\"newpkg\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request></collection>#' \$B/obs/requests.xml" \
   --format plain
-! grep -qE "^10[23]	" <<<"$LAST" && pass "others-package-in-my-project: not listed" || fail "others-package-in-my-project: $LAST"
-case_ maintainer-meta-unreadable 2 "/source/devel:example/foo/_meta did not parse" "put \$B/obs/_source_devel:example_foo__meta '<package'" --format plain
-# _incoming.maintains() mirrors _pr_guard.maintains(): both judge each case
-# from the same answers (the guard's offline stand-ins, a fake run for ours).
-out="$(python3 -I - "$REPO/skills/opensuse-packaging/scripts" "$work/parity" 2>&1 <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-scripts, root = sys.argv[1:3]
-sys.path.insert(0, scripts)
-import _incoming  # noqa: E402
-
-os.environ["PR_GUARD_OBS_USER"] = "tester"
-guard = {"__name__": "_pr_guard", "__file__": scripts + "/_pr_guard.py"}
-exec(compile(open(guard["__file__"]).read(), guard["__file__"], "exec"), guard)
-me, other = '<person userid="tester" role="maintainer"/>', '<person userid="other" role="maintainer"/>'
-grp, scm = '<group groupid="t" role="maintainer"/>', "<scmsync>https://src.opensuse.org/o/P#main</scmsync>"
-cases = [  # package _meta (None: absent), project _meta, _maintainership.json (None: absent)
-    (me, "", None), (other, me, None), (grp, me, None), (grp + me, "", None), ("", me, None),
-    ("", other, None), (None, me, None), ("", scm, {"foo": ["tester"]}), ("", scm, {"": ["tester"]}),
-    ("", scm, {"foo": ["other"], "": ["tester"]}), ("", scm, {"foo": [], "": ["tester"]}),
-    (me, scm, {"": ["other"]}), ("", scm, None),
-]
-bad = []
-for n, (pkg, prj, git) in enumerate(cases):
-    ans = {"/source/d:p/_meta": f'<project name="d:p">{prj}</project>'}
-    if pkg is not None:
-        ans["/source/d:p/foo/_meta"] = f'<package name="foo">{pkg}</package>'
-    if git is not None:
-        ans["/repos/o/P/raw/_maintainership.json?ref=main"] = json.dumps(git)
-    d = f"{root}/{n}"  # PR_GUARD_META_DIR/api/<path, /?&= as _>, PR_GUARD_GITEA_DIR/<path, / as _>
-    os.makedirs(f"{d}/api")
-    os.environ.update(PR_GUARD_META_DIR=d, PR_GUARD_GITEA_DIR=d)
-    for p, text in ans.items():
-        name = f"api/{p.translate(str.maketrans('/?&=', '____'))}" if p[:2] == "/s" else p[1:].replace("/", "_")
-        with open(f"{d}/{name}", "w") as fh:
-            fh.write(text)
-
-    def fake(cmd):
-        p = cmd[-1]
-        if p in ans:
-            return subprocess.CompletedProcess(cmd, 0, ans[p], "")
-        return subprocess.CompletedProcess(cmd, 1, "", "HTTP Error 404 | ERROR: 404 Not Found")
-
-    want = guard["maintains"]("d:p", "foo", guard["Ctx"]("/"))[0]
-    if _incoming.maintains("tester", "d:p", "foo", fake)[0] != want:
-        bad.append(f"case {n}: the guard says {want}")
-print(f"{len(cases)} cases" if not bad else "; ".join(bad))
-sys.exit(1 if bad else 0)
-PY
-)"; rc=$?
-[ "$rc" = 0 ] && pass "maintainer-rule-matches-guard ($out)" || fail "maintainer-rule-matches-guard: $out"
+case_ lists-assigned-review 0 "105	submit	devel:example/bar	review" \
+  "put \$B/obs/_source_devel:example_bar__meta '<package name=\"bar\" project=\"devel:example\"><person userid=\"someone\" role=\"maintainer\"/></package>' &&
+   sed -i 's#</collection>#<request id=\"105\" creator=\"x\"><action type=\"submit\"><source project=\"a\" package=\"bar\"/><target project=\"devel:example\" package=\"bar\"/></action><state name=\"review\" when=\"2026-09-22T10:00:00\"/><review state=\"new\" by_user=\"tester\"/></request></collection>#' \$B/obs/requests.xml" \
+  --format plain
+! grep -q "api /source/" "$work/lists-assigned-review/calls" && pass "lists-assigned-review: no _meta read" \
+  || fail "lists-assigned-review: a package _meta was read"
+case_ lists-project-request 0 "106	add_role	devel:example	new" \
+  "sed -i 's#</collection>#<request id=\"106\" creator=\"x\"><action type=\"add_role\"><target project=\"devel:example\"/><person name=\"x\" role=\"maintainer\"/></action><state name=\"new\" when=\"2026-09-22T10:00:00\"/></request></collection>#' \$B/obs/requests.xml" \
+  --format plain
 
 echo "---"; [ "$fails" = 0 ] && echo "all incoming-requests checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

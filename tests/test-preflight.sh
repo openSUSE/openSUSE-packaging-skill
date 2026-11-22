@@ -212,16 +212,112 @@ case_ others-forward 3 "VERDICT: STOP - already in flight: SR 2000012 [new] deve
   "$MAINT && echo '<collection>$SR_FWD</collection>' > $INQ && echo '<collection>$SR_FWD</collection>' > \$B/obs/*states_new_review_project_openSUSE*"
 ! grep -qF "sr#2000012" <<<"$LAST" && pass "others-forward: a forward is no contributor's submission" || fail "others-forward: $LAST"
 case_ incoming-and-ahead 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB"
+# After the review: what devel already has is on the verdict line, so nobody
+# repackages it.
+grep -qF "after it: devel already has a newer version than openSUSE:Factory, forward it, do not repackage" <<<"$LAST" \
+  && pass "incoming-and-ahead: says devel already has it" || fail "incoming-and-ahead: $LAST"
+case_ incoming-landed 5 "after it: nothing to package, devel:example and openSUSE:Factory are both at 1.1" \
+  "$MAINT && $CONTRIB && printf 'Name: foo\nVersion: 1.1\n' > \$B/obs/_source_openSUSE:Factory_foo_foo.spec" 1.1
 case_ incoming-not-mine 3 "VERDICT: STOP - already in flight: SR 2000010" "$CONTRIB"
+# A contributor's request that submits to devel and to the target is in flight
+# at the target, whichever action comes first: the sweep keeps its target
+# action, though the devel one is listed as incoming.
+A_DEV='<action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action>'
+A_TGT='<action type="submit"><source project="devel:other" package="foo"/><target project="openSUSE:Factory" package="foo"/></action>'
+for order in "$A_DEV$A_TGT" "$A_TGT$A_DEV"; do
+  sr="<collection><request id=\"2000014\" creator=\"someone-else\">$order<state name=\"new\"/></request></collection>"
+  case_ "incoming-and-target-$([ "$order" = "$A_DEV$A_TGT" ] && echo devel-first || echo target-first)" 3 \
+    "VERDICT: STOP - already in flight: SR 2000014 [new] devel:other/foo -> openSUSE:Factory by someone-else" \
+    "$MAINT && echo '$sr' > $INQ && echo '$sr' > \$B/obs/*search_request*"
+done
+# Your own PR in flight beats a contributor's.
+case_ own-pr-and-incoming 3 "VERDICT: STOP - already in flight: PR #6 -> factory: My update (None) by tester" \
+  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}},
+             {\"number\": 6, \"base\": {\"ref\": \"factory\"}, \"title\": \"My update\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+# Who maintains it is no answer when the lookup crashed, came back empty or
+# does not parse: CHECK-FAILED, never "not yours".
+case_ maintainer-deep-json 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
+  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && printf '%*s' 100000 '' | tr ' ' '[' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+case_ maintainer-empty-answer 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
+  "$CONTRIB && : > \$B/obs/_source_devel:example_foo__meta"
+case_ incoming-no-creator 2 "unparseable SR collection (incoming)" "$MAINT && echo '<collection>${SR_C/ creator=\"someone-else\"/}</collection>' > $INQ"
 case_ check-failed-wins 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
   "echo '<collection>$SR_C$SR_OWN</collection>' > $INQ && echo @500 > \$B/obs/_source_devel:example_foo__meta"
 case_ incoming-owner-unknown 2 "CHECK FAILED: could not tell whose requests are open" "$MAINT && $CONTRIB && : > \$B/no-whois"
 case_ incoming-empty-answer 2 "unparseable SR collection (incoming)" ": > $INQ"
 case_ incoming-second-action 5 "sr#2000013 by someone-else: not reviewed" \
   "$MAINT && echo '<collection><request id=\"2000013\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"devel:example\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > $INQ"
-case_ incoming-blocked-stamp 5 "sr#2000010 by someone-else: reviewed: BLOCK (key 0123456789ab)" \
-  "$MAINT && $CONTRIB && stamp obs 2000010 '{\"v\": 1, \"kind\": \"obs\", \"id\": \"2000010\", \"creator\": \"someone-else\", \"verdict\": \"BLOCK\", \"key\": \"0123456789ab\"}'"
+K64="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+st_() { printf '{"v": 1, "kind": "%s", "id": "%s", "verdict": "BLOCK", "key": "%s"}' "$@"; }
+case_ incoming-blocked-stamp 5 "sr#2000010 by someone-else: reviewed: BLOCK (key $K64)" \
+  "$MAINT && $CONTRIB && stamp obs 2000010 '$(st_ obs 2000010 "$K64")'"
 case_ incoming-bad-stamp 5 "sr#2000010 by someone-else: not reviewed" "$MAINT && $CONTRIB && stamp obs 2000010 '{\"v\": 1, \"verdict\": '"
+# Only a stamp of this submission with a full key counts: one naming another
+# request, or with the old 12-hex key, is not a review of it.
+case_ incoming-stamp-other-sr 5 "sr#2000010 by someone-else: not reviewed" \
+  "$MAINT && $CONTRIB && stamp obs 2000010 '$(st_ obs 2000099 "$K64")'"
+case_ incoming-stamp-short-key 5 "sr#2000010 by someone-else: not reviewed" \
+  "$MAINT && $CONTRIB && stamp obs 2000010 '$(st_ obs 2000010 0123456789ab)'"
+# A PR's stamp is <owner>_<repo>_<N>.json, owner and repo lowercased and each
+# % and _ escaped (%25, %5F), as incoming-review.sh writes it.
+B="$work/stamp-gitea" stamp gitea 'ex%5Fample_my%5Fpkg_5' "$(st_ gitea 'Ex_ample/My_Pkg#5' "$K64")"
+out="$(HOME="$work/stamp-gitea/home" python3 -I -B "$HERE/../skills/opensuse-packaging/scripts/_incoming.py" stamp 'Ex_ample/My_Pkg#5' 2>&1)"
+[ "$out" = "reviewed: BLOCK (key $K64)" ] && pass "stamp-gitea-name: lowercased and escaped" || fail "stamp-gitea-name: $out"
+
+# _incoming.maintains() mirrors _pr_guard.maintains(): both judge each case
+# from the same answers (the guard's offline stand-ins, a fake run for ours).
+out="$(python3 -I -B - "$HERE/../skills/opensuse-packaging/scripts" "$work/parity" 2>&1 <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+scripts, root = sys.argv[1:3]
+sys.path.insert(0, scripts)
+import _incoming  # noqa: E402
+
+os.environ["PR_GUARD_OBS_USER"] = "tester"
+guard = {"__name__": "_pr_guard", "__file__": scripts + "/_pr_guard.py"}
+exec(compile(open(guard["__file__"]).read(), guard["__file__"], "exec"), guard)
+me, other = '<person userid="tester" role="maintainer"/>', '<person userid="other" role="maintainer"/>'
+grp, scm = '<group groupid="t" role="maintainer"/>', "<scmsync>https://src.opensuse.org/o/P#main</scmsync>"
+cases = [  # package _meta (None: absent), project _meta, _maintainership.json (None: absent)
+    (me, "", None), (other, me, None), (grp, me, None), (grp + me, "", None), ("", me, None),
+    ("", other, None), (None, me, None), ("", scm, {"foo": ["tester"]}), ("", scm, {"": ["tester"]}),
+    ("", scm, {"foo": ["other"], "": ["tester"]}), ("", scm, {"foo": [], "": ["tester"]}),
+    (me, scm, {"": ["other"]}), ("", scm, None),
+]
+bad = []
+for n, (pkg, prj, git) in enumerate(cases):
+    ans = {"/source/d:p/_meta": f'<project name="d:p">{prj}</project>'}
+    if pkg is not None:
+        ans["/source/d:p/foo/_meta"] = f'<package name="foo">{pkg}</package>'
+    if git is not None:
+        ans["/repos/o/P/raw/_maintainership.json?ref=main"] = json.dumps(git)
+    d = f"{root}/{n}"  # PR_GUARD_META_DIR/api/<path, /?&= as _>, PR_GUARD_GITEA_DIR/<path, / as _>
+    os.makedirs(f"{d}/api")
+    os.environ.update(PR_GUARD_META_DIR=d, PR_GUARD_GITEA_DIR=d)
+    for p, text in ans.items():
+        name = f"api/{p.translate(str.maketrans('/?&=', '____'))}" if p[:2] == "/s" else p[1:].replace("/", "_")
+        with open(f"{d}/{name}", "w") as fh:
+            fh.write(text)
+
+    def fake(cmd):
+        p = cmd[-1]
+        if p in ans:
+            return subprocess.CompletedProcess(cmd, 0, ans[p], "")
+        return subprocess.CompletedProcess(cmd, 1, "", "HTTP Error 404 | ERROR: 404 Not Found")
+
+    want = guard["maintains"]("d:p", "foo", guard["Ctx"]("/"))[0]
+    if _incoming.maintains("tester", "d:p", "foo", fake)[0] != want:
+        bad.append(f"case {n}: the guard says {want}")
+print(f"{len(cases)} cases" if not bad else "; ".join(bad))
+sys.exit(1 if bad else 0)
+PY
+)"; rc=$?
+[ "$rc" = 0 ] && pass "maintainer-rule-matches-guard ($out)" || fail "maintainer-rule-matches-guard: $out"
 
 # The version slot takes a version: a project name there compared as one and
 # printed PROCEED (seen twice with `preflight.sh <pkg> <project>`).
@@ -262,6 +358,10 @@ PKG=python3-pytest-lazy-fixtures case_ near-flavour 3 "but it has python-pytest-
 PKG=python-brand-new case_ near-none 0 "VERDICT: PROCEED (new package" "$NEW"
 PKG=python-brand-new case_ near-list-failed 2 "CHECK FAILED" "$NEW && rm \$B/ls/openSUSE:Factory"
 ! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "near-list-failed: no PROCEED" || fail "near-list-failed: $LAST"
+# A new package someone already submitted to the target is in flight, not one
+# to package from scratch.
+PKG=python-brand-new case_ new-package-in-flight 3 "VERDICT: STOP - already in flight: SR 2000020 [new] devel:other/python-brand-new -> openSUSE:Factory by someone-else" \
+  "$NEW && echo '<collection><request id=\"2000020\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"python-brand-new\"/><target project=\"openSUSE:Factory\" package=\"python-brand-new\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/_request_view_collection_types_submit_states_new_review_project_openSUSE:Factory_package_python-brand-new"
 # devel-of.sh: the same lookup, its own exit 6.
 DEVEL_OF="$HERE/../skills/opensuse-packaging/scripts/devel-of.sh"
 devel_of_() { # <name> <rc> <expected> <pkg> [mutation]
