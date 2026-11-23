@@ -526,7 +526,9 @@ session. It asks before:
   repository you maintain (listed for it, or for its project when its own entry is empty, in
   `<owner>/_ObsPrj`'s `_maintainership.json`), only `osc comment create -c` or a plain `tea
   comment` whose one text has the sha256 its incoming review's stamp recorded runs: a
-  `$(cat FILE)` substitution is read, and tea takes only one inline line. Anything else there
+  `$(cat FILE)` substitution is read, FILE not written in the same call, and tea's text is
+  one inline line or a lone `"$(cat FILE)"` word after the index, where bash neither splits
+  nor globs what it reads. Anything else there
   asks, as someone else's item on `pool/<pkg>` always does. Only the plain form is judged:
   `--login src.opensuse.org`, a literal `--repo owner/name` that is no local path (tea reads
   one as a checkout), no other option, and the tea command alone in the call with nothing
@@ -548,8 +550,13 @@ session. It asks before:
   Factory's devel project of a package that passes that test, and `incoming-review.sh`
   recorded PASS or FIXABLE for exactly what the item holds now; the prompt shows the
   verdict, key, findings and build. Anything short of that is refused, an unreviewed item
-  with "review it first". While devel still holds exactly an accepted FIXABLE submission,
-  the Factory forward is refused until the follow-up fix lands;
+  with "review it first";
+- **a Factory forward an accepted FIXABLE review holds** (`[incoming-hold]`): while devel
+  still holds exactly what was accepted (a request's source files, `_link` aside, or a PR's
+  head files in the commit OBS synced) and openSUSE:Factory does not already hold it (a
+  `_link` and what OBS adds to a package it syncs from git aside), the ask names the item
+  and says its follow-up fix is not in devel yet: you may decide none is needed. A stamp
+  directory, a stamp or a lookup it cannot read refuses instead;
 - **closing or forcing a request or PR someone else filed** (`[others-request]`): an `osc
   request` `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`creq`/`mr` with `-s ID`,
   an `accept` with `--force` or `--or-revoke`, the API's `newstate=revoked|superseded|new|
@@ -584,9 +591,10 @@ session. It asks before:
 A contributor's review is refused, not asked, outside its agent (`[incoming-self]`):
 `incoming-review.sh --record` runs only when the event names the agent `incoming-review`,
 and that agent may not parse, build or service-run the submission (the rpm tools, `osc
-build`, `osc service`, `osc co`/`up` with the services, `gate.sh`, `target-gate.sh` and the
-other scripts that do), nor accept, approve, comment or decline. On opencode 1.x no review of
-a contributor's submission records.
+build`, `osc service`, `osc co`/`up` with the services, `osc commit`, which runs the local
+ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor set or export `PATH`
+(the guard looks command names up on its own), nor accept, approve, comment or decline. On
+opencode 1.x no review of a contributor's submission records.
 
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
@@ -885,7 +893,11 @@ create must be refused too, the `AI/zzz` create must run, and so must
   added to that list later (`cmd += ["--json", body]`) is not seen.
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is. For the state
-  directory git's `-C`, `--git-dir`, `--work-tree` and `clone`/`init` targets count.
+  directory git's `-C`, `--git-dir`, `--work-tree`, `core.worktree` (`-c`, `--config-env`),
+  `clone`/`init` targets and `bundle create`'s file count, and so does every value the call
+  gives `GIT_DIR` or `GIT_WORK_TREE`. A push is judged in the repository `-C`, `--git-dir`
+  or a `GIT_DIR` before git places it; one the call sets elsewhere (exported, before
+  another command) is judged with and without, and a value only the shell knows refuses.
 - A path to the state directory the call holds only in a file it reads at run time
   (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
   'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen, nor one the call
@@ -937,6 +949,16 @@ It does not judge code an interpreter runs (a Python, Perl or Node subprocess, `
 rpm`), shell aliases, or a stamp written through a path built at run time. A stamp forged
 so can let a comment post unasked or lift the FIXABLE hold. The go on an accept, an
 approval or a decline stays the user's, in a prompt only a Claude Code session raises.
+
+These bypasses stay open on purpose, each an agent's deliberate act:
+- a wrapper is known by its name: a copy of or link to a wrapper binary under another name
+  (`cp /usr/bin/timeout /var/tmp/t`, then `/var/tmp/t 5 osc rq accept …`) runs the command
+  after it unjudged;
+- a bare wrapper name is taken for the wrapper, so a script of that name earlier on `PATH`
+  (one the main session put there; the incoming-review agent may not set `PATH`) runs in
+  its place unread;
+- a command word holding a glob (`/usr/bin/os? rq accept …`) is judged as written, not as
+  the program the shell expands it to.
 
 ## The bugzilla hand-back guard
 

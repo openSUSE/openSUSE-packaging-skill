@@ -90,6 +90,55 @@
     },
     "cwd": "@OTHER@"
   },
+  "push-git-dir-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@CLONE@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env GIT_DIR=@CLONE@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR=@CLONE@/.git; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-bash-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@CLONE@/.git bash -c 'git push fork tess-88053-16.0'"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-env-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR=@OTHER@/.git; env -u GIT_DIR git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=$D git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-elsewhere": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
   "cd-call-1": {
     "tool_name": "Bash",
     "tool_input": {
@@ -11398,6 +11447,149 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "bash @WORK@/wrapunset.sh"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-file-stamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat comment-12.txt)\""
+    },
+    "cwd": "@WORK@"
+  },
+  "comment-tea-file-other-text": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat comment-other.txt)\""
+    },
+    "cwd": "@WORK@"
+  },
+  "comment-tea-file-written": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf '%s\\n' 'Thanks, applied.' > comment-12.txt; tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat comment-12.txt)\""
+    },
+    "cwd": "@WORK@"
+  },
+  "comment-tea-file-two-subs": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat comment-12.txt)\" \"$(cat comment-other.txt)\""
+    },
+    "cwd": "@WORK@"
+  },
+  "comment-tea-file-unquoted": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"\"$(cat comment-12.txt)\"\""
+    },
+    "cwd": "@WORK@"
+  },
+  "forward-fixable-in-factory": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:inc incinfac openSUSE:Factory -m 'Update incinfac to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-fixable-factory-err": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:inc incfacerr openSUSE:Factory -m 'Update incfacerr to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "forward-fixable-in-factory-git": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:incgit incgitfac openSUSE:Factory -m 'Update incgitfac to 2.0: fixes.'"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-dir-init": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@LINKS@/state/x.git git init --bare"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-work-tree-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_WORK_TREE=@LINKS@/state/incoming; git -C @CLONE@ checkout -f HEAD -- ."
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-core-worktree": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ -c core.worktree=@LINKS@/state/incoming checkout -f HEAD -- ."
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-config-env-worktree": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export W=@LINKS@/state/incoming; git -C @CLONE@ --config-env=core.worktree=W checkout -f HEAD -- ."
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-bundle": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ bundle create @LINKS@/state/b.bundle HEAD"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-osc-ci": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc ci -m 'Update incpass'"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-osc-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc commit -m 'Update incpass'"
+    },
+    "cwd": "@OSC@/devel/x",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "PATH=/var/tmp/x-review/bin:$PATH incpass-tool"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export PATH=/var/tmp/x-review/bin:$PATH; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-for": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for PATH in /var/tmp/x-review/bin; do ls; done"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export PATH=/var/tmp/x-review/bin:$PATH; ls"
     },
     "cwd": "@PLAIN@"
   }

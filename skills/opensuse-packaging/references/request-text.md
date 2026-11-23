@@ -104,15 +104,15 @@ git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # a
 **Once the user has approved the exact text, post it yourself** on your own request or PR:
 pr-guard lets the plain form through,
 `osc comment create -c "$(cat FILE)" request <id>`, or
-`tea comments --login src.opensuse.org --repo <owner>/<pkg> <n> '<text>'` with the text
-inline on one line, no `$`, backslash or backtick, and the command alone in the call.
+`tea comments --login src.opensuse.org --repo <owner>/<pkg> <n> '<text>'`, the command alone
+in the call, with the text inline on one line (no `$`, backslash or backtick) or, for several
+lines, as the one word `"$(cat FILE)"`, FILE written in an earlier call.
 
 **A contributor's item on a package the user maintains** takes only the comment its incoming
 review recorded, posted unchanged and unattended in the same forms: pr-guard passes it when
 its text's sha256 equals the stamp's (`references/incoming-review.md` "Posting the comment,
 accepting, declining"). Write the stamp's `comment` field to FILE in one call
-(`jq -r .comment <stamp> > FILE`) and post it in the next; tea's one-line form cannot carry
-a comment of several lines, so on a PR that one is asked.
+(`jq -r .comment <stamp> > FILE`) and post it in the next, `"$(cat FILE)"` as the text.
 
 Any other item or form needs the user's go: the guard asks, and the user answers the
 harness's prompt. The opencode plugins refuse every ask: report it as waiting for the user's

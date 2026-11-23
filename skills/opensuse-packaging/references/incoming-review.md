@@ -125,7 +125,9 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
    goes through the usual build, review and devel submission.
 4. **No Factory forward until the follow-up is in devel.** pr-guard holds it: while devel's
    files still equal those of the accepted FIXABLE submission (the request's source files, or
-   the PR's files at its head), it refuses the Factory request. Once the follow-up has landed,
+   the PR's files at its head) and openSUSE:Factory does not already hold them, the Factory
+   request asks for the user's go, which they give only when they decide no follow-up is
+   needed. A review record or a lookup it cannot read refuses. Once the follow-up has landed,
    forward through the normal gate.
 
 ## BLOCK
@@ -153,11 +155,10 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 
 - The caller posts the recorded comment — the stamp's `comment` field — unchanged and
   unattended. pr-guard passes a comment on someone else's item when its text's sha256 equals
-  the stamp's, and checks nothing else; any other text asks. On a request:
-  `jq -r .comment <stamp> > FILE` in one call, then in the next
-  `osc comment create -c "$(cat FILE)" request <id>`. On a devel PR, `tea comment` passes
-  only with the text inline on one line, so a comment of several lines is asked like any
-  other. Mechanics:
+  the stamp's, and checks nothing else; any other text asks. Write it with
+  `jq -r .comment <stamp> > FILE` in one call, then in the next, on a request,
+  `osc comment create -c "$(cat FILE)" request <id>`, or on a devel PR, as the only command,
+  `tea comment --login src.opensuse.org --repo <owner>/<repo> <N> "$(cat FILE)"`. Mechanics:
   `references/request-text.md` "Comments: reading them, posting an approved one".
 - An accept or approve without a PASS or FIXABLE stamp of what the item holds now is refused
   (no stamp: "review it first"). With one, pr-guard asks for the user's go, showing the

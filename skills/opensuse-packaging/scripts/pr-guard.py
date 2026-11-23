@@ -39,16 +39,19 @@ pr review approve unless incoming-review.sh recorded PASS or FIXABLE for that
 request's source and target srcmd5, or for the PR head its commit option
 names, into Factory's devel project of a package the user maintains and may
 move unattended: then it asks, showing the review and the facts it checked
-again; a submit to openSUSE:Factory while devel still holds the files an
-accepted FIXABLE review saw; incoming-review.sh's record option outside the
+again; a submit to openSUSE:Factory that an accepted FIXABLE review may hold
+when a review record or a lookup it needs cannot be read; incoming-review.sh's
+record option outside the
 incoming-review agent (an argument it cannot read there counts on the agent's
 own command line); any accept, approval, comment, decline, close, revoke or
 supersede from the incoming-review or changes-review agent; and in the
 incoming-review agent, every call judged, whatever parses or runs a
 submission: the rpm family by name or through a link (rpmlint too), quilt
 setup, osc build (chroot, shell, wipe), an osc checkout or update that runs the
-source services, osc service but wait, gate.sh, target-gate.sh and the skill's
-other scripts that parse a spec, run a service or build; and a write, move or
+source services, osc service but wait, osc commit (it runs the local ones),
+gate.sh, target-gate.sh and the skill's other scripts that parse a spec, run a
+service or build, and a command that sets or exports PATH, which the guard
+looks names up on; and a write, move or
 delete of the installed guard (~/.claude/hooks), Claude Code's settings (a
 .claude/settings.json or settings.local.json anywhere) or the opencode plugins
 (~/.config/opencode/plugins), which the user changes by hand, a tree into
@@ -82,9 +85,11 @@ when its text's sha256 is the one its incoming review recorded, and a tea
 comment on a src.opensuse.org issue or PR the user opened, or, with the same
 review, one in a repository they maintain outside pool, as the call's only
 command naming the src.opensuse.org login and a literal owner/name
-repository); an osc request (rq, review) accept or approve of a request the
-user filed, or the API's changestate to accepted, or a submit to
-openSUSE:Factory from a devel project, unless autoforward-gate.sh would call
+repository, its text inline or one "$(cat FILE)" word); a submit to
+openSUSE:Factory while devel still holds the files an accepted FIXABLE review
+saw and openSUSE:Factory does not; an osc request (rq, review) accept or
+approve of a request the user filed, or the API's changestate to accepted, or
+a submit to openSUSE:Factory from a devel project, unless autoforward-gate.sh would call
 the package ELIGIBLE (no reviewer, the user's package or an unowned one in a
 project they maintain, Factory's devel project; for a project kept in git, its
 project git's _maintainership.json and workflow.config Reviewers), and every
