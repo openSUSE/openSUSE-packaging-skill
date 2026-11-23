@@ -79,6 +79,70 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+insert_prose_script() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith("- `geectl build results"):
+        lines.insert(i + 1, "- `geectl build results PRJ --package PKG` — remote status; the gate's `--entries` names the new ones.")
+        break
+else:
+    raise SystemExit("no build results line")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+insert_prose_script_unattributed() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith("- `geectl build results"):
+        lines.insert(i + 1, "- `geectl build results PRJ --package PKG` — remote status; `--repos` picks the repos.")
+        break
+else:
+    raise SystemExit("no build results line")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+insert_prose_script_attributed() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith("- `geectl build results"):
+        lines.insert(i + 1, "- `geectl build results PRJ --package PKG` — remote status; the gate's `--repos` picks the repos.")
+        break
+else:
+    raise SystemExit("no build results line")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+insert_prose_short() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith("- `geectl build results"):
+        lines.insert(i + 1, "- `geectl build results PRJ --package PKG` — remote status; pass `-p` through to cargo.")
+        break
+else:
+    raise SystemExit("no build results line")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add() { python3 - "$M" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -140,6 +204,14 @@ case_ wrong-bullet-is-no-synopsis 1 "\`geectl checkout\` has no synopsis line" \
   "del_line $U '- \`geectl checkout PRJ PKG --live\`'"
 case_ prose-flag-typo 1 "prose cites --bogus, which no cited \`geectl\` command accepts" \
   "insert_prose_typo $U"
+case_ prose-flag-script 0 "geectl citations match geectl" \
+  "insert_prose_script $U"
+case_ prose-flag-script-unattributed 1 "prose cites --repos, which no cited \`geectl\` command accepts" \
+  "insert_prose_script_unattributed $U"
+case_ prose-flag-script-attributed 0 "geectl citations match geectl" \
+  "insert_prose_script_attributed $U"
+case_ prose-flag-short 0 "geectl citations match geectl" \
+  "insert_prose_short $U"
 case_ prose-flag-no-command 0 "geectl citations match geectl" \
   "add 'Note: \`--live\` performs a mutation.'"
 case_ geectl-missing 2 "cannot run geectl" ":" "--geectl /nonexistent"

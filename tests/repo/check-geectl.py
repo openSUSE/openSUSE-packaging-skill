@@ -12,7 +12,11 @@ leaf):
   * every flag cited after it is an option that leaf's parser accepts
     (the global options every command accepts included);
   * a `--flag` cited in prose on the same line as a command is an option
-    geectl accepts, so a typo in a prose flag fails too;
+    geectl accepts, so a typo in a prose flag fails too — unless it is a
+    bundled script's option whose script is named on the same line
+    (script-usage.md synopses give the flag's owners; a bare geectl typo
+    that merely collides with a script flag still fails) or a short flag
+    of another tool (`-p`, `-j1`);
   * references/geectl-usage.md has a synopsis line for that command, so no
     doc uses a geectl form the reference does not define;
   * the known wrong forms are not recommended outside geectl-usage.md's
@@ -82,6 +86,49 @@ def prose_flags(span):
             prev_flag = True
         else:
             prev_flag = False
+    return out
+
+
+SHORT = re.compile(r"^-[A-Za-z][A-Za-z0-9]?$")
+
+
+def _stem_mentioned(stem, line):
+    """The script stem as a word on the line, bounded by characters outside
+    [A-Za-z0-9_-]: ``gate`` matches ``the gate's`` and ``gate.sh``, not
+    ``target-gate.sh``."""
+    return (
+        re.search(
+            r"(?<![A-Za-z0-9_-])" + re.escape(stem) + r"(?![A-Za-z0-9_-])",
+            line,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def script_flags(base):
+    """Long flags of the bundled scripts, from their script-usage.md
+    synopses (check-flags.py verifies those against each script's --help),
+    as flag -> {script stems}: a prose flag naming one of those passes only
+    when its owning script is named on the same line, so a geectl typo that
+    merely collides with a script flag (``--repos`` for ``--repo``) still
+    fails."""
+    path = os.path.join(base, "references", "script-usage.md")
+    out = {}
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for line in fh.read().splitlines():
+            if _cf.SYNOPSIS.match(line):
+                m = re.search(r"`([^`]+)`", line)
+                if not m:
+                    continue
+                stem = os.path.basename(m.group(1).split()[0])
+                if not stem.endswith((".sh", ".py")):
+                    continue
+                stem = re.sub(r"\.(sh|py)$", "", stem)
+                for flag in _cf.FLAG.findall(line):
+                    out.setdefault(flag, set()).add(stem)
     return out
 
 
@@ -333,10 +380,15 @@ def check(base, cli, manifest_leaves, manifest_flags):
     # loaded those), the manifest rows, and the global options: a prose
     # flag may name another command's flag (`--description`, for the shell
     # safety the add-comment line points at), so the check is existence,
-    # not which command takes it. A span naming another tool
-    # (`tea … --login`) starts with that tool, not a flag, so it is not a
-    # prose flag; a line with no `geectl` call has no command to attribute
-    # the flag to, so it is skipped. Wrong forms define nothing.
+    # not which command takes it. A flag of a bundled script (its
+    # script-usage.md synopsis lists it) is that script's, not geectl's,
+    # when the script is named on the same line; a short flag (`-p`, `-j1`)
+    # belongs to another tool — geectl's short
+    # options are verified inside call spans, where the call check covers
+    # them. A span naming another tool (`tea … --login`) starts with that
+    # tool, not a flag, so it is not a prose flag; a line with no `geectl`
+    # call has no command to attribute the flag to, so it is skipped.
+    # Wrong forms define nothing.
     known = set(GLOBAL_OPTS)
     for _path, flags in cli.flags.items():
         known |= set(flags)
@@ -344,12 +396,15 @@ def check(base, cli, manifest_leaves, manifest_flags):
         known |= set(flags)
     for row in manifest_flags.values():
         known |= set(row)
+    script_owners = script_flags(base)
     for doc in docs_of(base):
         rel = os.path.relpath(doc, ROOT)
         skip = wrong_ok if doc == usage else set()
         by_line = {}
         for n, text in spans(doc):
             by_line.setdefault(n, []).append(text)
+        with open(doc, encoding="utf-8") as fh:
+            raw_lines = fh.read().splitlines()
         for n in sorted(by_line):
             if n in skip:
                 continue
@@ -367,15 +422,21 @@ def check(base, cli, manifest_leaves, manifest_flags):
                 if not OPT.match(text.strip()):
                     continue
                 for flag in prose_flags(text):
-                    if flag not in known:
-                        findings.append(
-                            (
-                                rel,
-                                n,
-                                f"prose cites {flag}, which no cited "
-                                "`geectl` command accepts",
-                            )
+                    if flag in known or SHORT.match(flag):
+                        continue
+                    owners = script_owners.get(flag)
+                    if owners and any(
+                        _stem_mentioned(stem, raw_lines[n - 1]) for stem in owners
+                    ):
+                        continue
+                    findings.append(
+                        (
+                            rel,
+                            n,
+                            f"prose cites {flag}, which no cited "
+                            "`geectl` command accepts",
                         )
+                    )
     # A manifest row goes stale the moment the binary gains it.
     for path, (issue, _flags) in sorted(manifest_leaves.items()):
         if path in cli.paths:
