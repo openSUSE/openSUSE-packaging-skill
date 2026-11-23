@@ -35,14 +35,15 @@ are always-on, not a phase.
   and name the ONE section it needs — or paste that section's `refsection.py` output into the brief
   when it is short. Give the absolute skill-root path; the agent's cwd is not the skill root.
 - **Point the brief at a playbook, never at the references behind it.** `agents/update-build.md`,
-  `agents/submit-watch.md`, `agents/triage.md` and `agents/changes-review.md` each open with the 1–5
-  sections that block must read, written as `refsection.py` commands, plus a trigger table for
+  `agents/submit-watch.md`, `agents/triage.md`, `agents/changes-review.md` and
+  `agents/incoming-review.md` each open with the 4–10 sections that block must read, written as `refsection.py` commands, plus a trigger table for
   everything else. That mandatory set is the agent's step-0 cost, measured:
 
   | playbook | mandatory sections | bytes | ≈ tokens |
   |---|---|---|---|
   | `agents/update-build.md` | 10 (+ the 0.8 KB entry template) | 43,700 | ~10.9k |
   | `agents/changes-review.md` | 4 | 33,400 | ~8.3k |
+  | `agents/incoming-review.md` | 8 | 27,700 | ~6.9k |
   | `agents/submit-watch.md` | 7 | 26,500 | ~6.6k |
   | `agents/triage.md` | 8 | 23,700 | ~5.9k |
 

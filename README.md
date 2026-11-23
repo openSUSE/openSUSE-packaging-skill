@@ -131,6 +131,7 @@ ln -sfn "$PWD/skills/opensuse-packaging/agents/triage.md"         ~/.claude/agen
 ln -sfn "$PWD/skills/opensuse-packaging/agents/update-build.md"   ~/.claude/agents/osc-update-build.md
 ln -sfn "$PWD/skills/opensuse-packaging/agents/submit-watch.md"   ~/.claude/agents/osc-submit-watch.md
 ln -sfn "$PWD/skills/opensuse-packaging/agents/changes-review.md" ~/.claude/agents/changes-review.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/incoming-review.md" ~/.claude/agents/incoming-review.md
 ```
 
 ### The sub-agent playbooks
@@ -143,9 +144,12 @@ repository-root `agents/` directory: that path existed before v1.0.0 and is gone
 made against it now resolve to nothing.
 
 Without sub-agent support, run a playbook inline or paste it as a standalone session
-prompt — they are plain prompts and need no harness support to be useful. The change review
-is the exception: it never runs in the session that wrote the change, and records its own
-verdict (`gate.sh --review`), which the pool PR guard asks you about from any other agent.
+prompt — they are plain prompts and need no harness support to be useful. The two reviewers
+are the exception: neither runs in the session that wrote the change, and each records its
+own verdict — the change review with `gate.sh --review`, which the pool PR guard asks you
+about from any other agent; the review of a contributor's submission with
+`incoming-review.sh --record`, which the guard refuses from any other agent. Register them
+as `changes-review` and `incoming-review`: the guard knows them by those names.
 
 ## Safety model
 

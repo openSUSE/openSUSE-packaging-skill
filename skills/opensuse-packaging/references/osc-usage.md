@@ -69,8 +69,8 @@ Call osc exactly as below: don't guess a form and don't run `osc <cmd> --help`. 
 - `osc mbranch PKG` — branch every maintained product's copy of the package.
 - `osc rq list -U USER -s new,review -t submit [PRJ [PKG]]` (request) — list requests.
 - `osc rq show ID` (`-d` adds the diff) · `osc rq log ID` — one request · its history.
-- `osc comment list request ID` — a request's comments, each headed `( COMMENT_ID ) On … USER wrote:` · `osc comment create [-p COMMENT_ID] -c TEXT request ID` — post one, `-p` as a reply in that thread; `-c "$(cat FILE)"` for the same shell safety as `-m` (`references/request-text.md` "Answering a reviewer").
-- `osc rq accept -m MSG ID` · `osc rq decline -m MSG ID` · `osc rq revoke -m MSG ID` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: after a devel accept, file the onward `osc sr` yourself.
+- `osc comment list request ID` — a request's comments, each headed `( COMMENT_ID ) On … USER wrote:` · `osc comment create [-p COMMENT_ID] -c TEXT request ID` — post one, `-p` as a reply in that thread; `-c "$(cat FILE)"` for the same shell safety as `-m` (`references/request-text.md` "Answering a reviewer"). It is the comment form for every request: pr-guard reads its text, which a contributor's item needs to match its incoming review's recorded comment; an `osc api` POST to `/comments/request/ID` carries no text it reads, so on anyone else's request it asks.
+- `osc rq accept -m MSG ID` · `osc rq decline -m MSG ID` · `osc rq revoke -m MSG ID` — act on a request: accept your own on `autoforward-gate.sh` ELIGIBLE; accept a contributor's (once its incoming review recorded PASS or FIXABLE) or decline one only on the user's explicit go (`references/incoming-review.md` "Posting the comment, accepting, declining"). Accepting does not forward: after a devel accept, file the onward `osc sr` yourself.
 
 ## Lookup
 

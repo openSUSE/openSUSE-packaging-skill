@@ -20,5 +20,10 @@ You run in the openSUSE packaging container. What differs from a workstation:
 - **Reports go under `reports/` in the work directory.** The user cannot open
   `/var/tmp` or `/tmp` of the container; `/var/tmp` survives a restart, `/tmp` does not.
 - **Sub-agents:** start an update with `osc-update-build`, a review with
-  `changes-review`, a submission with `osc-submit-watch`. The agent `general`
+  `changes-review`, a submission with `osc-submit-watch`, the review of a
+  contributor's submission with `incoming-review`. The agent `general`
   cannot start a review.
+- **No accept, approval or decline of a contributor's submission here.** The
+  guard refuses every call it would ask the user about: post the recorded
+  comment, then report the item as waiting for the user's go, which they give
+  on the host.

@@ -158,7 +158,7 @@ What happens after the PR opens:
 - The **`autogits-devel` bot** automatically opens a second PR against the project's `_ObsPrj` repo.
 - The **`autogits_obs_staging_bot`** creates an OBS build project, builds the change, and **posts build results as a comment on your PR** — this is your server-side build feedback (you don't need an OBS home branch just to see if it builds).
 - Prefix the PR title with **`WIP:`** to suppress the bot automation while iterating.
-- Maintainer approves → bot auto-merges. A maintainer's own PR auto-merges on a successful build.
+- Maintainer approves → bot auto-merges. A maintainer's own PR auto-merges on a successful build. The approve form, pinned to the head reviewed: `git-obs -G src.opensuse.org pr review approve --commit <head-sha> <owner>/<repo>#<N>`, never `--reviewer`. A contributor's PR to the user's package is approved only after its incoming review recorded PASS or FIXABLE at that head, on the user's go (`references/incoming-review.md` "Devel PRs on src.opensuse.org"); agents never merge one.
 
 **Submitting to `openSUSE:Factory` is still pure osc** — it is *not* yet managed through Git/Gitea (as of 2026-07). After your change lands in the devel project (PR merged), run the classic `osc sr <obs-devel-project>/<pkg> openSUSE:Factory` (see "Submit requests" in `references/submit-watch.md`). The whole Factory review chain (`factory-auto`, `licensedigger`, staging, `opensuse-review-team`) is unchanged.
 

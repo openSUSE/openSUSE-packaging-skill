@@ -26,9 +26,11 @@
 # accepted anywhere else lands in the wrong devel project (real case: apache-arrow
 # accepted into Application:Geo, whose package only linked to science).
 #
-# This ONLY ever applies to requests YOU created. Never use it to accept or
-# decline somebody else's request — that always needs an explicit human
-# decision, regardless of what roles are set.
+# Its unattended accept ONLY ever applies to requests YOU created. Somebody
+# else's request is accepted or declined only on the user's explicit go,
+# regardless of what roles are set: on a package this calls ELIGIBLE, once its
+# incoming review recorded PASS or FIXABLE (references/incoming-review.md); on
+# any other package, never.
 #
 #   exit 0  ELIGIBLE   — no reviewer set, and you maintain the package (or the
 #                        package is unmaintained and you maintain the project)
