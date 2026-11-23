@@ -44,21 +44,15 @@ jobs:
       # check-osc.py reads its argparse parser, pinned so the check is stable.
       - name: Install osc
         run: python3 -m pip install osc==1.27.3
-      # No released geectl tarball ships the CLI yet (v0.2.0 predates the
-      # rollout), so check-geectl.py runs against a debug build from a pinned
-      # source commit. Bump the pin to re-validate against a newer geectl.
+      # check-geectl.py runs against the released CLI from crates.io.
+      # Bump the version to re-validate against a newer geectl.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.99.1
-      - name: Build geectl
-        run: |
-          git clone https://github.com/scarabeusiv/geectl.git /tmp/geectl
-          git -C /tmp/geectl checkout d4f2f0158b11f94b350aa323dadcc505dde66e47
-          cargo build --locked --manifest-path /tmp/geectl/Cargo.toml
+      - name: Install geectl
+        run: cargo install geectl --version 0.2.1
       - name: Script suites
-        env:
-          GEectl_BIN: /tmp/geectl/target/debug/geectl
         # `|| rc=1` and NOT `|| break`: break returns 0, so the loop would report
         # success on a failing suite -- green forever, for no reason anyone sees.
         run: (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
@@ -69,7 +63,7 @@ jobs:
           python3 tests/repo/check-skills.py
           python3 tests/repo/check-flags.py
           python3 tests/repo/check-osc.py
-          python3 tests/repo/check-geectl.py --geectl /tmp/geectl/target/debug/geectl
+          python3 tests/repo/check-geectl.py
 
   lint:
     runs-on: ubuntu-latest

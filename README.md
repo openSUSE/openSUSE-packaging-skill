@@ -181,18 +181,14 @@ CI runs exactly these, so the two cannot drift:
 
 ```
 python3 -m pip install osc==1.27.3
-# geectl for check-geectl.py: no released tarball ships the CLI yet
-# (v0.2.0 predates the rollout), so build it from the pinned source commit.
-git clone https://github.com/scarabeusiv/geectl.git /tmp/geectl
-git -C /tmp/geectl checkout d4f2f0158b11f94b350aa323dadcc505dde66e47
-cargo build --locked --manifest-path /tmp/geectl/Cargo.toml
-export GEectl_BIN=/tmp/geectl/target/debug/geectl
+# geectl for check-geectl.py: install the released CLI from crates.io.
+cargo install geectl --version 0.2.1
 (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
 python3 tests/test-update-checkers.py
 python3 tests/repo/check-skills.py
 python3 tests/repo/check-flags.py
 python3 tests/repo/check-osc.py
-python3 tests/repo/check-geectl.py --geectl /tmp/geectl/target/debug/geectl
+python3 tests/repo/check-geectl.py
 ruff check . && ruff format --check .
 shellcheck tests/test-*.sh
 shellcheck skills/opensuse-packaging/scripts/{leap-sync,pool-pr,target-gate}.sh
@@ -204,7 +200,7 @@ every source disabled or behind a dead proxy — and need only the Python standa
 plus osc itself for `check-osc.py`, which validates every `osc` citation against osc's
 own parser (pinned in CI; bump the pin to re-validate against a newer osc), and a geectl
 binary for `check-geectl.py`, which validates every `geectl` citation against geectl's
-own `--help` (built from the pinned source commit in CI; bump the pin to re-validate
+own `--help` (installed from crates.io in CI; bump the version to re-validate
 against a newer geectl).
 
 Before making any check blocking, break the thing it guards and watch it go red. A check
