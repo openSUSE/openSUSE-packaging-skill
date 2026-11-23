@@ -508,38 +508,48 @@ judged, and a refusal redacts the credentials it would echo (URL userinfo,
 
 Some calls it leaves to you instead: it exits 0 and prints the hook's `ask` decision as
 JSON, and a refusal anywhere in the same call still wins. Claude Code shows the prompt,
-from a sub-agent too; a headless `-p` run refuses it. Neither opencode plugin can prompt,
-so both refuse the call with the guard's reason: approve it by running the command
-yourself. It asks before:
+from a sub-agent too; a headless `-p` run refuses it. Neither opencode plugin hands an ask
+to opencode's prompt, so both refuse the call with the guard's reason ("How a refusal
+travels"): the agent reports it as waiting for your go, which you give in a Claude Code
+session. It asks before:
 
 - **a comment or review on OBS or src.opensuse.org**: `osc comment create` or `delete`, `tea
   comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
-  review approve`/`decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
+  review decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
   write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`; a `tea
   comment` with no subcommand and no body, which tea still posts, also names the read
-  (`tea comments list`). A comment
-  on an OBS request you filed (a reply to its reviewers), or whose every target package you maintain (a person entry, not a group)
-  runs, with the user's go left to the agent (`osc comment create request
-  N`, or the API's `/comments/request/N`). So does a `tea comment` (or a `tea api` POST to
-  `repos/<owner>/<repo>/issues/<n>/comments`) on a src.opensuse.org issue or PR you opened, or in
-  a repository you maintain: listed for it, or for its project when its own entry is empty, in
-  `<owner>/_ObsPrj`'s `_maintainership.json`; for `pool/<pkg>`, the package in Factory's devel
-  project. Only the plain form is judged: `--login src.opensuse.org`, a literal `--repo
-  owner/name` that is no local path (tea reads one as a checkout), no other option, and the tea
-  command alone in the call with nothing for the shell to expand outside quotes; anything
-  else asks, because tea's own remote and login choice can point elsewhere. GitHub (`gh`) is not
+  (`tea comments list`). A comment on an OBS request you filed (a reply to its reviewers)
+  runs (`osc comment create request N`, or the API's `/comments/request/N`), and so does a
+  `tea comment` (or a `tea api` POST to `repos/<owner>/<repo>/issues/<n>/comments`) on a
+  src.opensuse.org issue or PR you opened. On a contributor's request whose every target
+  package you maintain (a person entry, not a group), or a contributor's issue or PR in a
+  repository you maintain (listed for it, or for its project when its own entry is empty, in
+  `<owner>/_ObsPrj`'s `_maintainership.json`), only `osc comment create -c` or a plain `tea
+  comment` whose one text has the sha256 its incoming review's stamp recorded runs: a
+  `$(cat FILE)` substitution is read, and tea takes only one inline line. Anything else there
+  asks, as someone else's item on `pool/<pkg>` always does. Only the plain form is judged:
+  `--login src.opensuse.org`, a literal `--repo owner/name` that is no local path (tea reads
+  one as a checkout), no other option, and the tea command alone in the call with nothing
+  for the shell to expand outside quotes; anything else asks, because tea's own remote and
+  login choice can point elsewhere. GitHub (`gh`) is not
   judged, so reviews on your own GitHub projects run;
 - **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
-  (also `rq` and `review`) `decline` and `approvenew`; its `accept` and `approve`, an
-  `osc api` `changestate` to accepted or `cmd=approve`, and a submit to
-  `openSUSE:Factory` from a project outside `home:`, unless the package passes the
+  (also `rq` and `review`) `decline` and `approvenew`; the `accept` and `approve` of a
+  request you filed, an `osc api` `changestate` to accepted or `cmd=approve` of one, and a
+  submit to `openSUSE:Factory` from a project outside `home:`, unless the package passes the
   guard's own copy of `autoforward-gate.sh`'s test (only submit actions; no reviewer on
   package or project; you maintain the package, or it has no maintainer and you maintain the
-  project; Factory develops it there or links it there). Who filed the request does not
-  matter to an accept, and a package a group maintains is someone else's. The skill still
-  wants the user's go for someone else's request (core directive 10); the guard no longer
-  asks for it on your own packages, so that go is the agent's to hold.
-  The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+  project; Factory develops it there or links it there). A package a group maintains is
+  someone else's. The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+- **a contributor's accept or approval with a review** (`[incoming-accept]`,
+  `[incoming-approve]`): an accept of a request someone else filed, or `git-obs pr review
+  approve --commit SHA` of someone else's devel PR, asks only when it is one plain submit
+  from a pinned revision (a PR: its literal head, no `--reviewer`, never `pool/`) into
+  Factory's devel project of a package that passes that test, and `incoming-review.sh`
+  recorded PASS or FIXABLE for exactly what the item holds now; the prompt shows the
+  verdict, key, findings and build. Anything short of that is refused, an unreviewed item
+  with "review it first". While devel still holds exactly an accepted FIXABLE submission,
+  the Factory forward is refused until the follow-up fix lands;
 - **closing or forcing a request or PR someone else filed** (`[others-request]`): an `osc
   request` `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`creq`/`mr` with `-s ID`,
   an `accept` with `--force` or `--or-revoke`, the API's `newstate=revoked|superseded|new|
@@ -570,6 +580,13 @@ yourself. It asks before:
   started with `--agent`; the 2.x plugin passes opencode's `agent` as `agent_type`. The harness
   fills the field, not the model. opencode 1.x hands its hook no agent, so there every review is
   recorded by you.
+
+A contributor's review is refused, not asked, outside its agent (`[incoming-self]`):
+`incoming-review.sh --record` runs only when the event names the agent `incoming-review`,
+and that agent may not parse, build or service-run the submission (the rpm tools, `osc
+build`, `osc service`, `osc co`/`up` with the services, `gate.sh`, `target-gate.sh` and the
+other scripts that do), nor accept, approve, comment or decline. On opencode 1.x no review of
+a contributor's submission records.
 
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
@@ -845,8 +862,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   (`r.data = ...`).
 - Perl's LWP and HTTP::Tiny requests are not seen, and `ruby`, `bun`, `deno` and `php`
   programs are not read.
-- Commands run through `flock` or `script` are not unwrapped, and words `xargs` reads
-  from stdin are not seen (`echo B | xargs git push fork` is
+- Words `xargs` reads from stdin are not seen (`echo B | xargs git push fork` is
   judged as a push of the current branch).
 - A script whose shebang is `env -S` and whose name has no `.sh` is read as program
   code, so its shell pushes are not parsed.

@@ -7,9 +7,16 @@ wrote* — upstream release notes, bug comments, submit-request diffs, build log
 metadata, other distributions' spec files. Its security properties follow from that:
 
 - **The bundled scripts read; they do not write.** They query OBS, Gitea, Repology, Anitya
-  and the package registries, and print. Anything that changes state outside the working
-  tree — a commit, a submit request, a bug comment, an accept or decline — is the user's
-  decision, taken in their session, not something a script does on its own.
+  and the package registries, and print; the gate and review recorders write only their own
+  stamps. Anything that changes state outside the working tree — a commit, a submit
+  request, a bug comment, an accept or decline — is the user's decision, taken in their
+  session, not something a script does on its own.
+- **A contributor's submission is reviewed as text and accepted only on the user's go.** On
+  a package the user maintains, the `incoming-review` agent reads it without parsing,
+  building or running it, and records a verdict with a comment; a comment posts without a
+  prompt only when its text matches the record, and accepting, approving or declining
+  waits for the user's explicit go at the harness's prompt. Another maintainer's package is
+  never acted on.
 - **Third-party text is data, never instructions.** `references/untrusted-content.md` is
   the policy; `scripts/_sanitize.py` is the mechanism, stripping terminal escapes and
   Unicode-smuggling characters so that what a human sees and what the model receives are
@@ -24,6 +31,8 @@ A report is a vulnerability if it breaks one of those promises:
 
 - a bundled script that performs a write, or that can be induced to;
 - a way to get text from a fetched source treated as an instruction;
+- a way to get a contributor's submission accepted, approved or declined without the user's
+  go, or its code run on the host by its review;
 - a `_sanitize.py` bypass — escapes, invisible characters or fence forgeries that survive;
 - a credential read, or a token reaching an outbound artifact;
 - a path traversal or a file read outside the skill checkout.

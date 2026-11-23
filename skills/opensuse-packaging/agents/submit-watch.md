@@ -33,7 +33,7 @@ You are the **submit / watch** stage. Goal: get a green package's change committ
 | the target is Leap 16.x / SLFO / Backports | `leap-slfo.md` "1. Where does the package come from?" (routing); a released product → `maintenance-updates.md` "Maintenance updates (Backports / Leap)" |
 | a Leap `pool/` PR (a `leap-16.x` branch) | `leap-slfo.md` "The pool PR gate — build, review, open, watch", then `script-usage.md` "Leap" |
 | brand-new package (Factory does not have it) | `new-package.md` "Submitting a brand-new package — go via the devel project, not straight to Factory" |
-| reviewing someone else's incoming request | `submit-watch.md` "Reviewing incoming requests" — and core directive 10: never accept or decline it on your own initiative |
+| someone else's incoming request or PR | `incoming-review.md` "The flow" — core directive 10: accept, approve or decline it only on the user's go, after its review; another maintainer's package, never |
 | a red arch/flavor on the server after the SR | `submit-watch.md` "Monitoring server-side builds" |
 | consolidating or renaming packages | `submit-watch.md` "Consolidating several source packages into one" |
 | a security bug to hand back (the Block-2 report lists it as fixed) | `bugzilla-cve-triage.md` "5. Resolving (only on explicit instruction)", "3. Triage each CVE — is it still live?" (stream matrix) |

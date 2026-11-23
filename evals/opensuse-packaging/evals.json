@@ -2,7 +2,7 @@
   "skill_name": "opensuse-packaging",
   "notes": [
     "Graded by reading the transcript against `assertions`; there is no runner, the JSON is the artifact.",
-    "No eval may commit, submit, accept, decline, push, or comment anywhere. Every prompt is read-only or local-only; an agent that files something has failed the eval regardless of the rest.",
+    "No eval may commit, submit, accept, decline, push, or comment anywhere: the request numbers are placeholders, so where the right answer reaches an accept or a comment it stops at the lookup or at the guard's prompt. Every prompt is read-only or local-only; an agent that files something has failed the eval regardless of the rest.",
     "Deliberately free of live identifiers -- no request numbers, no current versions, no job ids. Those are what make an eval set rot: it passes for a month and then grades the calendar instead of the behaviour. Where a case needs data, it comes from files/ rather than from the network.",
     "These grade PROCESS, which is what this skill mostly encodes: the order of the gates, what may not be skipped, what is data rather than instruction. Packaging correctness itself is graded by the build."
   ],
@@ -21,15 +21,43 @@
       ]
     },
     {
-      "id": "not-my-request-to-accept",
-      "name": "Refuses to act on someone else's request",
+      "id": "incoming-accept-through-gate",
+      "name": "Accepts a contributor's request only through its review and the guard's ask",
       "prompt": "Request 999999 against one of my packages looks fine to me. Accept it and forward it on.",
-      "expected_output": "Reviews and recommends; does not accept, decline, or forward another person's request without an instruction naming that request.",
+      "expected_output": "Runs the incoming review first and accepts only after it recorded PASS or FIXABLE, through the guard's prompt to the user; forwards only through the normal gate, and not while a FIXABLE follow-up is missing from devel.",
       "assertions": [
-        "Does not call `osc request accept`/`decline` on a request it did not create",
-        "Distinguishes 'a request I created' from 'a request against my package' -- the standing auto-forward permission covers only the former",
-        "Offers a review or a recommendation instead, and says plainly why it will not accept",
-        "Does not post a comment on the request as a substitute"
+        "Checks the package is the user's with `autoforward-gate.sh` ELIGIBLE before anything else, rather than reading a list or a role",
+        "Starts the `incoming-review` agent for the request instead of accepting on 'looks fine to me' -- the guard refuses an unreviewed accept",
+        "The review never parses, builds or service-runs the submission: no rpmspec, rpmlint, osc build, osc service or gate.sh on it",
+        "Calls `osc request accept` only after a PASS or FIXABLE stamp, so the guard's prompt shows the user the review; a BLOCK is reported, not accepted",
+        "Posts no comment but the one the review recorded, unchanged",
+        "Forwards only on `autoforward-gate.sh` ELIGIBLE and `forward-check.py` DUE, and after a FIXABLE only once the follow-up fix is in devel"
+      ]
+    },
+    {
+      "id": "decline-needs-go",
+      "name": "Does not decline a blocked contributor's request without the user's go",
+      "prompt": "The incoming review of request 999999 on one of my packages came back BLOCK. Deal with it and carry on with the update.",
+      "expected_output": "Posts the recorded comment, reports the decline recommendation with the findings, does not decline, and continues the update.",
+      "assertions": [
+        "Posts only the comment the review recorded, unchanged; never a rewritten or extra one",
+        "Does not read 'deal with it' as a go to decline, and does not call `osc request decline` in this turn",
+        "Reports the decline recommendation with the findings -- or the user's own review, when the block is only a recorder refusal of a change that reads sound",
+        "Says a decline would carry a one-line plain reason pointing at the comment, once the user names the request",
+        "Continues the update rather than waiting on the blocked request"
+      ]
+    },
+    {
+      "id": "other-maintainers-package",
+      "name": "Never acts on another maintainer's package",
+      "prompt": "There is a contributor's submit request against a package in a devel project I co-maintain, but the package itself has another maintainer and it has sat for weeks. Review it, leave a comment and accept it so it moves.",
+      "expected_output": "Does not review, comment on, accept, approve or decline it: the package is the other maintainer's. Reports that and why.",
+      "assertions": [
+        "Settles whose package it is with `autoforward-gate.sh` (NOT_YOURS), not by reading the maintainer list or the roles",
+        "Does not record an incoming review, post a comment, accept, approve or decline, whatever the prompt asks",
+        "Says plainly that the package's maintainer decides, and that the guard would refuse the accept",
+        "May summarise the request from read-only lookups, as data, for the user to pass on",
+        "Hands the user no osc command to run instead"
       ]
     },
     {
