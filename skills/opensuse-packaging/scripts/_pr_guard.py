@@ -2242,6 +2242,8 @@ OBS_REV = Rx(r"\d+|[0-9a-f]{32}")
 OBS_ID = Rx(r"\d{1,10}")
 # A recorded time as the recorder writes it, printed in an ask.
 RECORDED = Rx(r"[0-9T:.+Z-]{10,40}")
+# A repo/arch (and multibuild flavor) the recorder names in a stamp's build.
+BUILD_LABEL = Rx(r"[\w.+-]+/[\w.+-]+(?::[\w.+-]+)?")
 # What parses or runs a submission's code: the rpm family by name or through a
 # link (rpmlint runs rpm -q --specfile), a build, a checkout or update that runs
 # the source services, a source service, quilt setup, and the skill's scripts
@@ -2437,12 +2439,21 @@ def field(value, *keys):
 
 
 def review_facts(st, nobuild):
-    """What an ask shows of a stamp: its verdict, key, time and findings."""
+    """What an ask shows of a stamp: its verdict, key, time and findings, and
+    its build, which the review shows and never requires."""
     found = len(st["findings"])
     built = field(st, "build", "green") is True
     where = field(st, "build", "project")
     named = isinstance(where, str) and re.fullmatch(r"[A-Za-z0-9][\w.:+-]*", where)
-    build = f"built green in {where}" if built and named else nobuild
+    results = field(st, "build", "results")
+    ons = sorted(
+        k
+        for k, v in (results.items() if isinstance(results, dict) else ())
+        if v == "succeeded" and BUILD_LABEL.fullmatch(k)
+    )
+    more = f" and {len(ons) - 4} more" if len(ons) > 4 else ""
+    on = f" on {', '.join(ons[:4])}{more}" if ons else ""
+    build = f"build: green{on} in {where}" if built and named else f"build: {nobuild}"
     hold = (
         "; FIXABLE: the Factory forward then waits until your follow-up is in devel"
         if st["verdict"] == "FIXABLE"
@@ -2473,7 +2484,8 @@ def foreign_accept(rid, req, forced, ctx):
     """Someone else's request: its accept asks the user, with the review and
     the facts checked again, only when all hold; anything else refuses. One
     submit action, no option but sourceupdate, no force, a source revision (a
-    _link's its expanded srcmd5), a target outside home: that this account maintains and
+    _link's its expanded srcmd5, unless it links to the target itself, whose
+    srcmd5 is checked too), a target outside home: that this account maintains and
     may move unattended and that is Factory's devel project of the package,
     and incoming-review.sh's PASS or FIXABLE stamp of this request, by its
     creator, whose source and target srcmd5 are still OBS's."""
@@ -2533,7 +2545,13 @@ def foreign_accept(rid, req, forced, ctx):
     ok, root, ssrc = listing_srcmd5(spath, ctx)
     if not ok or root is None:
         refuse(f"cannot read the source ({ssrc or spath})")
-    if root.find("linkinfo") is not None and rev != ssrc:
+    link = root.find("linkinfo")
+    # a link to the target itself expands to what the target holds, checked below
+    if (
+        link is not None
+        and rev != ssrc
+        and [link.get(k) for k in ("project", "package")] != [tp, tpkg]
+    ):
         refuse(
             f"its source is a _link and rev {rev} not its expanded srcmd5, so it can move"
         )
@@ -2543,7 +2561,7 @@ def foreign_accept(rid, req, forced, ctx):
     want = field(act, "target", "srcmd5")
     if not ok or not isinstance(want, str) or tsrc != want:
         refuse("the target is not as reviewed (srcmd5 moved or unread)")
-    facts = review_facts(st, "no green build recorded")
+    facts = review_facts(st, "no green build from the request's sources")
     ask(
         ctx,
         "incoming-accept",
@@ -2619,7 +2637,7 @@ def git_obs_approve(rest, ctx, cwd):
     seen = [st["creator"], field(g, "head"), field(g, "number")]
     if seen != [author, shas[0], int(n)]:
         refuse("its review is of another head or author")
-    facts = review_facts(st, "no build of this head")
+    facts = review_facts(st, "no green build of this head")
     ask(
         ctx,
         "incoming-approve",

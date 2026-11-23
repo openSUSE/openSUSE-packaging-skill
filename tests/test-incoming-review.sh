@@ -178,8 +178,9 @@ if k("kind", "obs") == "obs":
     put("obs", "/request/%s" % rid,
         '<request id="%s" creator="%s">%s<state name="review" when="2026-11-20T10:00:00"/>'
         "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1"))))
+    # a link to the target, or to the "project package" of the knob linkto
     link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"/>' % (
-        tprj, tpkg, "1" * 32, "1" * 32, "2" * 32) if k("link", "0") == "1" else ""
+        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, "1" * 32, "2" * 32) if k("link", "0") == "1" else ""
     put("obs", "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else ""), listing(spkg, ssrc, src, link))
     # the source package now: as the request has it, or moved on since
     cur = dict(src, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
@@ -375,7 +376,7 @@ recorded record-pass PASS
 stampok record-pass "$SF" v=1 kind=obs id=1001 creator=contrib verdict=PASS "key=$K" "comment_sha256=$GOODSUM" \
   "comment=$GOOD" obs.actions=1 obs.action.type=submit 'obs.action.options=["sourceupdate"]' obs.action.source.rev=3 \
   obs.action.target.project=devel:example "obs.action.source.files=~\"foo-1.1.tar.gz\"" \
-  "obs.action.target.files=~\"foo-1.0.tar.gz\"" "build.project=$SP" build.package=foo build.required=true build.green=true \
+  "obs.action.target.files=~\"foo-1.0.tar.gz\"" "build.project=$SP" build.package=foo build.required=false build.green=true 'build.notes=[]' \
   "build.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk "/source/$SP/foo?expand=1")")" \
   "obs.action.target.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk '/source/devel:example/foo?expand=1')")" \
   scan.exit=0 'findings=[]' "recorded=~T"
@@ -398,11 +399,17 @@ expect record-key-moved 3 "KEY MOVED"
 fresh record-no-rev; knob rev ''; fix
 refused record-no-rev PASS "the request pins no source rev"
 
-fresh record-link-numeric-rev; knob link 1; fix
-refused record-link-numeric-rev PASS "its rev 3 is not its expanded srcmd5"
-fresh record-link-unexpanded-rev; knob link 1; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
-refused record-link-unexpanded-rev PASS "is not its expanded srcmd5"
-fresh record-link-srcmd5; knob link 1; knob rev @expanded; fix
+# A link to the target itself expands to what the target holds, which the key and the
+# guard check: any rev pins it. A link anywhere else is pinned only by its expansion.
+fresh record-link-target-numeric-rev; knob link 1; fix
+recorded record-link-target-numeric-rev PASS
+fresh record-link-target-unexpanded-rev; knob link 1; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
+recorded record-link-target-unexpanded-rev PASS
+fresh record-link-other-package; knob link 1; knob linkto 'devel:example bar'; fix
+refused record-link-other-package PASS "its rev 3 is not its expanded srcmd5"
+fresh record-link-other-project; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
+refused record-link-other-project PASS "is not its expanded srcmd5"
+fresh record-link-srcmd5; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev @expanded; fix
 recorded record-link-srcmd5 PASS
 
 fresh record-target-moved; fix
@@ -496,6 +503,22 @@ refused record-macro-line-expr PASS "foo.spec line 3: a preamble line a macro of
 fresh record-macro-line-host
 for s in src tgt; do sed -i '/^Version:/a %{?sle15_python_module_pythons}\n%python_subpackages' "$D/$s/foo.spec"; done; fix
 recorded record-macro-line-host PASS
+# A conditional writes a tag only when its body holds one, at its start or after a
+# newline; a body that only defines writes none, but what it defines is the spec's own.
+fresh record-cond-define
+for s in src tgt; do sed -i '/^Version:/a %{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}' "$D/$s/foo.spec"; done; fix
+recorded record-cond-define PASS
+fresh record-cond-tag; sed -i '/^Version:/a %{?with_x:Source1: https://evil.example/x}' "$D/src/foo.spec"; fix
+refused record-cond-tag PASS "foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-cond-tag-newline; sed -i '/^Version:/a %{?with_x:%global a 1\nBuildRequires: evil}' "$D/src/foo.spec"; fix
+refused record-cond-tag-newline PASS "foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-cond-defined-macro-line
+sed -i '/^Version:/a %{!?s:%global s Source1: https://evil.example/x}\n%{s}' "$D/src/foo.spec"; fix
+refused record-cond-defined-macro-line PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-cond-defined-url
+sed -i -e '/^Version:/a %global srchost example.org\n%{?with_x:%global srchost evil.example}' \
+  -e 's|^Source0:.*|Source0:        https://%{srchost}/releases/%{name}-%{version}.tar.gz|' "$D/src/foo.spec"; fix
+refused record-cond-defined-url PASS "Source0 uses a macro the text cannot expand: https://%{srchost}/releases/foo-1.1.tar.gz"
 
 # A name both defined and set by its tag is not sure: rpm takes the later one.
 fresh record-define-and-tag
@@ -545,10 +568,22 @@ refused record-memory-cap PASS "the files fetched passed the 64 MiB cap"
 rm -rf "$D"
 
 # ---------------------------------------------------------------- build evidence
-# The source package's own results, from the request's sources, wherever the target builds.
+# The source package's own results, from the request's sources, wherever the target
+# builds: shown to the user and kept in the stamp, never refusing PASS or FIXABLE.
+# built <case> <verdict> <note>: recorded, the note under the build line of the
+# output and in the stamp's build.notes, the build not green and no finding
+built() {
+  recorded "$1" "$2"
+  grep -qF "build (shown to the user, not required): $SP not green" <<<"$out" && grep -qF "  $SP/foo: $3" <<<"$out" \
+    && pass "$1: the build shown, not green, with its note" || { fail "$1: no build note '$3'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  stampok "$1" "$SF" "verdict=$2" build.green=false build.required=false "build.notes=~$SP/foo: $3" 'findings=[]'
+}
 fresh record-no-build; knob results ''; fix
-refused record-no-build PASS "build: $SP/foo: openSUSE_Tumbleweed/x86_64 has no build of foo"
-refused record-no-build FIXABLE "build: $SP/foo: openSUSE_Tumbleweed/x86_64 has no build of foo"
+built record-no-build PASS "openSUSE_Tumbleweed/x86_64 has no build of foo"
+built record-no-build FIXABLE "openSUSE_Tumbleweed/x86_64 has no build of foo"
+showkey record-no-build
+grep -qxF 'findings: none' <<<"$out" && grep -qxF "  $SP/foo: 16.0/aarch64 has no build of foo" <<<"$out" \
+  && pass "record-no-build: --show lists the build notes apart, no finding" || { fail "record-no-build: --show"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # gate.sh's judged set, of the target: Tumbleweed and Leap 16 on x86_64 and aarch64,
 # nothing else; an arch both sides exclude skipped.
@@ -559,25 +594,25 @@ recorded record-build-judged-set PASS
 stampok record-build-judged-set "$SF" 'build.results={"16.0/aarch64": "excluded", "openSUSE_Tumbleweed/x86_64": "succeeded"}' build.green=true
 
 fresh record-build-target-set; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 succeeded')"; fix
-refused record-build-target-set PASS "16.0/aarch64 has no build of foo"
+built record-build-target-set PASS "16.0/aarch64 has no build of foo"
 
 fresh record-build-path-elsewhere; knob smeta "$(printf 'openSUSE_Tumbleweed openSUSE:Factory snapshot\n16.0 devel:example 16.0')"; fix
-refused record-build-path-elsewhere PASS "repository openSUSE_Tumbleweed builds against openSUSE:Factory, not devel:example"
+built record-build-path-elsewhere PASS "repository openSUSE_Tumbleweed builds against openSUSE:Factory, not devel:example"
 
 fresh record-build-disabled; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 disabled\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
-refused record-build-disabled PASS "openSUSE_Tumbleweed/aarch64 disabled"
+built record-build-disabled PASS "openSUSE_Tumbleweed/aarch64 disabled"
 
 fresh record-build-red; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 failed\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
-refused record-build-red FIXABLE "openSUSE_Tumbleweed/aarch64 failed"
+built record-build-red FIXABLE "openSUSE_Tumbleweed/aarch64 failed"
 
 fresh record-build-no-aarch64; knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 -\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
-refused record-build-no-aarch64 PASS "openSUSE_Tumbleweed/aarch64 has no build of foo"
+built record-build-no-aarch64 PASS "openSUSE_Tumbleweed/aarch64 has no build of foo"
 
 fresh record-build-old-sources; knob jobsrc old; fix
-refused record-build-old-sources PASS "built 000000000000, not the sources"
+built record-build-old-sources PASS "openSUSE_Tumbleweed/aarch64 built 000000000000, not the sources"
 
 fresh record-build-source-moved; knob moved 1; fix
-refused record-build-source-moved PASS "build: $SP/foo moved since the request"
+built record-build-source-moved PASS "moved since the request"
 
 fresh record-new-package; rm -r "$D/tgt"; fix
 refused record-new-package PASS "devel:example/foo does not exist: a new package"
@@ -622,7 +657,7 @@ refused record-comment-long PASS "characters, over 1500" "$(printf 'x%.0s' $(seq
 # ---------------------------------------------------------------- BLOCK, the rollout guard, stale stamps
 fresh record-block-always; knob results ''; printf -- '- Fix the \xe2\x80\xae order\n' >> "$D/src/foo.changes"; fix
 recorded record-block-always BLOCK "$(printf 'This cannot go in.\n- See https://example.com/x')"
-stampok record-block-always "$SF" verdict=BLOCK 'comment_sha256=' 'comment=' "findings=~has no build of foo" \
+stampok record-block-always "$SF" verdict=BLOCK 'comment_sha256=' 'comment=' "build.notes=~has no build of foo" \
   "findings=~U+202E" "findings=~comment: a URL" build.green=false
 grep -qF "the stamp allows no comment" <<<"$out" && pass "record-block-always: a comment that breaks a rule is not stamped" \
   || fail "record-block-always: no note on the comment"
@@ -642,11 +677,9 @@ refused record-guard-docstring PASS "has no foreign_accept yet: only BLOCK recor
 # A review refused or moved now removes the stamp recorded before for that request.
 fresh record-stale-stamp; fix
 recorded record-stale-stamp PASS
-knob results "$(printf 'openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 failed\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded')"; fix
-vfile PASS 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+vfile PASS 1001 "$K" "$(printf 'Thanks.\n- See https://example.com/x')"; irv "$REC" 1001 "$D/verdict.txt"
 expect "record-stale-stamp: a refused re-record" 1 "the earlier stamp"
 [ ! -e "$SF" ] && pass "record-stale-stamp: the PASS before is gone" || fail "record-stale-stamp: the old PASS stamp stayed"
-rm "$D/k/results"; fix
 recorded record-stale-stamp BLOCK
 printf -- '- Fix a typo\n' >> "$D/src/foo.changes"; fix
 vfile BLOCK 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
@@ -708,7 +741,7 @@ expect broken-install 5 "cannot start: ModuleNotFoundError"
 fresh show-key-pr; knob kind gitea; fix
 showkey show-key-pr pool/foo#7
 grep -qxF '+Version:        1.1' <<<"$out" && grep -qxF 'findings: none' <<<"$out" \
-  && grep -qxF "build -" <<<"$out" && grep -qxF "build: none, not required for a PR: no build of this head" <<<"$out" \
+  && grep -qxF "build -" <<<"$out" && grep -qxF "build (shown to the user, not required): none: no build of this head" <<<"$out" \
   && pass "show-key-pr: the diff, no finding (the LFS tarball matches its Source URL), no build required" \
   || { fail "show-key-pr: diff, findings or build project"; printf '%s\n' "$out" | sed 's/^/    /'; }
 grep '^osc ' "$D/calls" | grep -qv '^osc -A ' && fail "show-key-pr: an osc call without -A" || pass "show-key-pr: every osc call names openSUSE's OBS"
