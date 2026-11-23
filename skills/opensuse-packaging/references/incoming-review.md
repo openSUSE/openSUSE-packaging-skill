@@ -60,12 +60,16 @@ comment; it fetches everything again first. It refuses PASS and FIXABLE on any o
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
   obscpio archive; a diff over the size cap; a preamble line that starts with a macro
   and holds anything but host macro calls and conditionals that only define, or a tag
-  line with a macro before its colon or continued by a backslash; Source and Patch lines
-  count in a file the spec `%include`s too. A host macro's arguments pass only by rpm's own
-  table (`%dump`, read once with a fixed argv and environment): when its body is plain
-  text that starts no line with a macro and names no Source or Patch, plain arguments;
-  any other body (Lua, `%{expand:`, shell) only on a line that stands as it is in the
-  target's spec, with the spec's own macros it names defined there by the same lines. A
+  line with a macro before its colon or continued by a backslash; a changed file the spec
+  `%include`s or loads (its Source and Patch lines are read too). A host macro's arguments
+  pass only by rpm's own table (`%dump`, read once with a fixed argv and environment):
+  when its body is plain text that starts no line with a macro and names no Source or
+  Patch, arguments whose every macro, followed through, expands to one plain line; any
+  other body (Lua, `%{expand:`, shell) only on a line that stands as it is in the target's
+  spec, every macro it reaches through definitions, tag values and host bodies the host's,
+  a checked tag or one of the spec's own defined there by the same lines, and only while
+  the change touches nothing but the spec, its `.changes` and the Source archives checked
+  against their URLs (a host macro may read any file: `%kernel_module_package -p`). A
   macro the host lacks, one that takes no arguments, and a table rpm did not give whole
   stay findings;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
@@ -88,9 +92,9 @@ A BLOCK always records. The stamp lands in
 refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup failed.
 
 `scripts/incoming-review.sh --prune` removes the stamps of final submissions: a request
-accepted, declined, revoked, superseded or deleted, a PR closed or merged. An accepted or
-merged FIXABLE one stays while it may hold the Factory forward ("FIXABLE"): a request's
-until devel's files differ from its source's, a PR's always. A failed lookup, or a file
+accepted, declined, revoked, superseded or deleted, a PR closed or merged. A FIXABLE one
+stays while it may hold the Factory forward ("FIXABLE"), whatever became of it: a
+request's until devel's files differ from its source's, a PR's always. A failed lookup, or a file
 that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 
 ## Verdicts

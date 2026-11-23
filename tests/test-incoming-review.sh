@@ -484,7 +484,7 @@ refused record-hidden-escape PASS "foo.changes line 12 holds a control character
 fresh record-invisible-more; printf -- '- Fix\xe2\x80\xa8 order\n' >> "$D/src/foo.changes"; fix
 refused record-invisible-more PASS "foo.changes line 11 holds a bidi or zero-width character (U+2028)"
 # Fillers and invisible formatting points render as nothing too.
-for cp in 206A 206F FFF9 FFFB 115F 1160 3164 FFA0 180B 180D 17B4 17B5 1D173 1D17A; do
+for cp in 206A 206F FFF9 FFFB 115F 1160 3164 FFA0 180B 180D 180F 17B4 17B5 1BCA0 1BCA3 1D173 1D17A; do
   fresh "record-invisible-$cp"
   python3 -I -c 'import sys; open(sys.argv[1], "a").write("- Fix%s order\n" % chr(int(sys.argv[2], 16)))' "$D/src/foo.changes" "$cp"; fix
   irv --show sr#1001
@@ -532,10 +532,17 @@ printf 'Source1:        https://evil.example/extra-1.1.tar.gz\n' > "$D/src/extra
 refused record-include-source-host PASS "extra.inc Source1 downloads from evil.example, a host the target's Sources and Patches do not use"
 # ...and the target's included Source lines name the hosts it uses.
 fresh record-include-source-same-host
-for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; done
-printf 'Source1:        https://cdn.example.org/extra-1.0.tar.gz\n' > "$D/tgt/extra.inc"
-printf 'Source1:        https://cdn.example.org/extra-1.1.tar.gz\n' > "$D/src/extra.inc"; fix
+for s in src tgt; do
+  sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"
+  printf 'Source1:        https://cdn.example.org/extra-1.0.tar.gz\n' > "$D/$s/extra.inc"
+done
+sed -i '/^Source0:/a Source2:        https://cdn.example.org/other-1.1.tar.gz' "$D/src/foo.spec"; fix
 recorded record-include-source-same-host PASS
+# What the spec includes is spec text rpm reads in its place: a changed one is a finding.
+fresh record-include-changed
+for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; printf '# none\n' > "$D/$s/extra.inc"; done
+printf '%%global s Source1: https://evil.example/x.tar.gz\n%%{s}\n' > "$D/src/extra.inc"; fix
+refused record-include-changed PASS "content: extra.inc changed: a file the spec includes or loads"
 fresh record-include-untaken
 for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; printf '# none\n' > "$D/$s/extra.inc"; done
 printf '%%{?nil}Source1:        https://evil.example/x.tar.gz\n' > "$D/src/extra.inc"; fix
@@ -650,19 +657,32 @@ addlines() {
   done
 }
 MADE="foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes, or a host macro's arguments"
-fresh host-plain; addlines both '%global own_x 1'; addlines src '%plain_req foo %{own_x} %{?_libdir}' '%{plain_req -n x bar}'; fix
+fresh host-plain; addlines both '%global own_x 1'; addlines src '%plain_req foo %{own_x} %{?_prefix}' '%{plain_req -n x bar}'; fix
 recorded host-plain PASS
+# Every macro plain arguments reach, followed through, expands to one plain line:
+# none takes arguments (a bare one would take the rest of the line), runs code,
+# continues a line, starts with a macro, or is unknown; and no %%.
 plains=(
   '%plain_req %(id)'
   '%plain_req foo %{lua:print("x")}'
   '%plain_req foo %{quote:x}'
   '%plain_req %{?_libdir:%[1]}'
   '%{plain_req foo %(id)}'
+  '%plain_req %shell_mid x;id'
+  "%plain_req %requires_eq x';id;'"
+  '%plain_req %{?_libdir:%shell_mid x;id}'
+  '%plain_req %{zz_unknown}'
+  '%plain_req %{_libdir}'
+  '%plain_req %%(id)'
 )
 for i in "${!plains[@]}"; do
   fresh "host-plain-code-$i"; addlines src "${plains[$i]}"; fix
   refused "host-plain-code ${plains[$i]}" PASS "$MADE"
 done
+# One of the spec's own whose definition a backslash continues: the next line can
+# hold a tag that this reading never sees.
+fresh host-plain-own-multiline; addlines src "%define evil x\\" 'Sour%{nil}ce99:https://evil.example/x.tar.gz' '%plain_req %{evil}'; fix
+refused host-plain-own-multiline PASS "foo.spec line 5: a preamble line a macro of the spec"
 # Arguments a backslash continues onto the next line: that line is no part of the one
 # that stands in the target's spec.
 fresh host-args-backslash; addlines both "%requires_eq foo \\" 'Requires: bar'; fix
@@ -700,6 +720,27 @@ refused host-own-from-elsewhere PASS "$MADE"
 fresh host-include; addlines both '%include extra.inc' '%requires_eq foo'
 for s in src tgt; do printf '%%define x 1\n' > "$D/$s/extra.inc"; done; fix
 refused host-include PASS "foo.spec line 4: a preamble line a macro of the spec"
+# Every macro of the spec's own the line reaches, through definitions, tag values and
+# host bodies, is defined by the same lines in the target's spec.
+fresh host-own-transitive; addlines both '%define libname libfoo%{sover}' '%requires_eq %{libname}'
+sed -i '/^Version:/a %define sover 1' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define sover 1';id;'" "$D/src/foo.spec"; fix
+refused host-own-transitive PASS "foo.spec line 5: a preamble line a macro of the spec"
+fresh host-own-through-host; addlines both '%requires_eq foo%{_libdir}'; sed -i "/^Version:/a %define _prefix /usr';id;'" "$D/src/foo.spec"; fix
+refused host-own-through-host PASS "foo.spec line 4: a preamble line a macro of the spec"
+fresh host-own-through-tag; addlines both '%requires_eq foo-%{release}'
+sed -i 's/^Release:.*/Release:        0%{rsuffix}/' "$D/src/foo.spec" "$D/tgt/foo.spec"
+sed -i '/^Version:/a %define rsuffix .a' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define rsuffix .a';id;'" "$D/src/foo.spec"; fix
+refused host-own-through-tag PASS "foo.spec line 4: a preamble line a macro of the spec"
+# A host macro may read any file of the package: a line passes as it stands only
+# while the change touches nothing but the spec, its .changes and checked archives.
+fresh host-kmp-preamble; addlines both '%kernel_module_package -p %name-preamble'
+printf 'Requires: bar\n' > "$D/tgt/foo-preamble"; printf 'Requires: bar\nSource99: https://evil.example/x.tar.gz\n' > "$D/src/foo-preamble"; fix
+refused host-kmp-preamble PASS "$MADE"
+grep -qF "host macros: no line of foo.spec passes as it stands in the target's spec, since the change also touches foo-preamble" <<<"$out" \
+  && pass "host-kmp-preamble: says why" || fail "host-kmp-preamble: no reason"
+fresh host-kmp-preamble-same; addlines both '%kernel_module_package -p %name-preamble'
+for s in src tgt; do printf 'Requires: bar\n' > "$D/$s/foo-preamble"; done; fix
+recorded host-kmp-preamble-same PASS
 # rpm failed, listed nothing, or listed less than it counted: no host macro takes
 # arguments, and the output says why.
 hostfail() {   # hostfail <case> <why>
@@ -909,7 +950,12 @@ expect prune-fixable-held-unread 5 "stays: osc api /source/devel:example/foo?exp
 [ -e "$SF" ] && pass "prune-fixable-held-unread: kept" || fail "prune-fixable-held-unread: the stamp is gone"
 fresh prune-fixable-declined; fix; recorded prune-fixable-declined FIXABLE; knob state declined; fix; irv --prune
 expect prune-fixable-declined 0 "pruned $SF: request 1001 declined"
-# PRs: closed or merged goes, a merged FIXABLE one stays.
+# pr-guard holds on a FIXABLE stamp whatever became of its request: a declined one
+# whose source devel still equals stays too.
+fresh prune-fixable-held-declined; fix; recorded prune-fixable-held-declined FIXABLE
+knob state declined; rm -r "$D/tgt"; cp -a "$D/src" "$D/tgt"; fix; irv --prune
+expect prune-fixable-held-declined 0 "prune: 0 removed, 1 stay, 0 not read"
+# PRs: closed or merged goes, a FIXABLE one stays, merged or not.
 fresh prune-pr; knob kind gitea; fix; recorded prune-pr PASS "$GOOD" pool/foo#7 gitea pool_foo_7
 irv --prune; expect "prune-pr: open" 0 "prune: 0 removed, 1 stay, 0 not read"
 knob prstate closed; knob merged 1; fix; irv --prune
@@ -918,7 +964,7 @@ fresh prune-pr-fixable; knob kind gitea; fix; recorded prune-pr-fixable FIXABLE 
 knob prstate closed; knob merged 1; fix; irv --prune
 expect "prune-pr-fixable: merged" 0 "prune: 0 removed, 1 stay, 0 not read"
 knob merged 0; fix; irv --prune
-expect "prune-pr-fixable: closed unmerged" 0 "pruned $SF: PR pool/foo#7 closed"
+expect "prune-pr-fixable: closed unmerged" 0 "prune: 0 removed, 1 stay, 0 not read"
 # A file that is no stamp of this request stays, and so does whatever is not a stamp.
 fresh prune-not-a-stamp; fix; recorded prune-not-a-stamp PASS; knob state accepted; fix
 SDIR=$(dirname "$SF"); sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$SDIR/1003.json"; printf '{"v": 1' > "$SDIR/1004.json"

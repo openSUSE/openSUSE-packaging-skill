@@ -38,9 +38,9 @@
 #             lowercased, % written %25 and _ written %5F)
 #   --prune   removes each stamp whose submission is final: a request accepted,
 #             declined, revoked, superseded or deleted, a PR closed or merged;
-#             but an accepted or merged FIXABLE one stays while it may hold the
-#             Factory forward (a PR's always, a request's while its target's
-#             files still equal its source's). A failed lookup, or a file that
+#             but a FIXABLE one stays while it may hold the Factory forward
+#             (a PR's always, a request's while its target's files still
+#             equal its source's). A failed lookup, or a file that
 #             is no stamp of this recorder, removes nothing and is exit 5.
 #             --show and --record prune first, and go on whatever it found
 # Findings, each refusing PASS and FIXABLE: no source rev, or a _link source
@@ -50,15 +50,19 @@
 # package that does not exist;
 # parse-time code the scanner finds added over the target's files, or a scan
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
-# .gitmodules, symlink or submodule; control (a CR before LF ends a line),
+# .gitmodules, symlink or submodule; a changed file the spec includes or loads;
+# control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
 # text cannot read (in a spec or a file the scanner reads with it), a preamble
 # line that starts with a macro and holds anything but host macro calls and
 # conditionals that only define (a host macro takes arguments only when rpm's
 # %dump, read once with a fixed argv and environment, lists it as taking them,
 # and either its body is plain text that starts no line with a macro and names
-# no Source or Patch, the arguments plain too, or the line and the definitions
-# of the spec's own macros it names stand as they are in the target's spec), a
+# no Source or Patch, and every macro the arguments reach expands to one plain
+# line, or the line stands as it is in the target's spec, every macro it
+# reaches the host's, a checked tag or one of the spec's own defined there by
+# the same lines, and the change touches no file but the specs, their .changes
+# and Source archives checked here), a
 # tag line with a macro before its colon or continued by a backslash, a URL
 # with a macro the text cannot expand (a name with a define beside its tag is
 # one) or that does not parse, a Source or
@@ -155,9 +159,9 @@ CTRL = re.compile(r"[\x00-\x1f\x7f]")
 # C1 (decoded, or raw bytes), and the invisible and direction-changing points.
 HIDDEN = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\udc80-\udc9f]")
 INVISIBLE = re.compile(
-    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f\u2028-\u202e"
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e"
     "\u2060-\u2064\u2066-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff9-\ufffb"
-    "\U0001d173-\U0001d17a\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+    "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
 )
 GUARDED = {"_service", "_link", "_aggregate", ".gitmodules"}
 VENDOR = re.compile(
@@ -476,17 +480,22 @@ CLEAN_ENV = {"PATH": "/usr/bin:/bin"}
 CODE = re.compile(r"%(?:[(\[]|\{?[?!]*(?:lua|expand|load|include)(?![A-Za-z0-9_]))")
 TAG_WORD = re.compile(r"(?i)\b(?:source|patch)")
 LOADS = re.compile(r"(?m)^[ \t]*%include\b|%\{?[?!]*load(?![A-Za-z0-9_])")
-REF = re.compile(r"%\{?[?!]*(\w+)")
-# Tags whose value rpm takes only as one token of plain characters.
+# A macro a text names, an escaped %% aside.
+REF = re.compile(r"(?<!%)(?:%%)*%\{?[?!]*(\w+)")
+# Tags rpm checks after expanding them: one token of letters, digits and ._+~^,
+# and %{} for a macro still unexpanded. So their own text carries no quote, blank
+# or newline into a line, but a macro they name expands where they are used, and
+# is followed as one the line names.
 CHECKED_TAGS = {"name", "version", "release", "epoch"}
+TAG_LINE = re.compile(r"(?i)^\s*(name|version|release|epoch)\s*:(.*)$")
 HOST = {}
 
 
 def parse_host(dump, ask):
-    """{name: (parametric, plain)} of a %dump listing, ask(names) the PARAMS
-    answer for its names; None when either is short, garbled or empty. plain:
-    the body runs no code, starts no line with a macro (so no argument lands at
-    a line's start) and names no Source or Patch."""
+    """{name: (parametric, plain, body)} of a %dump listing, ask(names) the
+    PARAMS answer for its names; None when either is short, garbled or empty.
+    plain: the body runs no code, starts no line with a macro (so no argument
+    lands at a line's start) and names no Source or Patch."""
     lines = dump.split("\n")
     if "========================" not in lines:
         return None
@@ -520,7 +529,7 @@ def parse_host(dump, ask):
         text = "\n".join(body)
         plain = text != "<builtin>" and not CODE.search(text) and not TAG_WORD.search(text)
         plain = plain and all(ln.lstrip()[:1] not in ("%", "\\") for ln in body)
-        table[name] = (kinds[name] == "p", plain)
+        table[name] = (kinds[name] == "p", plain, text)
     return table
 
 
@@ -565,11 +574,12 @@ def balanced(text):
     return lvl == 0
 
 
-def plain_args(text, depth=0):
-    """Whether text, a host macro's arguments, holds only plain characters and
-    macros that run nothing where it stands: no newline or backslash; %%,
-    %name, %{name}, %{?name} and %{?name:...} of the same; never code, a
-    section, a directive, or a call with arguments of its own."""
+def plain_args(text, table, vals, memo, depth=0):
+    """Whether text, a host macro's arguments or a value they reach, holds only
+    plain characters and macros that expand, followed through, to one line of
+    plain text: no newline, backslash or %%; %name, %{name}, %{?name} and
+    %{?name:...} of the same, each name plain_name(); never code, a section, a
+    directive, or a call with arguments. vals: the spec's own definitions."""
     if depth > 8:
         return False
     i = 0
@@ -579,37 +589,56 @@ def plain_args(text, depth=0):
         if text[i] != "%":
             i += 1
             continue
-        if text.startswith("%%", i):
-            i += 2
-            continue
         h = HEAD.match(text, i)
         name = (h.group(2) or h.group(4) or "") if h else ""
         if not name or name in SECTIONS or name in DIRECTIVES or CODE.match(text, i):
             return False
         if not h.group(2):
+            if not plain_name(name, table, vals, memo, depth):
+                return False
             i = h.end()
             continue
         end = closing(text, text.index("{", i))
         if end is None:
             return False
         if h.group(3):
-            if "?" not in h.group(1) or not plain_args(text[h.end() : end - 1], depth + 1):
+            if "?" not in h.group(1) or not plain_args(text[h.end() : end - 1], table, vals, memo, depth + 1):
                 return False
-        elif text[h.end()] != "}":
+        elif text[h.end()] != "}" or not plain_name(name, table, vals, memo, depth):
             return False
         i = end
     return True
 
 
-def host_args(plain, args, whole, same):
+def plain_name(k, table, vals, memo, depth):
+    """Whether macro k, named in plain arguments, expands to one line of plain
+    text: one of the spec's own whose every definition is plain (vals[k]), or a
+    host macro that takes no arguments with a plain body, its value not
+    starting with a macro and followed through plain_args(). Unknown,
+    parametric, defined any other way, or a cycle is not."""
+    if k not in memo:
+        memo[k] = False  # a cycle reads as not plain
+        if k in vals:
+            texts = vals[k]
+        elif k in table and not table[k][0] and table[k][2] != "<builtin>":
+            texts = [table[k][2]]
+        else:
+            texts = None
+        memo[k] = texts is not None and all(
+            t.lstrip()[:1] != "%" and plain_args(t, table, vals, memo, depth + 1) for t in texts
+        )
+    return memo[k]
+
+
+def host_args(table, name, args, whole, same, vals):
     """Whether a parametric host macro's arguments may write a tag. They must
     stay on their line with every brace closed; then a plain body passes plain
     arguments, and any other body (Lua, expand, shell...) only a line that
     stands as it is in the target's spec (same(whole))."""
     if "\n" in args or args.rstrip().endswith("\\") or not balanced(args):
         return True
-    if plain:
-        return not plain_args(args)
+    if table[name][1]:
+        return not plain_args(args, table, vals or {}, {})
     return whole is None or same is None or not same(whole)
 
 
@@ -630,7 +659,7 @@ def closing(text, i):
     return None
 
 
-def writes(text, own, depth=0, line=False, host=None, same=None):
+def writes(text, own, depth=0, line=False, host=None, same=None, vals=None):
     """Whether text, read where a preamble line starts, may write a tag: any
     text but blanks (a tag split across a conditional's brace is text on
     both sides); an expression, %{expand:, %{lua:, %{load:, a section, a
@@ -638,8 +667,9 @@ def writes(text, own, depth=0, line=False, host=None, same=None):
     a conditional whose body does. Only a define (a bare one's value the rest
     of its line, a braced one's its braces), rpm's own %{bcond...} and a call
     of a host macro write none, its arguments when host_args() clears them
-    (host: host_table, same: whether a line stands in the target's spec). line:
-    text holds a whole line, which ends at its first newline outside a body."""
+    (host: host_table, same: whether a line stands in the target's spec, vals:
+    the spec's own definitions). line: text holds a whole line, which ends at
+    its first newline outside a body."""
     if depth > 8:
         return True
     whole = text.split("\n", 1)[0] if line and depth == 0 else None
@@ -679,7 +709,7 @@ def writes(text, own, depth=0, line=False, host=None, same=None):
             table = host() if host and text[i:stop].strip() and not cond else None
             if table and table.get(name, (False,))[0]:
                 # a parametric host macro: the rest of the line is its arguments
-                if host_args(table[name][1], text[i:stop], whole, same):
+                if host_args(table, name, text[i:stop], whole, same, vals):
                     return True
                 i = stop
             continue
@@ -687,14 +717,14 @@ def writes(text, own, depth=0, line=False, host=None, same=None):
         if end is None:
             return True
         if h.group(3):
-            if "?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1, host=host):
+            if "?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1, host=host, vals=vals):
                 return True
         elif text[h.end()] != "}":
             # a macro with arguments, which end at its brace: a parametric host macro's may pass
             table = host() if host and not h.group(1) and text[h.end()] in " \t" else None
             if not (table and table.get(name, (False,))[0]):
                 return True
-            if host_args(table[name][1], text[h.end() : end - 1], whole, same):
+            if host_args(table, name, text[h.end() : end - 1], whole, same, vals):
                 return True
         i = end
     return False
@@ -730,29 +760,59 @@ def spec_lines(text, host=None, target=None):
     undefined, two different values, or a define beside its tag -- stays
     unexpanded, and so does every name the spec does not define. host:
     host_table, for a host macro's arguments; target: the target's spec text,
-    where a line stands as it is when its every macro is the host's, a tag rpm
-    checks, or one of the spec's own defined by the same lines in both, and
-    the spec includes and loads nothing that could define another."""
+    None when the change touches files a host macro may read. A line stands as
+    it is when the target's spec has it, the spec includes and loads nothing
+    that could define a macro, and every macro reachable from the line, followed
+    through definitions, tag values and host bodies, is the host's, a tag rpm
+    checks, or one of the spec's own defined by the same lines in both; a name
+    none of these, reached from the line or from the spec's own, is not."""
     lines = text.split("\n")
     inner = set()
     for line in lines:
         found = ANY_DEF.findall(line)
         inner.update(found[1:] if SPEC_DEF.match(line) else found)
     own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m} | inner
+    # each own macro's values as plain arguments may name it: none for one with
+    # arguments, undefined, or defined inside a line or a conditional
+    vals = {}
+    for m in map(SPEC_DEF.match, lines):
+        if m:
+            kind, k, rest = m.groups()
+            plain = kind != "undefine" and rest[:1] in (" ", "\t", "")
+            vals[k] = vals.get(k, []) + [rest.strip()] if plain and vals.get(k, []) is not None else None
+    for k in inner:
+        vals[k] = None
     same = None
     if host is not None and target is not None and not LOADS.search(text):
         theirs = target.split("\n")
         there, sdefs, tdefs = set(theirs), def_lines(lines), def_lines(theirs)
+        tagvals = {}
+        for line in lines:
+            m = TAG_LINE.match(line)
+            if m:
+                tagvals.setdefault(m.group(1).lower(), []).append(m.group(2))
 
         def same(whole):
             table = host()
             if not table or whole not in there:
                 return False
-            for k in REF.findall(whole):
+            # (name, strict): a name none of the spec's, the host's or a checked
+            # tag's is no answer, but where a host body names it, the host's own
+            todo, seen = [(k, True) for k in REF.findall(whole)], set()
+            while todo:
+                k, strict = todo.pop()
+                if (k, strict) in seen or k in DIRECTIVES:
+                    continue
+                seen.add((k, strict))
                 if k in own:
                     if sdefs.get(k) != tdefs.get(k):
                         return False
-                elif k not in table and k not in CHECKED_TAGS:
+                    todo += [(r, True) for d in sdefs.get(k, []) for r in REF.findall(d)]
+                elif k in CHECKED_TAGS:
+                    todo += [(r, True) for v in tagvals.get(k, []) for r in REF.findall(v)]
+                elif k in table:
+                    todo += [(r, False) for r in REF.findall(table[k][2])]
+                elif strict:
                     return False
             return True
 
@@ -766,7 +826,7 @@ def spec_lines(text, host=None, target=None):
             pre = name == "package"
         elif h and pre and not bare:
             # the whole line, through a body that spans lines, as rpm reads it
-            if writes("\n".join(lines[n - 1 : n + 99]), own, line=True, host=host, same=same):
+            if writes("\n".join(lines[n - 1 : n + 99]), own, line=True, host=host, same=same, vals=vals):
                 made.append(n)
         elif pre and not h and not was and line.strip()[:1] != "#":
             # a macro in a tag's name, or a tag line that the next one continues
@@ -1045,14 +1105,41 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     needed = scan(f, src, base, tmp, specs)
     text_of = lambda t, n: (t.real(n) or b"").decode("utf-8", "surrogateescape")  # noqa: E731
     read = lambda t: specs(t) + [n for n in needed if n in t.files and n not in specs(t)]  # noqa: E731
+    # rpm reads what the spec includes or loads in its place: a changed one is
+    # text this reading does not judge
+    for n in needed:
+        if n in changed and n not in removed and n not in specs(src):
+            f.find("content: %s %s: a file the spec includes or loads, which rpm reads with it, is the maintainer's own to review" % (shown(n), "added" if n in added else "changed"))
 
     # Source and Patch URLs: every one's host, a Source's change beyond its
     # version numbers, and the bytes of each changed file one names
     news, hosts, olds = [], set(), {}
+    for n in read(base):
+        for tag, v, _ in spec_lines(text_of(base, n))[0]:
+            if is_url(v):
+                if host_of(v):
+                    hosts.add(host_of(v))
+                olds[(n, tag_key(tag))] = v
+    # A host macro may read any file of the package (%kernel_module_package -p, a
+    # %{SOURCE} it cats): a line passes as it stands in the target's spec only while
+    # the change touches nothing but the specs, their .changes, and the archives a
+    # Source URL names whose bytes are checked against it here.
+    checked = {
+        local_name(v)
+        for n in specs(src)
+        for _, v, _ in spec_lines(text_of(src, n))[0]
+        if is_url(v) and "%" not in v and target_exists and host_of(v) in hosts
+    }
+    others = [
+        n for n in changed
+        if n not in removed and n not in checked and ("/" in n or not n.endswith((".spec", ".changes")))
+    ]
     for n in read(src):
         if n in specs(src):
-            theirs = text_of(base, n) if n in base.files else None
+            theirs = text_of(base, n) if n in base.files and not others else None
             found, untaken, made, split = spec_lines(text_of(src, n), host=host_table, target=theirs)
+            if made and others and n in base.files:
+                f.info.append("host macros: no line of %s passes as it stands in the target's spec, since the change also touches %s" % (n, ", ".join(map(shown, others[:4]))))
         else:
             found, untaken = spec_lines(text_of(src, n))[:2]
             made, split = [], []
@@ -1070,12 +1157,6 @@ def analyze(f, src, base, target_exists, tmp, lfs):
                 news.append((n, tag, v))
     if "table" in HOST and HOST["table"] is None:
         f.info.append("host macros: %s, so a host macro's arguments clear no line" % HOST["why"])
-    for n in read(base):
-        for tag, v, _ in spec_lines(text_of(base, n))[0]:
-            if is_url(v):
-                if host_of(v):
-                    hosts.add(host_of(v))
-                olds[(n, tag_key(tag))] = v
     for spec, tag, v in news:
         if "%" in v:
             f.find("content: %s %s uses a macro the text cannot expand: %s" % (spec, tag, v))
@@ -1670,7 +1751,9 @@ def final(kind, path):
         name = state.get("name") if state is not None and root.get("id") == rid else None
         if not name:
             raise Lookup("request %s: no state of it" % rid)
-        if name not in FINAL or name == "accepted" and fixable and holds(st):
+        # pr-guard holds the forward on every FIXABLE stamp whose source devel still
+        # equals, whatever became of its request
+        if name not in FINAL or fixable and holds(st):
             return ""
         return "request %s %s" % (rid, clean(name))
     label = "%s/%s#%s" % ident[1:]
@@ -1679,8 +1762,8 @@ def final(kind, path):
     if state not in ("open", "closed") or pr.get("number") != int(ident[3]):
         raise Lookup("%s: no state of it" % label)
     merged = pr.get("merged")
-    # a merged FIXABLE PR may hold the forward until its follow-up is in devel
-    if state == "open" or fixable and merged is not False:
+    # a FIXABLE PR's hold reads the commit OBS synced, which this does not: it stays
+    if state == "open" or fixable:
         return ""
     return "PR %s %s" % (label, "merged" if merged else "closed")
 
