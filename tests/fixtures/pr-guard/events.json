@@ -11051,6 +11051,27 @@
     },
     "cwd": "@PLAIN@"
   },
+  "accept-link-target-rev": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391020"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-link-target-moved": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391021"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "accept-red-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391019"
+    },
+    "cwd": "@PLAIN@"
+  },
   "accept-review-factory": {
     "tool_name": "Bash",
     "tool_input": {

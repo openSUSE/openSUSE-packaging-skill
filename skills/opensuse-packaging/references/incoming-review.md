@@ -49,23 +49,30 @@ mechanical findings, `build <source project>` (kept in the stamp's `build.projec
 takes a file whose first line is `PASS|FIXABLE|BLOCK <id> key <sha256>`, followed by the
 comment; it fetches everything again first. It refuses PASS and FIXABLE on any of:
 
-- **revision:** no source revision, or a `_link` source without a 32-hex srcmd5 revision;
+- **revision:** no source revision, or a `_link` source without a 32-hex srcmd5 revision,
+  unless it links to the target itself (it expands to the target's files, which the key
+  and the guard check);
 - **target:** the target's files moved since `--show`;
 - **shape:** more than one action, or an option other than `sourceupdate`;
 - **content:** a new parse-time construct in the spec; a changed `_service`, `_link`,
   `_aggregate`, `*.macros`, `.gitmodules` or symlink; bidi or zero-width bytes; a tarball that
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
-  obscpio archive; a diff over the size cap;
-- **build, for a request:** the source package's current srcmd5 is not the request's, or no
-  success from those sources in the source project on the repositories and arches
-  `gate.sh --obs-build` judges (Tumbleweed and Leap 16, x86_64 and aarch64, those the source
-  project builds, at least one). A PR is built only when the devel project builds PRs: its
-  build is reported when there is one, and is not required;
+  obscpio archive; a diff over the size cap; a preamble conditional whose body holds a tag
+  (one that only defines passes);
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
   `@`-mention of anyone but the creator, an internal tag (VERDICT, tree keys, gate names), a
   bot directive (`merge ok`, `@group : approve`), or a comment over the length cap;
 - **rollout:** the installed pr-guard predates these rules (`~/.claude/hooks/_pr_guard.py`
   has no `def foreign_accept(`): a review that is no BLOCK waits until the user installs it.
+
+The build is shown, never required: `--show` and `--record` print it under
+`build (shown to the user, not required):`, the stamp keeps it (`build.green`,
+`build.results`, `build.notes`) and pr-guard's accept ask repeats it. For a request it is
+green when the source package's sources are still the request's and succeeded in the source
+project on the repositories and arches `gate.sh --obs-build` judges (Tumbleweed and Leap 16,
+x86_64 and aarch64, those the target builds), each with a path to the target project; every
+gap is a note. A PR is built only when the devel project builds PRs. A failed build lookup
+is still exit 5.
 
 A BLOCK always records. The stamp lands in
 `~/.local/state/opensuse-packaging/incoming/<obs|gitea>/<id>.json`. Exit 0 recorded · 1
@@ -75,8 +82,8 @@ refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup faile
 
 | Verdict | Means | Next |
 |---|---|---|
-| PASS | nothing to change; a request's sources build green | comment, accept on the user's go, forward |
-| FIXABLE | right, a request's sources green; packaging or wording defects only | comment, accept on the go, follow-up fix, then forward |
+| PASS | nothing to change | comment, accept on the user's go, forward |
+| FIXABLE | right; packaging or wording defects only | comment, accept on the go, follow-up fix, then forward |
 | BLOCK | anything else | comment, recommend a decline, decline only on the go |
 
 ## PASS
@@ -133,7 +140,8 @@ refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup faile
   `references/request-text.md` "Comments: reading them, posting an approved one".
 - An accept or approve without a PASS or FIXABLE stamp of what the item holds now is refused
   (no stamp: "review it first"). With one, pr-guard asks for the user's go, showing the
-  verdict; for a PR head with no build, the ask says so.
+  verdict and the build: `build: green on … in <project>`, or
+  `build: no green build from the request's sources` (a PR: `… of this head`).
 - Accept, approve, decline and request-changes each need the user's explicit go naming that
   item, answered at that prompt in a Claude Code session; a go never carries to the next
   item. The opencode guard plugins refuse every ask, since an agent holding the server's

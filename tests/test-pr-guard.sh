@@ -278,10 +278,12 @@ def factory(pkg, devel):
     text = f'<package name="{pkg}" project="openSUSE:Factory"><devel project="{devel}" package="{pkg}"/></package>'
     put(os.path.join(meta, pkg + ".xml"), text)
     stub(f"/source/openSUSE:Factory/{pkg}/_meta", text)
-def stamp(kind, name, sid, creator, verdict, part, comment="", build="", key="0123456789ab" + "0" * 52, root=state):
+def stamp(kind, name, sid, creator, verdict, part, comment="", build="", key="0123456789ab" + "0" * 52, root=state, green=True):
+    green = bool(build) and green
+    ok = {"openSUSE_Tumbleweed/x86_64": "succeeded", "16.0/aarch64": "succeeded"} if green else {}
     st = {"v": 1, "kind": kind, "id": sid, "creator": creator, "verdict": verdict,
           "key": key, "recorded": "2026-11-22T10:00:00Z", "scan": {"exit": 0, "lines": []},
-          "build": {"project": build, "results": {}, "srcmd5": "", "green": bool(build)},
+          "build": {"project": build, "results": ok, "srcmd5": "", "green": green},
           "findings": [], "comment": comment,
           "comment_sha256": hashlib.sha256(comment.encode()).hexdigest() if comment else ""}
     put(os.path.join(root, "incoming", kind, name + ".json"), json.dumps(dict(st, **part)))
@@ -296,7 +298,8 @@ for c in s["obs"]:
     act = (f'<action type="submit"><source project="{S}" package="{pkg}"' + (f' rev="{rev}"' if rev else "")
            + f'/><target project="{T}" package="{pkg}"/>' + (f"<options>{opts}</options>" if opts else "") + "</action>")
     stub(f"/request/{rid}", f'<request id="{rid}" creator="contrib">{act * c.get("actions", 1)}<state name="new"/></request>')
-    link = f'<linkinfo project="{D}" package="{pkg}"/>' if c.get("link") else ""
+    lprj, lpkg = c["link"].split("/") if isinstance(c.get("link"), str) else (T, pkg)
+    link = f'<linkinfo project="{lprj}" package="{lpkg}"/>' if c.get("link") else ""
     stub(f"/source/{S}/{pkg}?expand=1&rev={rev}", f'<directory name="{pkg}" srcmd5="{ssrc}">{link}{entries(sfiles)}</directory>')
     now = {"source": sfiles, "followup": {f"{pkg}.spec": md5("fix " + pkg)}}.get(c.get("devel"), tfiles)
     stub(f"/source/{T}/{pkg}?expand=1", f'<directory name="{pkg}" srcmd5="{tsrc}">{entries(now)}</directory>')
@@ -315,7 +318,7 @@ for c in s["obs"]:
                        "srcmd5": md5("other") if c.get("stamp_tgt") else tsrc, "files": tfiles}}}}
         # the 48-bit key of old, under a HOME of its own: as no valid record, it holds every forward
         key = {"key": "0123456789ab", "root": os.path.join(work, "oldkey", sd)} if c.get("key12") else {}
-        stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S, **key)
+        stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S, green=c.get("green", True), **key)
     if c.get("devel") == "followup":  # the follow-up, gated and reviewed, as a forward needs it
         put(os.path.join(state, "gate", "obs", pkg, D + ".json"), json.dumps({
             "project": D, "package": pkg, "verdict": "GREEN", "files": now, "tree": "0" * 64,
@@ -1941,6 +1944,9 @@ case_ accept-others-unreviewed  2 incoming-accept "accepting request 1391011 by 
 ask_ accept-pass                incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS (key 0123456789ab"
 ask_ accept-pass                incoming-accept "source and target srcmd5 as reviewed, devel:inc is Factory's devel project"
 ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then waits until your follow-up is in devel"
+# The build the review recorded is shown in the ask, green or not, and never required.
+ask_ accept-pass                incoming-accept "0 findings); build: green on 16.0/aarch64, openSUSE_Tumbleweed/x86_64 in $h:contrib:branches:devel:inc"
+ask_ accept-red-build           incoming-accept "accepting request 1391019 by contrib into devel:inc/incred: review PASS (key 0123456789ab, recorded 2026-11-22T10:00:00Z, 0 findings); build: no green build from the request's sources"
 ask_ accept-api-pass            incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
 # A review accept is the user as a reviewer: asked as before unless ELIGIBLE, on
 # Factory's packages too, whoever filed the request.
@@ -1951,11 +1957,16 @@ case_ accept-block              2 incoming-accept "accepting request 1391003 by 
 case_ accept-files-moved        2 incoming-accept "accepting request 1391004 by contrib: its source is not the one reviewed (srcmd5 moved)"
 case_ accept-target-moved       2 incoming-accept "accepting request 1391005 by contrib: the target is not as reviewed"
 case_ accept-no-rev             2 incoming-accept "accepting request 1391006 by contrib: its source names no revision"
+# A _link source to another package (1391007: in the target's project; 1391015: the same
+# name in another project) is pinned only by its expanded srcmd5 at that rev: another
+# srcmd5 may be the link's own, whose expansion moves with the package it links to.
 case_ accept-link-rev           2 incoming-accept "accepting request 1391007 by contrib: its source is a _link and rev 5 not its expanded srcmd5"
-# A _link source is pinned only by its expanded srcmd5 at that rev: another srcmd5 may
-# be the link's own, whose expansion moves with the package it links to.
 case_ accept-link-rev-moved     2 incoming-accept "accepting request 1391015 by contrib: its source is a _link and rev 0123456789abcdef0123456789abcdef not its expanded srcmd5"
 ask_ accept-link-pinned         incoming-accept "accepting request 1391016 by contrib into devel:inc/inclinkok: review PASS"
+# A _link to the target itself expands to what the target holds: any rev passes, the
+# target's srcmd5 still checked against the review's.
+ask_ accept-link-target-rev     incoming-accept "accepting request 1391020 by contrib into devel:inc/inclinktgt: review PASS"
+case_ accept-link-target-moved  2 incoming-accept "accepting request 1391021 by contrib: the target is not as reviewed"
 case_ accept-multi-action       2 incoming-accept "accepting request 1391008 by contrib: it holds 2 actions, not one submit"
 case_ accept-options            2 incoming-accept "accepting request 1391009 by contrib: it sets updatelink"
 case_ accept-home-target        2 incoming-accept "accepting request 1391010 by contrib: it targets home"
@@ -1965,7 +1976,7 @@ case_ accept-from-reviewer-agent 2 incoming-self "accepting request 1391001 from
 # A devel PR: git-obs pr review approve --commit of the head reviewed, in the devel
 # organisation the project git syncs from; tea's approve keeps asking as a comment.
 ask_ approve-git-obs-pass       incoming-approve "approving incorg/incgit#5 by contrib at 555555555555: review PASS"
-ask_ approve-git-obs-pass       incoming-approve "no build of this head"
+ask_ approve-git-obs-pass       incoming-approve "0 findings); build: no green build of this head"
 case_ approve-no-commit         2 incoming-approve "approving incorg/incgit#5: it names no --commit SHA"
 case_ approve-head-moved        2 incoming-approve "approving incorg/incgit#5: its head is not 444444444444"
 case_ approve-reviewer-flag     2 incoming-approve "approving incorg/incgit#5: --reviewer approves for someone else"

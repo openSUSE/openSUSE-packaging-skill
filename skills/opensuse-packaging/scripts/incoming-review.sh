@@ -14,8 +14,9 @@
 # Usage: incoming-review.sh --show <sr#ID | owner/repo#N>
 #        incoming-review.sh --record <ID> FILE   (or --record=<ID> FILE)
 #   --show    the request's facts, its description and diff (sanitized, between
-#             data markers that carry a nonce of this run), the mechanical
-#             findings, then `build <project>`, the OBS project whose build is
+#             data markers that carry a nonce of this run), the build (shown,
+#             not required), the mechanical findings, then `build <project>`,
+#             the OBS project whose build is
 #             the evidence (an SR's source project; a PR's staging project, or
 #             - when none built the head), and last `key <sha256>`: a hash over
 #             the request's actions, its source rev, srcmd5 and file md5s and
@@ -34,26 +35,30 @@
 #             obs/<ID>.json, or gitea/<owner>_<repo>_<N>.json (owner and repo
 #             lowercased, % written %25 and _ written %5F)
 # Findings, each refusing PASS and FIXABLE: no source rev, or a _link source
-# whose rev is not its expanded srcmd5; more than one action, a type but
+# whose rev is not its expanded srcmd5 (but a link to the target itself, whose
+# files the key holds); more than one action, a type but
 # submit, an option but sourceupdate; a target package that does not exist;
 # parse-time code the scanner finds added over the target's files, or a scan
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
 # .gitmodules, symlink or submodule; control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
-# text cannot read, a preamble line a macro of the spec, an expression or a
-# conditional body writes, a URL with a macro the text cannot expand (a name
+# text cannot read, a preamble line a macro of the spec or an expression
+# writes, or a conditional whose body holds a tag (one that only defines
+# passes), a URL with a macro the text cannot expand (a name
 # with a define beside its tag is one) or that does not parse, a Source or
 # Patch host the target's spec does not use or that is not ASCII, a Source URL
 # changed beyond its version numbers (Source00 is Source0), a changed file
 # whose bytes differ from its Source URL's (fetched only from a host the
 # target's spec names, redirects followed over https to public ASCII hosts
 # alone, curl's address checked), a changed binary with no Source URL; a service-made
-# vendor or obscpio archive; a diff over 128 KiB, or fetched files over 64 MiB;
-# for an SR, a source package whose sources moved since the request, or whose
-# build is not green from them: each Tumbleweed and Leap 16 repo on x86_64 and
-# aarch64 that the target builds, present in the source project with a path to
-# the target project, enabled, and succeeded. A PR's build is reported, never
-# required: PRs build only where the devel project builds them. The comment:
+# vendor or obscpio archive; a diff over 128 KiB, or fetched files over 64 MiB.
+# The build is shown and in the stamp, never required: for an SR, green when
+# the source package's sources are still the request's and succeeded in each
+# Tumbleweed and Leap 16 repo on x86_64 and aarch64 that the target builds,
+# present in the source project with a path to the target project, and
+# enabled, each way it falls short a note; for a PR, the staging build of its
+# head, where the devel project builds PRs. A failed build lookup is still
+# exit 5. The comment:
 # no URL but an https build, src or bugzilla.opensuse.org one (Markdown links
 # and reference links, href= and src=, //host, backslash forms, scheme:
 # without slashes and e-mail addresses count, entities decoded), no @-mention
@@ -426,6 +431,62 @@ SECTIONS |= {"filetriggerpostun", "transfiletriggerin", "transfiletriggerun", "t
 SECTIONS |= {"verifyscript", "sepolicy", "generate_buildrequires", "conf", "patchlist", "sourcelist"}
 DIRECTIVES = {"if", "ifarch", "ifnarch", "ifos", "ifnos", "elif", "elifarch", "elifos", "else", "endif"}
 DIRECTIVES |= {"define", "global", "undefine", "include"}
+# A define anywhere in a line, a conditional's body included.
+ANY_DEF = re.compile(r"%\{?(?:global|define|undefine)[\s:]+(\w+)")
+# A tag where a line starts: Name:, Requires(post):, Source1 : and the like.
+TAG_WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:\s*\([^()\n]*\))?\s*:")
+BLANK = re.compile(r"[ \t]*")
+
+
+def closing(text, i):
+    """The index past the brace that closes the one at text[i], counted as
+    rpm counts it (a backslash escapes the next character), or None."""
+    lvl = 0
+    while i < len(text):
+        c, i = text[i], i + 1
+        if c == "\\":
+            i += 1
+        elif c == "}":
+            lvl -= 1
+            if lvl <= 0:
+                return i
+        elif c == "{":
+            lvl += 1
+    return None
+
+
+def writes(text, own, depth=0):
+    """Whether text, read where a preamble line starts, may write a tag: one
+    at its start or after a newline; an expression, %{expand:, %{lua:,
+    %{load:, another macro with an argument or one of the spec's own; or a
+    conditional whose body, or what follows it, does. A define, a directive
+    and a call of a host macro write none."""
+    if depth > 8:
+        return True
+    i = 0
+    while i < len(text):
+        i = BLANK.match(text, i).end()
+        if TAG_WORD.match(text, i):
+            return True
+        h = HEAD.match(text, i)
+        name = h and (h.group(2) or h.group(4))
+        if not h or name in DIRECTIVES or (name or "").startswith("bcond"):
+            # text, a define or a directive: the rest of its line is its own
+            i = text.find("\n", i)
+            if i < 0:
+                return False
+            i += 1
+            continue
+        if h.group(5) or name in ("expand", "lua", "load") or (name in own and not h.group(3)):
+            return True
+        if not h.group(2):
+            i = h.end()
+            continue
+        end = closing(text, text.index("{", i))
+        if end is None or h.group(3) and ("?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1)):
+            return True
+        i = end
+    return False
 
 
 def spec_lines(text):
@@ -433,14 +494,19 @@ def spec_lines(text):
     %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
     (one behind a macro); and those of preamble lines whose text a macro of the
-    spec's own, an expression or a conditional body writes, where rpm may read
-    a tag this reading never sees (a call of a macro the spec does not define
-    is the host's, and passes). A name with a definition that is not plain --
-    with arguments, inside %if, conditional, expanded, undefined, two different
-    values, or a define beside its tag -- stays unexpanded, and so does every
-    name the spec does not define."""
+    spec's own or an expression writes, or a conditional whose body holds a
+    tag (writes()), where rpm may read a tag this reading never sees (a call
+    of a macro the spec does not define is the host's, and passes; a body that
+    only defines writes none). A name with a definition that is not plain --
+    with arguments, inside %if or a conditional's body, conditional, expanded,
+    undefined, two different values, or a define beside its tag -- stays
+    unexpanded, and so does every name the spec does not define."""
     lines = text.split("\n")
-    own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m}
+    inner = set()
+    for line in lines:
+        found = ANY_DEF.findall(line)
+        inner.update(found[1:] if SPEC_DEF.match(line) else found)
+    own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m} | inner
     defs, tags, out, untaken, made, depth, pre, cont = {}, {}, [], [], [], 0, True, False
     for n, line in enumerate(lines, 1):
         was, cont = cont, line.rstrip().endswith("\\")
@@ -449,7 +515,14 @@ def spec_lines(text):
         if h and name in SECTIONS:
             pre = name == "package"
         elif h and pre and not (name in DIRECTIVES or (name or "").startswith("bcond")):
-            if h.group(5) or name in ("expand", "lua", "load") or name in own or h.group(3):
+            if h.group(3) and "?" in h.group(1):
+                # a conditional writes what its body and the rest of its line write
+                body = "\n".join(lines[n - 1 : n + 99])
+                end = closing(body, body.index("{"))
+                stop = body.find("\n", end) if end is not None else -1
+                if end is None or writes(body[h.end() : end - 1], own) or writes(body[end : stop if stop >= 0 else None], own):
+                    made.append(n)
+            elif h.group(5) or name in ("expand", "lua", "load") or name in own or h.group(3):
                 made.append(n)
         if re.match(r"\s*%if", line):
             depth += 1
@@ -472,6 +545,8 @@ def spec_lines(text):
             continue
         if UNTAKEN.match(line):
             untaken.append(n)
+    for k in inner:
+        defs[k] = None
     for k, vs in tags.items():
         # a define beside the tag: rpm takes whichever comes last, so neither is sure
         defs[k] = vs.pop() if len(vs) == 1 and k not in defs else None
@@ -841,21 +916,22 @@ def last_job(prj, repo, arch, name, label):
 
 
 def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
-    """The source package's own build: its current sources must be the
-    request's, and every repo/arch gate.sh --obs-build judges (_obs_scope)
-    that the target builds must be in the source project, with a path to the
-    target project, enabled, and succeeded from those sources."""
-    out = {"project": sprj, "package": spkg, "required": True, "results": {}, "srcmd5": "", "green": False}
+    """The source package's own build, shown and never required: green when
+    its current sources are the request's, and every repo/arch gate.sh
+    --obs-build judges (_obs_scope) that the target builds is in the source
+    project, with a path to the target project, enabled, and succeeded from
+    those sources; each way it falls short is a note."""
+    out = {"project": sprj, "package": spkg, "required": False, "results": {}, "srcmd5": "", "green": False, "notes": []}
     f.build = out
-    before = len(f.findings)
     what = "%s/%s" % (sprj, spkg)
+    note = lambda why: out["notes"].append(clean("%s: %s" % (what, why)))  # noqa: E731
     _, cur = listing(xml(obs("/source/%s/%s?expand=1" % (q(sprj), q(spkg))), what, "directory"), what)
     out["srcmd5"] = cur
     if cur != ssrc:
-        f.find("build: %s moved since the request (sources %s, the request's %s): its results are of other sources" % (what, cur[:12], ssrc[:12]))
+        note("moved since the request (sources %s, the request's %s): its results are of other sources" % (cur[:12], ssrc[:12]))
         return
     if not target_exists:
-        f.find("build: %s/%s does not exist, so no target says which repos the build must cover" % (tprj, tpkg))
+        note("%s/%s does not exist, so no target says which repos the build must cover" % (tprj, tpkg))
         return
     want = {}
     for (repo, arch), (_, codes) in results(tprj, tpkg).items():
@@ -863,7 +939,7 @@ def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
         if scope.judged(tprj, repo, arch, leap) and code not in (None, "disabled"):
             want[(repo, arch)] = code
     if not want:
-        f.find("build: %s/%s builds no Tumbleweed or Leap 16 repo on x86_64 or aarch64: nothing to judge the source by" % (tprj, tpkg))
+        note("%s/%s builds no Tumbleweed or Leap 16 repo on x86_64 or aarch64: nothing to judge the source by" % (tprj, tpkg))
         return
     meta = xml(obs("/source/%s/_meta" % q(sprj)), "the meta of %s" % sprj, "project")
     repos = {r.get("name"): r for r in meta.findall("repository")}
@@ -898,8 +974,8 @@ def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
         if got != cur:
             probs.append("%s built %s, not the sources %s" % (lab, clean(got[:12]) or "nothing recorded", cur[:12]))
     for p in probs:
-        f.find("build: %s: %s" % (what, p))
-    out["green"] = len(f.findings) == before
+        note(p)
+    out["green"] = not out["notes"]
 
 
 def build_pr(f, owner, repo, num, head):
@@ -991,7 +1067,7 @@ def derive_obs(rid, tmp):
         f.scan = {"exit": 3, "lines": ["no submit action: nothing scanned"]}
         f.key = digest(key)
         f.part = {"obs": {"action": {"type": acts[0]["type"], "options": [], "source": {}, "target": {}}, "actions": len(acts)}}
-        f.build = {"project": "", "required": True, "results": {}, "srcmd5": "", "green": False}
+        f.build = {"project": "", "required": False, "results": {}, "srcmd5": "", "green": False, "notes": []}
         return f
     sprj, spkg, rev = a["source"].get("project", ""), a["source"].get("package", ""), a["source"].get("rev", "")
     tprj, tpkg = a["target"].get("project", ""), a["target"].get("package") or spkg
@@ -1009,8 +1085,11 @@ def derive_obs(rid, tmp):
     sfiles, ssrc = listing(sroot, what)
     if not sfiles:
         raise Lookup("%s: no file" % what)
-    # a link expands against its origin as it is now, unless pinned to the expansion itself
-    if sroot.find("linkinfo") is not None and rev != ssrc:
+    # a link expands against its origin as it is now, unless pinned to the expansion itself;
+    # one to the target itself expands to what the target holds, whose files the key holds
+    link = sroot.find("linkinfo")
+    to_target = link is not None and [link.get("project"), link.get("package")] == [tprj, tpkg]
+    if link is not None and rev != ssrc and not (rev and to_target):
         f.find("revision: the source is a _link, and its rev %s is not its expanded srcmd5 %s: what it expands to moves" % (shown(rev) or "(none)", ssrc))
     traw = obs("/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), missing_ok=True)
     tfiles, tsrc = ({}, "") if traw is None else listing(xml(traw, "%s/%s" % (tprj, tpkg), "directory"), "%s/%s" % (tprj, tpkg))
@@ -1141,11 +1220,13 @@ def report(f, diff):
     for ln in f.scan["lines"][:20]:
         say("  " + ln)
     b = f.build
-    if b.get("required", True):
+    if f.kind == "obs":
         shown_results = ", ".join("%s %s" % kv for kv in sorted(b.get("results", {}).items())) or "none"
-        say("build: %s %s: %s" % (b.get("project") or "-", "green" if b.get("green") else "not green", shown_results))
+        say("build (shown to the user, not required): %s %s: %s" % (b.get("project") or "-", "green" if b.get("green") else "not green", shown_results))
+        for x in b.get("notes", []):
+            say("  " + x)
     else:
-        say("build: %s, not required for a PR: %s" % (b.get("verdict"), b.get("note")))
+        say("build (shown to the user, not required): %s: %s" % (b.get("verdict"), b.get("note")))
     if not guard_ready():
         say("guard: the installed pr-guard has no foreign_accept: only BLOCK records until it is installed")
     if not diff:
