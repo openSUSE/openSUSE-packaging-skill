@@ -147,13 +147,17 @@ case "$1 $2" in
   # with a podman another container keeps busy: silent answers nothing, fail is
   # podman's own error, slow the same 15 seconds later, exit2 answers and ends
   # with status 2, cut answers half, badexit answers with an id that is none
-  # and then podman's error status; else it answers.
+  # and then podman's error status, error is the server's answer to a request
+  # it refuses, as opencode api prints it, bare the same without a body; else
+  # it answers.
   busy() {
     echo >> "$FIX/$1-asked"
     case $(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null) in
     silent) exit 0 ;;
     cut) printf '{"data":[{"id":"per_'; exit 0 ;;
     badexit) echo '{"data":[{"id":"x/y"}]}'; exit 125 ;;
+    error) echo '{"name":"UnknownError","data":{"message":"no such row"}}'; echo "HTTP 500 Internal Server Error" >&2; exit 1 ;;
+    bare) echo "HTTP 502 Bad Gateway" >&2; exit 1 ;;
     slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
@@ -161,13 +165,21 @@ case "$1 $2" in
   }
   # With $FIX/exec-escape whatever runs in the container tries the terminal on its error stream.
   [ ! -e "$FIX/exec-escape" ] || printf 'inside says\033]52;c;QUFB\007\033[2J\n' >&2
+  # With $FIX/exec-conceal it hides what follows: concealed, and black on black.
+  [ ! -e "$FIX/exec-conceal" ] || printf 'hidden\033[8m\033[30;40m\033[38;5;0;48;5;0m\n' >&2
   case "$*" in
   # With $FIX/plugins-late holding N, the first N lists show no plugin yet.
   *"plugin list"*)
     n=$(cat "$FIX/plugins-late" 2>/dev/null || echo 0)
     if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FIX/plugins-late"; echo "ID  VERSION"; else cat "$FIX/plugins"; fi ;;
   # The login is read first, as opencode does, whether the import then fails or not.
-  *"auth import"*) cat > "$FIX/import-in"; busy import; mv "$FIX/import-in" "$FIX/imported"; [ ! -e "$FIX/import-fails" ] ;;
+  # It joins the model logins unless one with its id is there, and so does what
+  # $FIX/import-also holds.
+  *"auth import"*) cat > "$FIX/import-in"; busy import; mv "$FIX/import-in" "$FIX/imported"; [ ! -e "$FIX/import-fails" ] || exit 1
+    also='[]'; [ ! -e "$FIX/import-also" ] || also=$(cat "$FIX/import-also")
+    jq -c --slurpfile n "$FIX/imported" --argjson a "$also" \
+      '(.data | map(.id)) as $have | .data += [($n[0] + $a)[] | select(.id | IN($have[]) | not)]' "$FIX/logins" \
+      > "$FIX/logins.new" && mv "$FIX/logins.new" "$FIX/logins" ;;
   # A session the container imports from a pipe: stdin is the export.
   *"session import"*)
     cat > "$FIX/imported-session"
@@ -268,6 +280,8 @@ EOF
 cat > "$tools/bin/timeout" <<'EOF'
 #!/bin/bash
 . "$FIX/envcheck"
+# A call that outlives its time is killed five seconds later.
+if [ "$1 $2" = "-k 5" ]; then shift 2; else printf '%s\n' "$*" >> "$FIX/unkilled"; fi
 shift; FAKE_TIMEOUT=1 exec "$@"
 EOF
 # gh: the login's name and its token, each on request only, from the config
@@ -306,7 +320,7 @@ is-active) grep -qx true "$FIX/running" ;;
 esac
 EOF
 # The real commands of the launcher, each behind the same check.
-for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir; do
+for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir sort; do
   printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $(command -v "$f") \"\$@\"" > "$tools/bin/$f"
 done
 # The launcher's pauses are recorded; with $FIX/sleep-fast they take no time.
@@ -317,7 +331,7 @@ touch "$FIX/sleep-fast"
 # A client among the launcher's own commands is not the caller's.
 printf '%s\n' '#!/bin/bash' ': > "$FIX/launcher-path-client"; exit 1' > "$tools/bin/opencode"
 # First on the caller's PATH: what the launcher must take from its own.
-for f in podman python3 jq realpath sed timeout head base64 tr id mkdir seq sleep cat ls gh cp cmp mktemp rm systemctl ln ssh-keygen git rmdir; do
+for f in podman python3 jq realpath sed timeout head base64 tr id mkdir seq sleep cat ls gh cp cmp mktemp rm systemctl ln ssh-keygen git rmdir sort; do
   printf '%s\n' '#!/bin/bash' ': > "$FIX/planted-host"; exit 1' > "$tools/evilbin/$f"
 done
 chmod +x "$tools/bin/"* "$tools/userbin/"* "$tools/evilbin/"*
@@ -1022,7 +1036,7 @@ order="$(grep -o 'api DELETE [^ ]*\|api PATCH [^ ]*\|auth import' "$FIX/podman-c
   && [ "$order" = "api DELETE /api/permission/saved/per_a1 api DELETE /api/permission/saved/per_b2 api PATCH /api/session/ses_u1 api DELETE /api/credential/cred_old1 auth import " ] \
   && pass "up removes the saved approvals and session rules before the model credential goes in" \
   || fail "up and saved approvals: $order / $out"
-[ "$(jq -c .data "$FIX/logins")" = "[]" ] && [[ $order == *"api DELETE /api/credential/cred_old1 auth import " ]] \
+[ "$(jq -c '.data | map(.id)' "$FIX/logins")" = '["cred_1"]' ] && [[ $order == *"api DELETE /api/credential/cred_old1 auth import " ]] \
   && [ -z "$(leaks <<<"$out")" ] \
   && pass "up removes the model login the state volume kept, then imports the secret's" \
   || fail "up and a kept model login: $order / $(jq -c '.data | map(.id)' "$FIX/logins")"
@@ -1322,13 +1336,13 @@ for wd in "" ws / "$work/a,b" "$work/a:b"; do
 done
 printf %s "$work/ws" > "$FIX/workdir"
 
-# A reply reaches the terminal as text and colour, each stream on its own, and
-# the client's exit status is the launcher's.
+# A reply reaches the terminal as text without colour, each stream on its own,
+# and the client's exit status is the launcher's.
 touch "$FIX/escapes"
 sc run obs hello > "$work/rout" 2> "$work/rerr"; rc=$?
-[ "$rc" = 7 ] && cmp -s "$work/rout" <(printf 'out]52;c;QUJD\033[31mred\033[0m[2Jx[35m2Jy0;t\nctl<>\n') \
-  && cmp -s "$work/rerr" <(printf 'err]0;title\033[1mbold\033[0m\nctl<>\n') \
-  && pass "run prints a reply without its control characters, colours apart" \
+[ "$rc" = 7 ] && cmp -s "$work/rout" <(printf 'out]52;c;QUJDred[2Jx[35m2Jy0;t\nctl<>\n') \
+  && cmp -s "$work/rerr" <(printf 'err]0;titlebold\nctl<>\n') \
+  && pass "run prints a reply without its control characters and colours" \
   || fail "run and control characters: rc=$rc $(od -c "$work/rout" | head -8) / $(od -c "$work/rerr" | head -8)"
 rm "$FIX/escapes"
 
@@ -1460,6 +1474,28 @@ out="$(sc up obs 2>&1)"; rc=$?
   && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
   && pass "a kept model login whose id is no text: no call is made, nothing of it is shown" \
   || fail "up with a model login id that is no text: rc=$rc $out"
+# Nor is one of more than 128 characters: in a long enough command line the
+# removal would not start, every time it is tried.
+id128="$(printf 'c%.0s' {1..128})"
+restart; kept_login "$id128"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qF "api DELETE /api/credential/$id128 " "$FIX/podman-calls" \
+  && pass "a kept model login with an id of 128 characters is removed" \
+  || fail "up with a model login id of 128 characters: rc=$rc $out"
+restart; kept_login "c$id128"; : > "$FIX/sleep-calls"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the model logins $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "a kept model login with an id of 129 characters: no call is made with it, no pause" \
+  || fail "up with a model login id of 129 characters: rc=$rc $(pauses) pauses $out"
+echo '{"data":[]}' > "$FIX/logins"
+restart; approval "p$id128"; : > "$FIX/sleep-calls"
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && ! grep -q 'api DELETE /api/permission' "$FIX/podman-calls" && [ ! -s "$FIX/sleep-calls" ] \
+  && pass "a saved approval with an id of 129 characters stops the unit at once, no credential is sent" \
+  || fail "up with an approval id of 129 characters: rc=$rc $(pauses) pauses $out"
+echo '{"data":[]}' > "$FIX/saved"
 restart; kept_login cred_old1; touch "$FIX/login-ghost"
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && [ -z "$(leaks <<<"$out")" ] \
@@ -1476,7 +1512,7 @@ out="$(sc up obs 2>&1)"; rc=$?
 restart; kept_login cred_old1; mv "$FIX/logins" "$FIX/logins-next"; echo '{"error":"no"}' > "$FIX/logins"
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -q 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls" \
-  && [ "$(jq -c .data "$FIX/logins")" = "[]" ] \
+  && [ "$(jq -c '.data | map(.id)' "$FIX/logins")" = '["cred_1"]' ] \
   && pass "model logins that can be listed only the second time: the login listed then is removed first" \
   || fail "up without a first list of model logins: rc=$rc $out"
 rm -f "$FIX/logins-next"; echo '{"data":[]}' > "$FIX/logins"
@@ -1528,9 +1564,57 @@ out="$(sc up obs 2>&1)"; rc=$?
 # Status 2 from the command in the container is not a list without an end.
 restart; scripted logins exit2
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 1 ] \
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads logins)" = 4 ] && [ "$(pauses)" = 1 ] \
   && pass "an answer that ends with status 2 is asked for again" \
   || fail "up with an answer that ends with status 2: rc=$rc $(reads logins) reads $out"
+# An error the server answers is its answer: asking again would get the same.
+for what in projects approvals sessions logins; do
+  restart; scripted "$what" error
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "podman volume rm" <<<"$out" \
+    && [ "$(reads "$what")" = 1 ] && [ "$(pauses)" = 0 ] \
+    && pass "an error the server answers for the $what stops the unit at once, no credential is sent" \
+    || fail "up with an error answered for the $what: rc=$rc $(reads "$what") reads, $(pauses) pauses $out"
+done
+for what in deletes patches logindel; do
+  restart
+  case $what in
+  deletes) approval per_x1 ;;
+  patches) sessions "[{\"id\":\"ses_x1\",\"permissions\":$allow}]" ;;
+  logindel) kept_login cred_x1 ;;
+  esac
+  scripted "$what" error
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "keeps cannot be removed" <<<"$out" \
+    && [ "$(reads "$what")" = 1 ] && [ "$(pauses)" = 0 ] \
+    && pass "an error the server answers for a removal ($what) stops the unit at once, no credential is sent" \
+    || fail "up with an error answered for a removal ($what): rc=$rc $(reads "$what") calls, $(pauses) pauses $out"
+done
+echo '{"data":[]}' > "$FIX/saved"; sessions '[]'; echo '{"data":[]}' > "$FIX/logins"
+# A failed call without an answer is asked again.
+restart; scripted projects bare bare
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+  && [ "$(reads projects)" = 3 ] && [ "$(pauses)" = 2 ] \
+  && pass "a failed call without an answer is asked again" \
+  || fail "up with failed calls without an answer: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+# The deadline is the launcher's own: one in the environment counts for nothing.
+restart; scripted projects fail
+out="$("${scenv[@]}" cutoff=0 HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads projects)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "a cutoff preset in the environment is ignored" \
+  || fail "up with a cutoff in the environment: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+# A later try's errors are hidden, not its die: die and retried as the launcher
+# has them, around a try that dies the second time.
+retriedprog="$(sed -n -e '/^die() {$/,/^}$/p' -e '/^exec {diefd}>&2$/p' -e '/^retried() {$/,/^}$/p' "$SC")"
+out="$(bash -c "$retriedprog"'
+sleep() { :; }
+ctr=x tries=0
+try() { tries=$((tries + 1)); ((tries > 1)) || return 1; die LATE-DIE; }
+retried try' 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF "trying again" <<<"$out" && grep -qx "skill-container: LATE-DIE" <<<"$out" \
+  && pass "a die in a later try, whose errors are hidden, still shows" \
+  || fail "a die in a later try: rc=$rc $out"
 # bash takes SECONDS from the environment. 314 short of the largest number,
 # the start's deadline still fits for 14 seconds; after a start of 15 the
 # read's has wrapped round and is past: nothing is tried again after five
@@ -1547,7 +1631,7 @@ rm "$FIX/start-slow"
 # logins read set for itself after a failure of 15 would have wrapped round.
 restart; scripted projects slow; echo fail > "$FIX/logins-script"; : > "$FIX/logins-asked"
 out="$("${scenv[@]}" SECONDS=$((9223372036854775807 - 314)) HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads projects)" = 2 ] && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 2 ] \
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads projects)" = 2 ] && [ "$(reads logins)" = 4 ] && [ "$(pauses)" = 2 ] \
   && pass "every try after the start shares one deadline" \
   || fail "up with one deadline: rc=$rc $(reads projects) and $(reads logins) reads, $(pauses) pauses $out"
 # An id that is none stops the start at once: an empty one would vanish from
@@ -1640,7 +1724,7 @@ out="$(sc up obs 2>&1)"; rc=$?
 rm "$FIX/keeps-rules"; sessions '[]'
 restart; kept_login cred_old1; scripted logindel fail
 out="$(sc up obs 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ "$(jq -c .data "$FIX/logins")" = "[]" ] && [ -e "$FIX/imported" ] \
+[ "$rc" = 0 ] && [ "$(jq -c '.data | map(.id)' "$FIX/logins")" = '["cred_1"]' ] && [ -e "$FIX/imported" ] \
   && [ "$(reads logindel)" = 2 ] && [ "$(pauses)" = 1 ] \
   && pass "a model login whose removal failed once is removed in the next round" \
   || fail "up with a lost login removal: rc=$rc $(reads logindel) removals $out"
@@ -1654,12 +1738,30 @@ out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads import)" = 2 ] && [ "$(pauses)" = 1 ] \
   && pass "an import that ends with status 2 is tried again" \
   || fail "up with an import that ends with status 2: rc=$rc $(reads import) imports $out"
+# An import ends with 0 when it imported nothing as well: the list read again
+# holds the secret's login and no other.
+restart; never import silent
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the model credential was not imported" <<<"$out" \
+  && [ "$(reads import)" = 60 ] && [ "$(pauses)" = 59 ] && [ "$(jq -c .data "$FIX/logins")" = "[]" ] \
+  && pass "an import that ends with 0 and imports nothing: the unit is stopped after 60 tries" \
+  || fail "up with an import that imports nothing: rc=$rc $(reads import) imports, $(pauses) pauses $out"
+restart; scripted import
+printf '%s\n' '[{"id":"cred_agent","integrationID":"prov","label":"x","active":true,"value":{"type":"key","key":"x"}}]' \
+  > "$FIX/import-also"
+out="$(sc up obs 2>&1)"; rc=$?
+rm "$FIX/import-also"
+[ "$rc" != 0 ] && stopped && grep -qF "the model credential was not imported" <<<"$out" \
+  && [ "$(reads import)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "an import that leaves another login beside the secret's: the unit is stopped after 60 tries" \
+  || fail "up with an import beside another login: rc=$rc $(reads import) imports, $(pauses) pauses $out"
+echo '{"data":[]}' > "$FIX/logins"
 # A failed read leaves no part of its list for the next round: here a ! for an
 # id that is none, in an answer podman then failed.
 restart; kept_login cred_old1; scripted logins ok badexit
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && ! grep -qF 'api DELETE /api/credential/! ' "$FIX/podman-calls" \
-  && [ "$(reads logins)" = 3 ] && [ "$(pauses)" = 1 ] \
+  && [ "$(reads logins)" = 4 ] && [ "$(pauses)" = 1 ] \
   && pass "a failed read of the model logins leaves nothing for the next round to remove" \
   || fail "up with a failed login read that left a part: rc=$rc $(reads logins) reads $out"
 restart; approval per_c1; scripted approvals ok ok ok ok ok badexit
@@ -1698,8 +1800,8 @@ for first in 1 2; do
   if [ "$first" = 1 ]; then scripted logins silent silent silent; else scripted logins ok silent silent silent; fi
   out="$(sc up obs 2>&1)"; rc=$?
   [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -q 'api DELETE /api/credential/cred_old1' "$FIX/podman-calls" \
-    && [ "$(jq -c .data "$FIX/logins")" = "[]" ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
-    && [ "$(reads logins)" = 5 ] && [ "$(pauses)" = 3 ] \
+    && [ "$(jq -c '.data | map(.id)' "$FIX/logins")" = '["cred_1"]' ] && [ "$(grep -cxF "$again" <<<"$out")" = 1 ] \
+    && [ "$(reads logins)" = 6 ] && [ "$(pauses)" = 3 ] \
     && pass "up asks again for the model logins while podman does not answer (from read $first)" \
     || fail "up with a busy podman and model logins (from read $first): rc=$rc $(reads logins) reads $out"
 done
@@ -1827,6 +1929,20 @@ sessions '[{"id":"ses_\u001b]52;c;eA==\u0007\u001b[2J","permissions":null,"time"
 out="$(sc idle nol 2>&1)"; rc=$?
 [ "$rc" != 0 ] && ! grep -q $'\033' <<<"$out" && grep -qF "cannot list the sessions" <<<"$out" \
   && pass "idle prints no control sequence from a session id" || fail "idle with a crafted id: rc=$rc"
+# Nor can what the container writes hide the line after it: concealed, or black
+# on black. On a terminal that line resets the attributes first.
+touch "$FIX/exec-conceal"
+out="$(sc idle nol 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qx hidden <<<"$out" && ! grep -q $'\033' <<<"$out" \
+  && grep -qxF "skill-container: cannot list the sessions of $N-nol-agent" <<<"$out" \
+  && pass "idle passes on no colour from inside the container: the launcher's line after it shows" \
+  || fail "idle with concealed text: rc=$rc $(od -c <<<"$out" | head -8)"
+out="$(tty idle nol)"; rc=$?
+rm "$FIX/exec-conceal"
+[ "$rc" != 0 ] && grep -qxF $'\033[0m'"skill-container: cannot list the sessions of $N-nol-agent" <<<"$out" \
+  && [ "$(grep -c $'\033' <<<"$out")" = 1 ] \
+  && pass "on a terminal the launcher's last line resets the attributes first" \
+  || fail "the last line on a terminal: rc=$rc $(od -c <<<"$out" | tail -8)"
 sessions '[]'
 printf '%s\n' /srv/elsewhere > "$FIX/others"
 # podman names a shared network by the server's id, not its name: the client
@@ -2089,6 +2205,8 @@ rm "$FIX/want-locale"
   || fail "commands outside the C locale: rc=$rc $(sort -u "$FIX/locale-seen" 2>/dev/null | tr '\n' ' ')"
 [ ! -s "$FIX/untimed" ] && pass "every command in the container is bounded in time" \
   || fail "commands in the container without a timeout: $(sort -u "$FIX/untimed")"
+[ ! -s "$FIX/unkilled" ] && pass "every bound on a command in the container kills one that outlives it" \
+  || fail "a bound without a kill: $(sort -u "$FIX/unkilled")"
 [ ! -e "$FIX/planted-host" ] && [ ! -e "$FIX/planted-client" ] && [ ! -e "$FIX/launcher-path-client" ] \
   && pass "no command of the caller's PATH or the work directory ran in place of the launcher's" \
   || fail "a planted command ran: $(cd "$FIX" && echo planted-* launcher-path-clien[t])"
