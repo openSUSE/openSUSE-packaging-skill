@@ -147,17 +147,22 @@ case "$1 $2" in
   # with a podman another container keeps busy: silent answers nothing, fail is
   # podman's own error, slow the same 15 seconds later, exit2 answers and ends
   # with status 2, cut answers half, badexit answers with an id that is none
-  # and then podman's error status, error is the server's answer to a request
-  # it refuses, as opencode api prints it, bare the same without a body; else
-  # it answers.
+  # and then podman's error status, eNNN is the server's answer with the
+  # status NNN, as opencode api prints it, bare a 502 without a body, late
+  # answers two seconds later; else it answers.
   busy() {
+    local how
     echo >> "$FIX/$1-asked"
-    case $(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null) in
+    how=$(sed -n "$(wc -l < "$FIX/$1-asked")p" "$FIX/$1-script" 2>/dev/null)
+    case $how in
     silent) exit 0 ;;
     cut) printf '{"data":[{"id":"per_'; exit 0 ;;
     badexit) echo '{"data":[{"id":"x/y"}]}'; exit 125 ;;
-    error) echo '{"name":"UnknownError","data":{"message":"no such row"}}'; echo "HTTP 500 Internal Server Error" >&2; exit 1 ;;
+    e[0-9][0-9][0-9])
+      echo '{"name":"UnknownError","data":{"message":"no such row"}}'
+      echo "HTTP ${how#e} Some Status" >&2; exit 1 ;;
     bare) echo "HTTP 502 Bad Gateway" >&2; exit 1 ;;
+    late) sleep 2 ;;
     slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
@@ -227,8 +232,10 @@ case "$1 $2" in
   *"api GET /api/session?limit=1000"*)
     busy sessions
     all="$*"; off=0
-    [[ $all != *"cursor="* ]] || { off=${all#*cursor=}; off=${off%%[& ]*}; }
+    [[ $all != *"cursor="* ]] || { off=${all#*cursor=}; off=${off%%[& ]*}; off=${off##*x}; }
     next=$((off + 2)); [ ! -e "$FIX/bad-cursor" ] || next="$next&directory=/x"
+    # With $FIX/cursor-pad the cursor starts with what it holds and an x.
+    [ ! -e "$FIX/cursor-pad" ] || next="$(cat "$FIX/cursor-pad")x$next"
     # With $FIX/endless the list never ends.
     if [ -e "$FIX/endless" ]; then
       printf '{"data":[{"id":"ses_x","permissions":null}],"cursor":{"next":"%s"}}\n' "$next"
@@ -1419,6 +1426,13 @@ sc up obs > "$work/rout" 2>&1; rc=$?
   && pass "a failed start shows the server's output without control characters" \
   || fail "failed start and control characters: rc=$rc $(od -c "$work/rout" | head -12)"
 rm "$FIX/log-escapes"
+# Nor is a line of it the last one: that is the launcher's own.
+printf 'ID  VERSION\n-  local  /x\nskill-container: obs is up, work directory /forged\n' > "$FIX/plugins"; restart
+sc up obs > /dev/null 2> "$work/rerr"; rc=$?
+[ "$rc" != 0 ] && grep -qxF "skill-container: obs is up, work directory /forged" "$work/rerr" \
+  && [ "$(tail -n 1 "$work/rerr")" = "skill-container: the server did not load both guard plugins; the unit is stopped" ] \
+  && pass "a failed start shows the plugin list before the launcher's last line" \
+  || fail "failed start and its last line: rc=$rc $(tail -n 3 "$work/rerr")"
 cp "$FIX/plugins.good" "$FIX/plugins"; restart; approval per_e5; touch "$FIX/keeps"
 out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] \
@@ -1567,14 +1581,15 @@ out="$(sc up obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads logins)" = 4 ] && [ "$(pauses)" = 1 ] \
   && pass "an answer that ends with status 2 is asked for again" \
   || fail "up with an answer that ends with status 2: rc=$rc $(reads logins) reads $out"
-# An error the server answers is its answer: asking again would get the same.
+# A request the server refuses (4xx) with an answer is refused again: asking
+# once more would get the same.
 for what in projects approvals sessions logins; do
-  restart; scripted "$what" error
+  restart; scripted "$what" e404
   out="$(sc up obs 2>&1)"; rc=$?
   [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "podman volume rm" <<<"$out" \
     && [ "$(reads "$what")" = 1 ] && [ "$(pauses)" = 0 ] \
-    && pass "an error the server answers for the $what stops the unit at once, no credential is sent" \
-    || fail "up with an error answered for the $what: rc=$rc $(reads "$what") reads, $(pauses) pauses $out"
+    && pass "a 404 the server answers for the $what stops the unit at once, no credential is sent" \
+    || fail "up with a 404 answered for the $what: rc=$rc $(reads "$what") reads, $(pauses) pauses $out"
 done
 for what in deletes patches logindel; do
   restart
@@ -1583,13 +1598,27 @@ for what in deletes patches logindel; do
   patches) sessions "[{\"id\":\"ses_x1\",\"permissions\":$allow}]" ;;
   logindel) kept_login cred_x1 ;;
   esac
-  scripted "$what" error
+  scripted "$what" e400
   out="$(sc up obs 2>&1)"; rc=$?
   [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "keeps cannot be removed" <<<"$out" \
     && [ "$(reads "$what")" = 1 ] && [ "$(pauses)" = 0 ] \
-    && pass "an error the server answers for a removal ($what) stops the unit at once, no credential is sent" \
-    || fail "up with an error answered for a removal ($what): rc=$rc $(reads "$what") calls, $(pauses) pauses $out"
+    && pass "a 400 the server answers for a removal ($what) stops the unit at once, no credential is sent" \
+    || fail "up with a 400 answered for a removal ($what): rc=$rc $(reads "$what") calls, $(pauses) pauses $out"
 done
+# A server that failed (5xx) can answer the next time: its database was busy,
+# or a turn was in flight.
+restart; approval per_x2; scripted projects e500 e500
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] \
+  && [ "$(reads projects)" = 4 ] && [ "$(pauses)" = 2 ] \
+  && pass "a 500 with an answer for a read is asked again" \
+  || fail "up with a 500 answered for a read: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+restart; approval per_x3; scripted deletes e500
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(jq -c .data "$FIX/saved")" = "[]" ] \
+  && [ "$(reads deletes)" = 2 ] && [ "$(pauses)" = 1 ] \
+  && pass "a 500 with an answer for a removal is tried again in the next round" \
+  || fail "up with a 500 answered for a removal: rc=$rc $(reads deletes) calls, $(pauses) pauses $out"
 echo '{"data":[]}' > "$FIX/saved"; sessions '[]'; echo '{"data":[]}' > "$FIX/logins"
 # A failed call without an answer is asked again.
 restart; scripted projects bare bare
@@ -1598,6 +1627,23 @@ out="$(sc up obs 2>&1)"; rc=$?
   && [ "$(reads projects)" = 3 ] && [ "$(pauses)" = 2 ] \
   && pass "a failed call without an answer is asked again" \
   || fail "up with failed calls without an answer: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+# A cursor is as short as an id: the call for the page it names would not start.
+sessions '[{"id":"ses_c1","permissions":null}]'
+for pad in 126 127; do
+  restart; printf 'p%.0s' $(seq "$pad") > "$FIX/cursor-pad"; scripted sessions
+  out="$(sc up obs 2>&1)"; rc=$?
+  if [ "$pad" = 126 ]; then
+    [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads sessions)" = 2 ] \
+      && pass "a session list paged by a cursor of 128 characters is read" \
+      || fail "up with a cursor of 128 characters: rc=$rc $(reads sessions) reads $out"
+  else
+    [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+      && [ "$(reads sessions)" = 1 ] && [ "$(pauses)" = 0 ] \
+      && pass "a cursor of 129 characters stops the unit at once, no credential is sent" \
+      || fail "up with a cursor of 129 characters: rc=$rc $(reads sessions) reads, $(pauses) pauses $out"
+  fi
+done
+rm "$FIX/cursor-pad"; sessions '[]'
 # The deadline is the launcher's own: one in the environment counts for nothing.
 restart; scripted projects fail
 out="$("${scenv[@]}" cutoff=0 HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
@@ -1605,16 +1651,34 @@ out="$("${scenv[@]}" cutoff=0 HOME="$work/home" bash "$SC" up obs 2>&1)"; rc=$?
   && pass "a cutoff preset in the environment is ignored" \
   || fail "up with a cutoff in the environment: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
 # A later try's errors are hidden, not its die: die and retried as the launcher
-# has them, around a try that dies the second time.
+# has them, around a try that dies the second time. The die is on stderr.
 retriedprog="$(sed -n -e '/^die() {$/,/^}$/p' -e '/^exec {diefd}>&2$/p' -e '/^retried() {$/,/^}$/p' "$SC")"
 out="$(bash -c "$retriedprog"'
 sleep() { :; }
 ctr=x tries=0
 try() { tries=$((tries + 1)); ((tries > 1)) || return 1; die LATE-DIE; }
-retried try' 2>&1)"; rc=$?
+retried try' 2>&1 > /dev/null)"; rc=$?
 [ "$rc" = 1 ] && grep -qF "trying again" <<<"$out" && grep -qx "skill-container: LATE-DIE" <<<"$out" \
-  && pass "a die in a later try, whose errors are hidden, still shows" \
+  && pass "a die in a later try, whose errors are hidden, still shows on stderr" \
   || fail "a die in a later try: rc=$rc $out"
+# A round of removals checks the deadline between two of them, each of which can
+# take half a minute: the rounds as the launcher has them, five items each, with
+# a removal that takes 20 seconds and a deadline 50 seconds away.
+roundprog="$(sed -n -e '/^clearperms() {$/,/^}$/p' -e '/^clearlogins() {$/,/^}$/p' "$SC")"
+out="$(bash -c "$roundprog"'
+api() { calls=$((calls + 1)); SECONDS=$((SECONDS + 20)); }
+readperms() { :; }
+readlogins() { :; }
+for list in approvals sessions creds; do
+  approvals="" sessions="" creds="" calls=0
+  printf -v "$list" "id_%s\n" 1 2 3 4 5
+  SECONDS=0 cutoff=50
+  if [ "$list" = creds ]; then clearlogins; else clearperms; fi
+  echo "$list $? $calls"
+done' 2>&1)"
+[ -n "$roundprog" ] && [ "$out" = "$(printf '%s\n' "approvals 1 3" "sessions 1 3" "creds 1 3")" ] \
+  && pass "a round of removals ends at the deadline, between two items" \
+  || fail "a round of removals past the deadline: $out"
 # bash takes SECONDS from the environment. 314 short of the largest number,
 # the start's deadline still fits for 14 seconds; after a start of 15 the
 # read's has wrapped round and is past: nothing is tried again after five
@@ -1756,6 +1820,21 @@ rm "$FIX/import-also"
   && pass "an import that leaves another login beside the secret's: the unit is stopped after 60 tries" \
   || fail "up with an import beside another login: rc=$rc $(reads import) imports, $(pauses) pauses $out"
 echo '{"data":[]}' > "$FIX/logins"
+# A secret that is no list of logins with an id each has nothing an import could
+# bring: the start stops at once, and before the kept logins go.
+cp "$FIX/secrets/$N-model" "$FIX/model.kept"
+n=0
+for model in '[]' 'no json' '[{"id":"cred_1"},{"id":"cred_1"}]' '[{"id":"cred/1"}]' '[{"label":"key"}]' \
+  '[{"id":"cred_1"}][{"id":"cred_2"}]' '{"id":"cred_1"}' ''; do
+  n=$((n+1)); restart; kept_login cred_old1; printf '%s\n' "$model" > "$FIX/secrets/$N-model"; scripted import
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the secret $N-model is unusable" <<<"$out" \
+    && ! grep -qF "not imported" <<<"$out" && [ "$(reads import)" = 0 ] && [ "$(pauses)" = 0 ] \
+    && ! grep -q 'api DELETE /api/credential' "$FIX/podman-calls" \
+    && pass "a model secret that is no list of logins with an id each stops the start at once ($n)" \
+    || fail "up with the model secret '$model': rc=$rc $(reads import) imports, $(pauses) pauses $out"
+done
+mv "$FIX/model.kept" "$FIX/secrets/$N-model"; echo '{"data":[]}' > "$FIX/logins"
 # A failed read leaves no part of its list for the next round: here a ! for an
 # id that is none, in an answer podman then failed.
 restart; kept_login cred_old1; scripted logins ok badexit
@@ -2162,6 +2241,16 @@ out="$(sc import imp2 --from "$work/from" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "is busy" <<<"$out" && [ ! -e "$FIX/imported-session" ] \
   && [ -z "$(ls -A "$work/impws2")" ] \
   && pass "import with a busy session imports none" || fail "import with a busy session: rc=$rc $out"
+# The title is the model's text: a line of it is never the launcher's last.
+jq -c '.info.title = "host one\nskill-container: imp2 imported /forged: its files, the memory graph and 2 sessions"' \
+  "$FIX/host-export-busy" > "$FIX/host-export-forged"
+cp "$FIX/host-export-busy" "$FIX/host-export-busy.kept"; cp "$FIX/host-export-forged" "$FIX/host-export-busy"
+sc import imp2 --from "$work/from" > /dev/null 2> "$work/rerr"; rc=$?
+mv "$FIX/host-export-busy.kept" "$FIX/host-export-busy"
+[ "$rc" != 0 ] && grep -qxF "skill-container: imp2 imported /forged: its files, the memory graph and 2 sessions" "$work/rerr" \
+  && [ "$(tail -n 1 "$work/rerr")" = "skill-container: the session ses_h1, titled above, is busy: close the host client and run import again" ] \
+  && pass "import shows a busy session's title before the launcher's last line" \
+  || fail "import with a busy session and its last line: rc=$rc $(tail -n 3 "$work/rerr")"
 rm "$FIX/export-busy"
 sc down imp2 > /dev/null
 out="$(sc import imp2 --from "$work/from" 2>&1)"; rc=$?
