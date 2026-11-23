@@ -4,12 +4,12 @@
     [
       "forbidden",
       "cat",
-      "/home/USER/.config/osc/oscrc"
+      "/home/USER/.config/geectl/config.toml"
     ],
     [
       "forbidden",
       "less",
-      "/home/USER/.oscrc"
+      "/home/USER/.config/geectl/config.toml"
     ],
     [
       "forbidden",
@@ -26,11 +26,6 @@
       "cp",
       "/home/USER/.netrc",
       "/tmp/x"
-    ],
-    [
-      "forbidden",
-      "tail",
-      "/home/USER/.local/state/osc/cookiejar"
     ],
     [
       "forbidden",
@@ -67,21 +62,19 @@
     ],
     [
       "forbidden",
-      "osc",
-      "sr",
-      "--nodevelproject"
+      "geectl",
+      "request",
+      "file",
+      "--target-project",
+      "openSUSE:Factory"
     ],
     [
       "forbidden",
-      "osc",
-      "submitpac",
-      "--nodevelproject"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "createrequest",
-      "--nodevelproject"
+      "geectl",
+      "request",
+      "refile",
+      "--target-project",
+      "openSUSE:Factory"
     ],
     [
       "forbidden",
@@ -125,10 +118,11 @@
     ],
     [
       "none",
-      "osc",
-      "sr",
-      "-m",
-      "x"
+      "geectl",
+      "request",
+      "file",
+      "--target-project",
+      "devel:x"
     ],
     [
       "none",
@@ -138,7 +132,8 @@
     ],
     [
       "none",
-      "osc",
+      "geectl",
+      "local-build",
       "chroot"
     ],
     [
@@ -185,18 +180,6 @@
     ],
     [
       "forbidden",
-      "osc",
-      "config",
-      "--dump-full"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "--http-full-debug",
-      "ls"
-    ],
-    [
-      "forbidden",
       "git",
       "credential",
       "fill"
@@ -222,19 +205,23 @@
     ],
     [
       "none",
-      "osc",
-      "sr",
+      "geectl",
+      "request",
+      "file",
+      "--target-project",
       "devel:x",
-      "pkg",
-      "--nodevelproject"
+      "--target-project",
+      "openSUSE:Factory"
     ],
     [
       "none",
-      "osc",
-      "sr",
-      "-m",
+      "geectl",
+      "request",
+      "file",
+      "--description",
       "x",
-      "--nodevelproject"
+      "--target-project",
+      "openSUSE:Factory"
     ],
     [
       "none",
@@ -253,11 +240,16 @@
     ],
     [
       "none",
-      "osc",
+      "geectl",
+      "local-build",
       "build",
+      "--project",
       "openSUSE_Tumbleweed",
+      "--repo",
+      "standard",
+      "--arch",
       "x86_64",
-      "openssh-askpass-gnome.spec"
+      "openssh-askpass-gnome"
     ],
     [
       "forbidden",
@@ -300,38 +292,9 @@
     ],
     [
       "forbidden",
-      "osc",
-      "token"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-H",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "--http-d",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "--http-debug",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "--http-f",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "config",
-      "--dump-f"
+      "geectl",
+      "remote",
+      "create-token"
     ],
     [
       "forbidden",
@@ -350,33 +313,27 @@
     ],
     [
       "none",
-      "osc",
+      "geectl",
       "config",
-      "--dump"
+      "show"
     ],
     [
       "none",
-      "osc",
-      "-h"
+      "geectl",
+      "--help"
     ],
     [
       "none",
-      "osc",
-      "config",
-      "https://api.opensuse.org",
-      "pass"
+      "geectl",
+      "--format",
+      "json",
+      "remote",
+      "create-token"
     ],
     [
       "none",
-      "osc",
-      "-A",
-      "https://api.opensuse.org",
-      "token"
-    ],
-    [
-      "none",
-      "osc",
-      "co",
+      "geectl",
+      "checkout",
       "devel:tools:scm",
       "git-credential-oauth"
     ],
@@ -387,52 +344,10 @@
       "list"
     ],
     [
-      "forbidden",
-      "osc",
-      "-qH",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-vH",
-      "ls"
-    ],
-    [
       "none",
       "git",
       "credential-store",
       "get"
-    ],
-    [
-      "none",
-      "osc",
-      "api",
-      "/person/x/token"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-Hq",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-Hv",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-qvH",
-      "ls"
-    ],
-    [
-      "forbidden",
-      "osc",
-      "-vqH",
-      "ls"
     ],
     [
       "forbidden",
@@ -457,12 +372,6 @@
       "x",
       "service",
       "y"
-    ],
-    [
-      "none",
-      "osc",
-      "-dH",
-      "ls"
     ],
     [
       "forbidden",

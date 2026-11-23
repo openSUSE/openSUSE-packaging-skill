@@ -29,8 +29,8 @@ const unquoted = (t: string) =>
 // directory of credential files, is judged whatever it says.
 const STAMP_DIR = "target-gate"
 const STATE_DIR = new RegExp(String.raw`/\.local/+state/+opensuse-packaging(?:/|$)`)
-const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/(?:osc|opencode)|ssh)(?:/|$)`)
-const CRED_HOMES = ["/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc", "/.local/state/opencode", "/.config/mcp-", "/.ssh"]
+const CRED_DIR = new RegExp(String.raw`/\.(?:config/(?:tea|geectl|gh|git|mcp-[^/]*)|local/state/(?:opencode)|ssh)(?:/|$)`)
+const CRED_HOMES = ["/.config/tea", "/.config/geectl", "/.config/gh", "/.local/state/opencode", "/.config/mcp-", "/.ssh"]
 const real = (p: string) => {
   try {
     return realpathSync(p)
@@ -82,7 +82,7 @@ const asked = (out: string) => {
   try {
     const d = JSON.parse(out)?.hookSpecificOutput
     if (d?.permissionDecision !== "ask") return undefined
-    return `${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; a contributor's item, or anything else that needs the user's go, waits for the user in a Claude Code session; never hand the user an osc, tea or git-obs command; if it persists, report the blocker)`
+    return `${d.permissionDecisionReason} (opencode cannot ask here: on your own commit or request this names a missing step, so take it and retry; a contributor's item, or anything else that needs the user's go, waits for the user in a Claude Code session; never hand the user a geectl, tea or git-obs command; if it persists, report the blocker)`
   } catch {
     return `pr-guard printed what it should not: ${out.trim().slice(0, 200)}`
   }

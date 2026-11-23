@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Kimi Code PreToolUse hook: refuse tool calls that read credential files, print secrets, call
-# the OBS or Gitea API past osc/tea/git-obs, merge a PR on src.opensuse.org, file a
-# --nodevelproject request or run sudo.
+# the OBS or Gitea API past geectl/tea/git-obs, merge a PR on src.opensuse.org, file a
+# request that targets openSUSE:Factory directly, or run sudo.
 """Exit 2 blocks the call and its stderr becomes the tool result; exit 0 lets it run.
 
 Any error inside the hook blocks too (fail closed). It matches text, so a path built at run time,
@@ -25,21 +25,20 @@ MAX_TEXT = 64 * 1024
 PATHS = [
     r"\.config/gh(?![\w.-])",
     r"gh/hosts\.yml",
-    r"\.config/osc\b",
-    r"\.oscrc\b",
+    r"\.config/geectl\b",
     r"\.config/tea\b",
     r"\.netrc\b",
     r"\.git-credentials\b",
     r"\.config\}?/git/credentials\b",
     r"CONFIG_HOME\}?/git/credentials\b",
     r"(?:^|[\s/\"'=:<>(|;&])\.env(?:\.(?!example\b)[\w.-]+)?(?=$|[\s\"'/;|&)<>,*?\[])",
-    r"\.local/state/osc/cookiejar",
     r"\.config/mcp-bugzilla\b",
 ]
-# osc's global options that take the next word; a subcommand is found past them, in its
-# own place, not wherever its name occurs in a message.
-OSC_VALUED = {"-A", "-c", "-C"}
-OSC_VALUED_LONG = ("--apiurl", "--config", "--setopt")  # also taken by any prefix
+# geectl's global options that take the next word; a group and leaf are found past them,
+# in their own place, not wherever their names occur in a message. Only --format takes
+# a value; geectl takes no option by any unambiguous prefix.
+GEECLT_VALUED = set()
+GEECLT_VALUED_LONG = ("--format",)
 # Each rule holds when all its parts occur in one simple command. Parts are searched
 # separately, and no part has two quantifiers that can take the same characters, which
 # keeps every search linear in the command's length.
@@ -53,11 +52,7 @@ COMMANDS = [
     (r"gitcredentials-helper",),
     (r"\blogins?\s+(?:helper|git-credential)\b",),
     (r"\btea\b", r"\blogins?\s+(?:edit|e)\b"),
-    (r"\bosc\b", r"--dump-"),
-    (r"--http-[df]|http[-_](?:full[-_])?debug",),
-    (r"\bosc\b", r"(?:^|\s)(?-i:-[a-zA-Z]*H[a-zA-Z]*)\b"),
     (r"\bsecret-tool\s+(?:lookup|search)\b",),
-    (r"\bosc\b", r"/person/[^\s/]+/token"),
     (r"\bcredential\s+fill\b",),
     (r"\bgit[\s-]credential-", r"(?:^|\s)get\b"),
     (
@@ -65,11 +60,13 @@ COMMANDS = [
         r"\b(?:api|build)\.opensuse\.org\b|\bsrc\.opensuse\.org/api\b",
     ),
     (
-        r"\bosc\b",
-        r"\b(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)\b",
-        r"--nod",
+        r"\bgeectl\b",
+        r"\brequest\b",
+        r"\b(?:file|refile)\b",
+        r"--target-project\b",
+        r"openSUSE:Factory\b",
     ),
-    (r"\bsudo\b", r"(?<!osc )\bchroot\b"),
+    (r"\bsudo\b", r"(?<!local-build )\bchroot\b"),
     (
         r"\bsudo\b",
         r"(?:^|(?<=[;&|\n]))\s*(?:(?:do|then|else|exec|command|nohup|time|xargs|\w+=\S*)\s+)*sudo\b",
@@ -85,18 +82,16 @@ COMMANDS = [
 # A recursive search rooted at one of these, or at an ancestor of one, would read them.
 SECRET_ROOTS = [
     f"{HOME}/.config/gh",
-    f"{HOME}/.config/osc",
-    f"{HOME}/.oscrc",
+    f"{HOME}/.config/geectl",
     f"{HOME}/.config/tea",
     f"{HOME}/.netrc",
     f"{HOME}/.git-credentials",
     f"{HOME}/.config/git/credentials",
-    f"{HOME}/.local/state/osc",
     f"{HOME}/.config/mcp-bugzilla",
 ]
 PATH_RE = re.compile("|".join(PATHS), re.IGNORECASE)
 RULES = [[re.compile(p, re.IGNORECASE) for p in parts] for parts in COMMANDS]
-OSC_WORD_RE = re.compile(r"[\s`$(){}]+")
+GEECLT_WORD_RE = re.compile(r"[\s`$(){}]+")
 WORD_RE = re.compile(r"[\s\"'`=<>|;&()]+")
 UP_RE = re.compile(r"(?:\.\.(?:/|$))*")
 MCP_KEY_RE = re.compile(r"path|file|dir|root|scope|glob|url|command|cmd", re.IGNORECASE)
@@ -130,23 +125,20 @@ def segments(text):
     return out
 
 
-def osc_calls(segment):
-    """Yield (subcommand, the next three words) for each osc in a simple command."""
-    words = [w for w in OSC_WORD_RE.split(segment) if w]
+def geectl_calls(segment):
+    """Yield (group, leaf, the next three words) for each geectl in a simple command."""
+    words = [w for w in GEECLT_WORD_RE.split(segment) if w]
     for i, word in enumerate(words):
-        if word == "osc" or word.endswith("/osc"):
+        if word == "geectl" or word.endswith("/geectl"):
             j = i + 1
             for _ in range(16):  # more global options than that is not a real call
                 if j >= len(words) or not words[j].startswith("-"):
                     break
                 opt = words[j]
-                valued = opt in OSC_VALUED or (
-                    len(opt) > 2
-                    and any(long.startswith(opt) for long in OSC_VALUED_LONG)
-                )
+                valued = opt in GEECLT_VALUED or opt in GEECLT_VALUED_LONG
                 j += 2 if valued else 1
-            if j < len(words):
-                yield words[j], words[j + 1 : j + 4]
+            if j + 1 < len(words):
+                yield words[j], words[j + 1], words[j + 2 : j + 5]
 
 
 def refused(text):
@@ -159,7 +151,7 @@ def refused(text):
     # Only a rule whose parts all occur somewhere can hold in one simple command, and
     # only in a simple command where its first part occurs: each is tried once.
     candidates = [parts for parts in RULES if all(rx.search(text) for rx in parts)]
-    if not candidates and "osc" not in text:
+    if not candidates and "geectl" not in text:
         return None
     spans = segments(text)
     starts = [a for a, _ in spans]
@@ -172,11 +164,11 @@ def refused(text):
                 segment = text[spans[k][0] : spans[k][1]]
                 if all(rx.search(segment) for rx in parts):
                     return "it prints a secret or is refused here"
-    for a, b in spans if "osc" in text else ():
+    for a, b in spans if "geectl" in text else ():
         segment = text[a:b]
-        for sub, rest in osc_calls(segment) if "osc" in segment else ():
-            if sub == "token" or (sub == "config" and {"pass", "passx"} & set(rest)):
-                return "osc prints a token or password here"
+        for group, leaf, rest in geectl_calls(segment) if "geectl" in segment else ():
+            if group == "remote" and leaf == "create-token":
+                return "geectl prints a token here"
     return None
 
 

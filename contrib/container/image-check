@@ -36,7 +36,7 @@ while read -r tool; do
 	HOME=$scratch bash -c "$tool" >/dev/null 2>&1 || fail "does not run: $tool"
 done <<'EOF'
 opencode --version
-osc --help
+geectl --help
 git-obs --help
 tea --version
 gh --version
@@ -79,8 +79,6 @@ ssh-keygen -F src.opensuse.org -f /etc/ssh/ssh_known_hosts >/dev/null ||
 jq -e '.mcp.servers.memory | has("environment") | not' /etc/opencode/opencode.json >/dev/null ||
 	fail "the memory server's config pins its environment"
 [ -s /home/agent/.config/gh/config.yml ] || fail "gh has no config.yml beside the mounted login"
-# osc creates this directory before its first request; at run time it cannot.
-[ -d /home/agent/.config/osc/trusted-certs ] || fail "osc has no trusted-certs directory"
 # No key is mounted here: the server must stop at the key, not at its own options.
 mapfile -t mcp < <(jq -r '.mcp.servers.bugzilla.command[]' /etc/opencode/opencode.json)
 out=$("${mcp[@]}" </dev/null 2>&1 || true)
@@ -106,8 +104,8 @@ guard() {
 	jq -n --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}, cwd: "/work"}' |
 		python3 "$hooks/pr-guard.py" >/dev/null 2>&1
 }
-guard 'osc results' || fail "pr-guard refuses a harmless command"
-! guard 'cat /home/agent/.config/osc/oscrc' || fail "pr-guard lets a credential file be read"
+guard 'geectl build results' || fail "pr-guard refuses a harmless command"
+! guard 'cat /home/agent/.config/geectl/config.toml' || fail "pr-guard lets a credential file be read"
 ! guard 'cat /home/agent/.config/tea/config.yml' || fail "pr-guard lets a credential file be read"
 ! guard 'cat /home/agent/.config/gh/hosts.yml' || fail "pr-guard lets a credential file be read"
 ! guard 'cat /home/agent/.ssh/id_ed25519' || fail "pr-guard lets the SSH key be read"

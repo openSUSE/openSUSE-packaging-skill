@@ -6,7 +6,7 @@ You run in the openSUSE packaging container. What differs from a workstation:
   older session history (`~/.agents/skills`, `~/.claude/skills`) does not exist here.
 - **Builds run in containers.** A local build is `geectl local-build build`: geectl builds the package in a podman container (its one build vertical). The podman that spawns the build container lives on the host, where the work directory is shared, so a local build runs on the host. From here, builds run on OBS: use the skill's OBS-ONLY build mode (`references/update-build.md` "Build modes"), and for a Leap pool tree `target-gate.sh --remote`, never `--build`. `gate.sh` says "%prep not run: no sandbox" here every time: the sandbox needs user namespaces, which do not exist inside a container, so from here the OBS build is what proves `%prep`.
 - **"Permission denied: shell" refuses one command, not the shell.** The command's
-  text named a login file or directory (osc, tea, gh, the SSH key, the Bugzilla
+  text named a login file or directory (geectl, tea, gh, the SSH key, the Bugzilla
   key), a process environment under `/proc`, the server password, `sudo`, or an
   opencode server subcommand. Say it without that text and go on.
 - **Write files with the write tool, not a shell heredoc.** A heredoc's text is

@@ -12,22 +12,17 @@
     "tea login git-credential",
     "tea login edit",
     "tea logins e",
-    "osc config --dump-full",
-    "osc -H",
-    "osc --http-debug",
-    "osc --http-full-debug",
-    "osc token",
+    "geectl remote create-token",
     "git credential fill",
     "git-credential-store get",
     "tea pr merge",
     "tea pull m",
     "git-obs pr merge",
     "git obs pr merge",
-    "osc sr --nodevelproject",
+    "geectl request file --target-project openSUSE:Factory",
     "sudo",
-    "osc -Hq",
-    "osc -qvH",
     "secret-tool lookup",
-    "secret-tool search"
+    "secret-tool search",
+    "geectl request refile --target-project openSUSE:Factory"
   ]
 }

@@ -23,11 +23,11 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
 - The skill as a git repository of root's, with the ref pr-guard pins: the guard lets
   only the pinned `target-gate.sh` and `pool-pr.sh` record a review or open a Leap pool
   PR, and without that the container could do neither.
-- osc, git-obs, tea, gh, spec-cleaner, rpmcrab, rpmdevtools, git, ssh, jq, curl,
+- geectl, git-obs, tea, gh, spec-cleaner, rpmlint, rpmcrab, rpmdevtools, git, ssh, jq, curl,
   wget and the source services `source_validator`, `download_files`, `obs_scm`, `tar`,
   `recompress`, `set_version`, `format_spec_file`, `node_modules`, `cargo_vendor`,
-  `go_modules`, with the cargo and go those two call, and `obs_scm_bridge`, which osc
-  needs to check out a package kept in git.
+  `go_modules`, with the cargo and go those two call, and `obs_scm_bridge`, which the
+  `obs_scm` service uses for a package kept in git.
 - Three MCP servers: bugzilla (bugwarden), memory, sequentialthinking.
 - socat, for the socket relay the units run: the only way into the server from
   outside its container.
@@ -39,7 +39,7 @@ volumes, the cache, the logins. So is the server that applies the rules, see "Li
 `OPENCODE_DISABLE_PROJECT_CONFIG=1` is set because a project's `opencode.json` can unload a
 plugin of the managed configuration.
 
-Not in the image: a build root (`osc build` does not work, so packages are built by OBS,
+Not in the image: a build root (`geectl local-build build` does not work, so packages are built by OBS,
 `references/update-build.md` "Build modes") and podman. gcc, clang, cargo and go are there
 for the two vendoring services. `CONTAINER.md` tells the agent so: without it, it tried a
 local build first and took the first refused command for a missing shell. bubblewrap is
@@ -49,9 +49,9 @@ options). The gate says "%prep not run" there, and the OBS build is what proves 
 
 ## Run it
 
-On the host: rootless podman, osc, gh, jq, git, ssh-keygen, a `python3` that imports `osc` and
+On the host: rootless podman, geectl, gh, jq, git, ssh-keygen, a `python3` that imports
 `ruamel.yaml` without `PYTHONPATH` and your user site directory (the launcher starts it
-with `-I`), and working logins for osc (api.opensuse.org), tea (src.opensuse.org), gh
+with `-I`), and working logins for geectl (api.opensuse.org), tea (src.opensuse.org), gh
 (github.com), the bugzilla MCP server and one opencode model integration. opencode 2.x is
 needed there by `secrets`, which asks it for that login, and by `import`, which asks it
 for the project's sessions. The launcher runs its own
@@ -105,7 +105,8 @@ the mount point would lead the next start's mount onto the guards. A work
 directory that lies under `/var` on the host therefore needs `--as`.
 
 - **`secrets`: run it yourself, never from an agent.** It copies into podman secrets the
-  api.opensuse.org login of osc (read through osc, so a keyring works), the
+  api.opensuse.org login of geectl (read from the environment: `GEECTL_OBS_USERNAME` with
+  `GEECTL_OBS_PASSWORD` or `GEECTL_OBS_PASSWORD_FILE`), the
   src.opensuse.org logins of tea, the github.com login of gh (read through gh, likewise),
   the Bugzilla API key file and what `opencode auth export <integration>` prints. Its
   first run also makes an SSH key of the container's own, for pushes to src.opensuse.org:
@@ -479,8 +480,8 @@ changes only with `revision`, and there are two ways to set it:
   fits a repository whose tags are all releases. A tag can be moved and a commit cannot:
   whoever may push tags decides what an unattended container runs, so make the releases
   immutable or protect the tags. OBS does not watch the repository: after a release the
-  service runs again only on a commit to the package or on a trigger (`osc api -X POST
-  '/source/PROJECT/PACKAGE?cmd=runservice'`, or a token called from a release webhook).
+  service runs again only on a commit to the package or on a server-side trigger (a token
+  called from a release webhook).
   Switch to it only once a release tag holds `contrib/container/`, or `extract` fails.
 
 `podman run --rm --network=none IMAGE image-check` repeats the check on a built image; run as
