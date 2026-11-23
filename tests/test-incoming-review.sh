@@ -178,9 +178,11 @@ if k("kind", "obs") == "obs":
     put("obs", "/request/%s" % rid,
         '<request id="%s" creator="%s">%s<state name="review" when="2026-11-20T10:00:00"/>'
         "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1"))))
-    # a link to the target, or to the "project package" of the knob linkto
+    # a link to the target, or to the "project package" of the knob linkto, based on
+    # the target as it is now, or on an older one with the knob linkbase stale
+    base = srcmd5(tgt) if tgt is not None and k("linkbase") != "stale" else "1" * 32
     link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"/>' % (
-        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, "1" * 32, "2" * 32) if k("link", "0") == "1" else ""
+        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, base, "2" * 32) if k("link", "0") == "1" else ""
     put("obs", "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else ""), listing(spkg, ssrc, src, link))
     # the source package now: as the request has it, or moved on since
     cur = dict(src, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
@@ -399,12 +401,15 @@ expect record-key-moved 3 "KEY MOVED"
 fresh record-no-rev; knob rev ''; fix
 refused record-no-rev PASS "the request pins no source rev"
 
-# A link to the target itself expands to what the target holds, which the key and the
-# guard check: any rev pins it. A link anywhere else is pinned only by its expansion.
+# A link to the target itself, based on the target as it is now, expands to what the
+# target holds, which the key and the guard check: any rev pins it. A link based on an
+# older target, or anywhere else, is pinned only by its expansion.
 fresh record-link-target-numeric-rev; knob link 1; fix
 recorded record-link-target-numeric-rev PASS
 fresh record-link-target-unexpanded-rev; knob link 1; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
 recorded record-link-target-unexpanded-rev PASS
+fresh record-link-target-stale-base; knob link 1; knob linkbase stale; fix
+refused record-link-target-stale-base PASS "its rev 3 is not its expanded srcmd5"
 fresh record-link-other-package; knob link 1; knob linkto 'devel:example bar'; fix
 refused record-link-other-package PASS "its rev 3 is not its expanded srcmd5"
 fresh record-link-other-project; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
@@ -503,8 +508,8 @@ refused record-macro-line-expr PASS "foo.spec line 3: a preamble line a macro of
 fresh record-macro-line-host
 for s in src tgt; do sed -i '/^Version:/a %{?sle15_python_module_pythons}\n%python_subpackages' "$D/$s/foo.spec"; done; fix
 recorded record-macro-line-host PASS
-# A conditional writes a tag only when its body holds one, at its start or after a
-# newline; a body that only defines writes none, but what it defines is the spec's own.
+# A conditional writes when its body holds anything but defines and host macro calls;
+# a body that only defines writes none, but what it defines is the spec's own.
 fresh record-cond-define
 for s in src tgt; do sed -i '/^Version:/a %{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}' "$D/$s/foo.spec"; done; fix
 recorded record-cond-define PASS
@@ -519,6 +524,30 @@ fresh record-cond-defined-url
 sed -i -e '/^Version:/a %global srchost example.org\n%{?with_x:%global srchost evil.example}' \
   -e 's|^Source0:.*|Source0:        https://%{srchost}/releases/%{name}-%{version}.tar.gz|' "$D/src/foo.spec"; fix
 refused record-cond-defined-url PASS "Source0 uses a macro the text cannot expand: https://%{srchost}/releases/foo-1.1.tar.gz"
+# A tag split across a conditional's brace is text on both sides of it: any text in a
+# body or after it writes, as does a section or directive inside a body, or a macro of
+# the spec's own behind a host one.
+splits=(
+  '%{?_vendor:Source1}: https://evil.example/one.tar.gz'
+  '%{?_vendor:Source}1: https://evil.example/one.tar.gz'
+  '%{?_vendor:Patch}3: https://evil.example/three.patch'
+  '%{?_vendor:Source1} : https://evil.example/one.tar.gz'
+  '%{?a:Sour}%{?b:ce1}: https://evil.example/one.tar.gz'
+  '%{?a:%{?b:Patch9}: https://evil.example/nine.patch}'
+  '%{?_vendor:Requires}(post): evilpkg'
+  '%{?a:%include extra.inc}'
+)
+for i in "${!splits[@]}"; do
+  fresh "record-cond-split-$i"; printf '%s\n' "${splits[$i]}" > "$D/line"
+  sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
+  refused "record-cond-split ${splits[$i]}" PASS "foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes"
+done
+fresh record-cond-section
+printf '%%global s Source1: https://evil.example/x\n%%{?zzz_never:\n%%description\n}\n%%{s}\n' > "$D/line"
+sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
+refused record-cond-section PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
+fresh record-lead-host-own; sed -i '/^Version:/a %global s Source1: https://evil.example/x\n%{nil}%{s}' "$D/src/foo.spec"; fix
+refused record-lead-host-own PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
 
 # A name both defined and set by its tag is not sure: rpm takes the later one.
 fresh record-define-and-tag

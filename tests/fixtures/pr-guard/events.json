@@ -11065,6 +11065,13 @@
     },
     "cwd": "@PLAIN@"
   },
+  "accept-link-target-stale": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc rq accept -m 'ok' 1391022"
+    },
+    "cwd": "@PLAIN@"
+  },
   "accept-red-build": {
     "tool_name": "Bash",
     "tool_input": {

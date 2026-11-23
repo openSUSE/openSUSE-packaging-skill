@@ -35,17 +35,17 @@
 #             obs/<ID>.json, or gitea/<owner>_<repo>_<N>.json (owner and repo
 #             lowercased, % written %25 and _ written %5F)
 # Findings, each refusing PASS and FIXABLE: no source rev, or a _link source
-# whose rev is not its expanded srcmd5 (but a link to the target itself, whose
-# files the key holds); more than one action, a type but
-# submit, an option but sourceupdate; a target package that does not exist;
+# whose rev is not its expanded srcmd5 (but a link to the target itself based
+# on its current srcmd5, whose files the key holds); more than one action, a
+# type but submit, an option but sourceupdate; a target package that does not exist;
 # parse-time code the scanner finds added over the target's files, or a scan
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
 # .gitmodules, symlink or submodule; control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
-# text cannot read, a preamble line a macro of the spec or an expression
-# writes, or a conditional whose body holds a tag (one that only defines
-# passes), a URL with a macro the text cannot expand (a name
-# with a define beside its tag is one) or that does not parse, a Source or
+# text cannot read, a preamble line that starts with a macro and holds
+# anything but host macro calls and conditionals that only define, a URL
+# with a macro the text cannot expand (a name with a define beside its tag is
+# one) or that does not parse, a Source or
 # Patch host the target's spec does not use or that is not ASCII, a Source URL
 # changed beyond its version numbers (Source00 is Source0), a changed file
 # whose bytes differ from its Source URL's (fetched only from a host the
@@ -433,8 +433,6 @@ DIRECTIVES = {"if", "ifarch", "ifnarch", "ifos", "ifnos", "elif", "elifarch", "e
 DIRECTIVES |= {"define", "global", "undefine", "include"}
 # A define anywhere in a line, a conditional's body included.
 ANY_DEF = re.compile(r"%\{?(?:global|define|undefine)[\s:]+(\w+)")
-# A tag where a line starts: Name:, Requires(post):, Source1 : and the like.
-TAG_WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:\s*\([^()\n]*\))?\s*:")
 BLANK = re.compile(r"[ \t]*")
 
 
@@ -455,36 +453,47 @@ def closing(text, i):
     return None
 
 
-def writes(text, own, depth=0):
-    """Whether text, read where a preamble line starts, may write a tag: one
-    at its start or after a newline; an expression, %{expand:, %{lua:,
-    %{load:, another macro with an argument or one of the spec's own; or a
-    conditional whose body, or what follows it, does. A define, a directive
-    and a call of a host macro write none."""
+def writes(text, own, depth=0, line=False):
+    """Whether text, read where a preamble line starts, may write a tag: any
+    text but blanks (a tag split across a conditional's brace is text on
+    both sides); an expression, %{expand:, %{lua:, %{load:, a section, a
+    directive or bcond, a macro with an argument or one of the spec's own; or
+    a conditional whose body does. Only a define (its value the rest of its
+    line) and a call of a host macro write none. line: text holds a whole
+    line, which ends at its first newline outside a body."""
     if depth > 8:
         return True
     i = 0
     while i < len(text):
         i = BLANK.match(text, i).end()
-        if TAG_WORD.match(text, i):
-            return True
-        h = HEAD.match(text, i)
-        name = h and (h.group(2) or h.group(4))
-        if not h or name in DIRECTIVES or (name or "").startswith("bcond"):
-            # text, a define or a directive: the rest of its line is its own
-            i = text.find("\n", i)
-            if i < 0:
+        if text.startswith("\n", i):
+            if line:
                 return False
             i += 1
             continue
-        if h.group(5) or name in ("expand", "lua", "load") or (name in own and not h.group(3)):
+        h = HEAD.match(text, i) if text.startswith("%", i) else None
+        name = (h.group(2) or h.group(4) or "") if h else ""
+        if not h or h.group(5) or name in SECTIONS or name in ("expand", "lua", "load") or name.startswith("bcond"):
+            return True
+        if name in ("define", "global", "undefine"):
+            i = text.find("\n", i)
+            if i < 0 or line:
+                return False
+            i += 1
+            continue
+        if name in DIRECTIVES or (name in own and not h.group(3)):
             return True
         if not h.group(2):
             i = h.end()
             continue
         end = closing(text, text.index("{", i))
-        if end is None or h.group(3) and ("?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1)):
+        if end is None:
             return True
+        if h.group(3):
+            if "?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1):
+                return True
+        elif text[h.end()] != "}":
+            return True  # a macro with arguments
         i = end
     return False
 
@@ -493,11 +502,10 @@ def spec_lines(text):
     """(tag, value, line) of each Source and Patch line, the spec's own plain
     %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
-    (one behind a macro); and those of preamble lines whose text a macro of the
-    spec's own or an expression writes, or a conditional whose body holds a
-    tag (writes()), where rpm may read a tag this reading never sees (a call
-    of a macro the spec does not define is the host's, and passes; a body that
-    only defines writes none). A name with a definition that is not plain --
+    (one behind a macro); and those of preamble lines that start with a macro
+    and hold anything but host macro calls and conditionals that only define
+    (writes(), the whole line through any body that spans lines), where rpm
+    may read a tag this reading never sees. A name with a definition that is not plain --
     with arguments, inside %if or a conditional's body, conditional, expanded,
     undefined, two different values, or a define beside its tag -- stays
     unexpanded, and so does every name the spec does not define."""
@@ -515,14 +523,8 @@ def spec_lines(text):
         if h and name in SECTIONS:
             pre = name == "package"
         elif h and pre and not (name in DIRECTIVES or (name or "").startswith("bcond")):
-            if h.group(3) and "?" in h.group(1):
-                # a conditional writes what its body and the rest of its line write
-                body = "\n".join(lines[n - 1 : n + 99])
-                end = closing(body, body.index("{"))
-                stop = body.find("\n", end) if end is not None else -1
-                if end is None or writes(body[h.end() : end - 1], own) or writes(body[end : stop if stop >= 0 else None], own):
-                    made.append(n)
-            elif h.group(5) or name in ("expand", "lua", "load") or name in own or h.group(3):
+            # the whole line, through a body that spans lines, as rpm reads it
+            if writes("\n".join(lines[n - 1 : n + 99]), own, line=True):
                 made.append(n)
         if re.match(r"\s*%if", line):
             depth += 1
@@ -1085,14 +1087,15 @@ def derive_obs(rid, tmp):
     sfiles, ssrc = listing(sroot, what)
     if not sfiles:
         raise Lookup("%s: no file" % what)
-    # a link expands against its origin as it is now, unless pinned to the expansion itself;
-    # one to the target itself expands to what the target holds, whose files the key holds
-    link = sroot.find("linkinfo")
-    to_target = link is not None and [link.get("project"), link.get("package")] == [tprj, tpkg]
-    if link is not None and rev != ssrc and not (rev and to_target):
-        f.find("revision: the source is a _link, and its rev %s is not its expanded srcmd5 %s: what it expands to moves" % (shown(rev) or "(none)", ssrc))
     traw = obs("/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), missing_ok=True)
     tfiles, tsrc = ({}, "") if traw is None else listing(xml(traw, "%s/%s" % (tprj, tpkg), "directory"), "%s/%s" % (tprj, tpkg))
+    # a link expands against its origin as it is now, unless pinned to the expansion itself;
+    # one to the target itself, based on the target as it is now, expands to what the
+    # target holds, whose files the key holds
+    link = sroot.find("linkinfo")
+    to_target = link is not None and [link.get(k) for k in ("project", "package", "baserev")] == [tprj, tpkg, tsrc]
+    if link is not None and rev != ssrc and not (rev and tsrc and to_target):
+        f.find("revision: the source is a _link, and its rev %s is not its expanded srcmd5 %s: what it expands to moves" % (shown(rev) or "(none)", ssrc))
     if traw is None:
         f.find("target: %s/%s does not exist: a new package is the maintainer's own to review" % (tprj, tpkg))
     opts = " (%s)" % ", ".join("=".join(x for x in o if x) for o in a["options"]) if a["options"] else ""

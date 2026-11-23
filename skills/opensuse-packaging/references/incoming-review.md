@@ -50,15 +50,15 @@ takes a file whose first line is `PASS|FIXABLE|BLOCK <id> key <sha256>`, followe
 comment; it fetches everything again first. It refuses PASS and FIXABLE on any of:
 
 - **revision:** no source revision, or a `_link` source without a 32-hex srcmd5 revision,
-  unless it links to the target itself (it expands to the target's files, which the key
-  and the guard check);
+  unless it links to the target itself with the target's current srcmd5 as its `baserev`
+  (it expands to the target's files, which the key and the guard check);
 - **target:** the target's files moved since `--show`;
 - **shape:** more than one action, or an option other than `sourceupdate`;
 - **content:** a new parse-time construct in the spec; a changed `_service`, `_link`,
   `_aggregate`, `*.macros`, `.gitmodules` or symlink; bidi or zero-width bytes; a tarball that
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
-  obscpio archive; a diff over the size cap; a preamble conditional whose body holds a tag
-  (one that only defines passes);
+  obscpio archive; a diff over the size cap; a preamble line that starts with a macro
+  and holds anything but host macro calls and conditionals that only define;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
   `@`-mention of anyone but the creator, an internal tag (VERDICT, tree keys, gate names), a
   bot directive (`merge ok`, `@group : approve`), or a comment over the length cap;
@@ -140,8 +140,9 @@ refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup faile
   `references/request-text.md` "Comments: reading them, posting an approved one".
 - An accept or approve without a PASS or FIXABLE stamp of what the item holds now is refused
   (no stamp: "review it first"). With one, pr-guard asks for the user's go, showing the
-  verdict and the build: `build: green on … in <project>`, or
-  `build: no green build from the request's sources` (a PR: `… of this head`).
+  verdict and the build as the review recorded it, not read again:
+  `build at review: green on … in <project>`, or
+  `build at review: no green build from the request's sources` (a PR: `… of this head`).
 - Accept, approve, decline and request-changes each need the user's explicit go naming that
   item, answered at that prompt in a Claude Code session; a go never carries to the next
   item. The opencode guard plugins refuse every ask, since an agent holding the server's

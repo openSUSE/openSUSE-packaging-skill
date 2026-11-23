@@ -2453,7 +2453,8 @@ def review_facts(st, nobuild):
     )
     more = f" and {len(ons) - 4} more" if len(ons) > 4 else ""
     on = f" on {', '.join(ons[:4])}{more}" if ons else ""
-    build = f"build: green{on} in {where}" if built and named else f"build: {nobuild}"
+    build = f"green{on} in {where}" if built and named else nobuild
+    build = f"build at review: {build}"
     hold = (
         "; FIXABLE: the Factory forward then waits until your follow-up is in devel"
         if st["verdict"] == "FIXABLE"
@@ -2484,8 +2485,9 @@ def foreign_accept(rid, req, forced, ctx):
     """Someone else's request: its accept asks the user, with the review and
     the facts checked again, only when all hold; anything else refuses. One
     submit action, no option but sourceupdate, no force, a source revision (a
-    _link's its expanded srcmd5, unless it links to the target itself, whose
-    srcmd5 is checked too), a target outside home: that this account maintains and
+    _link's its expanded srcmd5, unless it links to the target itself with
+    the target's current srcmd5 as its baserev, the target's srcmd5 checked
+    too), a target outside home: that this account maintains and
     may move unattended and that is Factory's devel project of the package,
     and incoming-review.sh's PASS or FIXABLE stamp of this request, by its
     creator, whose source and target srcmd5 are still OBS's."""
@@ -2545,21 +2547,21 @@ def foreign_accept(rid, req, forced, ctx):
     ok, root, ssrc = listing_srcmd5(spath, ctx)
     if not ok or root is None:
         refuse(f"cannot read the source ({ssrc or spath})")
+    tok, _, tsrc = listing_srcmd5(tpath, ctx)
     link = root.find("linkinfo")
-    # a link to the target itself expands to what the target holds, checked below
-    if (
-        link is not None
-        and rev != ssrc
-        and [link.get(k) for k in ("project", "package")] != [tp, tpkg]
-    ):
+    # a link to the target itself, based on the target as it is now, expands to
+    # what the target holds, checked below
+    based = []
+    if link is not None and tok and tsrc:
+        based = [link.get(k) for k in ("project", "package", "baserev")]
+    if link is not None and rev != ssrc and based != [tp, tpkg, tsrc]:
         refuse(
             f"its source is a _link and rev {rev} not its expanded srcmd5, so it can move"
         )
     if ssrc != field(act, "source", "srcmd5"):
         refuse("its source is not the one reviewed (srcmd5 moved)")
-    ok, _, tsrc = listing_srcmd5(tpath, ctx)
     want = field(act, "target", "srcmd5")
-    if not ok or not isinstance(want, str) or tsrc != want:
+    if not tok or not isinstance(want, str) or tsrc != want:
         refuse("the target is not as reviewed (srcmd5 moved or unread)")
     facts = review_facts(st, "no green build from the request's sources")
     ask(
