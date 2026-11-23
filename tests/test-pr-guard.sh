@@ -74,6 +74,10 @@ clone_ "$work/pdef" tess-88053-16.0 origin=$F/pool/tesseract-ocr.git fork=$F/som
 git -C "$work/pdef" config remote.pushDefault fork
 # A remote URL that carries a token, which no refusal may print.
 clone_ "$work/tokened" leap-16.0 "origin=https://user:tok3n@${F#https://}/pool/x.git"
+# For GIT_DIR=~/...: bash expands ~ to $HOME, where prclone is the PR-head clone; a
+# literal ~ directory inside other/ leads to the harmless clone instead.
+ln -s "$work/clone" "$HOME/prclone"; ln -s "$work/other" "$HOME/otherclone"
+mkdir -p "$work/other/~" && ln -s "$work/other" "$work/other/~/prclone"
 
 # A skill checkout whose pool-pr.sh stand-in, a target-gate.sh it would run and
 # another script are committed and merged (origin/main, the pinned ref); the
@@ -432,15 +436,29 @@ case_ push-head-refspec         2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-upstream-mapping     2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-inline-remote        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-git-C                2 push-pr-head "pool/tesseract-ocr#3"
-# GIT_DIR places the push as -C does: before git (env's too) it is what git sees; set
-# elsewhere in the call it may reach git or not, so the push is judged both ways.
+# GIT_DIR or GIT_WORK_TREE assigned on git itself, ~ and $PWD expanded as bash does:
+# the push is judged there and where git runs (a repository there); refused if either
+# heads a pool PR. Any other form in the call -- env, exec -c, sudo, a wrapper, a
+# function, export, unset, a loop, a trap, a nameref, let, (( )), a subscript -- and
+# GIT_COMMON_DIR or GIT_CONFIG_* in any form refuse the push: the guard cannot place it.
 case_ push-git-dir-prefix       2 push-pr-head "pool/tesseract-ocr#3"
-case_ push-git-dir-env          2 push-pr-head "pool/tesseract-ocr#3"
-case_ push-git-dir-export       2 push-pr-head "pool/tesseract-ocr#3"
-case_ push-git-dir-bash-c       2 push-pr-head "pool/tesseract-ocr#3"
-case_ push-git-dir-env-unset    2 push-pr-head "pool/tesseract-ocr#3"
-case_ push-git-dir-unknown      2 push-unknown "GIT_DIR is set to a value only the shell knows"
-case_ push-git-dir-elsewhere    0 - ""
+case_ push-git-dir-elsewhere    2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-tilde        2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-no-repo      2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-harmless     0 - ""
+case_ push-git-dir-same         0 - ""
+case_ push-git-dir-unknown      2 push-unknown "GIT_DIR is set to a value the guard cannot read"
+for name in push-git-dir-env push-git-dir-export push-git-dir-bash-c push-git-dir-env-unset \
+    push-git-dir-exec-c push-git-dir-exec push-git-dir-systemd-run push-git-dir-setpriv \
+    push-git-dir-sudo push-git-dir-command push-git-dir-subshell-unset push-git-dir-cond-unset \
+    push-git-dir-pipe-unset push-git-dir-func-export push-git-dir-func-prefix \
+    push-git-dir-loop-after push-git-dir-trap push-git-dir-nameref push-git-dir-declare-x \
+    push-git-dir-arith push-git-dir-let push-git-dir-subscript; do
+  case_ "$name" 2 push-unknown "GIT_DIR is set in the call other than on the git command itself"
+done
+case_ push-common-dir           2 push-unknown "GIT_COMMON_DIR is set in the call"
+case_ push-common-dir-head      2 push-unknown "GIT_COMMON_DIR is set in the call"
+case_ push-config-env           2 push-unknown "GIT_CONFIG_COUNT is set in the call"
 case_ push-bash-c               2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-shell-heredoc        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-substitution         2 push-pr-head "pool/tesseract-ocr#3"
@@ -1129,12 +1147,15 @@ for name in state-cp-target-eq state-ln-target-eq state-dd-of state-sort-o-home 
     state-git-show-output; do
   case_ "$name" 2 stamp "state directory"
 done
-# git writes where GIT_DIR, GIT_WORK_TREE and core.worktree point, and the file a
-# bundle create names.
+# git writes where GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and core.worktree point,
+# and wherever any argument of a bundle create resolves to.
 for name in state-git-dir-init state-git-work-tree-export state-git-core-worktree \
-    state-git-config-env-worktree state-git-bundle; do
+    state-git-config-env-worktree state-git-bundle state-git-bundle-version \
+    state-git-index-file; do
   case_ "$name" 2 stamp "a command touching the state directory"
 done
+# A GIT_ variable set other than on git, in a call naming the state directory: unplaced.
+case_ state-git-env-unplaced   2 stamp "a GIT_ variable set in it"
 # A script the call runs that names it fails closed the same way.
 case_ state-script-xargs       2 stamp "state directory"
 case_ state-script-bash-c      2 stamp "state directory"
@@ -2017,6 +2038,8 @@ case_ approve-own-pr            2 incoming-approve "approving incorg/incgit#6: i
 case_ approve-reviewer-role     2 incoming-approve "approving incorg/increv#7: a reviewer role is set (qa)"
 # A gitea stamp's file name: owner and repo lowercased, % as %25 and _ as %5F.
 ask_ approve-underscore-name    incoming-approve "approving incorg/inc_under#11 by contrib at 111111111111: review PASS"
+# A SHA-256 repository's head, as src.opensuse.org's newer ones name it.
+ask_ approve-git-obs-sha256     incoming-approve "approving incorg/incgit#14 by contrib at 141414141414: review PASS"
 case_ approve-from-reviewer-agent 2 incoming-self "git-obs pr review approve from agent incoming-review"
 ask_ approve-tea-asks           comment "tea pulls approve"
 # A comment on a contributor's item in a package the user maintains runs when its text is
@@ -2034,6 +2057,13 @@ case_ comment-tea-file-written  2 bot-directive-unknown "cannot read the tea com
 ask_ comment-tea-file-two-subs  comment "tea comment: it is not one literal tea command alone"
 # Unquoted, bash would split and glob what cat prints: tea would post other text.
 ask_ comment-tea-file-unquoted  comment "tea comment: it is not one literal tea command alone"
+# The FILE is placed in the event's directory and its links followed there; one through
+# /proc or /dev (/proc/self/cwd is the reader's own directory) is refused, for osc too.
+# The guard runs elsewhere (-C), as the opencode plugins run it.
+case_ comment-tea-file-proc-cwd 2 bot-directive-unknown "cannot read the tea comment body" -C "$W"
+case_ comment-tea-file-proc-link 2 bot-directive-unknown "cannot read the tea comment body" -C "$W"
+case_ comment-osc-file-proc-cwd 2 bot-directive-unknown "cannot read the osc comment create body" -C "$W"
+case_ comment-osc-file-stamped  0 - ""
 case_ comment-from-reviewer-agent 2 incoming-self "osc comment create from agent incoming-review"
 # An accepted FIXABLE review asks before the Factory forward until devel holds the
 # follow-up, or Factory already holds what was accepted (a _link, and what OBS adds to
@@ -2091,19 +2121,28 @@ case_ reviewer-tea-close        2 incoming-self "tea pulls close from agent chan
 case_ reviewer-git-obs-close    2 incoming-self "git-obs pr close from agent incoming-review"
 case_ reviewer-api-revoke       2 incoming-self "osc api newstate=revoked from agent incoming-review"
 # A review of a repository named like the package holds its forward unless it is shown
-# not to: a package that syncs from no repository, or from another one, asks.
-ask_ forward-hold-no-scmsync    incoming-hold "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository"
-ask_ forward-hold-other-org     incoming-hold "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
+# not to: a package that syncs from no repository, or from another one, asks, saying
+# which check could not be made.
+ask_ forward-hold-no-scmsync    incoming-hold-repo "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository: its review was FIXABLE, and as devel does not sync from the repository reviewed"
+ask_ forward-hold-other-org     incoming-hold-repo "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
 case_ forward-after-followup    2 incoming-hold "cannot list" HOME="$work/listless"
 # The incoming-review agent commits nothing (osc commit runs the local source services),
-# and sets no PATH: the guard looks command names up on its own. The main session may.
+# and its call names nothing that changes which program a name runs: PATH as a word or
+# a variable, BASH_ENV, ENV=, the hash builtin, a nameref. The main session may.
 case_ reviewer-osc-ci           2 incoming-self "osc ci from agent incoming-review"
 case_ reviewer-osc-commit       2 incoming-self "osc commit from agent incoming-review"
 case_ osc-ci-devel              0 - ""
-case_ reviewer-path-prefix      2 incoming-self "setting PATH from agent incoming-review"
-case_ reviewer-path-export      2 incoming-self "setting PATH from agent incoming-review"
-case_ reviewer-path-for         2 incoming-self "setting PATH from agent incoming-review"
+for name in reviewer-path-prefix reviewer-path-export reviewer-path-for reviewer-path-subscript \
+    reviewer-path-select reviewer-path-let reviewer-path-printf reviewer-path-read; do
+  case_ "$name" 2 incoming-self "PATH from agent incoming-review"
+done
+case_ reviewer-path-nameref     2 incoming-self "typeset -n from agent incoming-review"
+case_ reviewer-path-hash        2 incoming-self "hash from agent incoming-review"
+case_ reviewer-path-bash-env    2 incoming-self "BASH_ENV from agent incoming-review"
+case_ reviewer-path-env         2 incoming-self "ENV= from agent incoming-review"
 case_ reviewer-path-main        0 - ""
+case_ reviewer-path-subscript-main 0 - ""
+case_ reviewer-hash-main        0 - ""
 
 echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
 # script's -c in a cluster, attached, by a prefix of --command or after its file; chrt's

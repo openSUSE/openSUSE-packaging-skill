@@ -526,11 +526,13 @@ session. It asks before:
   repository you maintain (listed for it, or for its project when its own entry is empty, in
   `<owner>/_ObsPrj`'s `_maintainership.json`), only `osc comment create -c` or a plain `tea
   comment` whose one text has the sha256 its incoming review's stamp recorded runs: a
-  `$(cat FILE)` substitution is read, FILE not written in the same call, and tea's text is
-  one inline line or a lone `"$(cat FILE)"` word after the index, where bash neither splits
-  nor globs what it reads. Anything else there
-  asks, as someone else's item on `pool/<pkg>` always does. Only the plain form is judged:
-  `--login src.opensuse.org`, a literal `--repo owner/name` that is no local path (tea reads
+  `$(cat FILE)` substitution is read now, and tea's text is one inline line or a lone
+  `"$(cat FILE)"` word after the index, where bash neither splits nor globs what it reads.
+  Anything else there asks, as someone else's item on `pool/<pkg>` always does. A FILE the
+  same call writes, or one whose path or a link on the way passes through `/proc` or `/dev`
+  (`/proc/self/cwd` is the guard's own directory, not the shell's), cannot be read now and
+  is refused, for osc's `-c` too; a relative FILE is placed in the event's directory.
+  Only the plain form is judged: `--login src.opensuse.org`, a literal `--repo owner/name` that is no local path (tea reads
   one as a checkout), no other option, and the tea command alone in the call with nothing
   for the shell to expand outside quotes; anything else asks, because tea's own remote and
   login choice can point elsewhere. GitHub (`gh`) is not
@@ -592,9 +594,14 @@ A contributor's review is refused, not asked, outside its agent (`[incoming-self
 `incoming-review.sh --record` runs only when the event names the agent `incoming-review`,
 and that agent may not parse, build or service-run the submission (the rpm tools, `osc
 build`, `osc service`, `osc co`/`up` with the services, `osc commit`, which runs the local
-ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor set or export `PATH`
-(the guard looks command names up on its own), nor accept, approve, comment or decline. On
-opencode 1.x no review of a contributor's submission records.
+ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor accept, approve,
+comment or decline. Any shell text of that agent (its command, a script it runs, an `eval`
+or `trap` string) that names `PATH` as a word or a variable, `BASH_ENV`, `ENV=`, the `hash`
+builtin, or a nameref (`declare -n`, `local -n`, `typeset -n`) is refused whatever it does
+with them: the guard looks command names up on its own `PATH`, and the forms that change
+the lookup are too many to match one by one. A search for such a word takes its pattern
+from a file (`grep -f FILE`). On opencode 1.x no review of a contributor's submission
+records.
 
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
@@ -894,10 +901,22 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - git's arguments are not judged for stamps, so git writing into a stamp directory
   itself (`--work-tree`, `--output`) is not seen; a redirection is. For the state
   directory git's `-C`, `--git-dir`, `--work-tree`, `core.worktree` (`-c`, `--config-env`),
-  `clone`/`init` targets and `bundle create`'s file count, and so does every value the call
-  gives `GIT_DIR` or `GIT_WORK_TREE`. A push is judged in the repository `-C`, `--git-dir`
-  or a `GIT_DIR` before git places it; one the call sets elsewhere (exported, before
-  another command) is judged with and without, and a value only the shell knows refuses.
+  `clone`/`init` targets and every argument of `bundle create` count, and so does the value
+  of a `GIT_DIR`, `GIT_WORK_TREE` or `GIT_INDEX_FILE` assigned on git itself. In a call that
+  names the state directory and sets `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`,
+  `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` or a `GIT_CONFIG*` variable any other way, every
+  git command is refused as unplaced.
+- A push is judged where git runs (`-C`, with its `-c` and `--git-dir` options) and, when
+  `GIT_DIR` or `GIT_WORK_TREE` is assigned on the git command itself (`GIT_DIR=… git push`,
+  nothing between them but other assignments), also where that places it, `~` and `$PWD`
+  expanded as bash does; where git runs counts then only when a repository is there. It is
+  refused when either place heads a pool PR or a value cannot be read. Any other form of
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or a `GIT_CONFIG*` variable in the call's
+  text -- before `env`, `exec`, `sudo`, a wrapper or a function, exported, unset, read into,
+  declared, a loop name, `let`, `((…))`, a subscript, a nameref's target, a word that only
+  mentions it (a commit message) -- refuses every push in the call (`[push-unknown]`); a
+  `$NAME` or `${NAME}` read does not count. A name built at run time (`${p}DIR`) is not
+  seen.
 - A path to the state directory the call holds only in a file it reads at run time
   (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
   'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen, nor one the call
@@ -953,12 +972,16 @@ approval or a decline stays the user's, in a prompt only a Claude Code session r
 These bypasses stay open on purpose, each an agent's deliberate act:
 - a wrapper is known by its name: a copy of or link to a wrapper binary under another name
   (`cp /usr/bin/timeout /var/tmp/t`, then `/var/tmp/t 5 osc rq accept …`) runs the command
-  after it unjudged;
+  after it unjudged, and a copy of another program's ELF named like a wrapper
+  (`/var/tmp/x/timeout`) is taken for the wrapper, its arguments judged as a command it
+  never runs;
 - a bare wrapper name is taken for the wrapper, so a script of that name earlier on `PATH`
-  (one the main session put there; the incoming-review agent may not set `PATH`) runs in
+  (one the main session put there; the incoming-review agent may not name `PATH`) runs in
   its place unread;
 - a command word holding a glob (`/usr/bin/os? rq accept …`) is judged as written, not as
-  the program the shell expands it to.
+  the program the shell expands it to;
+- a comment's `"$(cat FILE)"` is read when the guard judges the call; a FILE swapped
+  before `cat` reads it (by a process the call does not start) posts the new text.
 
 ## The bugzilla hand-back guard
 
