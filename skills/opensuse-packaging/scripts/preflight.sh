@@ -33,7 +33,9 @@
 #      contributor — a creator other than you — has an SR to it or a PR on its
 #      devel repo, that is INCOMING: review it before your update. Each one is
 #      listed with its creator and what its incoming-review.sh stamp recorded
-#      ("reviewed: BLOCK" is not reviewed again, yet still waits), and the
+#      ("reviewed: BLOCK" is not reviewed again, yet still waits; a PR's
+#      review of another head than it has now reads "reviewed at an older
+#      head: review again"), and the
 #      verdict line adds when devel already has the version or it already
 #      landed, so nobody repackages it after the review. On a package you do
 #      not maintain it is in flight, as before. A lookup that fails, or
@@ -296,7 +298,8 @@ if [ -n "$devel" ]; then
     err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
     [ "$grc" = 124 ] && err="git-obs timed out after 30s"
     [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
-    # "<author>\t<line>" per PR; a PR without a number or an author is no list
+    # "<author>\t<line>\t<head sha>" per PR; a PR without a number, an author
+    # or a head is no list (the head says whether a review is still of it)
     prs_by="$(printf '%s' "$resp" | python3 -I -c '
 import re, sys, json
 raw = sys.stdin.read()
@@ -306,16 +309,18 @@ except Exception: sys.exit(2)
 if not isinstance(d, list): sys.exit(2)
 for p in d:
     num = p.get("number"); base = (p.get("base") or {}).get("ref")
-    who = (p.get("user") or {}).get("login")
+    who = (p.get("user") or {}).get("login"); head = (p.get("head") or {}).get("sha")
     if type(num) is not int or not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
+        sys.exit(2)
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
         sys.exit(2)
     # one line each: a newline in a title could forge another PR
     title, url = (" ".join(str(x).split()) for x in (p.get("title"), p.get("html_url")))
-    print(f"{who}\tPR #{num} -> {base}: {title} ({url}) by {who}")
+    print(f"{who}\tPR #{num} -> {base}: {title} ({url}) by {who}\t{head}")
 ')" || fail "unparseable PR list for $org/$pkg"
     # PR titles are foreign-authored; sanitize AFTER the rc-gated capture above
     prs_by="$(sanitize "$prs_by")"
-    prs="$(printf '%s\n' "$prs_by" | cut -f2- | grep -v '^$')"
+    prs="$(printf '%s\n' "$prs_by" | cut -f2 | grep -v '^$')"
     [ -n "$prs" ] && { echo "open PR(s) on the devel repo:"; printf '%s\n' "$prs" | sed 's/^/    /'; } \
                   || echo "open PRs:       none"
   fi
@@ -363,7 +368,7 @@ if [ -n "$incoming$prs_by" ]; then
   [ -n "$user" ] || fail "could not tell whose requests are open (osc whois failed): pass --user"
   own_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF == u')"
   foreign_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF != u')"
-  own_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 == u { sub(/^[^\t]*\t/, ""); print }')"
+  own_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 == u { print $2 }')"
   foreign_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 != u')"
 fi
 if [ -n "$foreign_in$foreign_prs" ]; then
@@ -375,14 +380,15 @@ if [ -n "$foreign_in$foreign_prs" ]; then
          sid="${line#SR }" ; sid="${sid%% *}"
          items="${items}sr#$sid ${line##* }"$'\n'
        done <<< "$foreign_in"
-       while IFS=$'\t' read -r who line; do
+       while IFS=$'\t' read -r who line head; do
          [ -n "$who" ] || continue
          num="${line#PR #}" ; num="${num%% *}"
-         items="${items}$org/$pkg#$num $who"$'\n'
+         items="${items}$org/$pkg#$num $who $head"$'\n'
        done <<< "$foreign_prs"
-       while read -r item who; do
+       # a PR's review counts only at the head it has now
+       while read -r item who head; do
          [ -n "$item" ] || continue
-         note="$(python3 -I "$SDIR/_incoming.py" stamp "$item" 2>"$errf")" \
+         note="$(python3 -I "$SDIR/_incoming.py" stamp "$item" ${head:+"$head"} 2>"$errf")" \
            || fail "could not read the review stamp of $item: $(head -n 1 "$errf" 2>/dev/null)"
          contrib="${contrib:+$contrib
 }$item by $who: $note"

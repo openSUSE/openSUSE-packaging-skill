@@ -11,7 +11,8 @@ maintainers are never acted on.
 1. **Before an update**, `scripts/preflight.sh` reads every action of the open requests on the
    package and the author of each open PR. A contributor's open item prints
    `VERDICT: INCOMING` and exits 5, each item annotated with any verdict already recorded for
-   it, so a blocked item is not reviewed again until it changes. Exit order: a failed check (2)
+   it, so a blocked item is not reviewed again until it changes; a PR whose head moved since
+   reads `reviewed at an older head: review again`. Exit order: a failed check (2)
    wins over your own request in flight (3), which wins over incoming (5), which wins over a
    due forward (4).
 2. **The incoming-review agent runs** once per item, in a context that did not write the
@@ -50,8 +51,8 @@ takes a file whose first line is `PASS|FIXABLE|BLOCK <id> key <sha256>`, followe
 comment; it fetches everything again first. It refuses PASS and FIXABLE on any of:
 
 - **revision:** no source revision, or a `_link` source without a 32-hex srcmd5 revision,
-  unless it links to the target itself with the target's current srcmd5 as its `baserev`
-  (it expands to the target's files, which the key and the guard check);
+  unless it links to the target itself with the target's current srcmd5 as its `baserev` and
+  no `rev` of its own (it expands to the target's files, which the key and the guard check);
 - **target:** the target's files moved since `--show`;
 - **shape:** more than one action, or an option other than `sourceupdate`;
 - **content:** a new parse-time construct in the spec; a changed `_service`, `_link`,
@@ -59,7 +60,14 @@ comment; it fetches everything again first. It refuses PASS and FIXABLE on any o
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
   obscpio archive; a diff over the size cap; a preamble line that starts with a macro
   and holds anything but host macro calls and conditionals that only define, or a tag
-  line with a macro before its colon or continued by a backslash;
+  line with a macro before its colon or continued by a backslash; Source and Patch lines
+  count in a file the spec `%include`s too. A host macro's arguments pass only by rpm's own
+  table (`%dump`, read once with a fixed argv and environment): when its body is plain
+  text that starts no line with a macro and names no Source or Patch, plain arguments;
+  any other body (Lua, `%{expand:`, shell) only on a line that stands as it is in the
+  target's spec, with the spec's own macros it names defined there by the same lines. A
+  macro the host lacks, one that takes no arguments, and a table rpm did not give whole
+  stay findings;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
   `@`-mention of anyone but the creator, an internal tag (VERDICT, tree keys, gate names), a
   bot directive (`merge ok`, `@group : approve`), or a comment over the length cap;
@@ -78,6 +86,12 @@ is still exit 5.
 A BLOCK always records. The stamp lands in
 `~/.local/state/opensuse-packaging/incoming/<obs|gitea>/<id>.json`. Exit 0 recorded · 1
 refused · 2 usage · 3 key moved (review again from `--show`) · 5 lookup failed.
+
+`scripts/incoming-review.sh --prune` removes the stamps of final submissions: a request
+accepted, declined, revoked, superseded or deleted, a PR closed or merged. An accepted or
+merged FIXABLE one stays while it may hold the Factory forward ("FIXABLE"): a request's
+until devel's files differ from its source's, a PR's always. A failed lookup, or a file
+that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 
 ## Verdicts
 

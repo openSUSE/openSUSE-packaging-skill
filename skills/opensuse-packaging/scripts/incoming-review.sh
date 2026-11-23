@@ -5,14 +5,16 @@
 # accept or approve go ahead only with a stamp whose key matches what OBS or
 # src.opensuse.org serves at that moment. The recorder trusts nothing from the
 # agent but the verdict word and the comment: --record fetches everything
-# again and re-derives every fact. It writes nothing but its own stamp and its
-# scratch under $TMPDIR (default /var/tmp), removed on every exit; it never
-# builds, never runs a service, never parses a spec with rpm (the advisory
-# scanner _parse_scan.py reads it as text), and reads no credential: osc and
-# git-obs log in themselves.
+# again and re-derives every fact. It writes nothing but its own stamps (and
+# removes those of final submissions) and its scratch under $TMPDIR (default
+# /var/tmp), removed on every exit; it never builds, never runs a service,
+# never parses a spec with rpm (the advisory scanner _parse_scan.py reads it as
+# text; rpm only lists the host's own macros), and reads no credential: osc
+# and git-obs log in themselves.
 #
 # Usage: incoming-review.sh --show <sr#ID | owner/repo#N>
 #        incoming-review.sh --record <ID> FILE   (or --record=<ID> FILE)
+#        incoming-review.sh --prune
 #   --show    the request's facts, its description and diff (sanitized, between
 #             data markers that carry a nonce of this run), the build (shown,
 #             not required), the mechanical findings, then `build <project>`,
@@ -34,17 +36,30 @@
 #             stamp, mode 0600: ~/.local/state/opensuse-packaging/incoming/
 #             obs/<ID>.json, or gitea/<owner>_<repo>_<N>.json (owner and repo
 #             lowercased, % written %25 and _ written %5F)
+#   --prune   removes each stamp whose submission is final: a request accepted,
+#             declined, revoked, superseded or deleted, a PR closed or merged;
+#             but an accepted or merged FIXABLE one stays while it may hold the
+#             Factory forward (a PR's always, a request's while its target's
+#             files still equal its source's). A failed lookup, or a file that
+#             is no stamp of this recorder, removes nothing and is exit 5.
+#             --show and --record prune first, and go on whatever it found
 # Findings, each refusing PASS and FIXABLE: no source rev, or a _link source
 # whose rev is not its expanded srcmd5 (but a link to the target itself based
-# on its current srcmd5, whose files the key holds); more than one action, a
-# type but submit, an option but sourceupdate; a target package that does not exist;
+# on its current srcmd5 and pinned to no rev, whose files the key holds); more
+# than one action, a type but submit, an option but sourceupdate; a target
+# package that does not exist;
 # parse-time code the scanner finds added over the target's files, or a scan
 # that stopped short; a changed _service, _link, _aggregate, *.macros,
 # .gitmodules, symlink or submodule; control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
-# text cannot read, a preamble line that starts with a macro and holds
-# anything but host macro calls and conditionals that only define, a tag
-# line with a macro before its colon or continued by a backslash, a URL
+# text cannot read (in a spec or a file the scanner reads with it), a preamble
+# line that starts with a macro and holds anything but host macro calls and
+# conditionals that only define (a host macro takes arguments only when rpm's
+# %dump, read once with a fixed argv and environment, lists it as taking them,
+# and either its body is plain text that starts no line with a macro and names
+# no Source or Patch, the arguments plain too, or the line and the definitions
+# of the spec's own macros it names stand as they are in the target's spec), a
+# tag line with a macro before its colon or continued by a backslash, a URL
 # with a macro the text cannot expand (a name with a define beside its tag is
 # one) or that does not parse, a Source or
 # Patch host the target's spec does not use or that is not ASCII, a Source URL
@@ -65,8 +80,8 @@
 # without slashes and e-mail addresses count, entities decoded), no @-mention
 # but of the creator, no internal tag (VERDICT, keys,
 # gate names), no bot directive, 1500 characters at most.
-# Exit: 0 = recorded (--show: shown); 1 = refused; 2 = usage; 3 = key moved;
-#       5 = lookup failed
+# Exit: 0 = recorded (--show: shown, --prune: pruned); 1 = refused; 2 = usage;
+#       3 = key moved; 5 = lookup failed
 set -u
 
 usage() { awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "$0"; }
@@ -77,7 +92,8 @@ case "${1:-}" in
   --record) [ $# -eq 3 ] || bad "--record takes an id and a FILE" ;;
   # the two spellings the guard knows; no abbreviation, no short form
   --record=*) [ $# -eq 2 ] || bad "--record=<ID> takes a FILE"; set -- --record "${1#--record=}" "$2" ;;
-  *) bad "--show or --record expected" ;;
+  --prune) [ $# -eq 1 ] || bad "--prune takes no argument" ;;
+  *) bad "--show, --record or --prune expected" ;;
 esac
 [ -n "${HOME:-}" ] || bad "HOME is not set"
 HERE="$(cd "$(dirname "$0")" && pwd)" || exit 5
@@ -127,7 +143,8 @@ HOPS = 5
 UA = "openSUSE-packaging-incoming-review/1"
 SCAN = os.path.join(HERE, "_parse_scan.py")
 HEX32 = re.compile(r"[0-9a-f]{32}")
-HEX40 = re.compile(r"[0-9a-f]{40}")
+# a git object id: SHA-1, or SHA-256 (src.opensuse.org's repositories use both)
+GIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 PRJ = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+:-]*")
 PKG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*")
@@ -138,8 +155,9 @@ CTRL = re.compile(r"[\x00-\x1f\x7f]")
 # C1 (decoded, or raw bytes), and the invisible and direction-changing points.
 HIDDEN = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\udc80-\udc9f]")
 INVISIBLE = re.compile(
-    "[\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069"
-    "\ufe00-\ufe0f\ufeff\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f\u2028-\u202e"
+    "\u2060-\u2064\u2066-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff9-\ufffb"
+    "\U0001d173-\U0001d17a\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
 )
 GUARDED = {"_service", "_link", "_aggregate", ".gitmodules"}
 VENDOR = re.compile(
@@ -218,11 +236,13 @@ def last(err):
     return clean(lines[-1])[:200] if lines else ""
 
 
-def run(cmd, timeout=TIMEOUT):
+def run(cmd, timeout=TIMEOUT, env=None, data=None):
     """(exit status, stdout, stderr) as bytes; a timeout or a missing program
-    is a failed call (124, 127), never an empty answer."""
+    is a failed call (124, 127), never an empty answer. data: the bytes on
+    its stdin, else none."""
     try:
-        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        stdin = subprocess.DEVNULL if data is None else None
+        p = subprocess.run(cmd, stdin=stdin, input=data, capture_output=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return 124, b"", b"%s timed out after %ds" % (cmd[0].encode(), timeout)
     except OSError as e:
@@ -319,7 +339,7 @@ def gitea_tree(owner, repo, sha):
             or typ not in ("blob", "commit")
             or mode not in MODES
             or not isinstance(s, str)
-            or not HEX40.fullmatch(s)
+            or not GIT_ID.fullmatch(s)
             or not isinstance(size, int)
             or isinstance(size, bool)
             or size < 0
@@ -339,8 +359,13 @@ def md5_of(path):
     return h.hexdigest()
 
 
-def git_blob(b):
-    return hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+def git_hash(ident):
+    """The hash of a repository whose object ids look like ident."""
+    return hashlib.sha256 if len(ident) == 64 else hashlib.sha1
+
+
+def git_blob(b, ident):
+    return git_hash(ident)(b"blob %d\0" % len(b) + b).hexdigest()
 
 
 def placeholder(ident):
@@ -435,6 +460,157 @@ DIRECTIVES |= {"define", "global", "undefine", "include"}
 # A define anywhere in a line, a conditional's body included.
 ANY_DEF = re.compile(r"%\{?(?:global|define|undefine)[\s:]+(\w+)")
 BLANK = re.compile(r"[ \t]*")
+# The host's macro table: rpm's %dump, each entry `LEVEL: NAME[(OPTS)][\tBODY]`, a
+# body running on over the lines up to the next entry, and a closing count.
+DUMP_ENTRY = re.compile(r" *-?[0-9]+[:=] ([A-Za-z_][A-Za-z0-9_]*)(\([^)\n]*\))?(?:\t(.*))?")
+DUMP_END = re.compile(r"=+ active ([0-9]+) empty [0-9]+")
+# %dump shows a macro's options, but not the empty () of %requires_eq(): rpm
+# itself says which macros take arguments, for the names %dump listed, on stdin.
+PARAMS = (
+    "%{lua: for n in io.lines() do local d, p = rpm.isdefined(n) "
+    "print(n .. (p and ' p' or d and ' s' or ' -') .. '\\n') end}"
+)
+CLEAN_ENV = {"PATH": "/usr/bin:/bin"}
+# What runs code where it is expanded: shell, an expression, Lua, expand, a load
+# or an include.
+CODE = re.compile(r"%(?:[(\[]|\{?[?!]*(?:lua|expand|load|include)(?![A-Za-z0-9_]))")
+TAG_WORD = re.compile(r"(?i)\b(?:source|patch)")
+LOADS = re.compile(r"(?m)^[ \t]*%include\b|%\{?[?!]*load(?![A-Za-z0-9_])")
+REF = re.compile(r"%\{?[?!]*(\w+)")
+# Tags whose value rpm takes only as one token of plain characters.
+CHECKED_TAGS = {"name", "version", "release", "epoch"}
+HOST = {}
+
+
+def parse_host(dump, ask):
+    """{name: (parametric, plain)} of a %dump listing, ask(names) the PARAMS
+    answer for its names; None when either is short, garbled or empty. plain:
+    the body runs no code, starts no line with a macro (so no argument lands at
+    a line's start) and names no Source or Patch."""
+    lines = dump.split("\n")
+    if "========================" not in lines:
+        return None
+    entries, total = [], None
+    for ln in lines[lines.index("========================") + 1 :]:
+        m = DUMP_END.fullmatch(ln)
+        if m:
+            total = int(m.group(1))
+            break
+        m = DUMP_ENTRY.fullmatch(ln)
+        if m:
+            entries.append((m.group(1), m.group(2), [m.group(3) or ""]))
+        elif entries:
+            entries[-1][2].append(ln)
+        else:
+            return None
+    names = [e[0] for e in entries]
+    if not entries or total != len(entries) or len(set(names)) != len(names):
+        return None
+    kinds = {}
+    for ln in (ask(names) or "").splitlines():
+        k, _, v = ln.partition(" ")
+        if k:
+            kinds[k] = v
+    if set(kinds) != set(names) or set(kinds.values()) - {"p", "s"}:
+        return None
+    table = {}
+    for name, opts, body in entries:
+        if opts and kinds[name] != "p":
+            return None
+        text = "\n".join(body)
+        plain = text != "<builtin>" and not CODE.search(text) and not TAG_WORD.search(text)
+        plain = plain and all(ln.lstrip()[:1] not in ("%", "\\") for ln in body)
+        table[name] = (kinds[name] == "p", plain)
+    return table
+
+
+def host_table():
+    """parse_host() of this host's rpm, run once and only when a line needs it,
+    with a fixed argv and environment and nothing of the submission; None, and
+    HOST["why"], when it failed."""
+    if "table" in HOST:
+        return HOST["table"]
+    HOST["table"], HOST["why"] = None, "no rpm on PATH"
+    rpm = shutil.which("rpm")
+    if not rpm:
+        return None
+    rc, _, err = run([rpm, "--eval", "%dump"], env=CLEAN_ENV)
+    if rc != 0:
+        HOST["why"] = "rpm %%dump failed (%d): %s" % (rc, last(err) or "no message")
+        return None
+
+    def ask(names):
+        rc, out, _ = run([rpm, "--eval", PARAMS], env=CLEAN_ENV, data=("\n".join(names) + "\n").encode())
+        return out.decode("utf-8", "replace") if rc == 0 else ""
+
+    HOST["table"] = parse_host(err.decode("utf-8", "surrogateescape"), ask)
+    HOST["why"] = "rpm's %dump listed nothing, or not every macro whole"
+    return HOST["table"]
+
+
+def balanced(text):
+    """Whether every brace in text closes in it, as rpm counts them."""
+    lvl, i = 0, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 1
+        elif c == "{":
+            lvl += 1
+        elif c == "}":
+            lvl -= 1
+            if lvl < 0:
+                return False
+        i += 1
+    return lvl == 0
+
+
+def plain_args(text, depth=0):
+    """Whether text, a host macro's arguments, holds only plain characters and
+    macros that run nothing where it stands: no newline or backslash; %%,
+    %name, %{name}, %{?name} and %{?name:...} of the same; never code, a
+    section, a directive, or a call with arguments of its own."""
+    if depth > 8:
+        return False
+    i = 0
+    while i < len(text):
+        if text[i] in "\n\\":
+            return False
+        if text[i] != "%":
+            i += 1
+            continue
+        if text.startswith("%%", i):
+            i += 2
+            continue
+        h = HEAD.match(text, i)
+        name = (h.group(2) or h.group(4) or "") if h else ""
+        if not name or name in SECTIONS or name in DIRECTIVES or CODE.match(text, i):
+            return False
+        if not h.group(2):
+            i = h.end()
+            continue
+        end = closing(text, text.index("{", i))
+        if end is None:
+            return False
+        if h.group(3):
+            if "?" not in h.group(1) or not plain_args(text[h.end() : end - 1], depth + 1):
+                return False
+        elif text[h.end()] != "}":
+            return False
+        i = end
+    return True
+
+
+def host_args(plain, args, whole, same):
+    """Whether a parametric host macro's arguments may write a tag. They must
+    stay on their line with every brace closed; then a plain body passes plain
+    arguments, and any other body (Lua, expand, shell...) only a line that
+    stands as it is in the target's spec (same(whole))."""
+    if "\n" in args or args.rstrip().endswith("\\") or not balanced(args):
+        return True
+    if plain:
+        return not plain_args(args)
+    return whole is None or same is None or not same(whole)
 
 
 def closing(text, i):
@@ -454,17 +630,19 @@ def closing(text, i):
     return None
 
 
-def writes(text, own, depth=0, line=False):
+def writes(text, own, depth=0, line=False, host=None, same=None):
     """Whether text, read where a preamble line starts, may write a tag: any
     text but blanks (a tag split across a conditional's brace is text on
     both sides); an expression, %{expand:, %{lua:, %{load:, a section, a
     directive or bcond, a macro with an argument or one of the spec's own; or
     a conditional whose body does. Only a define (a bare one's value the rest
     of its line, a braced one's its braces), rpm's own %{bcond...} and a call
-    of a host macro write none. line: text holds a whole line, which ends at its first newline
-    outside a body."""
+    of a host macro write none, its arguments when host_args() clears them
+    (host: host_table, same: whether a line stands in the target's spec). line:
+    text holds a whole line, which ends at its first newline outside a body."""
     if depth > 8:
         return True
+    whole = text.split("\n", 1)[0] if line and depth == 0 else None
     i = 0
     while i < len(text):
         i = BLANK.match(text, i).end()
@@ -495,20 +673,50 @@ def writes(text, own, depth=0, line=False):
             return True
         if not h.group(2):
             i = h.end()
+            stop = text.find("\n", i)
+            stop = len(text) if stop < 0 else stop
+            cond = h.group(0).lstrip()[1:2] in ("?", "!")
+            table = host() if host and text[i:stop].strip() and not cond else None
+            if table and table.get(name, (False,))[0]:
+                # a parametric host macro: the rest of the line is its arguments
+                if host_args(table[name][1], text[i:stop], whole, same):
+                    return True
+                i = stop
             continue
         end = closing(text, text.index("{", i))
         if end is None:
             return True
         if h.group(3):
-            if "?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1):
+            if "?" not in h.group(1) or writes(text[h.end() : end - 1], own, depth + 1, host=host):
                 return True
         elif text[h.end()] != "}":
-            return True  # a macro with arguments
+            # a macro with arguments, which end at its brace: a parametric host macro's may pass
+            table = host() if host and not h.group(1) and text[h.end()] in " \t" else None
+            if not (table and table.get(name, (False,))[0]):
+                return True
+            if host_args(table[name][1], text[h.end() : end - 1], whole, same):
+                return True
         i = end
     return False
 
 
-def spec_lines(text):
+def def_lines(lines):
+    """{name: the lines that define it}, each with the lines a backslash
+    continues it on."""
+    out = {}
+    for n, line in enumerate(lines):
+        names = ANY_DEF.findall(line)
+        if not names:
+            continue
+        j = n
+        while lines[j].rstrip().endswith("\\") and j + 1 < len(lines):
+            j += 1
+        for k in names:
+            out.setdefault(k, []).append("\n".join(lines[n : j + 1]))
+    return out
+
+
+def spec_lines(text, host=None, target=None):
     """(tag, value, line) of each Source and Patch line, the spec's own plain
     %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
@@ -520,13 +728,34 @@ def spec_lines(text):
     read a tag this reading never sees. A name with a definition that is not plain --
     with arguments, inside %if or a conditional's body, conditional, expanded,
     undefined, two different values, or a define beside its tag -- stays
-    unexpanded, and so does every name the spec does not define."""
+    unexpanded, and so does every name the spec does not define. host:
+    host_table, for a host macro's arguments; target: the target's spec text,
+    where a line stands as it is when its every macro is the host's, a tag rpm
+    checks, or one of the spec's own defined by the same lines in both, and
+    the spec includes and loads nothing that could define another."""
     lines = text.split("\n")
     inner = set()
     for line in lines:
         found = ANY_DEF.findall(line)
         inner.update(found[1:] if SPEC_DEF.match(line) else found)
     own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m} | inner
+    same = None
+    if host is not None and target is not None and not LOADS.search(text):
+        theirs = target.split("\n")
+        there, sdefs, tdefs = set(theirs), def_lines(lines), def_lines(theirs)
+
+        def same(whole):
+            table = host()
+            if not table or whole not in there:
+                return False
+            for k in REF.findall(whole):
+                if k in own:
+                    if sdefs.get(k) != tdefs.get(k):
+                        return False
+                elif k not in table and k not in CHECKED_TAGS:
+                    return False
+            return True
+
     defs, tags, out, untaken, made, split, depth, pre, cont = {}, {}, [], [], [], [], 0, True, False
     for n, line in enumerate(lines, 1):
         was, cont = cont, line.rstrip().endswith("\\")
@@ -537,7 +766,7 @@ def spec_lines(text):
             pre = name == "package"
         elif h and pre and not bare:
             # the whole line, through a body that spans lines, as rpm reads it
-            if writes("\n".join(lines[n - 1 : n + 99]), own, line=True):
+            if writes("\n".join(lines[n - 1 : n + 99]), own, line=True, host=host, same=same):
                 made.append(n)
         elif pre and not h and not was and line.strip()[:1] != "#":
             # a macro in a tag's name, or a tag line that the next one continues
@@ -709,7 +938,7 @@ def verify(f, src, name, spec, tag, url, tmp, lfs):
     else:
         data = src.data.get(name)
         m = LFS.match(data) if data is not None else None
-        h = hashlib.sha256() if m else hashlib.sha1(b"blob %d\0" % os.path.getsize(path))
+        h = hashlib.sha256() if m else git_hash(ident)(b"blob %d\0" % os.path.getsize(path))
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 h.update(chunk)
@@ -811,15 +1040,26 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     if over:
         f.find("content: the diff is over the %d KiB cap: no review can read it whole" % (DIFF_CAP >> 10))
 
+    # the scan first: the files it reads with a spec (an %include's) hold
+    # Source and Patch lines too
+    needed = scan(f, src, base, tmp, specs)
+    text_of = lambda t, n: (t.real(n) or b"").decode("utf-8", "surrogateescape")  # noqa: E731
+    read = lambda t: specs(t) + [n for n in needed if n in t.files and n not in specs(t)]  # noqa: E731
+
     # Source and Patch URLs: every one's host, a Source's change beyond its
     # version numbers, and the bytes of each changed file one names
     news, hosts, olds = [], set(), {}
-    for n in specs(src):
-        found, untaken, made, split = spec_lines((src.real(n) or b"").decode("utf-8", "surrogateescape"))
+    for n in read(src):
+        if n in specs(src):
+            theirs = text_of(base, n) if n in base.files else None
+            found, untaken, made, split = spec_lines(text_of(src, n), host=host_table, target=theirs)
+        else:
+            found, untaken = spec_lines(text_of(src, n))[:2]
+            made, split = [], []
         for ln in untaken:
             f.find("content: %s line %d: a Source or Patch tag behind a macro, which this reading cannot take" % (n, ln))
         for ln in made:
-            f.find("content: %s line %d: a preamble line a macro of the spec, an expression or a conditional body writes, where rpm may read a tag this reading cannot" % (n, ln))
+            f.find("content: %s line %d: a preamble line a macro of the spec, an expression or a conditional body writes, or a host macro's arguments the host's table does not clear, where rpm may read a tag this reading cannot" % (n, ln))
         for ln in split:
             f.find("content: %s line %d: a preamble line with a macro before its colon, or one the next line continues, where rpm may read a tag this reading cannot" % (n, ln))
         for tag, v, ln in found:
@@ -828,8 +1068,10 @@ def analyze(f, src, base, target_exists, tmp, lfs):
                 f.find("content: %s %s: a URL that does not parse: %s" % (n, tag, v))
             elif u:
                 news.append((n, tag, v))
-    for n in specs(base):
-        for tag, v, _ in spec_lines((base.real(n) or b"").decode("utf-8", "surrogateescape"))[0]:
+    if "table" in HOST and HOST["table"] is None:
+        f.info.append("host macros: %s, so a host macro's arguments clear no line" % HOST["why"])
+    for n in read(base):
+        for tag, v, _ in spec_lines(text_of(base, n))[0]:
             if is_url(v):
                 if host_of(v):
                     hosts.add(host_of(v))
@@ -863,18 +1105,18 @@ def analyze(f, src, base, target_exists, tmp, lfs):
                 f.find("content: the bytes of %s are not checked: %s is no host the target's Sources use" % (shown(n), host_of(v) or v))
                 continue
             verify(f, src, n, spec, tag, v, tmp, lfs)
-    scan(f, src, base, tmp, specs)
     if FETCHED["short"]:
         f.find("content: the files fetched passed the %d MiB cap (%s not fetched): the review is incomplete" % (MEM_CAP >> 20, ", ".join(map(shown, FETCHED["short"][:4]))))
 
 
 def scan(f, src, base, tmp, specs):
     """_parse_scan.py scan of the change against the target's files: each file
-    it reads fetched, until what it reads settles."""
+    it reads fetched, until what it reads settles. The files it reads with
+    the specs (needs), none when it failed."""
     new, old = os.path.join(tmp, "new"), os.path.join(tmp, "old")
     short = ["%s is over the %d MiB fetch cap" % (shown(n), FETCH_CAP >> 20) for n in specs(src) if src.real(n) is None]
     # one round per include level: the scanner reads 8 deep
-    capped = []
+    capped, needed = [], []
     for _ in range(12):
         src.write(new)
         rc, out, err = run([sys.executable, "-I", SCAN, "needs", new])
@@ -882,12 +1124,13 @@ def scan(f, src, base, tmp, specs):
         if rc not in (0, 4):
             f.scan = {"exit": 3, "lines": ["needs failed (%d): %s" % (rc, last(err) or last(out))]}
             f.find("content: the parse scan failed: %s" % f.scan["lines"][0])
-            return
-        more, capped = False, []
+            return []
+        more, capped, needed = False, [], []
         for n in out.decode("utf-8", "replace").splitlines():
             if n.startswith("incomplete: "):
                 capped.append(clean(n[len("incomplete: "):]))
                 continue
+            needed.append(n)
             for t in (src, base):
                 if n in t.files and n not in t.data:
                     if t.real(n) is not None:
@@ -913,6 +1156,7 @@ def scan(f, src, base, tmp, specs):
         f.find("content: the parse scan stopped short (incomplete): nothing past that point is known")
     elif rc != 0:
         f.find("content: the parse scan failed (%d): %s" % (rc, lines[0] if lines else "no message"))
+    return needed
 
 
 # ---------------------------------------------------------------- build evidence
@@ -1021,7 +1265,7 @@ def build_pr(f, owner, repo, num, head):
     if info is None:
         out["note"] = "%s holds no %s" % (prj, repo)
         return
-    m = re.search(rb"^commit: ([0-9a-f]{40})\s*$", info, re.M)
+    m = re.search(rb"^commit: ([0-9a-f]{40}(?:[0-9a-f]{24})?)\s*$", info, re.M)
     if not m:
         raise Lookup("the _scmsync.obsinfo of %s/%s names no commit" % (prj, repo))
     if m.group(1).decode() != head:
@@ -1109,10 +1353,11 @@ def derive_obs(rid, tmp):
     traw = obs("/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), missing_ok=True)
     tfiles, tsrc = ({}, "") if traw is None else listing(xml(traw, "%s/%s" % (tprj, tpkg), "directory"), "%s/%s" % (tprj, tpkg))
     # a link expands against its origin as it is now, unless pinned to the expansion itself;
-    # one to the target itself, based on the target as it is now, expands to what the
-    # target holds, whose files the key holds
+    # one to the target itself, based on the target as it is now and pinned to no rev of
+    # it, expands to what the target holds, whose files the key holds
     link = sroot.find("linkinfo")
-    to_target = link is not None and [link.get(k) for k in ("project", "package", "baserev")] == [tprj, tpkg, tsrc]
+    to_target = link is not None and link.get("rev") is None
+    to_target = to_target and [link.get(k) for k in ("project", "package", "baserev")] == [tprj, tpkg, tsrc]
     if link is not None and rev != ssrc and not (rev and tsrc and to_target):
         f.find("revision: the source is a _link, and its rev %s is not its expanded srcmd5 %s: what it expands to moves" % (shown(rev) or "(none)", ssrc))
     if traw is None:
@@ -1153,7 +1398,8 @@ def derive_gitea(owner, repo, num, tmp):
         head, base_, ref = pr["head"]["sha"], pr["base"]["sha"], pr["base"]["ref"]
         mb, f.creator = pr["merge_base"], pr["user"]["login"]
         full = pr["base"]["repo"]["full_name"]
-        ok = pr["number"] == int(num) and all(isinstance(x, str) and HEX40.fullmatch(x) for x in (head, base_, mb))
+        ok = pr["number"] == int(num) and all(isinstance(x, str) and GIT_ID.fullmatch(x) for x in (head, base_, mb))
+        ok = ok and len({len(head), len(base_), len(mb)}) == 1  # one repository, one hash
         ok = ok and isinstance(f.creator, str) and LOGIN.fullmatch(f.creator) and isinstance(full, str)
         ok = ok and isinstance(ref, str) and bool(ref) and not CTRL.search(ref)
     except (KeyError, TypeError):
@@ -1175,7 +1421,7 @@ def derive_gitea(owner, repo, num, tmp):
         except (binascii.Error, ValueError):
             raise Lookup("the blob %s of %s: no base64" % (ident[:12], label))
 
-    blobok = lambda b, ident: git_blob(b) == ident  # noqa: E731
+    blobok = lambda b, ident: git_blob(b, ident) == ident  # noqa: E731
     src, base = pair(Tree(hfiles, fetch, blobok), Tree(bfiles, fetch, blobok))
     hmap = {n: s for n, (s, _, _) in hfiles.items()}
     f.key = digest({
@@ -1375,6 +1621,111 @@ def drop(ident, rc):
     return rc
 
 
+FINAL = {"accepted", "declined", "revoked", "superseded", "deleted"}
+
+
+def dig(value, *keys):
+    """value[keys[0]][keys[1]]..., None where one is missing."""
+    for k in keys:
+        value = value.get(k) if isinstance(value, dict) else None
+    return value
+
+
+def holds(st):
+    """Whether an accepted FIXABLE request's review may still hold the Factory
+    forward, as pr-guard's fixable_pending() reads it: its target's files, but
+    _link, still equal its source's. A stamp that names them malformed holds."""
+    prj, pkg = (dig(st, "obs", "action", "target", k) for k in ("project", "package"))
+    want = dig(st, "obs", "action", "source", "files")
+    if not (isinstance(prj, str) and PRJ.fullmatch(prj) and isinstance(pkg, str) and PKG.fullmatch(pkg) and isinstance(want, dict)):
+        return True
+    raw = obs("/source/%s/%s?expand=1" % (q(prj), q(pkg)), missing_ok=True)
+    if raw is None:
+        return True
+    files, _ = listing(xml(raw, "%s/%s" % (prj, pkg), "directory"), "%s/%s" % (prj, pkg))
+    now = {n: m for n, (m, _, _) in files.items() if n != "_link"}
+    return now == {k: v for k, v in want.items() if k != "_link"}
+
+
+def final(kind, path):
+    """Why the stamp at path may go, "" while it stays; a Lookup when its
+    submission cannot be read or the file is no stamp this recorder wrote."""
+    try:
+        if os.path.islink(path) or os.path.getsize(path) > 1 << 20:
+            raise ValueError("no regular file of at most 1 MiB")
+        with open(path, encoding="utf-8") as fh:
+            st = json.load(fh)
+        ident = parse_id(st["id"])
+    except (OSError, ValueError, RecursionError, KeyError, TypeError, Usage) as e:
+        raise Lookup("no stamp of this recorder (%s)" % type(e).__name__)
+    if st.get("v") != 1 or st.get("kind") != kind or ident[0] != kind or stamp_path(ident) != path:
+        raise Lookup("no stamp of this recorder, or of another submission")
+    if st.get("verdict") not in ("PASS", "FIXABLE", "BLOCK"):
+        raise Lookup("no stamp of this recorder (verdict)")
+    fixable = st["verdict"] == "FIXABLE"
+    if kind == "obs":
+        rid = ident[1]
+        root = xml(obs("/request/%s" % rid), "request %s" % rid, "request")
+        state = root.find("state")
+        name = state.get("name") if state is not None and root.get("id") == rid else None
+        if not name:
+            raise Lookup("request %s: no state of it" % rid)
+        if name not in FINAL or name == "accepted" and fixable and holds(st):
+            return ""
+        return "request %s %s" % (rid, clean(name))
+    label = "%s/%s#%s" % ident[1:]
+    pr = gitea("/repos/%s/%s/pulls/%s" % ident[1:])
+    state = pr.get("state") if isinstance(pr, dict) else None
+    if state not in ("open", "closed") or pr.get("number") != int(ident[3]):
+        raise Lookup("%s: no state of it" % label)
+    merged = pr.get("merged")
+    # a merged FIXABLE PR may hold the forward until its follow-up is in devel
+    if state == "open" or fixable and merged is not False:
+        return ""
+    return "PR %s %s" % (label, "merged" if merged else "closed")
+
+
+def prune(quiet):
+    """Remove each stamp whose submission is final (final()): (removed, still
+    there, failed). A lookup that fails removes nothing. quiet: say nothing of
+    the stamps that stay."""
+    gone, kept, failed = 0, 0, 0
+    for kind in ("obs", "gitea"):
+        top = os.path.join(STATE, kind)
+        try:
+            names = sorted(os.listdir(top))
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            say("prune: cannot list %s: %s" % (top, e.strerror))
+            failed += 1
+            continue
+        for name in names:
+            if not name.endswith(".json") or name.startswith("."):
+                continue
+            path = os.path.join(top, name)
+            try:
+                why = final(kind, path)
+            except Lookup as e:
+                say("prune: %s stays: %s" % (path, e))
+                failed += 1
+                continue
+            if not why:
+                kept += 1
+                if not quiet:
+                    say("prune: %s stays: open, or a FIXABLE review that may hold the forward" % path)
+                continue
+            try:
+                os.unlink(path)
+            except OSError as e:
+                say("prune: %s stays: %s" % (path, e.strerror))
+                failed += 1
+                continue
+            gone += 1
+            say("pruned %s: %s" % (path, why))
+    return gone, kept, failed
+
+
 def show(ident, tmp):
     f = derive(ident, tmp)
     report(f, diff=True)
@@ -1434,9 +1785,14 @@ def record(ident, verdict, comment, want, tmp):
 def main():
     tmp = None
     try:
+        if MODE == "--prune":
+            gone, kept, failed = prune(quiet=False)
+            say("prune: %d removed, %d stay, %d not read" % (gone, kept, failed))
+            return 5 if failed else 0
         ident = parse_id(ARGS[0])
         if MODE == "--record":
             verdict, comment, want = read_file(ARGS[1], ident)
+        prune(quiet=True)
         tmp = tempfile.mkdtemp(prefix="incoming-review.", dir=os.environ.get("TMPDIR") or "/var/tmp")
         if MODE == "--show":
             return show(ident, tmp)

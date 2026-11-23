@@ -2,7 +2,8 @@
 # test-incoming-review.sh — incoming-review.sh offline: fake osc, git-obs, tea,
 # curl and getent on PATH answer from each case's fixture tree (a missing
 # fixture is a 404, one with a .fail beside it a 500; a URL may redirect, a host
-# resolve to any address), and each case has a HOME of its own, the installed
+# resolve to any address), a fake rpm in the case's own bin serves its macro
+# table, and each case has a HOME of its own, the installed
 # guard a file in it. A case builds its fixtures from plain trees (src: the
 # request's source, tgt: its target) and knobs, runs --show, then the recording
 # with the key --show printed, and expects an exit code plus a line.
@@ -176,13 +177,15 @@ if k("kind", "obs") == "obs":
     act = '<action type="submit"><source project="%s" package="%s"%s/><target project="%s" package="%s"/>%s</action>' % (
         sprj, spkg, ' rev="%s"' % rev if rev else "", tprj, tpkg, "<options>%s</options>" % opts if opts else "")
     put("obs", "/request/%s" % rid,
-        '<request id="%s" creator="%s">%s<state name="review" when="2026-11-20T10:00:00"/>'
-        "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1"))))
+        '<request id="%s" creator="%s">%s<state name="%s" when="2026-11-20T10:00:00"/>'
+        "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1")), k("state", "review")))
     # a link to the target, or to the "project package" of the knob linkto, based on
-    # the target as it is now, or on an older one with the knob linkbase stale
+    # the target as it is now, or on an older one with the knob linkbase stale; the
+    # knob linkrev pins it to a rev of its own
     base = srcmd5(tgt) if tgt is not None and k("linkbase") != "stale" else "1" * 32
-    link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"/>' % (
-        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, base, "2" * 32) if k("link", "0") == "1" else ""
+    link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"%s/>' % (
+        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, base, "2" * 32,
+        ' rev="%s"' % k("linkrev") if k("linkrev") else "") if k("link", "0") == "1" else ""
     put("obs", "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else ""), listing(spkg, ssrc, src, link))
     # the source package now: as the request has it, or moved on since
     cur = dict(src, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
@@ -202,9 +205,12 @@ if k("kind", "obs") == "obs":
         results(tprj, tpkg, tsrc, "/build/%s/_result?package=%s&multibuild=1" % (q(tprj), q(tpkg)), "tresults")
 else:
     creator, o, r = k("creator", "contrib"), k("prowner", "pool"), k("prrepo", "foo")
+    # a SHA-256 repository with the knob sha256: every object id 64 hex
+    GH = hashlib.sha256 if k("sha256", "0") == "1" else hashlib.sha1
+    W = len(GH().hexdigest())
 
     def gsha(b):
-        return hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+        return GH(b"blob %d\0" % len(b) + b).hexdigest()
 
     def gtree(side):
         ents = {}
@@ -220,17 +226,17 @@ else:
 
     def tree_json(ents):
         dirs = sorted({os.path.dirname(p) for p in ents if "/" in p})
-        items = [{"path": d, "mode": "040000", "type": "tree", "sha": "9" * 40} for d in dirs]
+        items = [{"path": d, "mode": "040000", "type": "tree", "sha": "9" * W} for d in dirs]
         items += [{"path": p, "mode": m, "type": "blob", "sha": gsha(b), "size": len(b)} for p, (m, b) in sorted(ents.items())]
-        return json.dumps({"sha": "8" * 40, "truncated": False, "page": 1, "total_count": len(items), "tree": items}, indent=1)
+        return json.dumps({"sha": "8" * W, "truncated": False, "page": 1, "total_count": len(items), "tree": items}, indent=1)
 
     def commit(name, ents):
-        return hashlib.sha1(name.encode() + json.dumps(sorted((p, m, gsha(b)) for p, (m, b) in ents.items())).encode()).hexdigest()
+        return GH(name.encode() + json.dumps(sorted((p, m, gsha(b)) for p, (m, b) in ents.items())).encode()).hexdigest()
 
     head_t, base_t = gtree("src"), gtree("tgt")
     head, mb = commit("head", head_t), commit("base", base_t)
-    pr = {"number": 7, "title": "Update foo to 1.1", "body": "Please have a look.", "state": "open",
-          "user": {"login": creator}, "merge_base": mb,
+    pr = {"number": 7, "title": "Update foo to 1.1", "body": "Please have a look.", "state": k("prstate", "open"),
+          "merged": k("merged", "0") == "1", "user": {"login": creator}, "merge_base": mb,
           "head": {"sha": head, "ref": "update", "repo": {"full_name": "contrib/%s" % r}},
           "base": {"sha": k("basesha", mb), "ref": k("baseref", "factory"), "repo": {"full_name": "%s/%s" % (o, r)}}}
     put("gitea", "/repos/%s/%s/pulls/7" % (o, r), json.dumps(pr))
@@ -279,6 +285,25 @@ printf '93.184.215.15\n' > "$B/dns/mirror.example.net"
 printf '93.184.215.16\n' > "$B/dns/cdn.example.org"
 printf '93.184.215.17\n' > "$B/dns/evil.example"
 printf '10.1.2.3\n' > "$B/dns/internal.example"
+# rpm as the recorder runs it: PATH alone in its environment, so the case is found
+# by the stub's own path; %dump on stderr, and which listed names take arguments
+# for the names on stdin. rpm/fail makes it fail; every call is logged.
+mkdir -p "$B/bin" "$B/rpm"
+cp "$HERE/fixtures/incoming-review/rpm-dump" "$B/rpm/dump"; cp "$HERE/fixtures/incoming-review/rpm-params" "$B/rpm/params"
+cat > "$B/bin/rpm" <<'EOF'
+#!/bin/bash
+d=${0%/*}/../rpm
+printf '%s\n' "$*" >> "$d/calls"
+[ -z "${HOME+x}${FIX+x}" ] && [ "$PATH" = /usr/bin:/bin ] || { echo "fake rpm: an environment not clean" >&2; exit 99; }
+[ ! -e "$d/fail" ] || { echo "error: fake rpm failed" >&2; exit 1; }
+[ $# = 2 ] && [ "$1" = --eval ] || { echo "fake rpm: unexpected $*" >&2; exit 99; }
+if [ "$2" = %dump ]; then cat "$d/dump" >&2; echo; exit 0; fi
+[ "${2:0:6}" = '%{lua:' ] || { echo "fake rpm: unexpected $*" >&2; exit 99; }
+while read -r n; do
+  if grep -qxF -- "$n" "$d/params"; then echo "$n p"; else echo "$n s"; fi
+done
+EOF
+chmod +x "$B/bin/rpm"
 
 GOOD='Thanks, the update to 1.1 looks right.
 - The changelog entry names the new version.
@@ -295,7 +320,7 @@ fresh() {
 }
 knob() { printf '%s\n' "$2" > "$D/k/$1"; }
 fix() { rm -rf "$D/obs" "$D/gitea"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
-irv() { out="$(FIX=$D HOME=$D/home TMPDIR=$D/tmp PATH="$work/bin:$PATH" bash "$IRV" "$@" 2>&1)"; rc=$?; }
+irv() { out="$(FIX=$D HOME=$D/home TMPDIR=$D/tmp PATH="$D/bin:$work/bin:$PATH" bash "$IRV" "$@" 2>&1)"; rc=$?; }
 keyof() { sed -n 's/^key \([0-9a-f]\{64\}\)$/\1/p' <<<"$out" | tail -n 1; }
 vfile() { printf '%s %s key %s\n%s\n' "$1" "$2" "$3" "$4" > "$D/verdict.txt"; }
 stampf() { printf '%s/home/%s/incoming/%s/%s.json' "$D" "$SD" "$1" "$2"; }
@@ -366,6 +391,7 @@ irv --show 1001
 [ "$(keyof)" = "$K1" ] && pass "show-key: the same content gives the same key" || fail "show-key: key $(keyof), then $K1"
 [ -n "$(nonce)" ] && [ "$(nonce)" != "$N1" ] && pass "show-key: each run its own nonce" || fail "show-key: nonce $(nonce) after $N1"
 grep -q '^tea ' "$D/calls" && fail "show-key: tea was called" || pass "show-key: no tea"
+[ ! -e "$D/rpm/calls" ] && pass "show-key: no rpm, as no line needs the host's macros" || fail "show-key: rpm ran: $(cat "$D/rpm/calls")"
 grep '^osc ' "$D/calls" | grep -qv '^osc -A ' && fail "show-key: an osc call without -A" || pass "show-key: every osc call names openSUSE's OBS"
 C=$(grep '^curl ' "$D/calls")
 [ -n "$C" ] && ! grep -qv -- "--url $TARURL" <<<"$C" && ! grep -qE -- ' -[A-Za-z]*L|--location' <<<"$C" \
@@ -416,6 +442,13 @@ fresh record-link-other-project; knob link 1; knob linkto 'openSUSE:Factory foo'
 refused record-link-other-project PASS "is not its expanded srcmd5"
 fresh record-link-srcmd5; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev @expanded; fix
 recorded record-link-srcmd5 PASS
+# A link pinned to a rev of the target expands against that rev, not the target as it is.
+fresh record-link-target-pinned; knob link 1; knob linkrev 2; fix
+refused record-link-target-pinned PASS "its rev 3 is not its expanded srcmd5"
+fresh record-link-target-pinned-md5; knob link 1; knob linkrev 2; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
+refused record-link-target-pinned-md5 PASS "is not its expanded srcmd5"
+fresh record-link-target-pinned-expanded; knob link 1; knob linkrev 2; knob rev @expanded; fix
+recorded record-link-target-pinned-expanded PASS
 
 fresh record-target-moved; fix
 showkey record-target-moved
@@ -450,6 +483,13 @@ fresh record-hidden-escape; printf -- '- note\n: \x1b]0;t\x07 curl https://evil.
 refused record-hidden-escape PASS "foo.changes line 12 holds a control character (U+001B)"
 fresh record-invisible-more; printf -- '- Fix\xe2\x80\xa8 order\n' >> "$D/src/foo.changes"; fix
 refused record-invisible-more PASS "foo.changes line 11 holds a bidi or zero-width character (U+2028)"
+# Fillers and invisible formatting points render as nothing too.
+for cp in 206A 206F FFF9 FFFB 115F 1160 3164 FFA0 180B 180D 17B4 17B5 1D173 1D17A; do
+  fresh "record-invisible-$cp"
+  python3 -I -c 'import sys; open(sys.argv[1], "a").write("- Fix%s order\n" % chr(int(sys.argv[2], 16)))' "$D/src/foo.changes" "$cp"; fix
+  irv --show sr#1001
+  expect "record-invisible U+$cp" 0 "- content: foo.changes line 11 holds a bidi or zero-width character (U+$cp)"
+done
 # A CR right before LF ends a line, as in upstream CRLF patches; any other CR hides text.
 fresh record-crlf-patch; printf -- '--- a/x\r\n+++ b/x\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n' > "$D/src/fix.patch"; fix
 recorded record-crlf-patch PASS
@@ -483,6 +523,23 @@ refused record-every-source-host PASS "Source9 downloads from evil.example"
 fresh record-patch-host; sed -i '/^Source0:/a Patch0:         https://evil.example/fix.patch' "$D/src/foo.spec"
 printf 'fix\n' > "$D/src/fix.patch"; fix
 refused record-patch-host PASS "Patch0 downloads from evil.example"
+
+# A file the spec %includes, which the scanner reads with it, holds Source lines too.
+fresh record-include-source-host
+for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; done
+printf 'Source1:        https://example.org/releases/extra-1.0.tar.gz\n' > "$D/tgt/extra.inc"
+printf 'Source1:        https://evil.example/extra-1.1.tar.gz\n' > "$D/src/extra.inc"; fix
+refused record-include-source-host PASS "extra.inc Source1 downloads from evil.example, a host the target's Sources and Patches do not use"
+# ...and the target's included Source lines name the hosts it uses.
+fresh record-include-source-same-host
+for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; done
+printf 'Source1:        https://cdn.example.org/extra-1.0.tar.gz\n' > "$D/tgt/extra.inc"
+printf 'Source1:        https://cdn.example.org/extra-1.1.tar.gz\n' > "$D/src/extra.inc"; fix
+recorded record-include-source-same-host PASS
+fresh record-include-untaken
+for s in src tgt; do sed -i '/^Version:/a %include extra.inc' "$D/$s/foo.spec"; printf '# none\n' > "$D/$s/extra.inc"; done
+printf '%%{?nil}Source1:        https://evil.example/x.tar.gz\n' > "$D/src/extra.inc"; fix
+refused record-include-untaken PASS "extra.inc line 1: a Source or Patch tag behind a macro"
 
 fresh record-untaken-tag; sed -i '/^Source0:/a %{?nil}Source1:        https://evil.example/x.tar.gz' "$D/src/foo.spec"; fix
 refused record-untaken-tag PASS "foo.spec line 8: a Source or Patch tag behind a macro"
@@ -577,6 +634,85 @@ fresh record-tag-backslash
 printf '%%global s Source1: https://evil.example/one.tar.gz\nBuildArch: noarch \\\n%%{s}\n' > "$D/line"
 sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
 refused record-tag-backslash PASS "foo.spec line 4: a preamble line with a macro before its colon, or one the next line continues"
+
+# A host macro's arguments, by rpm's own table (rpm/dump and rpm/params): a plain
+# body takes plain arguments, the spec's own macros among them; any other body
+# (Lua, expand, shell, an argument at a line's start, a Source or Patch) only a line
+# that stands as it is in the target's spec, with the spec's own macros it names
+# defined by the same lines and no other name but the host's or a checked tag. A
+# macro the host lacks, one that takes no arguments, and a table rpm did not give
+# whole stay findings. addlines <both|src> <line>...: lines after Version:.
+addlines() {
+  local where=$1 s; shift; printf '%s\n' "$@" > "$D/line"
+  for s in src tgt; do
+    [ "$where" = both ] || [ "$s" = src ] || continue
+    sed -i "/^Version:/r $D/line" "$D/$s/foo.spec"
+  done
+}
+MADE="foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes, or a host macro's arguments"
+fresh host-plain; addlines both '%global own_x 1'; addlines src '%plain_req foo %{own_x} %{?_libdir}' '%{plain_req -n x bar}'; fix
+recorded host-plain PASS
+plains=(
+  '%plain_req %(id)'
+  '%plain_req foo %{lua:print("x")}'
+  '%plain_req foo %{quote:x}'
+  '%plain_req %{?_libdir:%[1]}'
+  '%{plain_req foo %(id)}'
+)
+for i in "${!plains[@]}"; do
+  fresh "host-plain-code-$i"; addlines src "${plains[$i]}"; fix
+  refused "host-plain-code ${plains[$i]}" PASS "$MADE"
+done
+# Arguments a backslash continues onto the next line: that line is no part of the one
+# that stands in the target's spec.
+fresh host-args-backslash; addlines both "%requires_eq foo \\" 'Requires: bar'; fix
+refused host-args-backslash PASS "$MADE"
+fresh host-not-parametric; addlines both '%plain_text foo bar'; fix
+refused host-not-parametric PASS "$MADE"
+for m in plain_lead plain_src shell_mid; do
+  fresh "host-body-$m"; addlines src "%$m foo"; fix
+  refused "host-body-$m: not plain, a new line" PASS "$MADE"
+done
+fresh host-lead-verbatim; addlines both '%plain_lead foo'; fix
+recorded host-lead-verbatim PASS
+# The four spellings that set this off: a Lua, expand or shell body passes as it stands
+# in the target's spec; a macro the host lacks never does.
+fresh host-kmp; addlines both '%kernel_module_package -p %name-preamble'; fix
+recorded host-kmp PASS
+fresh host-kmp-new; addlines src '%kernel_module_package -p %name-preamble'; fix
+refused host-kmp-new PASS "$MADE"
+fresh host-requires-eq; addlines both '%requires_eq foo' '%{requires_eq bar}'; fix
+showkey host-requires-eq
+[ "$(grep -cx -- '--eval %dump' "$D/rpm/calls")" = 1 ] && [ "$(grep -c '^--eval %{lua:' "$D/rpm/calls")" = 1 ] \
+  && pass "host-requires-eq: the table read once for two lines" || fail "host-requires-eq: rpm calls: $(cat "$D/rpm/calls")"
+recorded host-requires-eq PASS
+fresh host-requires-eq-new; addlines both '%requires_eq foo'; sed -i 's/^%requires_eq foo$/%requires_eq foo;id/' "$D/src/foo.spec"; fix
+refused host-requires-eq-new PASS "$MADE"
+fresh host-hpc; addlines both '%{hpc_init -c gnu}'; fix
+refused host-hpc PASS "$MADE"
+fresh host-treesitter; addlines both '%define _name foo' '%treesitter_grammars %{_name}'; fix
+recorded host-treesitter PASS
+fresh host-treesitter-redefined; addlines both '%define _name foo' '%treesitter_grammars %{_name}'
+sed -i 's/^%define _name foo$/%define _name foo;id/' "$D/src/foo.spec"; fix
+refused host-treesitter-redefined PASS "foo.spec line 4: a preamble line a macro of the spec"
+fresh host-own-from-elsewhere; addlines both '%requires_eq lib%{_llvm_sonum}'; fix
+refused host-own-from-elsewhere PASS "$MADE"
+fresh host-include; addlines both '%include extra.inc' '%requires_eq foo'
+for s in src tgt; do printf '%%define x 1\n' > "$D/$s/extra.inc"; done; fix
+refused host-include PASS "foo.spec line 4: a preamble line a macro of the spec"
+# rpm failed, listed nothing, or listed less than it counted: no host macro takes
+# arguments, and the output says why.
+hostfail() {   # hostfail <case> <why>
+  showkey "$1"; vfile PASS 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+  [ "$rc" = 1 ] && grep -qF "$MADE" <<<"$out" && grep -qF "host macros: $2" <<<"$out" && [ ! -e "$(stampf obs 1001)" ] \
+    && pass "$1: refused, and says why" || { fail "$1: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+}
+fresh host-rpm-failed; addlines both '%requires_eq foo'; : > "$D/rpm/fail"; fix
+hostfail host-rpm-failed "rpm %dump failed (1): error: fake rpm failed"
+fresh host-rpm-empty; addlines both '%requires_eq foo'; printf '========================\n======================== active 0 empty 0\n' > "$D/rpm/dump"; fix
+hostfail host-rpm-empty "rpm's %dump listed nothing"
+fresh host-rpm-short; addlines both '%requires_eq foo'; sed -i '/active 14 empty/d' "$D/rpm/dump"; fix
+hostfail host-rpm-short "rpm's %dump listed nothing, or not every macro whole"
 
 # A name both defined and set by its tag is not sure: rpm takes the later one.
 fresh record-define-and-tag
@@ -744,6 +880,63 @@ vfile BLOCK 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
 expect "record-stale-stamp: a moved key" 3 "the earlier stamp"
 [ ! -e "$SF" ] && pass "record-stale-stamp: the stamp of the old key is gone" || fail "record-stale-stamp: the old stamp stayed"
 
+# ---------------------------------------------------------------- --prune
+# A stamp goes once its submission is final; an accepted or merged FIXABLE one stays
+# while it may hold the Factory forward (pr-guard's hold), a failed lookup removes
+# nothing, and nothing but the stamps is touched.
+for st in accepted declined revoked superseded deleted; do
+  fresh "prune-$st"; fix; recorded "prune-$st" PASS
+  knob state "$st"; fix; irv --prune
+  expect "prune-$st" 0 "pruned $SF: request 1001 $st"
+  [ ! -e "$SF" ] && pass "prune-$st: the stamp is gone" || fail "prune-$st: the stamp stayed"
+done
+fresh prune-open; fix; recorded prune-open BLOCK; irv --prune
+expect prune-open 0 "prune: 0 removed, 1 stay, 0 not read"
+[ -e "$SF" ] && pass "prune-open: an open request keeps its stamp" || fail "prune-open: the stamp is gone"
+fresh prune-lookup-failed; fix; recorded prune-lookup-failed PASS; knob state accepted; fix; touch "$D/obs/_request_1001.fail"
+irv --prune; expect prune-lookup-failed 5 "prune: $SF stays: osc api /request/1001 failed"
+[ -e "$SF" ] && pass "prune-lookup-failed: a failed lookup removes nothing" || fail "prune-lookup-failed: the stamp is gone"
+# Accepted FIXABLE: held while devel's files (but _link) are the request's source files.
+fresh prune-fixable-held; fix; recorded prune-fixable-held FIXABLE
+knob state accepted; rm -r "$D/tgt"; cp -a "$D/src" "$D/tgt"; fix; irv --prune
+expect prune-fixable-held 0 "prune: 0 removed, 1 stay, 0 not read"
+[ -e "$SF" ] && pass "prune-fixable-held: kept while it holds the forward" || fail "prune-fixable-held: the stamp is gone"
+printf 'follow-up\n' > "$D/tgt/fix.patch"; fix; irv --prune
+expect "prune-fixable-held: the follow-up landed" 0 "pruned $SF: request 1001 accepted"
+fresh prune-fixable-held-unread; fix; recorded prune-fixable-held-unread FIXABLE
+knob state accepted; fix; touch "$D/obs/$(fk '/source/devel:example/foo?expand=1').fail"; irv --prune
+expect prune-fixable-held-unread 5 "stays: osc api /source/devel:example/foo?expand=1 failed"
+[ -e "$SF" ] && pass "prune-fixable-held-unread: kept" || fail "prune-fixable-held-unread: the stamp is gone"
+fresh prune-fixable-declined; fix; recorded prune-fixable-declined FIXABLE; knob state declined; fix; irv --prune
+expect prune-fixable-declined 0 "pruned $SF: request 1001 declined"
+# PRs: closed or merged goes, a merged FIXABLE one stays.
+fresh prune-pr; knob kind gitea; fix; recorded prune-pr PASS "$GOOD" pool/foo#7 gitea pool_foo_7
+irv --prune; expect "prune-pr: open" 0 "prune: 0 removed, 1 stay, 0 not read"
+knob prstate closed; knob merged 1; fix; irv --prune
+expect "prune-pr: merged" 0 "pruned $SF: PR pool/foo#7 merged"
+fresh prune-pr-fixable; knob kind gitea; fix; recorded prune-pr-fixable FIXABLE "$GOOD" pool/foo#7 gitea pool_foo_7
+knob prstate closed; knob merged 1; fix; irv --prune
+expect "prune-pr-fixable: merged" 0 "prune: 0 removed, 1 stay, 0 not read"
+knob merged 0; fix; irv --prune
+expect "prune-pr-fixable: closed unmerged" 0 "pruned $SF: PR pool/foo#7 closed"
+# A file that is no stamp of this request stays, and so does whatever is not a stamp.
+fresh prune-not-a-stamp; fix; recorded prune-not-a-stamp PASS; knob state accepted; fix
+SDIR=$(dirname "$SF"); sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$SDIR/1003.json"; printf '{"v": 1' > "$SDIR/1004.json"
+: > "$SDIR/.1001.json.x.tmp"; : > "$SDIR/notes.txt"
+irv --prune; expect prune-not-a-stamp 5 "prune: 1 removed, 0 stay, 2 not read"
+[ "$(cd "$SDIR" && find . -type f | LC_ALL=C sort | tr '\n' ' ')" = "./.1001.json.x.tmp ./1003.json ./1004.json ./notes.txt " ] \
+  && pass "prune-not-a-stamp: only the final stamp is removed" || fail "prune-not-a-stamp: left $(cd "$SDIR" && find . -type f)"
+# --show and --record prune first, and go on.
+fresh prune-on-show; fix; recorded prune-on-show PASS
+sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$(stampf obs 1002)"
+printf '<request id="1002" creator="contrib"><state name="revoked"/></request>' > "$D/obs/$(fk /request/1002)"
+showkey prune-on-show
+grep -qxF "pruned $(stampf obs 1002): request 1002 revoked" <<<"$out" && [ ! -e "$(stampf obs 1002)" ] && [ -e "$SF" ] \
+  && pass "prune-on-show: the final stamp went, the open one stayed" || { fail "prune-on-show"; printf '%s\n' "$out" | sed 's/^/    /'; }
+sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$(stampf obs 1002)"
+vfile PASS 1001 "$K" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"
+expect "prune-on-record" 0 "pruned $(stampf obs 1002): request 1002 revoked"
+
 # ---------------------------------------------------------------- failed lookups
 # Each failed, empty or malformed answer is exit 5, never "nothing found".
 lk() {   # lk <case> <message> [show|record]: the case's answers as mutated fail with 5
@@ -816,6 +1009,28 @@ recorded record-pr-built PASS "$GOOD" pool/foo#7 gitea pool_foo_7
 grep -qxF "build devel:example:PullRequest:7" <<<"$out" && pass "record-pr-built: the staging project named" || fail "record-pr-built: no build line"
 stampok record-pr-built "$SF" build.project=devel:example:PullRequest:7 build.verdict=green build.green=true build.required=false
 
+# A SHA-256 repository: every commit and blob id is 64 hex, each blob checked by it,
+# and the staging build's obsinfo names a 64-hex commit.
+fresh record-pr-sha256; knob kind gitea; knob sha256 1; knob prbuild 1; fix
+recorded record-pr-sha256 PASS "$GOOD" pool/foo#7 gitea pool_foo_7
+H64=$(sed -n 's/.*"sha": "\([0-9a-f]\{64\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")
+[ -n "$H64" ] && grep -qxF "build devel:example:PullRequest:7" <<<"$out" \
+  && pass "record-pr-sha256: a 64-hex head, built" || fail "record-pr-sha256: head '$H64'"
+stampok record-pr-sha256 "$SF" "gitea.head=$H64" build.verdict=green "gitea.files=~\"foo.spec\""
+fresh record-pr-sha256-tampered; knob kind gitea; knob sha256 1; fix
+# the head's foo.spec answers other bytes than its id
+python3 -I -c '
+import glob, json, sys
+d = sys.argv[1] + "/gitea/"
+head = json.load(open(d + "_repos_pool_foo_pulls_7"))["head"]["sha"]
+tree = json.load(open(glob.glob(d + "_repos_pool_foo_git_trees_" + head + "*")[0]))["tree"]
+p = d + "_repos_pool_foo_git_blobs_" + next(e["sha"] for e in tree if e["path"] == "foo.spec")
+j = json.load(open(p)); j["content"] = "dGFtcGVyZWQK"; json.dump(j, open(p, "w"))' "$D"
+irv --show pool/foo#7; expect "record-pr-sha256-tampered: a blob unlike its 64-hex id" 5 "the bytes fetched do not match"
+# One repository has one hash: a head of one length and a base of the other is no answer.
+fresh record-pr-mixed-ids; knob kind gitea; knob sha256 1; knob basesha "$(printf 'a%.0s' $(seq 1 40))"; fix
+irv --show pool/foo#7; expect "record-pr-mixed-ids" 5 "a malformed answer for the PR"
+
 fresh record-pr-head-moved; knob kind gitea; fix
 showkey record-pr-head-moved pool/foo#7
 printf -- '- Fix a typo\n' >> "$D/src/foo.changes"; fix
@@ -845,7 +1060,8 @@ stampok record-pr-stem "$SF" id=My_Org/foo_bar#7 gitea.owner=My_Org
 
 # ---------------------------------------------------------------- usage
 fresh usage; fix
-irv; expect "usage: no mode" 2 "--show or --record expected"
+irv; expect "usage: no mode" 2 "--show, --record or --prune expected"
+irv --prune 1001; expect "usage: --prune takes nothing" 2 "--prune takes no argument"
 irv --show 'pool/../x#1'; expect "usage: a malformed id" 2 "not an id"
 irv "$REC" 1001 "$D/none.txt"; expect "usage: no FILE" 2 "cannot read"
 printf 'LGTM\nfine\n' > "$D/verdict.txt"; irv "$REC" 1001 "$D/verdict.txt"; expect "usage: a first line of no verdict" 2 "is no 'PASS|FIXABLE|BLOCK"
@@ -853,7 +1069,7 @@ vfile PASS 1002 "$Z" "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"; expect "usage: a
 vfile PASS 1001 000000000000 "$GOOD"; irv "$REC" 1001 "$D/verdict.txt"; expect "usage: a 12-hex key is no key" 2 "is no 'PASS|FIXABLE|BLOCK"
 irv --help; expect "usage: --help" 0 "Usage: incoming-review.sh --show"
 # Only the spellings the guard knows record: an abbreviation is a usage error.
-vfile PASS 1001 "$Z" "$GOOD"; irv --rec 1001 "$D/verdict.txt"; expect "usage: --rec is no --record" 2 "--show or --record expected"
+vfile PASS 1001 "$Z" "$GOOD"; irv --rec 1001 "$D/verdict.txt"; expect "usage: --rec is no --record" 2 "--show, --record or --prune expected"
 irv "$REC=" "$D/verdict.txt"; expect "usage: an empty --record=" 2 "not an id"
 
 echo "---"; [ "$fails" = 0 ] && echo "all incoming-review checks passed" || echo "$fails FAILED"
