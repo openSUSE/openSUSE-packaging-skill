@@ -170,5 +170,5 @@ Two Factory-accepted shapes:
   ```
   with `BuildArch: noarch` in the default flavor's branch and every other `%package`,
   `%description` and `%files` inside it. Expect `E: invalid-spec-name` on the flavor's src
-  rpm and `W: libdir-macro-in-noarch-package` (rpmlint's spec check ignores `%if`); both
+  rpm and `W: libdir-macro-in-noarch-package` (rpmcrab credits the noarch declaration here — the `%files` lines share its branch — so the check still fires); both
   are noise. The flavor reruns the whole build, `%check` included.
