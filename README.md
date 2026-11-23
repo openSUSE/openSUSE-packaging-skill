@@ -13,7 +13,8 @@ read as ordinary instruction documents.
 | `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `osc`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
 
 Requirements: `bash`, `python3` (3.11+, standard library only), `osc`, `curl`. Individual
-helpers use `tea`, `gh` or `rpmcrab` where the task needs them.
+helpers use `tea` or `gh` where the task needs them; the agent runs `rpmcrab` over built
+packages itself.
 
 ## Layout
 
