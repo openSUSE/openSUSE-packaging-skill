@@ -1772,82 +1772,6 @@ done
 [ $rc -eq 0 ] && echo "OK: no file named like a skill script" >> "$log/skill-scripts.txt"
 show skill-scripts $rc "$log/skill-scripts.txt"
 
-# Parse surface: the parse-time code each spec adds over openSUSE:Factory/<pkg>'s
-# (_parse_scan.py), read as text, for the review. Information only, never red: a
-# text scan cannot see everything rpm runs, which is why the parses below run in
-# a sandbox where the host has one. Only a tree with a construct needs Factory's
-# copy, read from openSUSE's OBS whatever apiurl the checkout names.
-: > "$log/parse-surface.txt"; pf=openSUSE:Factory/$pkg; pb="$log/parse-base"; nocmp=""
-obs=(osc -A https://api.opensuse.org)
-need=$(timeout 60 python3 -I "$HERE/_parse_scan.py" needs . 2> "$log/parse-needs.err"); nrc=$?
-short=$(grep '^incomplete: ' <<< "$need"); need=$(grep -v '^incomplete: ' <<< "$need")
-if [ $nrc -ne 0 ] && [ $nrc -ne 4 ]; then
-  nocmp="the scan failed (exit $nrc): $(head -n 1 "$log/parse-needs.err")${need%%$'\n'*}"
-elif [ -z "$need" ] && [ -n "$short" ]; then
-  { printf '%s\n' "$short"
-    echo "note: the text scan stopped short (incomplete: above): a spec it did not read may hold parse-time constructs"; } >> "$log/parse-surface.txt"
-elif [ -z "$need" ]; then
-  echo "OK: no spec holds a parse-time construct the text scan can see" >> "$log/parse-surface.txt"
-else
-  mkdir -p "$pb"
-  if timeout 60 "${obs[@]}" api "/source/$pf?expand=1" > "$log/parse-factory.xml" 2> "$log/parse-factory.err"; then
-    while IFS= read -r f; do
-      grep -qF "name=\"$f\"" "$log/parse-factory.xml" || continue   # Factory lacks it
-      if ! timeout 60 "${obs[@]}" cat openSUSE:Factory "$pkg" "$f" > "$pb/$f" 2> "$log/parse-factory.err"; then
-        rm -f "$pb/$f"
-        grep -q 'HTTP Error 404' "$log/parse-factory.err" || nocmp="cannot read its $f: $(head -n 1 "$log/parse-factory.err")"
-      fi
-    done <<< "$need"
-  elif grep -q 'HTTP Error 404' "$log/parse-factory.err"; then
-    rm -f "$log/parse-factory.xml"
-    echo "note: $pf does not exist: every construct counts as new" >> "$log/parse-surface.txt"
-  else
-    nocmp="cannot list it: $(head -n 1 "$log/parse-factory.err")"
-  fi
-  if [ -z "$nocmp" ]; then
-    timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
-    n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
-    case $src in
-      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; the parse itself runs in the sandbox)" ;;
-      1|4) cat "$log/parse-added.txt"
-         [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
-         ! grep -q '^incomplete: ' "$log/parse-added.txt" \
-           || echo "note: the comparison with $pf is incomplete (incomplete: above): what it could not tell is not known to be verbatim" ;;
-      124) nocmp="the scan did not finish in 120 s" ;;
-      *) nocmp="the scan failed (exit $src): $(head -n 1 "$log/parse-added.txt")" ;;
-    esac >> "$log/parse-surface.txt"
-  fi
-fi
-[ -z "$nocmp" ] || printf 'note: no comparison with %s: %s\n' "$pf" "$nocmp" | python3 -I "$HERE/_sanitize.py" >> "$log/parse-surface.txt"
-show parse-surface 0 "$log/parse-surface.txt"
-
-if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
-  /usr/lib/obs/service/source_validator --outdir "$log/sv" > "$log/source_validator.txt" 2>&1; rc=$?
-  # factory-auto (check_source.py) declines on these although the validator exits 0
-  na=$(grep -E 'Attention.*not mentioned' "$log/source_validator.txt")
-  [ -z "$na" ] || printf '%s\n' "${na//(W) /ERROR: factory-auto declines this: }" >> "$log/source_validator.txt"
-  show source_validator $rc "$log/source_validator.txt"
-  [ -z "$na" ] || [ $rc -ne 0 ] || red+=(source_validator)
-else
-  echo "## source_validator: SKIPPED (not installed)"; red+=(source_validator)
-fi
-
-# factory-auto's check_urls: every remote Source downloads and equals the
-# committed file. The downloads go under /var/tmp, not the /tmp tmpfs.
-if [ -x /usr/lib/obs/service/download_files ]; then
-  if dl=$(mktemp -d -p /var/tmp "gate-dl-$pkg.XXXXXX"); then
-    /usr/lib/obs/service/download_files --enforceupstream yes --enforcelocal yes --outdir "$dl" \
-      > "$log/download_files.txt" 2>&1; rc=$?
-    rm -rf "$dl"
-  else
-    echo "UNKNOWN: no scratch directory under /var/tmp" > "$log/download_files.txt"; rc=1
-  fi
-  [ $rc -eq 0 ] && echo "OK: every remote source downloads and matches the committed file" >> "$log/download_files.txt"
-  show download_files $rc "$log/download_files.txt"
-else
-  echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
-fi
-
 sandbox() {   # sandbox [writable dir]: the bwrap arguments, in sbx (the parses' and %prep's)
   # only /usr and /etc of the host, never / (core dumps, journals, other users'
   # files), and a HOME of its own; run under env -i with HOME=/tmp/home, so not
@@ -1894,6 +1818,85 @@ else
   pre=("$ENVCMD" -i PATH=/usr/bin:/bin HOME=/tmp/home)
   [ -z "${LANG:-}" ] || pre+=(LANG="$LANG"); [ -z "${LC_ALL:-}" ] || pre+=(LC_ALL="$LC_ALL")
   GATE_SANDBOX=$(printf '%s\037' "${pre[@]}" "$BWRAP" "${sbx[@]}"); export GATE_SANDBOX=${GATE_SANDBOX%$'\037'}
+fi
+if [ -n "$sbxbad" ]; then sbxsay="nothing parses: the sandbox does not start ($sbxbad)"
+elif [ -n "$nosbx" ]; then sbxsay="the parse runs unsandboxed here ($nosbx)"
+else sbxsay="the parse itself runs in the sandbox"; fi
+
+# Parse surface: the parse-time code each spec adds over openSUSE:Factory/<pkg>'s
+# (_parse_scan.py), read as text, for the review. Information only, never red: a
+# text scan cannot see everything rpm runs, which is why the parses below run in
+# a sandbox where the host has one. Only a tree with a construct needs Factory's
+# copy, read from openSUSE's OBS whatever apiurl the checkout names.
+: > "$log/parse-surface.txt"; pf=openSUSE:Factory/$pkg; pb="$log/parse-base"; nocmp=""
+obs=(osc -A https://api.opensuse.org)
+need=$(timeout 60 python3 -I "$HERE/_parse_scan.py" needs . 2> "$log/parse-needs.err"); nrc=$?
+short=$(grep '^incomplete: ' <<< "$need"); need=$(grep -v '^incomplete: ' <<< "$need")
+if [ $nrc -ne 0 ] && [ $nrc -ne 4 ]; then
+  nocmp="the scan failed (exit $nrc): $(head -n 1 "$log/parse-needs.err")${need%%$'\n'*}"
+elif [ -z "$need" ] && [ -n "$short" ]; then
+  { printf '%s\n' "$short"
+    echo "note: the text scan stopped short (incomplete: above): a spec it did not read may hold parse-time constructs"; } >> "$log/parse-surface.txt"
+elif [ -z "$need" ]; then
+  echo "OK: no spec holds a parse-time construct the text scan can see" >> "$log/parse-surface.txt"
+else
+  mkdir -p "$pb"
+  if timeout 60 "${obs[@]}" api "/source/$pf?expand=1" > "$log/parse-factory.xml" 2> "$log/parse-factory.err"; then
+    while IFS= read -r f; do
+      grep -qF "name=\"$f\"" "$log/parse-factory.xml" || continue   # Factory lacks it
+      if ! timeout 60 "${obs[@]}" cat openSUSE:Factory "$pkg" "$f" > "$pb/$f" 2> "$log/parse-factory.err"; then
+        rm -f "$pb/$f"
+        grep -q 'HTTP Error 404' "$log/parse-factory.err" || nocmp="cannot read its $f: $(head -n 1 "$log/parse-factory.err")"
+      fi
+    done <<< "$need"
+  elif grep -q 'HTTP Error 404' "$log/parse-factory.err"; then
+    rm -f "$log/parse-factory.xml"
+    echo "note: $pf does not exist: every construct counts as new" >> "$log/parse-surface.txt"
+  else
+    nocmp="cannot list it: $(head -n 1 "$log/parse-factory.err")"
+  fi
+  if [ -z "$nocmp" ]; then
+    timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
+    n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
+    case $src in
+      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; $sbxsay)" ;;
+      1|4) cat "$log/parse-added.txt"
+         [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
+         ! grep -q '^incomplete: ' "$log/parse-added.txt" \
+           || echo "note: the comparison with $pf is incomplete (incomplete: above): what it could not tell is not known to be verbatim" ;;
+      124) nocmp="the scan did not finish in 120 s" ;;
+      *) nocmp="the scan failed (exit $src): $(head -n 1 "$log/parse-added.txt")" ;;
+    esac >> "$log/parse-surface.txt"
+  fi
+fi
+[ -z "$nocmp" ] || printf 'note: no comparison with %s: %s\n' "$pf" "$nocmp" | python3 -I "$HERE/_sanitize.py" >> "$log/parse-surface.txt"
+show parse-surface 0 "$log/parse-surface.txt"
+
+if command -v /usr/lib/obs/service/source_validator >/dev/null 2>&1 || [ -x /usr/lib/obs/service/source_validator ]; then
+  /usr/lib/obs/service/source_validator --outdir "$log/sv" > "$log/source_validator.txt" 2>&1; rc=$?
+  # factory-auto (check_source.py) declines on these although the validator exits 0
+  na=$(grep -E 'Attention.*not mentioned' "$log/source_validator.txt")
+  [ -z "$na" ] || printf '%s\n' "${na//(W) /ERROR: factory-auto declines this: }" >> "$log/source_validator.txt"
+  show source_validator $rc "$log/source_validator.txt"
+  [ -z "$na" ] || [ $rc -ne 0 ] || red+=(source_validator)
+else
+  echo "## source_validator: SKIPPED (not installed)"; red+=(source_validator)
+fi
+
+# factory-auto's check_urls: every remote Source downloads and equals the
+# committed file. The downloads go under /var/tmp, not the /tmp tmpfs.
+if [ -x /usr/lib/obs/service/download_files ]; then
+  if dl=$(mktemp -d -p /var/tmp "gate-dl-$pkg.XXXXXX"); then
+    /usr/lib/obs/service/download_files --enforceupstream yes --enforcelocal yes --outdir "$dl" \
+      > "$log/download_files.txt" 2>&1; rc=$?
+    rm -rf "$dl"
+  else
+    echo "UNKNOWN: no scratch directory under /var/tmp" > "$log/download_files.txt"; rc=1
+  fi
+  [ $rc -eq 0 ] && echo "OK: every remote source downloads and matches the committed file" >> "$log/download_files.txt"
+  show download_files $rc "$log/download_files.txt"
+else
+  echo "## download_files: SKIPPED (not installed)"; red+=(download_files)
 fi
 
 # The spec as rpm reads it. rpmspec -P expands every macro, comments included:

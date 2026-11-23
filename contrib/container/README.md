@@ -478,4 +478,5 @@ changes only with `revision`, and there are two ways to set it:
   '/source/PROJECT/PACKAGE?cmd=runservice'`, or a token called from a release webhook).
   Switch to it only once a release tag holds `contrib/container/`, or `extract` fails.
 
-`podman run --rm --network=none IMAGE image-check` repeats the check on a built image.
+`podman run --rm --network=none IMAGE image-check` repeats the check on a built image; run as
+a user other than root, it skips the two checks that change user, and says so.

@@ -303,6 +303,21 @@ plan "$(bev 0.3 build_success $CUR)"
 run mid-err build $P $K --timeout 20
 expect "a lookup failing mid-wait is no answer, not pending" 3 "gateway"
 
+# OBS refuses the source listing while the package's source service runs: that
+# one failure is pending, so the wait goes on; any other lookup saying it is not.
+SVC='@ERR Server returned an error: HTTP Error 400: service in progress'
+new svc-then-green; res results x86_64=succeeded; echo "$SVC" > "$FIX/source@1"; src source@2 $CUR; job jobhist $CUR
+run svc-then-green build $P $K --recheck 1 --timeout 20
+expect "a source service still running is pending, and the wait goes on to green" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa"
+[ "$(calls "api /source/")" = 2 ] && pass "  ...asking for the listing again" || fail "  $(calls "api /source/") listings"
+new svc-stuck; res results x86_64=succeeded; echo "$SVC" > "$FIX/source"
+run svc-stuck build $P $K --timeout 3
+expect "a source service still running at the timeout: exit 1, repeat the call" 1 \
+  "VERDICT: PENDING — $P/$K: the source service is still running — not settled after 3s, repeat the call"
+new svc-results; echo "$SVC" > "$FIX/results"
+run svc-results build $P $K --timeout 0
+expect "the same words from another lookup stay no answer" 3 "VERDICT: UNKNOWN — osc results --xml failed"
+
 # An arch that only waits for a worker: no wait shortens it. Reported as
 # QUEUED-STUCK (exit 4, not green) once the rest is green from the current
 # sources and neither a commit nor a finished job in that repo/arch came in
@@ -437,6 +452,10 @@ rres results $TW/x86_64=broken $TW/aarch64=broken
 rres origin $TW/x86_64=succeeded $TW/aarch64=succeeded
 run broken-link build $P $K --timeout 0
 expect "a broken link's reds are a settled failure (exit 2), not exit 3" 2 "broken: $TW/x86_64, $TW/aarch64"
+new svc-raw; src source $CUR; job jobhist $CUR; echo "$SVC" > "$FIX/rawsource"
+rres results $TW/x86_64=succeeded $TW/aarch64=blocked
+run svc-raw build $P $K --timeout 0
+expect "the unexpanded listing refused while the service runs is pending too" 1 "VERDICT: PENDING — $P/$K: the source service is still running"
 # For a Factory target the gate leaves Leap 16 out, and so does the wait.
 new target-factory; src source $CUR; job jobhist $CUR
 rres results $TW/x86_64=succeeded $TW/aarch64=succeeded 16.1/x86_64=building
