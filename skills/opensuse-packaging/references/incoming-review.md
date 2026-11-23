@@ -58,7 +58,8 @@ comment; it fetches everything again first. It refuses PASS and FIXABLE on any o
   `_aggregate`, `*.macros`, `.gitmodules` or symlink; bidi or zero-width bytes; a tarball that
   differs from its Source URL's bytes, or a changed source host; a service-made vendor or
   obscpio archive; a diff over the size cap; a preamble line that starts with a macro
-  and holds anything but host macro calls and conditionals that only define;
+  and holds anything but host macro calls and conditionals that only define, or a tag
+  line with a macro before its colon or continued by a backslash;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an
   `@`-mention of anyone but the creator, an internal tag (VERDICT, tree keys, gate names), a
   bot directive (`merge ok`, `@group : approve`), or a comment over the length cap;
