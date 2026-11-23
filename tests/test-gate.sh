@@ -1857,7 +1857,7 @@ ce no-entry-unreadable 2 "UNKNOWN: cannot list devel:example/foo" "$work/t-ce-br
 rm "$O/fail-list"
 out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --no-entry "" 2>&1)"; rc=$?
 [ "$rc" = 2 ] && pass "--no-entry needs a reason" || fail "--no-entry empty: rc=$rc"
-out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" --review "$work/rv.txt" --no-entry x 2>&1)"; rc=$?
+out="$(HOME="$work/home" bash "$GATE" "$work/t-ce-branch" "$REV" "$work/rv.txt" --no-entry x 2>&1)"; rc=$?
 [ "$rc" = 2 ] && pass "--review with --no-entry: usage" || fail "--review with --no-entry: rc=$rc"
 ce branch-entry 0 "OK: foo.changes: its top entry is new vs devel:example/foo" "$work/t-good"
 grep -qF "OK: foo.changes: its top entry is new vs openSUSE:Factory/foo" <<<"$out" \
@@ -2066,10 +2066,10 @@ mkdir -p "$work/psbin" "$work/pxbin"
   printf '#!/bin/bash\necho "$*" >> "$PS_OSC"\nexit 1\n' > "$work/pxbin/osc"; }
 chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/psbin/bwrap-bad" "$work/pxbin/osc"
 gcopy nobw "$work/no-such/bwrap"; gcopy nsbw "$work/psbin/bwrap"; gcopy badbw "$work/psbin/bwrap-bad"
-ps_() {   # ps_ <dir> [gate args]: unsandboxed, through the copy that finds no bwrap
+ps_() {   # ps_ <dir>: unsandboxed, through the copy that finds no bwrap; the one argument keeps pr-guard from asking
   rm -f "$work/ps-calls" "$work/ps-a"
   out="$(OBS=$O HOME="$work/home" PS_CALLS="$work/ps-calls" OSC_A_LOG="$work/ps-a" \
-    PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "${PSGATE:-$work/sk-nobw/gate.sh}" "$@" 2>&1)"; rc=$?
+    PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "${PSGATE:-$work/sk-nobw/gate.sh}" "$1" 2>&1)"; rc=$?
 }
 psdir() {   # psdir <case> <pkg> < spec: a checkout of <pkg> (no .osc) holding that spec
   rm -rf "$work/ps-$1"; mkdir -p "$work/ps-$1/$2"; cat > "$work/ps-$1/$2/$2.spec"
@@ -2092,9 +2092,11 @@ printf '%%define bar_x 1\n' | put openSUSE:Factory/bar bar.inc
 psbar() {   # psbar <case>: a checkout of bar holding Factory's spec and bar.inc, then each line of stdin
   { cat "$O/openSUSE:Factory/bar/bar.spec"; cat; } | psdir "$1" bar; cp "$O/openSUSE:Factory/bar/bar.inc" "$work/ps-$1/bar/"
 }
+# parse-surface's OK line goes on to say how the parse runs: through ps_, unsandboxed.
+PSOK='OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic;'
 psbar same < /dev/null
 ps_ "$work/ps-same/bar"
-grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
+grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "$PSOK the parse runs unsandboxed here (bwrap is not installed))" <<<"$out" \
   && [ -s "$work/ps-calls" ] && pass "parse-identical-to-factory: green, and the spec is parsed" \
   || { fail "parse-identical-to-factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
 [ -s "$work/ps-a" ] && ! grep -qv '^https://api.opensuse.org ' "$work/ps-a" \
@@ -2102,7 +2104,7 @@ grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "OK: no new parse-time c
   || { fail "parse-surface osc -A"; sed 's/^/    /' "$work/ps-a" 2>/dev/null; }
 sed -i 's/^%global commit 0123abcd$/%global commit 4567cdef/' "$work/ps-same/bar/bar.spec"
 ps_ "$work/ps-same/bar"
-grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
+grep -qF "$PSOK the parse runs unsandboxed here (bwrap is not installed))" <<<"$out" \
   && pass "parse-plain-value: a new commit hash in a macro Factory's shell line uses lists nothing" \
   || { fail "parse-plain-value"; printf '%s\n' "$out" | sed 's/^/    /'; }
 sed -i 's/^%global commit 4567cdef$/%global commit x;id;/' "$work/ps-same/bar/bar.spec"
@@ -2126,7 +2128,7 @@ ps_ "$work/ps-include/bar"
 advisory parse-include-target-changed 'bar.inc:1: %define bar_x %(id) — shell: new'
 psbar include-tags < /dev/null; printf 'Source1000: https://registry.example/a-1.tgz\n' > "$work/ps-include-tags/bar/bar.inc"
 ps_ "$work/ps-include-tags/bar"
-grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
+grep -qF "$PSOK the parse runs unsandboxed here (bwrap is not installed))" <<<"$out" \
   && pass "parse-include-tags-only: an included file that changed without a construct lists nothing" \
   || { fail "parse-include-tags-only"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A scan that stopped short says so and never claims the rest verbatim: an
@@ -2137,7 +2139,7 @@ printf '%%define bar_d 1\n' | tee "$work/ps-deep/bar/bar-i11.inc" | put openSUSE
 ps_ "$work/ps-deep/bar"
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "incomplete: an %include past depth 8 was not read" <<<"$out" \
   && grep -qF "note: the comparison with openSUSE:Factory/bar is incomplete" <<<"$out" \
-  && ! grep -qF "OK: no new parse-time construct found against openSUSE:Factory/bar (a text heuristic; the parse itself runs in the sandbox)" <<<"$out" \
+  && ! grep -qF "$PSOK" <<<"$out" \
   && pass "parse-incomplete: a scan stopped by a cap says so, no OK line" \
   || { fail "parse-incomplete"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm -f "$O"/openSUSE:Factory/bar/bar-i*.inc
@@ -2189,6 +2191,16 @@ grep -qF "## rpmspec: rc=1" <<<"$out" && grep -qF "RED: the sandbox does not sta
   && [ ! -s "$work/ps-calls" ] && grep -q "^VERDICT: RED — .*rpmspec.*prep" <<<"$out" \
   && pass "sandbox-broken: another bwrap failure is red and nothing parses" \
   || { fail "sandbox-broken"; printf '%s\n' "$out" | sed 's/^/    /'; }
+# parse-surface runs before the parses, and its OK line says how they run.
+psbar ok < /dev/null
+while IFS='|' read -r name says; do
+  PSGATE="$work/sk-$name/gate.sh" ps_ "$work/ps-ok/bar"
+  grep -qF "$PSOK $says" <<<"$out" && pass "sandbox-$name: the parse-surface OK line says ${says%% (*}" \
+    || { fail "sandbox-$name: the parse-surface OK line"; printf '%s\n' "$out" | grep -F -A3 '## parse-surface' | sed 's/^/    /'; }
+done <<'EOF'
+nsbw|the parse runs unsandboxed here (bwrap: No permissions to create a new namespace, likely because
+badbw|nothing parses: the sandbox does not start (bwrap: Can't create file at /x
+EOF
 # Which bwrap failures fall back, taken from bubblewrap 0.11.2's messages
 # (strings /usr/bin/bwrap): no user namespaces (EINVAL; EPERM, also in the older
 # "creating" wording), none left (ENOSPC, user.max_user_namespaces=0), or a
@@ -2266,6 +2278,14 @@ sbxrun() {   # sbxrun <name> <dir> [env...]: the real gate on the probe spec; th
 }
 sbxrun sandbox "$work/sb/sbx"
 grep -qF "note: no sandbox here" <<<"$out" || sbxok=1
+if [ -n "$sbxok" ]; then
+  PSGATE="$GATE" ps_ "$work/ps-ok/bar"
+  grep -qF "$PSOK the parse itself runs in the sandbox)" <<<"$out" && ! grep -qF "no sandbox here" <<<"$out" \
+    && pass "sandbox: the parse-surface OK line says the parse runs in the sandbox" \
+    || { fail "sandbox: the parse-surface OK line"; printf '%s\n' "$out" | grep -F -A3 '## parse-surface' | sed 's/^/    /'; }
+else
+  echo "SKIP: the parse-surface OK line in the sandbox (no bwrap sandbox starts here)"
+fi
 sbxrun "sandbox, the checkout through a symlink" "$work/sbx-link"
 # The caller's environment cannot switch the sandbox off: an empty or odd HOME, or a
 # failing bwrap first on PATH.

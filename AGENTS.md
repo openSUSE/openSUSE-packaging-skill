@@ -80,7 +80,8 @@ readable that way.
 - **Every suite must run unrefused under `pr-guard.py`**, which reads each script a command
   runs. Text a suite needs that the guard refuses — a pool PR write, merge or stamp path —
   goes in `tests/fixtures/` or is assembled at run time; `tests/test-pr-guard.sh` puts every
-  `tests/test-*.sh` through the guard.
+  `tests/test-*.sh` through the guard, and fails on an ask too unless its `asks_ok` names
+  the suite and the rule.
 
 ## Before you push
 

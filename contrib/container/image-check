@@ -132,10 +132,15 @@ record() {
 		'{tool_name: "Bash", tool_input: {command: $c}, cwd: "/work", agent_type: "changes-review"}' |
 		setpriv --reuid=65534 --regid=65534 --clear-groups python3 "$hooks/pr-guard.py" >/dev/null 2>&1
 }
-record "$skill/scripts/target-gate.sh" || fail "pr-guard does not take the image's target-gate.sh for the pinned one"
-cp "$skill/scripts/target-gate.sh" "$scratch/target-gate.sh"
-chmod 755 "$scratch" "$scratch/target-gate.sh"
-! record "$scratch/target-gate.sh" || fail "pr-guard takes a copy of target-gate.sh for the pinned one"
+# setpriv changes user only as root: as another user the second check would pass for that alone.
+if [ "$(id -u)" = 0 ]; then
+	record "$skill/scripts/target-gate.sh" || fail "pr-guard does not take the image's target-gate.sh for the pinned one"
+	cp "$skill/scripts/target-gate.sh" "$scratch/target-gate.sh"
+	chmod 755 "$scratch" "$scratch/target-gate.sh"
+	! record "$scratch/target-gate.sh" || fail "pr-guard takes a copy of target-gate.sh for the pinned one"
+else
+	echo "image-check: skipped the pinned target-gate.sh checks: they need root (the image build runs it as root)" >&2
+fi
 
 # A server on the baked config must load both guard plugins. They load in the
 # background after the first request; one that failed is listed without its id.

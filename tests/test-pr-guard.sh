@@ -2789,14 +2789,32 @@ out="$(python3 "$GUARD" --help)"; got=$?
 python3 "$GUARD" --bogus </dev/null >/dev/null 2>&1; got=$?
 [ "$got" = 2 ] && pass "unknown argument (rc=2)" || fail "unknown argument: rc=$got"
 
-echo "--- the skill's own tools, and every suite, run unrefused"
+echo "--- the skill's own tools, and every suite, run unrefused and unasked"
+asks_ok() {   # asks_ok <file>: the rules its ask may name, where the ask is intended
+  case $1 in
+    # a mutation case runs its mutant through eval, which the guard cannot read
+    test-autoforward-gate.sh|test-check-flags.sh|test-check-osc.sh|test-forward-check.sh) echo eval-dynamic ;;
+    test-incoming-requests.sh|test-preflight.sh|test-sr-status.sh) echo eval-dynamic ;;
+    # each case is a command line run through eval
+    test-cone-status.sh) echo eval-dynamic ;;
+    # each case is a command line run through eval, target-gate.sh --review among them
+    test-target-gate.sh) echo eval-dynamic review-self ;;
+  esac
+}
 for f in "$REPO"/skills/opensuse-packaging/scripts/*.sh "$REPO"/skills/opensuse-packaging/scripts/*.py "$HERE"/test-*.sh; do
   # The scripts that write stamps run only as merged, unread: read, they are refused.
   case ${f##*/} in _*|pool-pr.sh|leap-sync.sh|target-gate.sh|gate.sh|incoming-review.sh) continue;; esac
   case $f in *.py) run=python3;; *) run=bash;; esac
   out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[2],
     "tool_input": {"command": sys.argv[1]}}))' "$run $f --help" "$work/plain" | python3 "$GUARD" 2>&1)"; got=$?
-  [ "$got" = 0 ] && pass "runs unrefused: ${f##*/}" || { fail "${f##*/} is refused: $out"; }
+  asked=$(grep -oE 'ASK \[[a-z-]+\]' <<<"$out" | sed 's/^ASK \[//; s/\]$//' | sort -u | tr '\n' ' ')
+  allowed=" $(asks_ok "${f##*/}") "; bad=""
+  for r in $asked; do case $allowed in *" $r "*) ;; *) bad+="$r ";; esac; done; bad=${bad% }
+  if [ "$got" != 0 ]; then fail "${f##*/} is refused: $out"
+  elif grep -qF '"permissionDecision": "ask"' <<<"$out" && { [ -z "$asked" ] || [ -n "$bad" ]; }; then
+    fail "${f##*/} asks (${bad:-no rule named}): $out"
+  elif [ -n "${allowed// /}" ] && [ -z "$asked" ]; then fail "${f##*/} asks nothing: drop it from asks_ok"
+  else pass "runs unrefused${asked:+, asking only ${asked% }}: ${f##*/}"; fi
 done
 
 echo "--- the opencode plugins carry the same prefilter"

@@ -41,7 +41,7 @@ green either.
 
 Exit:
   0 = green on every applicable repo/arch from the current sources; request accepted
-  1 = still pending at --timeout: repeat the same call
+  1 = still pending at --timeout, a source service still running included: repeat the same call
   2 = settled failure: failed/unresolvable/broken/unknown code, or nothing to build (with --all, --repo or --arch); request declined/revoked/superseded/deleted
   3 = no answer: usage, an osc lookup failed, was empty or did not parse, or no repo/arch in scope
   4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
@@ -80,6 +80,7 @@ OSC_TIMEOUT = 30
 POLL = 30  # --recheck default without the feed
 GAP = 2  # coalesces an event burst (every arch finishing at once) into one check
 STUCK = 30 * 60  # seconds without a commit or a finished job before scheduled is stuck
+SERVICE = "the source service is still running"
 
 GREEN = {"succeeded"}
 RED = {"unresolvable", "broken"}
@@ -89,6 +90,11 @@ PENDING = {"scheduled", "building", "blocked", "finished", "signing", "dispatchi
 
 class Lookup(Exception):
     """An osc answer we could not get or read: exit 3, never a verdict."""
+
+
+class ServiceRunning(Lookup):
+    """OBS refused a source listing while its source service runs: pending
+    where a source listing is read, exit 3 like any Lookup elsewhere."""
 
 
 class FeedLost(Exception):
@@ -116,7 +122,9 @@ def osc(args):
         raise Lookup("osc: command not found")
     if r.returncode != 0:
         last = (r.stderr.strip().splitlines() or ["no error text"])[-1]
-        raise Lookup(f"osc {what} failed: {clip(last)}")
+        # the backend's own words while it runs the package's _service
+        err = ServiceRunning if "service in progress" in r.stderr else Lookup
+        raise err(f"osc {what} failed: {clip(last)}")
     return r.stdout
 
 
@@ -192,9 +200,17 @@ def out_of_scope(who):
     )
 
 
+def source(t, query=""):
+    """prj/pkg's source listing, None while OBS still runs its source service."""
+    try:
+        return parse(osc(["api", f"/source/{t.prj}/{t.pkg}{query}"]), "source listing")
+    except ServiceRunning:
+        return None
+
+
 def listing(t):
-    src = parse(osc(["api", f"/source/{t.prj}/{t.pkg}?expand=1"]), "source listing")
-    if not src.get("srcmd5"):
+    src = source(t, "?expand=1")
+    if src is not None and not src.get("srcmd5"):
         raise Lookup(f"no srcmd5 in the {t.prj}/{t.pkg} source listing")
     return src
 
@@ -233,7 +249,9 @@ def build_verdict(t, notes):
     there, upstream = {}, None
     if t.scoped and any(d or c not in GREEN | SKIP for _, _, _, c, d, _ in rows):
         # unexpanded: a broken link fails to expand, and its reds must still read red
-        raw = parse(osc(["api", f"/source/{t.prj}/{t.pkg}"]), "source listing")
+        raw = source(t)
+        if raw is None:
+            return 1, f"PENDING — {who}: {SERVICE}"
         upstream = scope.origin(raw, t.pkg)
     if upstream:
         theirs = scope.codes(
@@ -279,7 +297,10 @@ def build_verdict(t, notes):
             raise Lookup(out_of_scope(who))
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
-    t.srcmd5 = listing(t).get("srcmd5")
+    src = listing(t)
+    if src is None:
+        return 1, f"PENDING — {who}: {SERVICE}"
+    t.srcmd5 = src.get("srcmd5")
     who += f" sources {t.srcmd5[:12]}"
     older = "built from older sources"
     for res, name, label in failed:
