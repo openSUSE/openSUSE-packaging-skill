@@ -43,7 +43,8 @@
 # .gitmodules, symlink or submodule; control (a CR before LF ends a line),
 # bidi or zero-width characters in a changed text; a Source or Patch line the
 # text cannot read, a preamble line that starts with a macro and holds
-# anything but host macro calls and conditionals that only define, a URL
+# anything but host macro calls and conditionals that only define, a tag
+# line with a macro before its colon or continued by a backslash, a URL
 # with a macro the text cannot expand (a name with a define beside its tag is
 # one) or that does not parse, a Source or
 # Patch host the target's spec does not use or that is not ASCII, a Source URL
@@ -458,9 +459,10 @@ def writes(text, own, depth=0, line=False):
     text but blanks (a tag split across a conditional's brace is text on
     both sides); an expression, %{expand:, %{lua:, %{load:, a section, a
     directive or bcond, a macro with an argument or one of the spec's own; or
-    a conditional whose body does. Only a define (its value the rest of its
-    line) and a call of a host macro write none. line: text holds a whole
-    line, which ends at its first newline outside a body."""
+    a conditional whose body does. Only a define (a bare one's value the rest
+    of its line, a braced one's its braces), rpm's own %{bcond...} and a call
+    of a host macro write none. line: text holds a whole line, which ends at its first newline
+    outside a body."""
     if depth > 8:
         return True
     i = 0
@@ -473,13 +475,21 @@ def writes(text, own, depth=0, line=False):
             continue
         h = HEAD.match(text, i) if text.startswith("%", i) else None
         name = (h.group(2) or h.group(4) or "") if h else ""
-        if not h or h.group(5) or name in SECTIONS or name in ("expand", "lua", "load") or name.startswith("bcond"):
+        bcond = name in ("bcond", "bcond_with", "bcond_without") and h.group(2) and not h.group(3) and name not in own
+        if not h or h.group(5) or name in SECTIONS or name in ("expand", "lua", "load") or name.startswith("bcond") and not bcond:
             return True
-        if name in ("define", "global", "undefine"):
+        if name in ("define", "global", "undefine") and h.group(4):
             i = text.find("\n", i)
             if i < 0 or line:
                 return False
             i += 1
+            continue
+        if (name in ("define", "global", "undefine") or bcond) and h.group(2) and not h.group(1):
+            # %{define:...}, %{bcond_with x}: the argument ends at the brace, the line goes on
+            end = closing(text, text.index("{", i))
+            if end is None:
+                return True
+            i = end
             continue
         if name in DIRECTIVES or (name in own and not h.group(3)):
             return True
@@ -502,10 +512,12 @@ def spec_lines(text):
     """(tag, value, line) of each Source and Patch line, the spec's own plain
     %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
-    (one behind a macro); and those of preamble lines that start with a macro
-    and hold anything but host macro calls and conditionals that only define
-    (writes(), the whole line through any body that spans lines), where rpm
-    may read a tag this reading never sees. A name with a definition that is not plain --
+    (one behind a macro); those of preamble lines that start with a macro but
+    a bare directive and hold anything but host macro calls and conditionals
+    that only define (writes(), the whole line through any body that spans
+    lines); and those of other preamble lines, comments aside, with a % before
+    their first colon or a backslash that continues them: each where rpm may
+    read a tag this reading never sees. A name with a definition that is not plain --
     with arguments, inside %if or a conditional's body, conditional, expanded,
     undefined, two different values, or a define beside its tag -- stays
     unexpanded, and so does every name the spec does not define."""
@@ -515,17 +527,22 @@ def spec_lines(text):
         found = ANY_DEF.findall(line)
         inner.update(found[1:] if SPEC_DEF.match(line) else found)
     own = {m.group(2) for m in map(SPEC_DEF.match, lines) if m} | inner
-    defs, tags, out, untaken, made, depth, pre, cont = {}, {}, [], [], [], 0, True, False
+    defs, tags, out, untaken, made, split, depth, pre, cont = {}, {}, [], [], [], [], 0, True, False
     for n, line in enumerate(lines, 1):
         was, cont = cont, line.rstrip().endswith("\\")
         h = None if was else HEAD.match(line)
         name = h and (h.group(2) or h.group(4))
+        bare = h and h.group(4) and (name in DIRECTIVES or name.startswith("bcond"))
         if h and name in SECTIONS:
             pre = name == "package"
-        elif h and pre and not (name in DIRECTIVES or (name or "").startswith("bcond")):
+        elif h and pre and not bare:
             # the whole line, through a body that spans lines, as rpm reads it
             if writes("\n".join(lines[n - 1 : n + 99]), own, line=True):
                 made.append(n)
+        elif pre and not h and not was and line.strip()[:1] != "#":
+            # a macro in a tag's name, or a tag line that the next one continues
+            if "%" in line.split(":", 1)[0] or cont:
+                split.append(n)
         if re.match(r"\s*%if", line):
             depth += 1
         elif re.match(r"\s*%endif\b", line):
@@ -570,7 +587,7 @@ def spec_lines(text):
                 break
             v = new
         done.append((tag, v, n))
-    return done, untaken, made
+    return done, untaken, made, split
 
 
 def is_url(v):
@@ -798,11 +815,13 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     # version numbers, and the bytes of each changed file one names
     news, hosts, olds = [], set(), {}
     for n in specs(src):
-        found, untaken, made = spec_lines((src.real(n) or b"").decode("utf-8", "surrogateescape"))
+        found, untaken, made, split = spec_lines((src.real(n) or b"").decode("utf-8", "surrogateescape"))
         for ln in untaken:
             f.find("content: %s line %d: a Source or Patch tag behind a macro, which this reading cannot take" % (n, ln))
         for ln in made:
             f.find("content: %s line %d: a preamble line a macro of the spec, an expression or a conditional body writes, where rpm may read a tag this reading cannot" % (n, ln))
+        for ln in split:
+            f.find("content: %s line %d: a preamble line with a macro before its colon, or one the next line continues, where rpm may read a tag this reading cannot" % (n, ln))
         for tag, v, ln in found:
             u = is_url(v)
             if u is None:
