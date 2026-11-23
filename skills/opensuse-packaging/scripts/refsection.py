@@ -31,7 +31,7 @@ ambiguous (candidates listed on stderr) · 3 usage / no such file.
 
 Output is NOT sanitised, deliberately: these are first-party skill docs shipped
 in this repo, not fetched content. references/untrusted-content.md scopes
-`_sanitize.py` to third-party bytes — build logs, osc output, Bugzilla and
+`_sanitize.py` to third-party bytes — build logs, geectl output, Bugzilla and
 Gitea text, API dumps. Piping our own documentation through it would only
 mangle the escapes the docs quote on purpose.
 

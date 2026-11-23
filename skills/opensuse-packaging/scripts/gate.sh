@@ -1,6 +1,6 @@
 #!/bin/bash
 # The commit/SR gate chain as ONE tool call: the SR target, the tracked files
-# (osc checkouts), no copy of a skill script, the parse-time code the specs add
+# (osc checkouts and geectl working copies), no copy of a skill script, the parse-time code the specs add
 # (parse-surface), source_validator, factory-auto's
 # URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
 # (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
@@ -24,14 +24,14 @@
 #   --entries N  entries the submission adds vs the target (changes-lint and
 #                changes-patches, default 1)
 #   changes-lint also checks those entries' author against what a bare
-#   `osc vc` writes (vc-identity.sh); with no identity from osc vc it is red.
+#   `geectl changelog generate` writes (vc-identity.sh); with no identity from it it is red.
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
 #   --squash-mine  the new top entry folds the run of your own unaccepted entries
 #                under it into one, when the user asks for it (changes-guard)
 #   --target     the SR target (default: Factory's devel project, devel-of.sh; for a
 #                link into another openSUSE:/SUSE: project, that maintenance
 #                project; for a package Factory lacks, the link origin, else the
-#                checkout's own project). An osc checkout whose link origin (its
+#                checkout's own project). An osc checkout or geectl working copy whose link origin (its
 #                own project when it is no link) is not the target is red: its
 #                .changes history is not the target's (sr#1392134). A forward to
 #                openSUSE:Factory from Factory's devel project is fine.
@@ -39,7 +39,7 @@
 #                changes-patches against the target
 #   --git-base   git checkout: the target's ref for changes-patches and patch-tags
 #                (a fork PR's upstream is the pushed fork branch, which compares clean)
-#   --build-log  also run build-summary.sh on this osc build log, in any form
+#   --build-log  also run build-summary.sh on this local-build log, in any form
 #                build-summary.sh takes (verdict only). Red unless it is a build
 #                of this tree: a spec of the checkout, its source RPM of the
 #                spec's name and version, started after the last change to any
@@ -55,7 +55,7 @@
 #                user namespaces; UNKNOWN but not red without bwrap or user
 #                namespaces, when /var/tmp lacks the room, or when %prep stops
 #                on what a BuildRequires missing here would bring
-#   --rpms DIR   the built RPMs (osc getbinaries -d DIR): source-binaries.py then
+#   --rpms DIR   the built RPMs (the RPMs fetched from an OBS build): source-binaries.py then
 #                also refuses a prebuilt binary the package ships, whatever its
 #                exception line says (firmware alone may ship); without it the
 #                gate notes that the RPMs went unchecked. A static library's code
@@ -74,8 +74,8 @@
 #                full output is always saved under $TMPDIR/gate-<pkg>/)
 #   --review FILE  record the change review instead of running the gates: FILE's
 #                first non-empty line starts with PASS and names "tree <key12>",
-#                the tree the last GREEN run printed (a scmsync checkout's
-#                git rev-parse HEAD^{tree} too); needs that GREEN run
+#                the tree the last GREEN run printed (a scmsync checkout's or a
+#                geectl working copy's git rev-parse HEAD^{tree} too); needs that GREEN run
 #   --obs-build  record OBS's build of the committed tree instead (gate 1 in
 #                OBS-ONLY mode): OBS's expanded files are the stamped tree, every
 #                repo/arch/flavor succeeded from them (each log's srcmd5), and
@@ -112,25 +112,30 @@
 # target lacks (factory-auto: "No changelog"), and one Factory lacks too when
 # the target is Factory's devel project; --amend-top and --squash-mine take an
 # entry Factory lacks, --no-entry REASON none.
-# Stamp (osc checkouts): a GREEN run records the tree it judged, a sha256 over
-# the md5 and name of every file osc would commit (no _link, no _service:*), in
+# Stamp (osc checkouts and geectl working copies): a GREEN run records the tree
+# it judged, a sha256 over the md5 and name of every file the checkout would commit
+# (no _link, no _service:*), in
 # ~/.local/state/opensuse-packaging/gate/obs/<pkg>/<prj>.json; a red run deletes
 # it. A rerun of the same tree keeps its review, build and --rpms check; a tree
 # that differs only in *.changes keeps the build and the --rpms check, never
-# the review. Nothing tracked (osc mkpac before osc add) is red and stamps
-# nothing, and --review refuses it. A scmsync checkout (osc co of a package OBS
+# the review. Nothing tracked (a fresh osc checkout before osc add, or a geectl
+# working copy before geectl add) is red and stamps nothing, and --review refuses it. A scmsync checkout (osc co of a package OBS
 # syncs from git, .osc/_scm) takes no osc ci: a change goes by git PR. Its tree
-# is the files OBS lists, the ones a forward's osc sr sends, stamped only while
-# the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
+# is the files OBS lists, the ones a forward would send once geectl can file it, stamped
+# only while the checkout holds each with OBS's md5 (but _scmsync.obsinfo and
 # build.specials.obscpio, which OBS makes) and no other, its git HEAD is the
 # commit OBS synced, no assume-unchanged or skip-worktree flag hides a file,
 # and git sees nothing untracked, ignored or changed (with no .git: no
 # directory, symlink or dotfile but .osc and .git*); --review and --obs-build
-# then work as in any osc checkout.
+# then work as in any osc checkout. A geectl working copy (a git repository, no
+# .osc, its project and package in git config geectl.*) stamps the files git
+# tracks, with the working copy's md5; --review accepts a PASS line naming that
+# tree or the git tree (git rev-parse HEAD^{tree}), and --obs-build works as in
+# any osc checkout.
 # Exit: 0 = every gate green (--review, --obs-build: recorded), 1 = at least one
 #       red (VERDICT names them; --review: the verdict file is not a PASS of this
 #       tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
-#       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package),
+#       2 = usage, or DIR is not a package checkout (no *.spec, no .osc/_package, no geectl working copy),
 #       3 = --review, --obs-build: no GREEN gate run of the current tree,
 #       4 = --obs-build: still building, or built from older sources: wait
 #       (obs-wait.py), then rerun.
@@ -168,31 +173,119 @@ import time
 import xml.etree.ElementTree as ET
 
 
-def listing(d, prj, pkg):
-    # .osc/_files, else the API's expanded listing (an osc store without one)
-    path = os.path.join(d, ".osc/_files")
-    if os.path.exists(path):
+def listing_file(path):
+    """A directory listing file as {name: md5}: an XML <directory> (an osc
+    store's _files, or a listing an older gate wrote) or a geectl list-files
+    JSON payload. None when it cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    if text.lstrip().startswith("{"):
         try:
-            return ET.parse(path).getroot()
-        except (OSError, ET.ParseError):
+            payload = json.loads(text)
+        except ValueError:
             return None
-    p = subprocess.run(["osc", "api", "/source/%s/%s?expand=1" % (prj, pkg)],
-                       capture_output=True, text=True)
+        return {f.get("name"): f.get("md5") for f in payload.get("files", [])}
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return None
+    return {e.get("name"): e.get("md5") for e in root.findall("entry")}
+
+
+def geectl_json(args):
+    """A geectl JSON read: the parsed payload, or None on any failure."""
+    try:
+        p = subprocess.run(["geectl", *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if p.returncode != 0:
         return None
     try:
-        return ET.fromstring(p.stdout)
-    except ET.ParseError:
+        return json.loads(p.stdout or "{}")
+    except ValueError:
         return None
 
 
+def _raw_files(prj, pkg, rev=None, payload=None):
+    """(files, link_tag) of prj/pkg at rev: files as a {name: md5} dict, and
+    the _link element's text when the listing carries one, else None. None
+    on any failure."""
+    if payload is None:
+        cmd = ["remote", "list-files", prj, pkg]
+        if rev is not None:
+            cmd += ["--rev", str(rev)]
+        payload = geectl_json(cmd)
+    if payload is None:
+        return None
+    files = {f.get("name"): f.get("md5") for f in payload.get("files", [])}
+    tag = None
+    if "_link" in files:
+        try:
+            p = subprocess.run(["geectl", "remote", "cat", prj, pkg, "_link", "--format", "text"],
+                               capture_output=True, text=True, timeout=60)
+            text = p.stdout if p.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            text = None
+        if text is None:
+            return None
+        m = re.search(r"<link\b[^>]*>", text)
+        tag = m.group(0) if m else ""
+    return files, tag
+
+
+def remote_files(prj, pkg, rev=None, first=None):
+    """The expanded files of prj/pkg (at revision rev) as {name: md5}, or
+    None on any failure. list-files never expands a link, so a listing that
+    carries _link is resolved by hand: the _link names its target (and pin),
+    the target's listing at that revision is the expanded one, and local
+    files overlay it. A link with its own _service is the exception: its
+    service results are in neither listing."""
+    raw = _raw_files(prj, pkg, rev, payload=first)
+    if raw is None:
+        return None
+    files, tag = raw
+    depth = 0
+    while tag is not None and depth < 5:
+        depth += 1
+
+        def attr(name, _tag=tag):
+            mm = re.search(rf'\b{name}="([^"]*)"', _tag)
+            return mm.group(1) if mm else ""
+
+        tprj, tpkg, trev = attr("project"), attr("package"), attr("rev")
+        if not tprj or not tpkg:
+            return None
+        traw = _raw_files(tprj, tpkg, trev or None)
+        if traw is None:
+            return None
+        tfiles, tag = traw
+        merged = {n: m for n, m in tfiles.items() if n != "_link"}
+        merged.update({n: m for n, m in files.items() if n != "_link"})
+        files = merged
+    if tag is not None:
+        return None
+    return files
+
+
+def listing(d, prj, pkg):
+    # .osc/_files, else the expanded listing geectl reads (a geectl working
+    # copy has no .osc store at all): {name: md5}, or None
+    path = os.path.join(d, ".osc/_files")
+    if os.path.exists(path):
+        return listing_file(path)
+    return remote_files(prj, pkg)
+
+
 def link(d, prj, pkg):
-    root = listing(d, prj, pkg)
-    if root is None:
+    payload = geectl_json(["remote", "link-target", prj, pkg])
+    if payload is None:
         return 2
-    li = root.find("linkinfo")
-    if li is not None and li.get("project"):
-        print("%s/%s" % (li.get("project"), li.get("package") or pkg))
+    tgt = payload.get("target") or {}
+    if tgt.get("project"):
+        print("%s/%s" % (tgt.get("project"), tgt.get("package") or pkg))
     return 0
 
 
@@ -219,18 +312,18 @@ def scm_stray(d, prj, pkg, local, remote):
     # no directory, symlink or dotfile but .osc and .git*. "" when none,
     # else why
     def note(why):
-        return "note: no tree to stamp: %s; a change goes by git PR, and once OBS synced it, osc up and rerun" % why
+        return "note: no tree to stamp: %s; a change goes by git PR, and once OBS synced it, geectl update and rerun" % why
     if not os.path.lexists(os.path.join(d, ".git")):
         odd = sorted(n for n in os.listdir(d) if n != ".osc" and not n.startswith(".git")
                      and (n.startswith(".") or os.path.islink(os.path.join(d, n))
                           or os.path.isdir(os.path.join(d, n))))
         return note("the checkout holds a directory, symlink or dotfile OBS does not list: %s"
                     % ", ".join(odd[:4])) if odd else ""
-    p = subprocess.run(["osc", "api", "/source/%s/%s/_scmsync.obsinfo" % (prj, pkg)],
+    p = subprocess.run(["geectl", "remote", "cat", prj, pkg, "_scmsync.obsinfo", "--format", "text"],
                        capture_output=True)
     if p.returncode != 0:
         err = (p.stderr.decode("utf-8", "replace").strip().splitlines()
-               or ["osc exited %d" % p.returncode])[-1][:160]
+               or ["geectl exited %d" % p.returncode])[-1][:160]
         return "UNKNOWN: cannot read the commit OBS synced for %s/%s: %s" % (prj, pkg, err)
     if hashlib.md5(p.stdout).hexdigest() != remote.get("_scmsync.obsinfo"):
         return ("UNKNOWN: the _scmsync.obsinfo read is not the one OBS lists for %s/%s:"
@@ -279,26 +372,19 @@ def scm(d):
     except OSError:
         SCM_WHY.append("UNKNOWN: cannot read .osc/_project and .osc/_package")
         return None
-    p = subprocess.run(["osc", "api", "/source/%s/%s?expand=1" % (prj, pkg)],
-                       capture_output=True, text=True)
-    root = None
-    try:
-        root = ET.fromstring(p.stdout) if p.returncode == 0 else None
-    except ET.ParseError:
-        pass
-    if root is None:
-        err = (p.stderr.strip().splitlines() or ["the answer did not parse"])[-1][:160]
-        SCM_WHY.append("UNKNOWN: cannot read the files OBS lists for %s/%s: %s" % (prj, pkg, err))
+    remote = listing(d, prj, pkg)
+    if remote is None:
+        SCM_WHY.append("UNKNOWN: cannot read the files OBS lists for %s/%s" % (prj, pkg))
         return None
-    remote = {e.get("name"): e.get("md5") for e in root.findall("entry")
-              if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    remote = {n: m for n, m in remote.items()
+              if n != "_link" and not (n or "").startswith("_service:")}
     local = {n for n in os.listdir(d) if not n.startswith(".")
              and os.path.isfile(os.path.join(d, n)) and not os.path.islink(os.path.join(d, n))}
     odd = sorted((set(remote) - SCM_MADE) ^ local)
     odd += [n for n in sorted(local & set(remote)) if md5(os.path.join(d, n)) != remote[n]]
     if odd:
         SCM_WHY.append("note: no tree to stamp: OBS lists other files for %s/%s than this checkout"
-                       " holds (%s); a change goes by git PR, and once OBS synced it, osc up and rerun"
+                       " holds (%s); a change goes by git PR, and once OBS synced it, geectl update and rerun"
                        % (prj, pkg, ", ".join(odd[:4])))
         return None
     stray = scm_stray(d, prj, pkg, local, remote)
@@ -308,25 +394,44 @@ def scm(d):
     return remote
 
 
-def files(d):
-    # the files `osc ci` would commit, with the working copy's md5; in a
-    # scmsync checkout the ones OBS lists (scm())
-    if os.path.exists(os.path.join(d, ".osc/_scm")):
-        return scm(d)
-    path = os.path.join(d, ".osc/_files")
+def is_gitwc(d):
+    # a geectl working copy: a git repository with no .osc store
+    return (os.path.lexists(os.path.join(d, ".git"))
+            and not os.path.exists(os.path.join(d, ".osc/_files"))
+            and not os.path.exists(os.path.join(d, ".osc/_scm")))
+
+
+def gitwc(d):
+    # A geectl working copy's files: the ones git tracks, with the working
+    # copy's md5; the stamp is over the working copy as it is, as in an osc
+    # checkout. Its project and package come from git config geectl.* (the
+    # working-copy design records them there), and its git tree goes to
+    # SCM_TREE, so --review accepts a PASS line naming it, as for a scmsync
+    # checkout. OBS packages hold no subdirectories, so only top-level files
+    # count.
+    env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
     try:
-        names = {e.get("name") for e in ET.parse(path).getroot().findall("entry")}
-    except (OSError, ET.ParseError):
+        prj = subprocess.run(["git", "config", "--get", "geectl.project"], cwd=d,
+                             capture_output=True, text=True, env=env).stdout.strip()
+        pkg = subprocess.run(["git", "config", "--get", "geectl.package"], cwd=d,
+                             capture_output=True, text=True, env=env).stdout.strip()
+    except OSError:
+        prj = pkg = ""
+    if not prj or not pkg:
+        SCM_WHY.append("note: no tree to stamp: no .osc/_files and no geectl.project/geectl.package"
+                       " in git config — not a geectl working copy")
         return None
-    for extra, add in (("_to_be_added", True), ("_to_be_deleted", False)):
-        try:
-            with open(os.path.join(d, ".osc", extra), encoding="utf-8") as fh:
-                for n in fh.read().split():
-                    (names.add if add else names.discard)(n)
-        except OSError:
-            pass
+    ls = subprocess.run(["git", "ls-files"], cwd=d, capture_output=True, text=True, env=env)
+    if ls.returncode != 0:
+        SCM_WHY.append("UNKNOWN: git ls-files failed in %s" % d)
+        return None
+    tree = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD^{tree}"],
+                          cwd=d, capture_output=True, text=True, env=env)
+    if tree.returncode == 0:
+        SCM_TREE.append(tree.stdout.strip())
     out = {}
-    for n in sorted(x for x in names if x and x != "_link" and not x.startswith("_service:")):
+    for n in sorted(x for x in ls.stdout.splitlines()
+                    if x and "/" not in x and x != "_link" and not x.startswith("_service:")):
         h = hashlib.md5()
         try:
             with open(os.path.join(d, n), "rb") as fh:
@@ -336,6 +441,41 @@ def files(d):
         except OSError:
             out[n] = "-"
     return out
+
+
+def files(d):
+    # the files `osc ci` would commit, with the working copy's md5; in a
+    # scmsync checkout the ones OBS lists (scm()); in a geectl working copy
+    # the ones git tracks (gitwc())
+    if os.path.exists(os.path.join(d, ".osc/_scm")):
+        return scm(d)
+    path = os.path.join(d, ".osc/_files")
+    if os.path.exists(path):
+        try:
+            names = {e.get("name") for e in ET.parse(path).getroot().findall("entry")}
+        except (OSError, ET.ParseError):
+            return None
+        for extra, add in (("_to_be_added", True), ("_to_be_deleted", False)):
+            try:
+                with open(os.path.join(d, ".osc", extra), encoding="utf-8") as fh:
+                    for n in fh.read().split():
+                        (names.add if add else names.discard)(n)
+            except OSError:
+                pass
+        out = {}
+        for n in sorted(x for x in names if x and x != "_link" and not x.startswith("_service:")):
+            h = hashlib.md5()
+            try:
+                with open(os.path.join(d, n), "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+                out[n] = h.hexdigest()
+            except OSError:
+                out[n] = "-"
+        return out
+    if os.path.lexists(os.path.join(d, ".git")):
+        return gitwc(d)
+    return None
 
 
 def key(fm):
@@ -375,13 +515,19 @@ def tracked(d):
         print(SCM_WHY[-1])
         return 1 if SCM_WHY[-1].startswith("UNKNOWN") else 0
     if fm is None:
-        print("note: no .osc/_files, no tree to stamp")
+        print("note: no .osc/_files and no geectl working copy, no tree to stamp")
         return 0
     if not present(fm):
-        print("nothing to stamp: no tracked files (osc add the package files first)")
+        if is_gitwc(d):
+            print("nothing to stamp: no tracked files (geectl add the package files first)")
+        else:
+            print("nothing to stamp: no tracked files (osc add the package files first)")
         return 1
     if os.path.exists(os.path.join(d, ".osc/_scm")):
         print("OK: %d file(s), the ones OBS lists; a change goes by git PR, never osc ci" % len(fm))
+        return 0
+    if is_gitwc(d):
+        print("OK: %d file(s), the ones git tracks; a change goes by geectl commit" % len(fm))
         return 0
     print("OK: %d file(s) osc would commit" % len(present(fm)))
     return 0
@@ -410,7 +556,7 @@ def build_note(st):
     if b.get("kind") == "log":
         more = len(b.get("logs") or [1]) - 1
         return "build: %s%s" % (b.get("log"), " and %d more" % more if more > 0 else "")
-    return ("build: none recorded for this tree; osc sr asks for one (--build-log LOG,"
+    return ("build: none recorded for this tree; geectl request file asks for one (gate.sh's own --build-log LOG,"
             " or --obs-build once OBS built the commit)")
 
 
@@ -556,7 +702,8 @@ def review(path, d, fpath):
         # only a stamp of no content: another tree's may still match OBS's copy
         if st and isinstance(st.get("files"), dict) and not present(st["files"]):
             os.remove(path)
-        print("VERDICT: NO GATE — nothing to review: no tracked files (osc add the package files first)")
+        add = "geectl add the package files first" if is_gitwc(d) else "osc add the package files first"
+        print("VERDICT: NO GATE — nothing to review: no tracked files (%s)" % add)
         return 3
     t = key(fm) if fm is not None else ""
     st = load(path)
@@ -581,7 +728,8 @@ def review(path, d, fpath):
     elif not trees:
         bad = "the PASS line names no 'tree <key12>'"
     else:
-        # a scmsync checkout held to the commit OBS synced: its git tree is the same tree
+        # a scmsync checkout held to the commit OBS synced, or a geectl working
+        # copy: its git tree is the same tree
         gt = SCM_TREE[-1] if fm is not None and SCM_TREE else ""
         wrong = sorted({x for x in trees if not t.startswith(x) and not (gt and gt.startswith(x))})
         if wrong:
@@ -603,26 +751,44 @@ WAITING = {"scheduled", "building", "blocked", "finished", "signing", "dispatchi
 SRCMD5 = re.compile(r"Building \S+ for project '[^']*' repository '[^']*' arch '[^']*' srcmd5 '([0-9a-f]+)'")
 
 
-def osc_run(args, out=None):
+def geectl_run(args, out=None):
     # (stdout, None), or (None, what failed): a failed lookup is never a verdict
     try:
-        p = subprocess.run(["osc", *args], stdout=out or subprocess.PIPE, stderr=subprocess.PIPE,
+        p = subprocess.run(["geectl", *args], stdout=out or subprocess.PIPE, stderr=subprocess.PIPE,
                            text=True, timeout=900)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, type(e).__name__
     if p.returncode:
-        return None, (p.stderr.strip().splitlines() or ["osc exited %d" % p.returncode])[-1][:160]
+        return None, (p.stderr.strip().splitlines() or ["geectl exited %d" % p.returncode])[-1][:160]
     return ("" if out else p.stdout), None
 
 
-def xml(text):
-    try:
-        return ET.fromstring(text) if text is not None else None
-    except ET.ParseError:
-        return None
-
-
 REDS = {"failed", "unresolvable", "broken"}
+
+
+def link_bound(prj, pkg, origin):
+    """The newest commit time a linked package's expanded sources can depend
+    on: the link's own last commit, or the target's too when the link follows
+    it (no rev pin in its _link). None when it cannot be told."""
+    def log_time(p, k):
+        text, _ = geectl_run(["remote", "package-log", p, k, "--limit", "1"])
+        try:
+            entries = json.loads(text).get("entries", []) if text else []
+            return int(entries[0].get("time") or 0) if entries else 0
+        except (ValueError, TypeError, AttributeError):
+            return 0
+    link_time = log_time(prj, pkg)
+    text, _ = geectl_run(["remote", "cat", prj, pkg, "_link", "--format", "text"])
+    pin = None
+    if text:
+        m = re.search(r"<link\b[^>]*>", text)
+        if m:
+            mm = re.search(r'\brev="([^"]*)"', m.group(0))
+            pin = mm.group(1) if mm else None
+    if pin:
+        return link_time or None
+    bound = max(link_time, log_time(origin[0], origin[1]))
+    return bound or None
 
 
 def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", arches=""):
@@ -647,17 +813,39 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         print("VERDICT: NO GATE — no GREEN gate run of tree %s: run gate.sh before the commit, then --obs-build" % (t[:12] or "?"))
         return 3
     who = "%s/%s" % (prj, pkg)
-    text, err = osc_run(["api", "/source/%s/%s?expand=1" % (prj, pkg)])
-    src = xml(text)
-    srcmd5 = src.get("srcmd5") if src is not None else None
+    # the current sources: the package log's srcmd5, and whether the package
+    # is a link (its log's srcmd5 is the link's own, not the expanded one no
+    # typed leaf reports)
+    text, err = geectl_run(["remote", "package-log", prj, pkg, "--limit", "1"])
+    try:
+        log = json.loads(text) if text else None
+    except ValueError:
+        log = None
+    entries = log.get("entries", []) if isinstance(log, dict) else []
+    srcmd5 = entries[0].get("srcmd5") if entries else None
     if not srcmd5:
-        print("VERDICT: UNKNOWN — cannot read the sources of %s: %s" % (who, err or "no srcmd5 in the listing"))
+        print("VERDICT: UNKNOWN — cannot read the sources of %s: %s" % (who, err or "no srcmd5 in the package log"))
         return 1
-    origin = scope.origin(src, pkg)
+    text, err = geectl_run(["remote", "link-target", prj, pkg])
+    try:
+        target = json.loads(text) if text else None
+    except ValueError:
+        target = None
+    if target is None:
+        print("VERDICT: UNKNOWN — cannot read the link of %s: %s" % (who, err or "unparseable"))
+        return 1
+    origin = scope.origin(target, pkg)
+    linked = bool(origin)
+    if linked:
+        srcmd5 = None
     tprj = (st.get("target") or "").split("/")[0]
     leap = not (tprj == "openSUSE:Factory" or tprj.startswith("openSUSE:Factory:"))
-    remote = {e.get("name"): e.get("md5") for e in src.findall("entry")
-              if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    remote = listing(d, prj, pkg)
+    if remote is None:
+        print("VERDICT: UNKNOWN — cannot read the files OBS lists for %s" % who)
+        return 1
+    remote = {n: m for n, m in remote.items()
+              if n != "_link" and not (n or "").startswith("_service:")}
     mine = st.get("files") if isinstance(st.get("files"), dict) else {}
     if remote != mine:
         odd = sorted(n for n in set(remote) | set(mine) if remote.get(n) != mine.get(n))
@@ -682,26 +870,29 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
 
     def pending(why):
         print("VERDICT: PENDING — %s sources %s: %s; wait with obs-wait.py build %s, then rerun"
-              % (who, srcmd5[:12], why, " ".join([prj, pkg] + scoped)))
+              % (who, srcmd5[:12] if srcmd5 else "(linked)", why, " ".join([prj, pkg] + scoped)))
         return 4
 
-    text, err = osc_run(["results", "--xml", prj, pkg])
-    res = xml(text)
-    if res is None:
+    text, err = geectl_run(["build", "results", prj, "--package", pkg, "--multibuild"])
+    try:
+        res = json.loads(text) if text else None
+    except ValueError:
+        res = None
+    if not isinstance(res, dict):
         print("VERDICT: UNKNOWN — cannot read the build results of %s: %s" % (who, err or "unparseable"))
         return 1
     entries, notes = [], []
-    for r in res.findall("result"):
+    for r in res.get("results", []):
         repo, arch = r.get("repository") or "", r.get("arch") or ""
         fac = scope.factory(prj, repo)
         inside = scope.judged(prj, repo, arch, leap, extra, wide)
-        for s in r.findall("status"):
+        for s in r.get("statuses", []):
             name = s.get("package") or ""
             if name != pkg and not name.startswith(pkg + ":"):
                 continue
             label = "%s/%s%s" % (repo, arch, name[len(pkg):])
             code = s.get("code") or ""
-            state = "dirty" if r.get("dirty") == "true" else code or "no code"
+            state = "dirty" if r.get("dirty") is True else code or "no code"
             if code in SKIPPED:
                 continue
             if not inside:
@@ -711,9 +902,12 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     # the link origin's state of each judged repo/arch, read only when one is not green
     theirs = {}
     if origin and any(e[5] != "succeeded" for e in entries):
-        text, err = osc_run(["results", "--xml", origin[0], origin[1]])
-        ores = xml(text)
-        if ores is None:
+        text, err = geectl_run(["build", "results", origin[0], "--package", origin[1], "--multibuild"])
+        try:
+            ores = json.loads(text) if text else None
+        except ValueError:
+            ores = None
+        if not isinstance(ores, dict):
             return unknown("cannot read the build results of %s/%s, the link origin: %s"
                            % (origin[0], origin[1], err or "unparseable"))
         theirs = scope.codes(ores, origin[1])
@@ -751,17 +945,51 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     os.makedirs(outdir, exist_ok=True)
     # factory: a Tumbleweed build succeeded; added: a green repo only --repos brought in
     reds, older, done, others, added, factory = [], [], [], set(), set(), False
+    bound = link_bound(prj, pkg, origin) if linked else None
+    built_srcmd5 = None
     for repo, arch, name, label, fac, red_there in rows:
         logf = os.path.join(tmp, "%s-%s-%s.log" % (repo, arch, name.replace(":", "_")))
         with open(logf, "w", encoding="utf-8") as fh:
-            _, err = osc_run(["rbl", prj, name, repo, arch], out=fh)
+            _, err = geectl_run(["build", "build-log", prj, name, repo, arch, "--format", "text"], out=fh)
         if err:
             return unknown("cannot read the build log of %s: %s" % (label, err))
         with open(logf, encoding="utf-8", errors="replace") as fh:
             m = next((m for m in (SRCMD5.search(ln) for _, ln in zip(range(400), fh)) if m), None)
-        if not m or m.group(1) != srcmd5:
-            older.append("%s on %s" % (label, m.group(1)[:12] if m else "unknown sources"))
+        if not m:
+            older.append("%s on unknown sources" % label)
             continue
+        if not linked:
+            if m.group(1) != srcmd5:
+                older.append("%s on %s" % (label, m.group(1)[:12]))
+                continue
+        else:
+            # the log's srcmd5 is the expanded one: the job counts as current
+            # when it started after the newest commit the link's sources can
+            # depend on (see link_bound)
+            if bound is None:
+                return unknown("cannot tell the newest commit the link's sources depend on")
+            jtext, jerr = geectl_run(["build", "job-history", prj, repo, arch, "--package", name, "--limit", "1"])
+            try:
+                jentries = json.loads(jtext).get("entries", []) if jtext else []
+            except ValueError:
+                jentries = []
+            job = jentries[0] if jentries else None
+            if jerr or job is None:
+                return unknown("cannot read the build job of %s: %s" % (label, jerr or "no job recorded"))
+            if (job.get("srcmd5") or "") != m.group(1):
+                older.append("%s on %s" % (label, m.group(1)[:12]))
+                continue
+            try:
+                started = int(job.get("starttime") or 0)
+            except (TypeError, ValueError):
+                started = 0
+            if not started:
+                return unknown("the build job of %s has no start time" % label)
+            if started <= bound:
+                older.append("%s on older sources" % label)
+                continue
+        if built_srcmd5 is None:
+            built_srcmd5 = m.group(1)
         if red_there:
             pre.append("%s failed" % label)
             continue
@@ -801,7 +1029,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         return 1
     if rpms:
         cur["rpms"] = {"dir": rpms, "time": now()}
-    cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5, "builds": done,
+    cur["build"] = {"verdict": "GREEN", "kind": "obs", "srcmd5": srcmd5 or built_srcmd5, "builds": done,
                     "repos": sorted(judged), "factory": factory, "others": sorted(others),
                     "added": sorted(added), "preexisting": pre, "time": now()}
     save(path, cur)
@@ -809,7 +1037,7 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""
     pe = "; PRE-EXISTING: %s" % ", ".join(pre) if pre else ""
     print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s%s (summaries: %s)"
-          % (t[:12], srcmd5[:12], shown, rp, pe, outdir))
+          % (t[:12], (srcmd5 or built_srcmd5 or "?")[:12], shown, rp, pe, outdir))
     return 0
 
 
@@ -875,9 +1103,8 @@ def untouched(against):
             return (subprocess.run(["git", "cat-file", "-e", "%s:./%s" % (ref, f)], capture_output=True).returncode == 0
                     and subprocess.run(["git", "diff", "--quiet", ref, "--", f], capture_output=True).returncode == 0)
         return same_git
-    try:
-        md5 = {e.get("name"): e.get("md5") for e in ET.parse(against).getroot().findall("entry")}
-    except (OSError, ET.ParseError):
+    md5 = listing_file(against)
+    if md5 is None:
         return lambda f: False
 
     def same(f):
@@ -1477,14 +1704,13 @@ def changed(against):
                            capture_output=True, text=True)
         return sorted(p.stdout.splitlines()) if p.returncode == 0 else None
     work = files(".")
-    try:
-        root = ET.parse(against).getroot()
-    except (OSError, ET.ParseError):
-        return None
     if work is None:
         return None
-    base = {e.get("name"): e.get("md5") for e in root.findall("entry")
-            if e.get("name") != "_link" and not (e.get("name") or "").startswith("_service:")}
+    base = listing_file(against)
+    if base is None:
+        return None
+    base = {n: m for n, m in base.items()
+            if n != "_link" and not (n or "").startswith("_service:")}
     return sorted(n for n in set(work) | set(base) if work.get(n) != base.get(n))
 
 
@@ -1602,11 +1828,49 @@ def comments(spec, basespec=""):
         i = j
     return bad
 
+def listfiles(prj, pkg, out):
+    # The expanded files of prj/pkg as a list-files JSON payload, for the
+    # shell: 0 written, 1 the package is absent, 2 any other failure.
+    try:
+        p = subprocess.run(["geectl", "remote", "list-files", prj, pkg],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return 2
+    if p.returncode != 0:
+        sys.stderr.write(p.stderr)
+        return 1 if "not_found" in p.stderr else 2
+    try:
+        payload = json.loads(p.stdout or "{}")
+    except ValueError:
+        return 2
+    files = remote_files(prj, pkg, first=payload)
+    if files is None:
+        return 2
+    payload = {"project": prj, "package": pkg,
+               "files": [{"name": n, "md5": m} for n, m in sorted(files.items())]}
+    try:
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=1, sort_keys=True)
+            fh.write("\n")
+    except OSError:
+        return 2
+    return 0
+
+
+def hasfile(path, name):
+    # 0 when the listing file names the file, 1 when it does not or cannot be read
+    files = listing_file(path)
+    if files is None:
+        return 1
+    return 0 if name in files else 1
+
+
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {"link": link, "tracked": tracked, "stamp": stamp, "review": review, "obsbuild": obsbuild,
       "buildlogs": buildlogs, "copyright": copyright, "tags": tags,
       "parse": parse, "cleaned": cleaned, "prepkey": prepkey, "hostonly": hostonly, "excerpt": excerpt,
-      "need": need, "entry": entry, "comments": comments}[cmd]
+      "need": need, "entry": entry, "comments": comments,
+      "listfiles": listfiles, "hasfile": hasfile}[cmd]
 sys.exit(fn(*args))
 PYEOF
 py() { python3 -I -X pycache_prefix="$PYTHONPYCACHEPREFIX" -c "$PY" "$@"; }
@@ -1646,25 +1910,33 @@ cd -P -- "$dir" || exit 2
 # Anywhere else source_validator reports rc=0 over nothing: a green piece of a
 # verdict about no package.
 specs=( *.spec )
-if [ ! -e "${specs[0]}" ] && [ ! -r .osc/_package ]; then
+if [ ! -e "${specs[0]}" ] && [ ! -r .osc/_package ] && [ -z "$(git config --get geectl.package 2>/dev/null || true)" ]; then
   if [ -r .osc/_project ]; then echo "gate.sh: $(pwd): osc project checkout — cd into the package directory" >&2
-  else echo "gate.sh: $(pwd): no *.spec and no .osc/_package — not a package checkout" >&2; fi
+  else echo "gate.sh: $(pwd): no *.spec, no .osc/_package and no geectl working copy — not a package checkout" >&2; fi
   exit 2
 fi
 pkg=$(basename "$(pwd -P)"); [ -r .osc/_package ] && pkg=$(tr -d '\n' < .osc/_package)
+[ -r .osc/_package ] || { gpkg=$(git config --get geectl.package 2>/dev/null || true); [ -z "$gpkg" ] || pkg=$gpkg; }
 # An osc checkout: its own project, and the stamp. A scmsync one (osc co of a
 # package OBS syncs from git) keys its tree on the files OBS lists, and takes no
-# osc ci: a change goes by git PR, and the stamp is for the forward.
-own=""; scm=""; [ -r .osc/_project ] && [ -r .osc/_package ] && own=$(tr -d '\n' < .osc/_project)
+# osc ci: a change goes by git PR, and the stamp is for the forward. A geectl
+# working copy (a git repository, no .osc) names its project and package in git
+# config geectl.*, and stamps the files git tracks, keyed on the git tree.
+own=""; scm=""; gitwc=""
+[ -r .osc/_project ] && [ -r .osc/_package ] && own=$(tr -d '\n' < .osc/_project)
 [ -z "$own" ] || [ ! -e .osc/_scm ] || scm=1
+if [ -z "$own" ]; then
+  own=$(git config --get geectl.project 2>/dev/null || true)
+  [ -z "$own" ] || gitwc=1
+fi
 stampf=""; [ -n "$own" ] && [[ $own != */* && $pkg != */* && $pkg != .* ]] \
   && stampf="$HOME/.local/state/opensuse-packaging/gate/obs/$pkg/$own.json"
 if [ -n "$review" ]; then
-  [ -n "$stampf" ] || { echo "gate.sh: --review needs an osc package checkout (.osc/_project and .osc/_package)" >&2; exit 2; }
+  [ -n "$stampf" ] || { echo "gate.sh: --review needs a package checkout (.osc/_project and .osc/_package, or a geectl working copy)" >&2; exit 2; }
   py review "$stampf" . "$review"; exit $?
 fi
 if [ "$obsbuild" = 1 ]; then
-  [ -n "$stampf" ] || { echo "gate.sh: --obs-build needs an osc package checkout (.osc/_project and .osc/_package)" >&2; exit 2; }
+  [ -n "$stampf" ] || { echo "gate.sh: --obs-build needs a package checkout (.osc/_project and .osc/_package, or a geectl working copy)" >&2; exit 2; }
   # the logs go under /var/tmp, not the /tmp tmpfs; the summaries stay with the gate's output
   dl=$(mktemp -d -p /var/tmp "gate-obs-$pkg.XXXXXX") || { echo "VERDICT: UNKNOWN — no scratch directory under /var/tmp"; exit 1; }
   sums="${TMPDIR:-/tmp}/gate-$pkg/obs-build"; rm -rf "$sums"
@@ -1691,14 +1963,14 @@ show() {   # $1 name, $2 rc, $3 output file
 # The SR target, and whether this checkout's history is the target's. A branch
 # of a stale copy in another project, submitted to Factory's devel project,
 # deletes the devel entries the copy never had (sr#1392134: hardware's 0.9.5
-# copy filed to devel:languages:python at 0.9.8). Only for osc checkouts; a git
-# checkout names its target with --git-base.
+# copy filed to devel:languages:python at 0.9.8). Only for osc and geectl
+# checkouts; a git checkout names its target with --git-base.
 tgt=""; tprj=""; tpkg=""
 if [ -n "$own" ]; then
   : > "$log/target.txt"; rc=0
   origin=$(py link . "$own" "$pkg" 2> "$log/link.err"); lrc=$?
   if [ $lrc -ne 0 ]; then
-    echo "UNKNOWN: cannot read the checkout's link: osc api /source/$own/$pkg failed" >> "$log/target.txt"; rc=1
+    echo "UNKNOWN: cannot read the checkout's link: geectl remote link-target $own $pkg failed" >> "$log/target.txt"; rc=1
   fi
   oprj=${origin%%/*}; base=${oprj:-$own}; bpkg=$pkg; [ -z "$origin" ] || bpkg=${origin#*/}
   devel=""; drc=-1
@@ -1721,6 +1993,8 @@ if [ -n "$own" ]; then
     tprj=${tgt%%/*}; tpkg=$pkg; [[ $tgt == */* ]] && tpkg=${tgt#*/}
     if [ "$tprj" = "$own" ] && [ -n "$scm" ]; then
       echo "OK: $own is the target, by git PR (a scmsync package takes no osc ci)" >> "$log/target.txt"
+    elif [ "$tprj" = "$own" ] && [ -n "$gitwc" ]; then
+      echo "OK: $own is the target, by geectl commit" >> "$log/target.txt"
     elif [ "$tprj" = "$own" ]; then
       echo "OK: a direct commit to $own, the target" >> "$log/target.txt"
     elif [ "$tprj" = "$base" ]; then
@@ -1736,13 +2010,13 @@ if [ -n "$own" ]; then
         3|4) echo "note: $pkg has no devel project in openSUSE:Factory; the checkout is based on $base" >> "$log/target.txt" ;;
         *) echo "UNKNOWN: Factory's devel project for $pkg could not be read (devel-of.sh exit $drc)" >> "$log/target.txt"; rc=1 ;;
       esac
-    elif timeout 60 osc api "/source/$tprj/$tpkg/_meta" > /dev/null 2> "$log/target-meta.err"; then
-      echo "RED: the checkout is based on $base/$bpkg, the SR goes to $tprj/$tpkg: its .changes history is not the target's — branch the target (osc branch $tprj $tpkg), or pass --target $base if $base really is where this goes" >> "$log/target.txt"; rc=1
-    elif grep -q 'HTTP Error 404' "$log/target-meta.err"; then
+    elif timeout 60 geectl remote package-meta "$tprj" "$tpkg" > /dev/null 2> "$log/target-meta.err"; then
+      echo "RED: the checkout is based on $base/$bpkg, the SR goes to $tprj/$tpkg: its .changes history is not the target's — branch the target (geectl branch branch-package --project $tprj --package $tpkg --live), or pass --target $base if $base really is where this goes" >> "$log/target.txt"; rc=1
+    elif grep -q 'not_found' "$log/target-meta.err"; then
       # a misspelt project would pass as a new package against the committed copy
-      if timeout 60 osc api "/source/$tprj/_meta" > /dev/null 2> "$log/target-meta.err"; then
+      if timeout 60 geectl remote project-meta "$tprj" > /dev/null 2> "$log/target-meta.err"; then
         echo "note: $tprj/$tpkg does not exist: a new package there" >> "$log/target.txt"
-      elif grep -q 'HTTP Error 404' "$log/target-meta.err"; then
+      elif grep -q 'not_found' "$log/target-meta.err"; then
         echo "RED: the target project $tprj does not exist — check --target" >> "$log/target.txt"; rc=1
       else
         echo "UNKNOWN: cannot read $tprj/_meta: $(head -n 1 "$log/target-meta.err")" >> "$log/target.txt"; rc=1
@@ -1827,9 +2101,8 @@ else sbxsay="the parse itself runs in the sandbox"; fi
 # (_parse_scan.py), read as text, for the review. Information only, never red: a
 # text scan cannot see everything rpm runs, which is why the parses below run in
 # a sandbox where the host has one. Only a tree with a construct needs Factory's
-# copy, read from openSUSE's OBS whatever apiurl the checkout names.
+# copy, read from openSUSE's OBS through geectl's default instance.
 : > "$log/parse-surface.txt"; pf=openSUSE:Factory/$pkg; pb="$log/parse-base"; nocmp=""
-obs=(osc -A https://api.opensuse.org)
 need=$(timeout 60 python3 -I "$HERE/_parse_scan.py" needs . 2> "$log/parse-needs.err"); nrc=$?
 short=$(grep '^incomplete: ' <<< "$need"); need=$(grep -v '^incomplete: ' <<< "$need")
 if [ $nrc -ne 0 ] && [ $nrc -ne 4 ]; then
@@ -1841,25 +2114,26 @@ elif [ -z "$need" ]; then
   echo "OK: no spec holds a parse-time construct the text scan can see" >> "$log/parse-surface.txt"
 else
   mkdir -p "$pb"
-  if timeout 60 "${obs[@]}" api "/source/$pf?expand=1" > "$log/parse-factory.xml" 2> "$log/parse-factory.err"; then
+  py listfiles openSUSE:Factory "$pkg" "$log/parse-factory.json" 2> "$log/parse-factory.err"; lrc=$?
+  if [ $lrc -eq 0 ]; then
     while IFS= read -r f; do
-      grep -qF "name=\"$f\"" "$log/parse-factory.xml" || continue   # Factory lacks it
-      if ! timeout 60 "${obs[@]}" cat openSUSE:Factory "$pkg" "$f" > "$pb/$f" 2> "$log/parse-factory.err"; then
+      py hasfile "$log/parse-factory.json" "$f" || continue   # Factory lacks it
+      if ! timeout 60 geectl remote cat openSUSE:Factory "$pkg" "$f" --format text > "$pb/$f" 2> "$log/parse-factory.err"; then
         rm -f "$pb/$f"
-        grep -q 'HTTP Error 404' "$log/parse-factory.err" || nocmp="cannot read its $f: $(head -n 1 "$log/parse-factory.err")"
+        grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$log/parse-factory.err" || nocmp="cannot read its $f: $(head -n 1 "$log/parse-factory.err")"
       fi
     done <<< "$need"
-  elif grep -q 'HTTP Error 404' "$log/parse-factory.err"; then
-    rm -f "$log/parse-factory.xml"
+  elif [ $lrc -eq 1 ]; then
+    rm -f "$log/parse-factory.json"
     echo "note: $pf does not exist: every construct counts as new" >> "$log/parse-surface.txt"
   else
     nocmp="cannot list it: $(head -n 1 "$log/parse-factory.err")"
   fi
   if [ -z "$nocmp" ]; then
-    timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.xml" > "$log/parse-added.txt" 2>&1; src=$?
+    timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.json" > "$log/parse-added.txt" 2>&1; src=$?
     n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
     case $src in
-      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; $sbxsay)" ;;
+      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; the parse itself runs in the sandbox)" ;;
       1|4) cat "$log/parse-added.txt"
          [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
          ! grep -q '^incomplete: ' "$log/parse-added.txt" \
@@ -2040,7 +2314,7 @@ if [ -e "${changes[0]}" ]; then
   if me=$("$HERE/vc-identity.sh" 2> "$log/vc-identity.txt"); then lint+=(--author "$me"); else me=""; fi
   "$HERE/changes-lint.sh" "${lint[@]}" "${changes[@]}" > "$log/changes-lint.txt" 2>&1; rc=$?
   if [ -z "$me" ]; then
-    { cat "$log/vc-identity.txt"; echo "author not checked: no identity from osc vc to compare against"; } \
+    { cat "$log/vc-identity.txt"; echo "author not checked: no identity from geectl changelog generate to compare against"; } \
       >> "$log/changes-lint.txt"
     [ $rc != 0 ] || rc=1
   fi
@@ -2051,14 +2325,14 @@ if [ -e "${changes[0]}" ]; then
     # commits its base, so its own copy is no evidence of what the target has.
     mkdir -p "$log/target-base"; : > "$log/changes-guard.txt"; rc=0
     for ch in "${changes[@]}"; do
-      if timeout 60 osc cat "$tprj" "$tpkg" "$ch" > "$log/target-base/$ch" 2> "$log/target-base/$ch.err"; then
+      if timeout 60 geectl remote cat "$tprj" "$tpkg" "$ch" --format text > "$log/target-base/$ch" 2> "$log/target-base/$ch.err"; then
         echo "### $ch vs $tprj/$tpkg" >> "$log/changes-guard.txt"
         "$HERE/changes-guard.sh" "${guard[@]}" --base "$log/target-base/$ch" "$ch" >> "$log/changes-guard.txt" 2>&1 || rc=1
-      elif grep -q 'HTTP Error 404' "$log/target-base/$ch.err"; then
+      elif grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$log/target-base/$ch.err"; then
         echo "### $ch: not in $tprj/$tpkg, vs the committed copy" >> "$log/changes-guard.txt"
         "$HERE/changes-guard.sh" "${guard[@]}" "$ch" >> "$log/changes-guard.txt" 2>&1 || rc=1
       else
-        echo "UNKNOWN: osc cat $tprj $tpkg $ch failed: $(head -n 1 "$log/target-base/$ch.err")" >> "$log/changes-guard.txt"; rc=1
+        echo "UNKNOWN: geectl remote cat $tprj $tpkg $ch failed: $(head -n 1 "$log/target-base/$ch.err")" >> "$log/changes-guard.txt"; rc=1
       fi
     done
   else
@@ -2124,11 +2398,13 @@ for s in "${specs[@]}"; do
   [ "$n" -le 1 ] || { echo "$s: $n '# spec file for package' headers — keep one" >> "$log/spec-header.txt"; rc=1; }
   b="$log/base.$s"; rm -f "$b"; from=""
   if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
-    if timeout 60 osc cat "$tprj" "$tpkg" "$s" > "$b" 2> "$b.err"; then from="$tprj/$tpkg"
-    elif grep -q 'HTTP Error 404' "$b.err"; then rm -f "$b"
-    else echo "UNKNOWN: osc cat $tprj $tpkg $s failed: $(head -n 1 "$b.err")" >> "$log/spec-header.txt"; rc=1; rm -f "$b"; fi
+    if timeout 60 geectl remote cat "$tprj" "$tpkg" "$s" --format text > "$b" 2> "$b.err"; then from="$tprj/$tpkg"
+    elif grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$b.err"; then rm -f "$b"
+    else echo "UNKNOWN: geectl remote cat $tprj $tpkg $s failed: $(head -n 1 "$b.err")" >> "$log/spec-header.txt"; rc=1; rm -f "$b"; fi
   elif [ -r ".osc/sources/$s" ]; then cp ".osc/sources/$s" "$b"; from="the committed copy"
   elif [ -r ".osc/$s" ]; then cp ".osc/$s" "$b"; from="the committed copy"
+  elif [ -n "$gitwc" ] && root=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n 1) && [ -n "$root" ] \
+       && git show "$root:./$s" > "$b" 2>/dev/null; then from="the committed copy"
   elif ref=${gitbase:-$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)} && [ -n "$ref" ] \
        && git show "$ref:./$s" > "$b" 2>/dev/null; then from=$ref
   else rm -f "$b"; fi
@@ -2163,16 +2439,19 @@ show spec-comments $rc "$log/spec-comments.txt"
 # package, a failed lookup) every patch counts as changed.
 : > "$log/patch-tags.txt"; rc=0; against=strict
 if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
-  if timeout 60 osc api "/source/$tprj/$tpkg?expand=1" > "$log/target-files.xml" 2> "$log/target-files.err"; then
-    against="$log/target-files.xml"
-  elif ! grep -q 'HTTP Error 404' "$log/target-files.err"; then
+  py listfiles "$tprj" "$tpkg" "$log/target-files.json" 2> "$log/target-files.err"; lrc=$?
+  if [ $lrc -eq 0 ]; then
+    against="$log/target-files.json"
+  elif [ $lrc -ne 1 ]; then
     echo "note: cannot list $tprj/$tpkg ($(head -n 1 "$log/target-files.err")): every patch counts as changed" >> "$log/patch-tags.txt"
   fi
+elif { [ -z "$own" ] || [ -n "$scm" ] || [ -n "$gitwc" ]; } && [ -n "$gitbase" ]; then
+  against="git:$gitbase"                   # named by the caller: always the base
 elif [ -n "$own" ] && [ "$tprj" = "$own" ] && [ -r .osc/_files ]; then
   against=.osc/_files                      # a direct commit: against the committed copy
-elif { [ -z "$own" ] || [ -n "$scm" ]; } && [ -n "$gitbase" ]; then
-  against="git:$gitbase"                   # named by the caller: always the base
-elif { [ -z "$own" ] || [ -n "$scm" ]; } && ref=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$ref" ]; then
+elif [ -n "$gitwc" ] && [ "$tprj" = "$own" ] && root=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n 1) && [ -n "$root" ]; then
+  against="git:$root"                      # a geectl working copy: against the base revision
+elif { [ -z "$own" ] || [ -n "$scm" ] || [ -n "$gitwc" ]; } && ref=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$ref" ]; then
   # a pushed fork or topic branch holds the change itself: it says nothing
   # about the target. The remote's default branch does (uncommitted edits).
   remote=$(git for-each-ref --format='%(upstream:remotename)' "$(git symbolic-ref -q HEAD)" 2>/dev/null)
@@ -2206,14 +2485,14 @@ if [ -e "${changes[0]}" ]; then
   rm -rf "$tbase" "$fbase"; mkdir -p "$tbase" "$fbase"
   if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
     tlabel="$tprj/$tpkg"
-    if [ "$against" = "$log/target-files.xml" ]; then
+    if [ "$against" = "$log/target-files.json" ]; then
       tlist=$against
       for ch in "${changes[@]}"; do   # changes-guard fetched them
         if [ -s "$log/target-base/$ch" ]; then cp "$log/target-base/$ch" "$tbase/"
-        elif ! grep -q 'HTTP Error 404' "$log/target-base/$ch.err" 2>/dev/null; then
+        elif ! grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$log/target-base/$ch.err" 2>/dev/null; then
           echo "UNKNOWN: no copy of $ch from $tlabel" >> "$log/changes-entry.txt"; rc=2; fi
       done
-    elif grep -q 'HTTP Error 404' "$log/target-files.err" 2>/dev/null; then
+    elif grep -q 'not_found' "$log/target-files.err" 2>/dev/null; then
       echo "note: $tlabel does not exist: a new package there, no entry to compare" >> "$log/changes-entry.txt"
     else
       echo "UNKNOWN: cannot list $tlabel" >> "$log/changes-entry.txt"; rc=2
@@ -2223,7 +2502,7 @@ if [ -e "${changes[0]}" ]; then
     for ch in "${changes[@]}"; do
       if [ -r ".osc/sources/$ch" ]; then cp ".osc/sources/$ch" "$tbase/"; elif [ -r ".osc/$ch" ]; then cp ".osc/$ch" "$tbase/"; fi
     done
-  elif { [ -z "$own" ] || [ -n "$scm" ]; } && [ "${against#git:}" != "$against" ]; then
+  elif { [ -z "$own" ] || [ -n "$scm" ] || [ -n "$gitwc" ]; } && [ "${against#git:}" != "$against" ]; then
     tlabel=${against#git:}; tlist=$against
     for ch in "${changes[@]}"; do git show "$tlabel:./$ch" > "$tbase/$ch" 2>/dev/null || rm -f "$tbase/$ch"; done
   else
@@ -2234,14 +2513,15 @@ if [ -e "${changes[0]}" ]; then
     [ $drc -ge 0 ] || devel_of
     [ $drc -eq 0 ] && [ "${devel%%/*}" = "$tprj" ] && fbound=1
     if [ $fbound = 1 ] || [ -n "$amend$squash" ]; then
-      if timeout 60 osc api "/source/$fac?expand=1" > "$log/factory-files.xml" 2> "$log/factory-files.err"; then
+      py listfiles openSUSE:Factory "$pkg" "$log/factory-files.json" 2> "$log/factory-files.err"; lrc=$?
+      if [ $lrc -eq 0 ]; then
         fseen=1
         for ch in "${changes[@]}"; do
-          if timeout 60 osc cat openSUSE:Factory "$pkg" "$ch" > "$fbase/$ch" 2> "$log/factory-cat.err"; then :
-          elif grep -q 'HTTP Error 404' "$log/factory-cat.err"; then rm -f "$fbase/$ch"
-          else echo "UNKNOWN: osc cat openSUSE:Factory $pkg $ch failed: $(head -n 1 "$log/factory-cat.err")" >> "$log/changes-entry.txt"; rc=2; fi
+          if timeout 60 geectl remote cat openSUSE:Factory "$pkg" "$ch" --format text > "$fbase/$ch" 2> "$log/factory-cat.err"; then :
+          elif grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$log/factory-cat.err"; then rm -f "$fbase/$ch"
+          else echo "UNKNOWN: geectl remote cat openSUSE:Factory $pkg $ch failed: $(head -n 1 "$log/factory-cat.err")" >> "$log/changes-entry.txt"; rc=2; fi
         done
-      elif grep -q 'HTTP Error 404' "$log/factory-files.err"; then
+      elif [ $lrc -eq 1 ]; then
         fseen=2; fbound=0   # not in Factory: every entry is new there
       else
         echo "UNKNOWN: cannot list $fac: $(head -n 1 "$log/factory-files.err")" >> "$log/changes-entry.txt"; rc=2
@@ -2256,7 +2536,7 @@ if [ -e "${changes[0]}" ]; then
     [ $erc -eq 0 ] || rc=$erc
   fi
   if [ $rc -eq 0 ] && [ $fbound = 1 ] && [ $fseen = 1 ]; then
-    py entry "$fac" "$log/factory-files.xml" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
+    py entry "$fac" "$log/factory-files.json" "$fac" "$fbase" "${changes[@]}" >> "$log/changes-entry.txt"; erc=$?
     [ $erc -eq 0 ] || rc=$erc
   fi
   # rc 1: an entry is missing, which --no-entry may waive but for Factory; 2: a lookup failed, which it never does
@@ -2276,7 +2556,7 @@ fi
 # its shipped pty helper a bootstrap).
 sb_args=(.); [ -z "$rpms" ] || sb_args+=(--rpms "$rpms")
 "$HERE/source-binaries.py" "${sb_args[@]}" > "$log/source-binaries.txt" 2>&1; rc=$?
-[ -n "$rpms" ] || echo "note: no --rpms DIR: the built RPMs were not checked for a prebuilt binary they ship (the build root's RPMS, or osc getbinaries -d DIR, then --obs-build --rpms DIR)" >> "$log/source-binaries.txt"
+[ -n "$rpms" ] || echo "note: no --rpms DIR: the built RPMs were not checked for a prebuilt binary they ship (the build root's RPMS, or the RPMs fetched from an OBS build, then --obs-build --rpms DIR)" >> "$log/source-binaries.txt"
 show source-binaries $rc "$log/source-binaries.txt"
 # a bootstrap's static library whose code ships: the review's to settle, so on the verdict line
 emb=$(grep -c '^EMBEDS?' "$log/source-binaries.txt"); review=""
@@ -2289,6 +2569,7 @@ if [ ${#red[@]} -eq 0 ]; then
     if t=$(GATE_NO_ENTRY=$ne py stamp "$stampf" . "$own" "$pkg" "${tprj:+$tprj/$tpkg}" "$rpms" "${blogs[@]}"); then
       echo "${t#*$'\n'}"; t=" for tree ${t:0:12}"
     elif [ -n "$scm" ]; then t=" (no tree stamped: the checkout does not hold the files OBS lists, see tracked)"
+    elif [ -n "$gitwc" ]; then t=" (no tree stamped: no tracked files in the working copy, see tracked)"
     else t=" (no tree stamped: no .osc/_files)"; fi
   fi
   [ -z "$ne" ] || t+=", no new .changes entry: $ne"

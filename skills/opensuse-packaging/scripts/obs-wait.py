@@ -7,23 +7,27 @@ build    PKG and its multibuild flavors on the repos/arches gate.sh
          aarch64; --repos/--arches REGEX widen it, --all takes every one,
          --repo/--arch name exactly what to wait on), judged only on a build of
          the CURRENT expanded sources: a result of an older srcmd5 reads
-         pending, never green or failed. In that default scope a repo/arch the
+         pending, never green or failed. A linked package has no typed leaf
+         for its expanded srcmd5, so a job of one counts as current when it
+         started after the last commit of the link (and of its target, when
+         the link follows it); when that cannot be told, the verdict is no
+         answer, never green. In that default scope a repo/arch the
          link origin disables is not waited on (one it excludes is: the change
          may edit ExclusiveArch), and --target openSUSE:Factory leaves Leap 16
          out, as gate.sh does for a Factory target
 request  request ID, by its request number
 
 It opens OBS's public event stream first (server-sent events from
-rabbit.opensuse.org, anonymous and read-only) and asks osc second, so nothing
-lands in between. An event only wakes it to ask osc again: osc gives every
-verdict. It also asks osc every --recheck seconds (default 300; 30 when
+rabbit.opensuse.org, anonymous and read-only) and asks geectl second, so nothing
+lands in between. An event only wakes it to ask geectl again: geectl gives every
+verdict. It also asks geectl every --recheck seconds (default 300; 30 when
 polling), after every reconnect and once more at --timeout (default 80), since
 unresolvable, broken, excluded and disabled send no event and a dropped stream
 replays nothing. With the stream unreachable or dropping repeatedly it polls
-osc and says so on stderr; a stalled stream never holds it past --timeout.
-A call takes about --timeout plus that last osc check; --timeout 0 asks osc
-once. Prints one VERDICT line. Read-only; osc authenticates itself, no
-credential file is read.
+geectl and says so on stderr; a stalled stream never holds it past --timeout.
+A call takes about --timeout plus that last geectl check; --timeout 0 asks geectl
+once. Prints one VERDICT line. Read-only; geectl authenticates from its
+configured credentials, no credential file is read.
 
 A build whose only unfinished repos/arches are "scheduled", with the rest
 green from the current sources, is QUEUED-STUCK once 30 minutes have passed
@@ -43,7 +47,7 @@ Exit:
   0 = green on every applicable repo/arch from the current sources; request accepted
   1 = still pending at --timeout, a source service still running included: repeat the same call
   2 = settled failure: failed/unresolvable/broken/unknown code, or nothing to build (with --all, --repo or --arch); request declined/revoked/superseded/deleted
-  3 = no answer: usage, an osc lookup failed, was empty or did not parse, or no repo/arch in scope
+  3 = no answer: usage, a geectl lookup failed, was empty or did not parse, or no repo/arch in scope
   4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
   5 = BLOCKED-UPSTREAM: only blocked arches left, blocked in the link origin too, the rest green; not green, check back later
 """
@@ -58,7 +62,6 @@ import sys
 import threading
 import time
 import urllib.request
-import xml.etree.ElementTree as ET
 
 sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -76,7 +79,7 @@ BUILD_TOPICS = {
     "opensuse.obs.package.build_unchanged",
     "opensuse.obs.repo.build_finished",
 }
-OSC_TIMEOUT = 30
+GEectl_TIMEOUT = 30
 POLL = 30  # --recheck default without the feed
 GAP = 2  # coalesces an event burst (every arch finishing at once) into one check
 STUCK = 30 * 60  # seconds without a commit or a finished job before scheduled is stuck
@@ -89,7 +92,7 @@ PENDING = {"scheduled", "building", "blocked", "finished", "signing", "dispatchi
 
 
 class Lookup(Exception):
-    """An osc answer we could not get or read: exit 3, never a verdict."""
+    """A geectl answer we could not get or read: exit 3, never a verdict."""
 
 
 class ServiceRunning(Lookup):
@@ -110,60 +113,85 @@ def clip(text, n=120):
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def osc(args):
+def geectl(args):
+    """A geectl JSON read, parsed. A failure, a timeout or an unparseable
+    answer is a Lookup (exit 3), never an empty answer."""
     what = " ".join(args[:2])
     try:
         r = subprocess.run(
-            ["osc"] + args, capture_output=True, text=True, timeout=OSC_TIMEOUT
+            ["geectl"] + args, capture_output=True, text=True, timeout=GEectl_TIMEOUT
         )
     except subprocess.TimeoutExpired:
-        raise Lookup(f"osc {what} timed out after {OSC_TIMEOUT}s")
+        raise Lookup(f"geectl {what} timed out after {GEectl_TIMEOUT}s")
     except FileNotFoundError:
-        raise Lookup("osc: command not found")
+        raise Lookup("geectl: command not found")
     if r.returncode != 0:
         last = (r.stderr.strip().splitlines() or ["no error text"])[-1]
         # the backend's own words while it runs the package's _service
         err = ServiceRunning if "service in progress" in r.stderr else Lookup
-        raise err(f"osc {what} failed: {clip(last)}")
-    return r.stdout
-
-
-def parse(xml, what):
+        raise err(f"geectl {what} failed: {clip(last)}")
     try:
-        return ET.fromstring(xml)
-    except ET.ParseError as e:
-        raise Lookup(f"unparseable {what}: {e}")
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        raise Lookup(f"unparseable geectl {what} answer: {e}")
 
 
 # ---------------------------------------------------------------- build
 
 
 def last_job(t, repo, arch, name):
-    """srcmd5 of the last build job of name on repo/arch, "" if none. Not
-    _history: an unchanged rebuild adds no entry there."""
-    path = f"/build/{t.prj}/{repo}/{arch}/_jobhistory?package={name}&limit=1"
-    jobs = parse(osc(["api", path]), f"{repo}/{arch} job history").findall("jobhist")
-    return jobs[-1].get("srcmd5", "") if jobs else ""
+    """The last build job of name on repo/arch (its job-history entry),
+    None when there is none. Not the package log: an unchanged rebuild
+    adds no entry there."""
+    payload = geectl(
+        ["build", "job-history", t.prj, repo, arch, "--package", name, "--limit", "1"]
+    )
+    entries = payload.get("entries", [])
+    return entries[0] if entries else None
+
+
+def job_built_current(t, job):
+    """Whether the job built the current sources: True, False, or None when
+    that cannot be told. A plain package compares the job's srcmd5 with the
+    package log's; a job with no srcmd5 recorded counts as current, as a
+    failure with no job history does. A linked package has no typed leaf
+    for its expanded srcmd5, so the job counts as current when it started
+    after the newest commit its expanded sources can depend on (see
+    listing): a job that started earlier may have built older sources."""
+    if job is None:
+        return None
+    got = job.get("srcmd5", "")
+    if t.srcmd5 and got:
+        return got == t.srcmd5
+    if not t.linked:
+        return True
+    try:
+        started = int(job.get("starttime") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not started or t.link_bound is None:
+        return None
+    return started > t.link_bound
 
 
 def last_commit(t):
     """When prj/pkg's latest revision was committed (epoch seconds)."""
-    path = f"/source/{t.prj}/{t.pkg}/_history?limit=1"
-    when = parse(osc(["api", path]), "source history").findtext("revision/time")
+    payload = geectl(["remote", "package-log", t.prj, t.pkg, "--limit", "1"])
+    entries = payload.get("entries", [])
     try:
-        return int(when)
-    except (TypeError, ValueError):
-        raise Lookup(f"no commit time in the {t.prj}/{t.pkg} history")
+        return int(entries[0].get("time"))
+    except (IndexError, TypeError, ValueError):
+        raise Lookup(f"no commit time in the {t.prj}/{t.pkg} package log")
 
 
 def last_job_end(t, repo, arch):
     """When the newest build job of any package in repo/arch ended (epoch
     seconds), 0 when there is none: a dependency that just built is why a
     package turns from blocked to scheduled."""
-    path = f"/build/{t.prj}/{repo}/{arch}/_jobhistory?limit=1"
-    jobs = parse(osc(["api", path]), f"{repo}/{arch} job history").findall("jobhist")
+    payload = geectl(["build", "job-history", t.prj, repo, arch, "--limit", "1"])
+    entries = payload.get("entries", [])
     try:
-        return int(jobs[-1].get("endtime") or 0) if jobs else 0
+        return int(entries[0].get("endtime") or 0) if entries else 0
     except ValueError:
         raise Lookup(f"unreadable end time in the {repo}/{arch} job history")
 
@@ -200,35 +228,74 @@ def out_of_scope(who):
     )
 
 
-def source(t, query=""):
-    """prj/pkg's source listing, None while OBS still runs its source service."""
-    try:
-        return parse(osc(["api", f"/source/{t.prj}/{t.pkg}{query}"]), "source listing")
-    except ServiceRunning:
-        return None
-
-
 def listing(t):
-    src = source(t, "?expand=1")
-    if src is not None and not src.get("srcmd5"):
-        raise Lookup(f"no srcmd5 in the {t.prj}/{t.pkg} source listing")
-    return src
+    """The current sources, from the latest package-log entry: {srcmd5,
+    linked, bound}. srcmd5 is the log's, which is the expanded revision's
+    for a plain package. For a linked package the log's srcmd5 is the
+    link's own, not the expanded one no typed leaf reports, so srcmd5 is
+    None and bound is the newest commit time the expanded sources can
+    depend on: the link's own last commit, or the target's too when the
+    link follows it (no rev pin in its _link). bound is None when that
+    cannot be told."""
+    payload = geectl(["remote", "package-log", t.prj, t.pkg, "--limit", "1"])
+    entries = payload.get("entries", [])
+    if not entries or not entries[0].get("srcmd5"):
+        raise Lookup(f"no srcmd5 in the {t.prj}/{t.pkg} package log")
+    out = {"srcmd5": entries[0]["srcmd5"], "linked": False, "bound": None}
+    try:
+        link_time = int(entries[0].get("time") or 0)
+    except (TypeError, ValueError):
+        link_time = 0
+    origin = scope.origin(geectl(["remote", "link-target", t.prj, t.pkg]), t.pkg)
+    if not origin:
+        return out
+    out["linked"] = True
+    out["srcmd5"] = None
+    pin = None
+    # remote cat is a text read, not a JSON one: run it directly
+    try:
+        r = subprocess.run(
+            ["geectl", "remote", "cat", t.prj, t.pkg, "_link", "--format", "text"],
+            capture_output=True,
+            text=True,
+            timeout=GEectl_TIMEOUT,
+        )
+        text = r.stdout if r.returncode == 0 else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        text = None
+    if text is not None:
+        m = re.search(r"<link\b[^>]*>", text)
+        if m:
+            mm = re.search(r'\brev="([^"]*)"', m.group(0))
+            pin = mm.group(1) if mm else None
+    if pin:
+        out["bound"] = link_time or None
+        return out
+    tgt = geectl(["remote", "package-log", origin[0], origin[1], "--limit", "1"])
+    tentries = tgt.get("entries", [])
+    try:
+        target_time = int(tentries[0].get("time") or 0) if tentries else 0
+    except (TypeError, ValueError):
+        target_time = 0
+    bound = max(link_time, target_time)
+    out["bound"] = bound or None
+    return out
 
 
 def build_verdict(t, notes):
-    cmd = ["results", "--xml"]
-    cmd += ["-r", t.repo] if t.repo else []
-    cmd += ["-a", t.arch] if t.arch else []
-    root = parse(osc(cmd + [t.prj, t.pkg]), "osc results")
+    cmd = ["build", "results", t.prj, "--package", t.pkg, "--multibuild"]
+    cmd += ["--repository", t.repo] if t.repo else []
+    cmd += ["--arch", t.arch] if t.arch else []
+    payload = geectl(cmd)
     rows, dirty_repo = [], False
-    for res in root.findall("result"):
+    for res in payload.get("results", []):
         repo, arch = res.get("repository") or "", res.get("arch") or ""
         inside = not t.scoped or scope.judged(
             t.prj, repo, arch, t.leap, t.repos, t.arches
         )
-        dirty = res.get("dirty") == "true"
+        dirty = res.get("dirty") is True
         dirty_repo |= dirty and inside
-        for s in res.findall("status"):
+        for s in res.get("statuses", []):
             name = s.get("package", "")
             if name == t.pkg or name.startswith(t.pkg + ":"):
                 label = f"{repo}/{arch}" + name[len(t.pkg) :]
@@ -249,14 +316,18 @@ def build_verdict(t, notes):
     there, upstream = {}, None
     if t.scoped and any(d or c not in GREEN | SKIP for _, _, _, c, d, _ in rows):
         # unexpanded: a broken link fails to expand, and its reds must still read red
-        raw = source(t)
-        if raw is None:
-            return 1, f"PENDING — {who}: {SERVICE}"
-        upstream = scope.origin(raw, t.pkg)
+        upstream = scope.origin(geectl(["remote", "link-target", t.prj, t.pkg]), t.pkg)
     if upstream:
         theirs = scope.codes(
-            parse(
-                osc(["results", "--xml", *upstream]), f"osc results of {upstream[0]}"
+            geectl(
+                [
+                    "build",
+                    "results",
+                    upstream[0],
+                    "--package",
+                    upstream[1],
+                    "--multibuild",
+                ]
             ),
             upstream[1],
         )
@@ -278,7 +349,7 @@ def build_verdict(t, notes):
         elif code in SKIP:
             continue
         elif code in RED:
-            red.append((code, label, clip(s.findtext("details"), 80)))
+            red.append((code, label, clip(s.get("details"), 80)))
         elif code == "failed":
             failed.append((res, name, label))
         elif code in GREEN:
@@ -298,15 +369,32 @@ def build_verdict(t, notes):
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
     src = listing(t)
-    if src is None:
-        return 1, f"PENDING — {who}: {SERVICE}"
     t.srcmd5 = src.get("srcmd5")
-    who += f" sources {t.srcmd5[:12]}"
+    t.linked = src.get("linked", False)
+    t.link_bound = src.get("bound")
+    who += f" sources {t.srcmd5[:12]}" if t.srcmd5 else " sources (linked)"
     older = "built from older sources"
     for res, name, label in failed:
-        got = last_job(t, res.get("repository"), res.get("arch"), name)
-        if got and got != t.srcmd5:
-            pending.append((older, label, f"failed on {got[:12]}"))
+        job = last_job(t, res.get("repository"), res.get("arch"), name)
+        if job is None:
+            red.append(("failed", label, ""))
+            continue
+        cur = job_built_current(t, job)
+        if cur is False:
+            src5 = job.get("srcmd5") or ""
+            pending.append(
+                (
+                    older,
+                    label,
+                    f"failed on {src5[:12]}"
+                    if src5
+                    else "failed before the latest commit",
+                )
+            )
+        elif cur is None:
+            raise Lookup(
+                f"cannot tell whether the {label} job built the current sources"
+            )
         else:
             red.append(("failed", label, ""))
     if red:
@@ -322,11 +410,25 @@ def build_verdict(t, notes):
     if pending and not (queued or held):
         return 1, f"PENDING — {who}: {summary(pending)}"
     for res, name, label in ok:
-        got = last_job(t, res.get("repository"), res.get("arch"), name)
-        if not got:
+        job = last_job(t, res.get("repository"), res.get("arch"), name)
+        if job is None:
             raise Lookup(f"no build job recorded for {label}: its sources are unknown")
-        if got != t.srcmd5:
-            pending.append((older, label, f"succeeded on {got[:12]}"))
+        cur = job_built_current(t, job)
+        if cur is False:
+            src5 = job.get("srcmd5") or ""
+            pending.append(
+                (
+                    older,
+                    label,
+                    f"succeeded on {src5[:12]}"
+                    if src5
+                    else "succeeded before the latest commit",
+                )
+            )
+        elif cur is None:
+            raise Lookup(
+                f"cannot tell whether the {label} job built the current sources"
+            )
     if pending and all(state == "scheduled" for state, _, _ in pending):
         now, since = time.time(), last_commit(t)
         if now - since >= STUCK:
@@ -378,11 +480,11 @@ def build_event(t, key, p):
 
 
 def request_check(t):
-    root = parse(osc(["api", f"/request/{t.id}"]), f"request {t.id}")
-    st = root.find("state")
-    name = st.get("name", "") if st is not None else ""
-    who = clip(st.get("who", "?") if st is not None else "?", 60)
-    said = clip(st.findtext("comment") if st is not None else "")
+    req = geectl(["request", "show", t.id])
+    st = req.get("state") or {}
+    name = st.get("name", "")
+    who = clip(st.get("who", "?"), 60)
+    said = clip(st.get("comment") or "")
     said = f": {said}" if said else ""
     if name == "accepted":
         return 0, f"ACCEPTED — request {t.id} by {who}"
@@ -395,7 +497,7 @@ def request_check(t):
             clip(
                 r.get("by_user") or r.get("by_group") or r.get("by_project") or "?", 60
             )
-            for r in root.findall("review")
+            for r in req.get("reviews", [])
             if r.get("state") == "new"
         ]
         by = f"; open reviews: {', '.join(open_)}" if open_ else ""
@@ -425,7 +527,7 @@ class Feed:
         if item is not OPEN:
             self.gone = True
             raise item if isinstance(item, FeedLost) else FeedLost("no answer")
-        # Ask osc only once the stream delivers: the server is subscribed then.
+        # Ask geectl only once the stream delivers: the server is subscribed then.
         self.early = self._get(min(FEED_PRIME, deadline - time.monotonic()))
         if isinstance(self.early, FeedLost):
             self.gone = True
@@ -489,7 +591,7 @@ def open_feed(deadline):
     try:
         return Feed(deadline)
     except FeedLost as e:
-        note(f"no event stream ({e}); polling osc instead")
+        note(f"no event stream ({e}); polling geectl instead")
         return None
 
 
@@ -515,7 +617,7 @@ def wait(t, check, match):
                         note(f"event stream lost ({e}); reconnecting")
                         feed = open_feed(deadline)
                     else:
-                        note(f"event stream lost {drops} times ({e}); polling osc")
+                        note(f"event stream lost {drops} times ({e}); polling geectl")
                         feed = None
                     recheck = t.recheck or (recheck if feed else POLL)
                     # whatever happened while disconnected sent no event
@@ -592,6 +694,8 @@ def main(argv=None):
             ap.error(f"not a request number: {t.id!r}")
         t.id = str(int(t.id))
     t.srcmd5 = None
+    t.linked = False
+    t.link_bound = None
     if t.mode == "build":
         if t.all and (t.repos or t.arches):
             ap.error("--all already takes every repo/arch: drop --repos/--arches")

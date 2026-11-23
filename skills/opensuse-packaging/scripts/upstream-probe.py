@@ -50,7 +50,7 @@ Traps encoded here (from triage.md):
     UPDATE-CANDIDATE with an explicit verify-by-hand caveat.
 
 Usage:
-  upstream-probe.py <pkg> [--project openSUSE:Factory]   # spec fetched via osc
+  upstream-probe.py <pkg> [--project openSUSE:Factory]   # spec fetched via geectl
   upstream-probe.py --spec <file>
   upstream-probe.py --url <github|gitlab|pypi|npm|crates url> [--version <packaged-ver>]
 
@@ -110,7 +110,7 @@ def main():
         "      2 = usage or no verdict (Source0 registry down, undatable).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("pkg", nargs="?", help="package name (spec fetched via osc)")
+    ap.add_argument("pkg", nargs="?", help="package name (spec fetched via geectl)")
     ap.add_argument("--spec", help="local spec file to read instead")
     ap.add_argument("--url", help="probe this forge/pypi/npm/crates URL directly")
     ap.add_argument("--version", help="packaged version (with --url)")
@@ -127,13 +127,24 @@ def main():
         pkgname, packaged, url, src = _forges.spec_facts(spec_text)
     elif a.pkg:
         r = subprocess.run(
-            ["osc", "cat", a.project, a.pkg, f"{a.pkg}.spec"],
+            [
+                "geectl",
+                "remote",
+                "cat",
+                a.project,
+                a.pkg,
+                f"{a.pkg}.spec",
+                "--format",
+                "text",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
         )
         if r.returncode != 0:
-            die(f"osc cat {a.project}/{a.pkg}/{a.pkg}.spec: {r.stderr.strip()}")
+            die(
+                f"geectl remote cat {a.project}/{a.pkg}/{a.pkg}.spec: {r.stderr.strip()}"
+            )
         _specname, packaged, url, src = _forges.spec_facts(r.stdout)
         pkgname = a.pkg or _specname
     elif not a.url:
@@ -149,7 +160,16 @@ def main():
     scm_rev = None
     if not sources and a.pkg and not a.url:
         r = subprocess.run(
-            ["osc", "cat", a.project, a.pkg, "_service"],
+            [
+                "geectl",
+                "remote",
+                "cat",
+                a.project,
+                a.pkg,
+                "_service",
+                "--format",
+                "text",
+            ],
             capture_output=True,
             text=True,
             timeout=30,

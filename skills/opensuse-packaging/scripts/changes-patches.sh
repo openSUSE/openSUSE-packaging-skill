@@ -17,13 +17,15 @@
 # It compares against the SR TARGET, not the checkout's last commit: in a
 # branched checkout the renames are already committed, so a baseline diff sees
 # no file delta at all — exactly the blind spot factory-auto does not have.
+# A geectl working copy is a git checkout, so the target is the git ref
+# (--git-base).
 #
-# Usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]
-#                           [--entries N]
+# Usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF] [--entries N]
 #   DIR         package checkout (default .)
-#   --target    SR target. Default: a branched osc checkout's link origin
-#               (<linkinfo project=> in .osc/_files, or the API listing for an
-#               osc-2.0 store that has none), else openSUSE:Factory.
+#   --target    SR target. Default: a branched checkout's link origin, else
+#               openSUSE:Factory; a checkout without --target is a direct commit
+#               to its project: its entries count against the committed copy.
+#               The target's files come from geectl list-files + remote cat.
 #   --base DIR  offline: a directory holding the target's files (tests/CI);
 #               a missing DIR means "new package" and passes with a note.
 #   --git-base  git checkout: ref holding the target's tree (default: the
@@ -34,11 +36,7 @@
 #               is a finding — typically a fix-up stacked as a second entry
 #               instead of folded into the top one. Pass the real count when
 #               the submission carries several on purpose (per-version entries
-#               of a superseding SR, a forward from devel). A non-link osc
-#               checkout without --target is a direct commit to its project:
-#               its entries count against the committed copy instead, as that
-#               project may be entries ahead of Factory, or Factory may not
-#               have the package yet.
+#               of a superseding SR, a forward from devel).
 # Output: factory-auto's own sentence per patch, plus a hint when the name is
 # present but wrapped across lines; a line per .changes adding too many entries.
 # Exit: 0 = clean (or new package), 1 = findings, 2 = usage / lookup failure
@@ -46,15 +44,15 @@
 set -euo pipefail
 case "${1:-}" in -h|--help) awk 'NR>1 { if (!/^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'; exit 0;; esac
 exec python3 -I - "$@" <<'PY'
-import os, re, sys, difflib, subprocess, xml.etree.ElementTree as ET
+import os, re, sys, difflib, subprocess, json
 
 def usage():
-    print("usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR] [--git-base REF]"
-          " [--entries N]", file=sys.stderr); sys.exit(2)
+    print("usage: changes-patches.sh [DIR] [--target PRJ[/PKG]] [--base DIR]"
+          " [--git-base REF] [--entries N]", file=sys.stderr); sys.exit(2)
 def fail(msg):
     print(f"changes-patches: {msg}", file=sys.stderr); sys.exit(2)
-def run(cmd, cwd=None):
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+def run(cmd, cwd=None, timeout=None):
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
 
 args, d, target, base, gitbase, maxnew, i = sys.argv[1:], ".", None, None, None, 1, 0
@@ -94,57 +92,101 @@ elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(
     if not os.path.isfile(os.path.join(d, ".osc/_package")):
         fail(f"{d}: osc project checkout — cd into the package directory")
     pkg = read(os.path.join(d, ".osc/_package")).strip()
-    if os.path.exists(os.path.join(d, ".osc/_files")):
-        files_xml = ET.parse(os.path.join(d, ".osc/_files")).getroot()
-    else:
-        # osc store 2.0 keeps no _files: ask the API for the same directory
-        # listing (expanded, so a link shows its real files and linkinfo).
-        prj = read(os.path.join(d, ".osc/_project")).strip()
-        rc, out, err = run(["osc", "api", f"/source/{prj}/{pkg}?expand=1"])
-        if rc != 0: fail(f"osc api /source/{prj}/{pkg} failed: {err.strip()[:200]}")
-        files_xml = ET.fromstring(out)
-    li = files_xml.find("linkinfo")
-    linked = li is not None and bool(li.get("project"))
-    if target is None and not linked:
-        # a direct commit to this (devel) project: its entries count against
-        # the committed copy -- the project may be entries ahead of Factory
-        def count_old(name):
-            for p in (".osc/sources", ".osc"):
-                txt = read(os.path.join(d, p, name))
-                if txt is not None: return txt
-            return None
-        count_where = "the committed copy"
+    prj = read(os.path.join(d, ".osc/_project")).strip()
+    new_files = {f for f in os.listdir(d)
+                 if os.path.isfile(os.path.join(d, f)) and not f.startswith(".")}
+    # A link's listing holds only _link: resolve it by hand, like the other
+    # scripts, so the comparison sees the target's real files.
+    def list_files(p, k, rev=None):
+        cmd = ["geectl", "remote", "list-files", p, k]
+        if rev is not None:
+            cmd += ["--rev", str(rev)]
+        rc, out, err = run(cmd, timeout=60)
+        if rc != 0:
+            return None if "not_found" in err else "FAILED"
+        try:
+            payload = json.loads(out)
+        except ValueError:
+            return "FAILED"
+        files = [(f.get("name"), f.get("md5")) for f in payload.get("files", [])]
+        tag = None
+        if any(n == "_link" for n, _ in files):
+            rc, out, err = run(["geectl", "remote", "cat", p, k, "_link", "--format", "text"], timeout=60)
+            if rc != 0:
+                return "FAILED"
+            m = re.search(r"<link\b[^>]*>", out or "")
+            tag = m.group(0) if m else ""
+        return (files, tag)
+    def expanded(p, k):
+        got = list_files(p, k)
+        if got is None or got == "FAILED":
+            return got
+        files, tag = got
+        depth = 0
+        while tag is not None and depth < 5:
+            depth += 1
+            def attr(name, _tag=tag):
+                mm = re.search(rf'\b{name}="([^"]*)"', _tag)
+                return mm.group(1) if mm else ""
+            tprj, tpkg, trev = attr("project"), attr("package"), attr("rev")
+            if not tprj or not tpkg:
+                return "FAILED"
+            got = list_files(tprj, tpkg, trev or None)
+            if got is None or got == "FAILED":
+                return got
+            tfiles, tag = got
+            merged = {n: m for n, m in tfiles if n != "_link"}
+            merged.update({n: m for n, m in files if n != "_link"})
+            files = sorted(merged.items())
+            p, k = tprj, tpkg
+        if tag is not None:
+            return "FAILED"
+        return (p, k, files)
     if target is None:
-        target = li.get("project") if linked else "openSUSE:Factory"
-    tprj, tpkg = target.split("/", 1) if "/" in target else (target, pkg)
-    rc, out, err = run(["osc", "api", f"/source/{tprj}/{tpkg}?expand=1"])
-    if rc != 0:
-        if "404" not in err and "does not exist" not in err:
-            fail(f"osc api /source/{tprj}/{tpkg} failed: {err.strip()[:200]}")
-        new_pkg = f"OK: {tprj}/{tpkg} does not exist — new package, factory-auto skips this check"
+        # the checkout's link origin, else Factory; a direct commit's entries
+        # count against the committed copy, not the target
+        rc, out, err = run(["geectl", "remote", "link-target", prj, pkg], timeout=60)
+        if rc != 0:
+            fail(f"geectl remote link-target {prj} {pkg} failed: {err.strip()[:200]}")
+        try:
+            origin = (json.loads(out).get("target") or {})
+        except ValueError:
+            fail(f"geectl remote link-target {prj} {pkg} did not parse")
+        if origin.get("project"):
+            target = f"{origin['project']}/{origin.get('package') or pkg}"
+        else:
+            target = "openSUSE:Factory"
+            def count_old(name):
+                for pp in (".osc/sources", ".osc"):
+                    txt = read(os.path.join(d, pp, name))
+                    if txt is not None: return txt
+                return None
+            count_where = "the committed copy"
+    tprj, _, tpkg = target.partition("/")
+    tpkg = tpkg or pkg
+    got = expanded(tprj, tpkg)
+    if got is None:
         if count_old is None:
-            print(new_pkg); sys.exit(0)
-        out = "<directory/>"         # the entries still count against the committed copy
-    old_files = {e.get("name") for e in ET.fromstring(out).findall("entry")}
+            print(f"OK: {tprj}/{tpkg} does not exist — new package, factory-auto skips this check")
+            sys.exit(0)
+        new_pkg = f"OK: {tprj}/{tpkg} does not exist — new package, factory-auto skips this check"
+        old_files, eprj, epkg = set(), tprj, tpkg
+    elif got == "FAILED":
+        fail(f"geectl remote list-files {tprj}/{tpkg} failed")
+    else:
+        eprj, epkg, files = got
+        old_files = {n for n, _ in files}
     def old_read(name):
         if name not in old_files: return None
-        rc, out, err = run(["osc", "cat", tprj, tpkg, name])
-        if rc != 0: fail(f"osc cat {tprj}/{tpkg}/{name} failed: {err.strip()[:200]}")
+        rc, out, err = run(["geectl", "remote", "cat", eprj, epkg, name, "--format", "text"], timeout=60)
+        if rc != 0: fail(f"geectl remote cat {eprj}/{epkg}/{name} failed: {err.strip()[:200]}")
         return out
-    new_files = {e.get("name") for e in files_xml.findall("entry")}
-    rc, out, err = run(["osc", "status"], cwd=d)
-    if rc != 0: fail(f"osc status failed: {err.strip()[:200]}")
-    for line in out.splitlines():
-        if len(line) > 4 and line[0] in "AD!":
-            (new_files.add if line[0] == "A" else new_files.discard)(line[4:].strip())
     where = f"{tprj}/{tpkg}"
 elif run(["git", "rev-parse", "--show-toplevel"], cwd=d)[0] == 0:
-    # An scmsync package carries BOTH .osc and .git. The osc side is useless
-    # here: it keeps no _files, so the API returns the *server's* listing --
-    # which is git HEAD, i.e. the unmodified side -- and `osc status` reports
-    # nothing in a git checkout, so a real patch delta reads as "no change".
+    # A geectl working copy is a git checkout: the target is the git ref, and
+    # the working tree is the new side — no OBS listing is read at all.
     if os.path.exists(os.path.join(d, ".osc/_scm")):
-        print("note: scmsync package — comparing the git tree, not the osc listing")
+        print("note: scmsync package — comparing the git tree")
     ref = gitbase
     if ref is None:
         rc, out, _ = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=d)
@@ -163,7 +205,7 @@ elif run(["git", "rev-parse", "--show-toplevel"], cwd=d)[0] == 0:
     new_files = {l.strip() for l in out.splitlines() if l.strip() and "/" not in l}
     where = ref
 else:
-    fail(f"{d} is neither an osc checkout nor a git checkout, and no --base given")
+    fail(f"{d} is neither a git checkout, and no --base given")
 
 def new_read(name): return read(os.path.join(d, name))
 

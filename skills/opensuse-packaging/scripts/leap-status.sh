@@ -10,7 +10,7 @@
 #     spec Version:
 #   * open PRs on pool/<pkg>: number, target branch, author, title, head spec
 #     Version:
-#   * presence in SUSE:SLFO:1.2 and openSUSE:Backports:SLE-16.0 (osc), and in
+#   * presence in SUSE:SLFO:1.2 and openSUSE:Backports:SLE-16.0 (geectl), and in
 #     products/PackageHub .gitmodules (what actually puts it in Leap)
 #
 # Usage: leap-status.sh <pkg>
@@ -107,8 +107,8 @@ for p in d:
 if [ -n "$prs" ]; then echo "open PR(s):"; printf '%s\n' "$prs" | sed 's/^/  /'; else echo "open PRs: none"; fi
 
 # ---- 3. presence in the OBS-side feeds + PackageHub .gitmodules --------------
-p_slfo="no"; timeout 30 osc api "/source/SUSE:SLFO:1.2/$pkg/_meta" >/dev/null 2>&1 && p_slfo="yes"
-p_bp="no";   timeout 30 osc api "/source/openSUSE:Backports:SLE-16.0/$pkg/_meta" >/dev/null 2>&1 && p_bp="yes"
+p_slfo="no"; timeout 30 geectl remote package-meta "SUSE:SLFO:1.2" "$pkg" >/dev/null 2>&1 && p_slfo="yes"
+p_bp="no";   timeout 30 geectl remote package-meta "openSUSE:Backports:SLE-16.0" "$pkg" >/dev/null 2>&1 && p_bp="yes"
 p_hub="no"
 gm="$(curl -fsS --max-time 20 "$G/products/PackageHub/raw/branch/leap-16.0/.gitmodules" 2>/dev/null)" || gm=""
 if [ -n "$gm" ] && printf '%s' "$gm" | grep -qE "^\[submodule \"$pkg\"\]|path = $pkg\$|url = \.\./\.\./pool/$pkg\$"; then p_hub="yes"; fi

@@ -17,7 +17,7 @@
 #   --all        lint every entry + file-global checks (EOF newline,
 #                trailing blank lines). For audits, not the gate.
 #   --author 'Name <email>'
-#                the identity a bare `osc vc` writes (vc-identity.sh; gate.sh
+#                the identity a bare `geectl changelog generate` writes (vc-identity.sh; gate.sh
 #                passes it): an entry whose author shares its name OR its
 #                address must carry both exactly (address case-insensitive).
 #                Other packagers' entries pass (a forwarded update keeps its
@@ -27,7 +27,7 @@
 #     - separators are exactly 67 dashes; entry starts at one
 #     - separator followed by 'Day Mon DD HH:MM:SS UTC YYYY - Name <email>'
 #     - author is 'Name <email>' form (never a bare email); with --author,
-#       the same name and address osc vc writes
+#       the same name and address geectl changelog generate writes
 #     - blank line after the header, blank line before the next separator
 #     - body lines are bullets ('- ', nested '* ') or indented continuations
 #     - no trailing whitespace
@@ -164,7 +164,7 @@ for i, l in enumerate(lines[:limit], 1):
             name, mail = m.groups() if m else ("", "")
             same_name, same_mail = name == me_name, mail.lower() == me_mail.lower()
             if (same_name or same_mail) and not (same_name and same_mail):
-                bad.append((i + 1, f"author '{who}' is not what osc vc writes ('{me}'): "
+                bad.append((i + 1, f"author '{who}' is not what geectl changelog generate writes ('{me}'): "
                             "use the same name and address"))
         if i + 1 < len(lines) and lines[i + 1].strip() != "":
             bad.append((i + 2, "missing blank line after the entry header"))

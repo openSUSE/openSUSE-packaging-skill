@@ -9,7 +9,7 @@
 # removes those of final submissions) and its scratch under $TMPDIR (default
 # /var/tmp), removed on every exit; it never builds, never runs a service,
 # never parses a spec with rpm (the advisory scanner _parse_scan.py reads it as
-# text; rpm only lists the host's own macros), and reads no credential: osc
+# text; rpm only lists the host's own macros), and reads no credential: geectl
 # and git-obs log in themselves.
 #
 # Usage: incoming-review.sh --show <sr#ID | owner/repo#N>
@@ -122,7 +122,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 try:
@@ -137,7 +136,6 @@ except Exception as e:  # a broken install must not read as a verdict
     sys.stderr.write("incoming-review.sh: cannot start: %s: %s; nothing recorded\n" % (type(e).__name__, e))
     sys.exit(5)
 
-API = "https://api.opensuse.org"
 TIMEOUT = 60
 FETCH_CAP = 8 << 20  # the scanner's own cap on included text
 MEM_CAP = 64 << 20
@@ -256,31 +254,91 @@ def run(cmd, timeout=TIMEOUT, env=None, data=None):
     return p.returncode, p.stdout, p.stderr
 
 
-def q(s):
-    return urllib.parse.quote(s, safe=":+")
-
-
-def obs(path, missing_ok=False, empty_ok=False):
-    """osc api PATH as bytes. missing_ok: a 404 is None; every other failure,
-    and an empty answer unless empty_ok, is a Lookup."""
-    rc, out, err = run(["osc", "-A", API, "api", path])
+def geectl(args, text=False, missing_ok=False, empty_ok=False):
+    """A geectl read: the parsed JSON payload, or the raw bytes when text.
+    missing_ok: a 404 is None; every other failure, and an empty answer
+    unless empty_ok, is a Lookup."""
+    rc, out, err = run(["geectl"] + args)
     if rc == 0:
         if not out.strip() and not empty_ok:
-            raise Lookup("osc api %s: an empty answer" % path)
-        return out
-    if missing_ok and b"HTTP Error 404" in err:
+            raise Lookup("geectl %s: an empty answer" % " ".join(args))
+        if text:
+            return out
+        try:
+            return json.loads(out.decode("utf-8", "replace"))
+        except ValueError as e:
+            raise Lookup("geectl %s: an unparseable answer (%s)" % (" ".join(args), e))
+    if missing_ok and rc == 3:
         return None
-    raise Lookup("osc api %s failed (%d): %s" % (path, rc, last(err) or "no message"))
+    raise Lookup("geectl %s failed (%d): %s" % (" ".join(args), rc, last(err) or "no message"))
 
 
-def xml(data, what, tag):
-    try:
-        root = ET.fromstring(data)
-    except ET.ParseError as e:
-        raise Lookup("%s: an unparseable answer (%s)" % (what, e))
-    if root.tag != tag:
-        raise Lookup("%s: a <%s> answer, not <%s>" % (what, clean(root.tag), tag))
-    return root
+def link_tag(data):
+    """(project, package, rev) a _link file names, else None."""
+    m = re.search(rb"<link[^>]*project=\"([^\"]+)\"[^>]*package=\"([^\"]+)\"", data)
+    if not m:
+        return None
+    rev = re.search(rb"\brev=\"([^\"]+)\"", data)
+    return m.group(1).decode(), m.group(2).decode(), rev.group(1).decode() if rev else ""
+
+
+def listing(prj, pkg, rev=None, what=None, missing_ok=False, depth=0):
+    """{name: (md5, size, "")} and the srcmd5 of a package, plus whether the
+    listing resolved a _link by hand: `remote list-files` never expands one,
+    so a _link is read and its target's listing at the pin is fetched,
+    with the package's own non-_link files overlaid. A link with its own
+    _service is the exception: its service results are in neither listing."""
+    what = what or "%s/%s" % (prj, pkg)
+    args = ["remote", "list-files", prj, pkg]
+    if rev:
+        args += ["--rev", str(rev)]
+    payload = geectl(args, missing_ok=missing_ok)
+    if payload is None:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        raise Lookup("%s: a malformed listing" % what)
+    files = {}
+    for e in payload["files"]:
+        if not isinstance(e, dict):
+            raise Lookup("%s: a malformed entry" % what)
+        n, m, s = e.get("name") or "", e.get("md5") or "", e.get("size") or 0
+        if (
+            not n
+            or n in files
+            or n in (".", "..")
+            or "/" in n
+            or CTRL.search(n)
+            or not HEX32.fullmatch(m)
+            or not isinstance(s, int)
+        ):
+            raise Lookup("%s: a malformed entry (%s)" % (what, shown(n) or "no name"))
+        files[n] = (m, s, "")
+    if isinstance(rev, str) and HEX32.fullmatch(rev):
+        srcmd5 = rev
+    elif rev:
+        log = geectl(["remote", "package-log", prj, pkg, "--range", "%s:%s" % (rev, rev)])
+        entries = log.get("entries") if isinstance(log, dict) else None
+        if not entries or not isinstance(entries[0], dict) or not HEX32.fullmatch(entries[0].get("srcmd5") or ""):
+            raise Lookup("%s: no srcmd5 for rev %s" % (what, shown(str(rev))))
+        srcmd5 = entries[0]["srcmd5"]
+    else:
+        log = geectl(["remote", "package-log", prj, pkg, "--limit", "1"])
+        entries = log.get("entries") if isinstance(log, dict) else None
+        if not entries or not isinstance(entries[0], dict) or not HEX32.fullmatch(entries[0].get("srcmd5") or ""):
+            raise Lookup("%s: no srcmd5" % what)
+        srcmd5 = entries[0]["srcmd5"]
+    if "_link" in files:
+        if depth >= HOPS:
+            raise Lookup("%s: a _link chain past %d" % (what, HOPS))
+        tag = link_tag(geectl(["remote", "cat", "--format", "text", prj, pkg, "_link"], text=True))
+        if tag is None:
+            raise Lookup("%s: an unreadable _link" % what)
+        tprj, tpkg, trev = tag
+        tf, _, _ = listing(tprj, tpkg, trev or None, "%s/%s" % (tprj, tpkg), depth=depth + 1)
+        merged = dict(tf)
+        merged.update({n: v for n, v in files.items() if n != "_link"})
+        return merged, srcmd5, True
+    return files, srcmd5, False
 
 
 def gitea(path):
@@ -296,28 +354,6 @@ def gitea(path):
         return json.loads(text)
     except json.JSONDecodeError as e:
         raise Lookup("git-obs api %s: an unparseable answer (%s)" % (path, e))
-
-
-def listing(root, what):
-    """{name: (md5, size, "")} and the srcmd5 of an OBS directory listing."""
-    files = {}
-    for e in root.findall("entry"):
-        n, m, s = e.get("name") or "", e.get("md5") or "", e.get("size") or ""
-        if (
-            not n
-            or n in files
-            or n in (".", "..")
-            or "/" in n
-            or CTRL.search(n)
-            or not HEX32.fullmatch(m)
-            or not re.fullmatch(r"[0-9]+", s)
-        ):
-            raise Lookup("%s: a malformed entry (%s)" % (what, shown(n) or "no name"))
-        files[n] = (m, int(s), "")
-    srcmd5 = root.get("srcmd5") or ""
-    if not HEX32.fullmatch(srcmd5):
-        raise Lookup("%s: no srcmd5" % what)
-    return files, srcmd5
 
 
 def valid_path(p):
@@ -1267,22 +1303,30 @@ def scan(f, src, base, tmp, specs):
 # ---------------------------------------------------------------- build evidence
 def results(prj, pkg):
     """{(repo, arch): (dirty, {package or flavor: code})} of prj/pkg."""
-    res = xml(obs("/build/%s/_result?package=%s&multibuild=1" % (q(prj), q(pkg))), "the results of %s/%s" % (prj, pkg), "resultlist")
+    payload = geectl(["build", "results", prj, "--package", pkg, "--multibuild"])
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise Lookup("the results of %s/%s: a malformed answer" % (prj, pkg))
     out = {}
-    for r in res.findall("result"):
+    for r in payload["results"]:
+        if not isinstance(r, dict):
+            raise Lookup("the results of %s/%s: a malformed answer" % (prj, pkg))
         codes = {}
-        for s in r.findall("status"):
-            name = s.get("package") or ""
+        for st in r.get("statuses") or []:
+            if not isinstance(st, dict):
+                raise Lookup("the results of %s/%s: a malformed answer" % (prj, pkg))
+            name = st.get("package") or ""
             if name == pkg or name.startswith(pkg + ":"):
-                codes[name] = s.get("code") or "unknown"
-        out[(r.get("repository") or "", r.get("arch") or "")] = (r.get("dirty") == "true", codes)
+                codes[name] = st.get("code") or "unknown"
+        out[(r.get("repository") or "", r.get("arch") or "")] = (r.get("dirty") is True, codes)
     return out
 
 
 def last_job(prj, repo, arch, name, label):
-    path = "/build/%s/%s/%s/_jobhistory?package=%s&limit=1" % (q(prj), q(repo), q(arch), q(name))
-    jobs = xml(obs(path), "the job history of %s/%s" % (prj, label), "jobhistlist").findall("jobhist")
-    return jobs[-1].get("srcmd5", "") if jobs else ""
+    payload = geectl(["build", "job-history", prj, repo, arch, "--package", name, "--limit", "1"])
+    if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+        raise Lookup("the job history of %s/%s: a malformed answer" % (prj, label))
+    jobs = payload["entries"]
+    return jobs[-1].get("srcmd5", "") if jobs and isinstance(jobs[-1], dict) else ""
 
 
 def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
@@ -1294,8 +1338,7 @@ def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
     out = {"project": sprj, "package": spkg, "required": False, "results": {}, "srcmd5": "", "green": False, "notes": []}
     f.build = out
     what = "%s/%s" % (sprj, spkg)
-    note = lambda why: out["notes"].append(clean("%s: %s" % (what, why)))  # noqa: E731
-    _, cur = listing(xml(obs("/source/%s/%s?expand=1" % (q(sprj), q(spkg))), what, "directory"), what)
+    _, cur, _ = listing(sprj, spkg, what=what)
     out["srcmd5"] = cur
     if cur != ssrc:
         note("moved since the request (sources %s, the request's %s): its results are of other sources" % (cur[:12], ssrc[:12]))
@@ -1311,14 +1354,16 @@ def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
     if not want:
         note("%s/%s builds no Tumbleweed or Leap 16 repo on x86_64 or aarch64: nothing to judge the source by" % (tprj, tpkg))
         return
-    meta = xml(obs("/source/%s/_meta" % q(sprj)), "the meta of %s" % sprj, "project")
-    repos = {r.get("name"): r for r in meta.findall("repository")}
+    meta = geectl(["remote", "project-meta", sprj])
+    if not isinstance(meta, dict) or not isinstance(meta.get("repositories"), list):
+        raise Lookup("the meta of %s: a malformed answer" % sprj)
+    repos = {r.get("name"): r for r in meta["repositories"] if isinstance(r, dict)}
     have = results(sprj, spkg)
     probs, judged, said = [], [], set()
     for (repo, arch), tcode in sorted(want.items()):
         label = "%s/%s" % (clean(repo), clean(arch))
         r = repos.get(repo)
-        paths = [p.get("project") or "?" for p in r.findall("path")] if r is not None else []
+        paths = [p.get("project") or "?" for p in r.get("paths") or [] if isinstance(p, dict)] if r is not None else []
         if r is None or tprj not in paths:
             why = "no repository %s" % clean(repo) if r is None else "repository %s builds against %s, not %s" % (clean(repo), clean(", ".join(paths) or "nothing"), tprj)
             if why not in said:
@@ -1366,7 +1411,7 @@ def build_pr(f, owner, repo, num, head):
     if not prj:
         return
     out["project"] = f.project = prj
-    info = obs("/source/%s/%s/_scmsync.obsinfo" % (q(prj), q(repo)), missing_ok=True)
+    info = geectl(["remote", "cat", "--format", "text", prj, repo, "_scmsync.obsinfo"], text=True, missing_ok=True)
     if info is None:
         out["note"] = "%s holds no %s" % (prj, repo)
         return
@@ -1376,7 +1421,7 @@ def build_pr(f, owner, repo, num, head):
     if m.group(1).decode() != head:
         out["verdict"], out["note"] = "stale", "the staging build is of %s, not the head %s" % (m.group(1).decode()[:12], head[:12])
         return
-    _, cur = listing(xml(obs("/source/%s/%s?expand=1" % (q(prj), q(repo))), "%s/%s" % (prj, repo), "directory"), "%s/%s" % (prj, repo))
+    _, cur, _ = listing(prj, repo, what="%s/%s" % (prj, repo))
     out["srcmd5"] = cur
     red, pending, ok = [], [], []
     for (rp, arch), (dirty, codes) in sorted(results(prj, repo).items()):
@@ -1405,21 +1450,29 @@ def build_pr(f, owner, repo, num, head):
 # ---------------------------------------------------------------- the two kinds
 def derive_obs(rid, tmp):
     f = Facts("obs", "sr#" + rid, rid)
-    root = xml(obs("/request/%s" % rid), "request %s" % rid, "request")
-    if root.get("id") != rid:
-        raise Lookup("request %s: the answer is request %s" % (rid, clean(root.get("id") or "?")))
-    f.creator = root.get("creator") or ""
+    req = geectl(["request", "show", rid])
+    if not isinstance(req, dict) or not isinstance(req.get("actions"), list):
+        raise Lookup("request %s: a malformed answer" % rid)
+    if req.get("id") != int(rid):
+        raise Lookup("request %s: the answer is request %s" % (rid, clean(str(req.get("id") or "?"))))
+    f.creator = req.get("creator") or ""
     if not LOGIN.fullmatch(f.creator):
         raise Lookup("request %s: no creator" % rid)
     acts = []
-    for a in root.findall("action"):
-        s, t, o = a.find("source"), a.find("target"), a.find("options")
-        acts.append({
-            "type": a.get("type") or "",
-            "source": dict(sorted(s.attrib.items())) if s is not None else {},
-            "target": dict(sorted(t.attrib.items())) if t is not None else {},
-            "options": [[c.tag, (c.text or "").strip()] for c in o] if o is not None else [],
-        })
+    for a in req["actions"]:
+        if not isinstance(a, dict):
+            raise Lookup("request %s: a malformed action" % rid)
+        source = {k: v for k, v in (("project", a.get("source_project")), ("package", a.get("source_package")), ("rev", a.get("source_rev"))) if v}
+        target = {k: v for k, v in (("project", a.get("target_project")), ("package", a.get("target_package"))) if v}
+        opts = []
+        if a.get("type") == "submit":
+            if a.get("sourceupdate"):
+                opts.append(["sourceupdate", a["sourceupdate"]])
+            if a.get("updatelink") is True:
+                opts.append(["updatelink", "true"])
+            if a.get("makeoriginolder") is True:
+                opts.append(["makeoriginolder", "true"])
+        acts.append({"type": a.get("type") or "", "source": source, "target": target, "options": opts})
     if not acts:
         raise Lookup("request %s: no action" % rid)
     if len(acts) > 1:
@@ -1430,7 +1483,7 @@ def derive_obs(rid, tmp):
         for tag, val in a["options"]:
             if tag != "sourceupdate":
                 f.find("shape: option %s%s: only sourceupdate may pass" % (clean(tag), "=" + clean(val) if val else ""))
-    f.desc = "description: " + _sanitize.sanitize(root.findtext("description") or "(none)")
+    f.desc = "description: " + _sanitize.sanitize(req.get("description") or "(none)")
     key = {"kind": "obs", "id": rid, "creator": f.creator, "actions": acts}
     a = next((x for x in acts if x["type"] == "submit"), None)
     if a is None:
@@ -1450,39 +1503,45 @@ def derive_obs(rid, tmp):
     elif not re.fullmatch(r"[0-9]+|[0-9a-f]{32}", rev):
         f.find("revision: rev %s is neither a revision number nor a srcmd5" % shown(rev))
     what = "%s/%s%s" % (sprj, spkg, " rev " + rev if rev else "")
-    path = "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else "")
-    sroot = xml(obs(path), what, "directory")
-    sfiles, ssrc = listing(sroot, what)
+    sfiles, ssrc, slinked = listing(sprj, spkg, rev or None, what=what)
     if not sfiles:
         raise Lookup("%s: no file" % what)
-    traw = obs("/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), missing_ok=True)
-    tfiles, tsrc = ({}, "") if traw is None else listing(xml(traw, "%s/%s" % (tprj, tpkg), "directory"), "%s/%s" % (tprj, tpkg))
+    tl = listing(tprj, tpkg, what="%s/%s" % (tprj, tpkg), missing_ok=True)
+    tfiles, tsrc = ({}, "") if tl is None else (tl[0], tl[1])
     # a link expands against its origin as it is now, unless pinned to the expansion itself;
     # one to the target itself, based on the target as it is now and pinned to no rev of
     # it, expands to what the target holds, whose files the key holds
-    link = sroot.find("linkinfo")
-    to_target = link is not None and link.get("rev") is None
-    to_target = to_target and [link.get(k) for k in ("project", "package", "baserev")] == [tprj, tpkg, tsrc]
-    if link is not None and rev != ssrc and not (rev and tsrc and to_target):
+    to_target = False
+    if slinked:
+        ltext = geectl(["remote", "cat", "--format", "text", sprj, spkg, "_link"], text=True, missing_ok=True)
+        if ltext is not None:
+            tag = link_tag(ltext)
+            base = re.search(rb'\bbaserev="([^"]+)"', ltext)
+            to_target = (
+                tag is not None
+                and tag[2] == ""
+                and [tag[0], tag[1], base.group(1).decode() if base else None] == [tprj, tpkg, tsrc]
+            )
+    if slinked and rev != ssrc and not (rev and tsrc and to_target):
         f.find("revision: the source is a _link, and its rev %s is not its expanded srcmd5 %s: what it expands to moves" % (shown(rev) or "(none)", ssrc))
-    if traw is None:
+    if tl is None:
         f.find("target: %s/%s does not exist: a new package is the maintainer's own to review" % (tprj, tpkg))
     opts = " (%s)" % ", ".join("=".join(x for x in o if x) for o in a["options"]) if a["options"] else ""
     f.info.insert(0, "%s by %s: submit %s -> %s/%s%s" % (f.label, f.creator, what, tprj, tpkg, opts))
 
     def fetcher(prj, pkg, srcmd5):
-        return lambda n, _: obs("/source/%s/%s/%s?rev=%s" % (q(prj), q(pkg), q(n), srcmd5), empty_ok=True)
+        return lambda n, _: geectl(["remote", "cat", "--rev", srcmd5, "--format", "text", prj, pkg, n], text=True, empty_ok=True)
 
     md5ok = lambda b, ident: hashlib.md5(b).hexdigest() == ident  # noqa: E731
     src, base = pair(Tree(sfiles, fetcher(sprj, spkg, ssrc), md5ok), Tree(tfiles, fetcher(tprj, tpkg, tsrc), md5ok))
     smap = {n: m for n, (m, _, _) in sfiles.items()}
     tmap = {n: m for n, (m, _, _) in tfiles.items()}
-    key.update(source={"srcmd5": ssrc, "files": smap}, target={"exists": traw is not None, "files": tmap})
+    key.update(source={"srcmd5": ssrc, "files": smap}, target={"exists": tl is not None, "files": tmap})
     f.key = digest(key)
-    analyze(f, src, base, traw is not None, tmp, lfs=False)
+    analyze(f, src, base, tl is not None, tmp, lfs=False)
     # a request to Factory itself is judged without Leap 16, as gate.sh judges it
     leap = not (tprj == "openSUSE:Factory" or tprj.startswith("openSUSE:Factory:"))
-    build_obs(f, sprj, spkg, ssrc, tprj, tpkg, traw is not None, leap)
+    build_obs(f, sprj, spkg, ssrc, tprj, tpkg, tl is not None, leap)
     f.part = {"obs": {
         "action": {
             "type": "submit",

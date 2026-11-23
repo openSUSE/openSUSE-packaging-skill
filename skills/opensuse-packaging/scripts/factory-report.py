@@ -24,7 +24,7 @@
 #   --since DATE    explicit window start
 #   --project PRJ   default openSUSE:Factory
 #   --top N         rows in the table, default 30
-#   --highlight U   mark this account's row; default `osc whois`
+#   --highlight U   mark this account's row; default $GEECTL_OBS_USERNAME
 #   --role-account  accounts to label as automation (repeatable; default
 #                   factory-maintainer)
 #   --json          print aggregates as JSON instead of writing HTML
@@ -41,48 +41,61 @@ import collections
 import datetime
 import html
 import json
+import os
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
-
-PAGE = 2000
 
 
-def osc_api(path):
-    r = subprocess.run(["osc", "api", path], capture_output=True)
+def geectl_search(project, since):
+    """The accepted submit requests targeting project since the window
+    start, as `geectl request search` JSON. --since matches on a history
+    entry, so the caller filters on the accept date itself."""
+    r = subprocess.run(
+        [
+            "geectl",
+            "request",
+            "search",
+            "--target-project",
+            project,
+            "--type",
+            "submit",
+            "--state",
+            "accepted",
+            "--since",
+            since,
+        ],
+        capture_output=True,
+    )
     if r.returncode != 0:
-        sys.exit(f"osc api failed: {r.stderr.decode(errors='replace')[-300:]}")
-    return r.stdout
+        sys.exit(
+            f"geectl request search failed: {r.stderr.decode(errors='replace')[-300:]}"
+        )
+    try:
+        payload = json.loads(r.stdout.decode())
+    except ValueError:
+        sys.exit("geectl request search: an unparseable answer")
+    if not isinstance(payload, dict) or not isinstance(payload.get("requests"), list):
+        sys.exit("geectl request search: a malformed answer")
+    return payload["requests"]
 
 
 def collect(project, since):
-    q = (
-        "/search/request?match=state/@name='accepted'+and+action/@type='submit'"
-        f"+and+action/target/@project='{project}'+and+state/@when>'{since}'"
-        "&view=collection&limit={n}&offset={o}"
-    )
     cnt = collections.Counter()
     pkgs = collections.defaultdict(set)
     when = collections.defaultdict(collections.Counter)
-    off = 0
-    while True:
-        rs = ET.fromstring(osc_api(q.format(n=PAGE, o=off))).findall("request")
-        if not rs:
-            break
-        for r in rs:
-            c = r.get("creator") or "?"
-            cnt[c] += 1
-            st = r.find("state")
-            w = (st.get("when") if st is not None else "") or ""
-            if len(w) >= 10:
-                when[c][w[:10]] += 1
-            for a in r.findall("action"):
-                t = a.find("target")
-                if t is not None and t.get("package"):
-                    pkgs[c].add(t.get("package"))
-        off += len(rs)
-        if len(rs) < PAGE:
-            break
+    for r in geectl_search(project, since):
+        if not isinstance(r, dict):
+            continue
+        st = r.get("state") or {}
+        w = st.get("when") or ""
+        if len(w) < 10 or w[:10] < since:
+            continue
+        c = r.get("creator") or "?"
+        cnt[c] += 1
+        when[c][w[:10]] += 1
+        for a in r.get("actions") or []:
+            if isinstance(a, dict) and a.get("target_package"):
+                pkgs[c].add(a["target_package"])
     return cnt, pkgs, when
 
 
@@ -333,8 +346,8 @@ def render(meta, rows, gran, weekend_idx, weekend_share):
 def main():
     ap = argparse.ArgumentParser(
         allow_abbrev=False,
-        epilog="Exit: 0 = report written, 1 = osc api failed or no accepted SRs in "
-        "the window, 2 = usage.",
+        epilog="Exit: 0 = report written, 1 = geectl request search failed or no "
+        "accepted SRs in the window, 2 = usage.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--days", type=int, default=30)
@@ -352,8 +365,7 @@ def main():
     roles = set(a.role_account or ["factory-maintainer"])
     me = a.highlight
     if me is None:
-        r = subprocess.run(["osc", "whois"], capture_output=True)
-        me = r.stdout.decode().split(":")[0].strip() if r.returncode == 0 else ""
+        me = os.environ.get("GEECTL_OBS_USERNAME", "")
 
     cnt, pkgs, when = collect(a.project, since)
     if not cnt:

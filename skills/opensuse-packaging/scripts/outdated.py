@@ -19,7 +19,7 @@ this script therefore cross-checks every hit against the live Factory `Version:`
 and SUPPRESSES the ones Factory already ships at the "newest" version, so the
 output is actually actionable instead of a wall of known-lag noise. Use
 --no-factory-check to skip that (raw Repology view). The cross-check needs a
-working `osc` against api.opensuse.org.
+working `geectl` against api.opensuse.org.
 
 REPOLOGY'S "newest" IS ITSELF ONLY "newest packaged in some tracked repo" — an
 upstream release that no distro has packaged yet is invisible to the sweep
@@ -31,7 +31,7 @@ this script probes further sources at the same time as the Repology sweep:
   * Anitya (release-monitoring.org) over names Repology did not flag; extra
     hits print tagged [anitya:mapped] / [anitya:name-match]. A name-collision
     across same-named Anitya projects is unknown, not max(version).
-  * Then a forge pass over names that still have no mapping: one `osc cat` of
+  * Then a forge pass over names that still have no mapping: one `geectl remote cat` of
     the Factory spec (Version, URL, Source0 together), Anitya retried with
     homepage=URL ([anitya:homepage]), and if still unmapped, GitHub/GitLab/
     PyPI/npm/crates.io from URL/Source0 plus GitHub→npm @owner/repo
@@ -141,7 +141,7 @@ ap = argparse.ArgumentParser(
 )
 ap.add_argument("--names", help="file of package names (default: stdin)")
 ap.add_argument("--repo", default="opensuse_tumbleweed")
-ap.add_argument("--ua", default="osc-update-check/1.0")
+ap.add_argument("--ua", default="outdated-check/1.0")
 ap.add_argument(
     "--project",
     default="openSUSE:Factory",
@@ -336,11 +336,20 @@ Ref = namedtuple("Ref", "status version url src")
 
 
 def ref_spec(pkg):
-    """One osc cat: Version, URL, Source0. status: ok | absent | failed.
-    A network hiccup / osc failure must NOT be conflated with 'not in project'."""
+    """One geectl remote cat: Version, URL, Source0. status: ok | absent | failed.
+    A network hiccup / geectl failure must NOT be conflated with 'not in project'."""
     try:
         r = subprocess.run(
-            ["osc", "cat", args.project, pkg, f"{pkg}.spec"],
+            [
+                "geectl",
+                "remote",
+                "cat",
+                "--format",
+                "text",
+                args.project,
+                pkg,
+                f"{pkg}.spec",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -348,7 +357,7 @@ def ref_spec(pkg):
     except Exception:
         return Ref("failed", None, None, None)
     if r.returncode != 0:
-        if "404" in (r.stderr or ""):
+        if r.returncode == 3:
             return Ref("absent", None, None, None)
         return Ref("failed", None, None, None)
     if _forges:
@@ -426,7 +435,7 @@ if do_check and suppressed:
 # including the suppressed ones (Repology's "newest" itself may be stale).
 lookups, a_hits, a_odd, failed = {}, [], [], []
 # Names the passes below could not look up in the reference project: absent is
-# the project answering, failed is osc not answering (the name went unchecked).
+# the project answering, failed is geectl not answering (the name went unchecked).
 ref_absent, ref_failed = set(), set()
 # Names whose answering source is OLDER than the packaged version: that channel
 # stopped (a repo no longer tagged, a stale mapping), so it decides nothing. They
@@ -741,7 +750,7 @@ if forge_pass_ran:
 # Many names looked up in the reference project and none of them there means the
 # input or --project is wrong (a whole my-packages.sh line once went in as one
 # name), not that every package is current. Only names the project ANSWERED for
-# count: when osc itself is down, the unreadable-spec loss below says so.
+# count: when geectl itself is down, the unreadable-spec loss below says so.
 ref_ok = sum(1 for r in refv.values() if r.status == "ok")
 none_found = (
     len(refv)
@@ -754,7 +763,7 @@ none_found = (
 if ref_failed:
     print(
         f"# {len(ref_failed)} name(s) whose {args.project} spec could not be read "
-        "(osc failed) — NOT checked: " + " ".join(sorted(ref_failed))
+        "(geectl failed) — NOT checked: " + " ".join(sorted(ref_failed))
     )
 if ref_absent:
     print(
@@ -828,7 +837,7 @@ else:
 if ref_failed:
     down.append(
         (
-            f"osc({len(ref_failed)} names)",
+            f"geectl({len(ref_failed)} names)",
             f"{args.project} spec unreadable for {len(ref_failed)} name(s)",
         )
     )

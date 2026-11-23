@@ -1,8 +1,8 @@
 #!/bin/bash
 # watch-submissions.sh — cron-friendly DELTA watcher for your submissions:
-# snapshots your ACTIVE OBS submit requests (states new,review; roles=creator),
-# INCOMING requests others directed at packages/projects you maintain
-# (roles=maintainer,reviewer, creator != you), plus your OPEN src.opensuse.org
+# snapshots your ACTIVE OBS submit requests (states new,review; creator you),
+# INCOMING requests awaiting your review (--reviewer, creator != you), plus
+# your OPEN src.opensuse.org
 # (Gitea) PRs; diffs each set against the saved baseline, prints only the
 # delta, then refreshes the baseline. Complements sr-status.py: that renders
 # the full current status; this answers "what CHANGED since the last firing?"
@@ -28,13 +28,15 @@
 #
 # "RESOLVE" means the item left the watched set: "gone from the list" is not
 # "landed". --resolve fetches the final state of your outgoing ones, one search
-# call per 50 ids; without it the CALLER fetches it (osc request show <id> /
+# call per 50 ids; without it the CALLER fetches it (geectl request show <id> /
 # tea api .../pulls/<n> — accepted/declined/revoked vs merged/closed). For NEW
 # INCOMING the caller reviews the request
-# (osc request show --diff <id>) and applies the accept/decline policy. Without
+# (geectl request diff <id>) and applies the accept/decline policy. Without
 # --resolve the watcher stays one API call per leg. A leg whose answer fills its
-# page (incoming 250, PRs 50) may be cut, so its diff is skipped rather than
-# reporting RESOLVE lines it cannot prove. maintenance_incident /
+# page (PRs 50) may be cut, so its diff is skipped rather than
+# reporting RESOLVE lines it cannot prove. The maintainer leg of incoming —
+# requests targeting packages you maintain, with no review assigned to you —
+# has no typed leaf, so it is not watched. maintenance_incident /
 # maintenance_release entries are the exception: they are the QAM/security
 # teams' pipeline, never the package
 # maintainer's to accept or decline, so they are aggregated into one counted
@@ -44,10 +46,10 @@
 # Usage: watch-submissions.sh [--user U] [--login GITEA_LOGIN]
 #                             [--state-dir DIR] [--allow-empty] [--no-prs]
 #                             [--no-incoming] [--resolve]
-#   --user        OBS account (default: osc whois)
+#   --user        OBS account (default: $GEECTL_OBS_USERNAME)
 #   --login       tea login name for the Gitea leg (default: src.opensuse.org)
 #   --state-dir   where the baseline JSON lives
-#                 (default: ${XDG_STATE_HOME:-~/.local/state}/osc-submission-watch).
+#                 (default: ${XDG_STATE_HOME:-~/.local/state}/geectl-submission-watch).
 #                 Every run replaces the baseline, so an ad-hoc "what changed?"
 #                 run takes its own directory, or it eats the delta the next
 #                 cron firing would have reported.
@@ -71,7 +73,7 @@
 set -o pipefail
 
 OBSUSER="" LOGIN="src.opensuse.org"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/osc-submission-watch"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/geectl-submission-watch"
 ALLOW_EMPTY=0 NO_PRS=0 NO_INCOMING=0 RESOLVE=0
 while [ $# -gt 0 ]; do
   case "$1" in --user|--login|--state-dir) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; };; esac
@@ -89,10 +91,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$OBSUSER" ]; then
-  OBSUSER=$(osc whois 2>/dev/null | cut -d: -f1 | tr -d '[:space:]')
+  OBSUSER=${GEECTL_OBS_USERNAME:-}
 fi
 if [ -z "$OBSUSER" ]; then
-  echo "WATCH-ERROR: cannot determine OBS user (osc whois failed; pass --user)"
+  echo "WATCH-ERROR: cannot determine OBS user (no user: set GEECTL_OBS_USERNAME or pass --user)"
   exit 2
 fi
 mkdir -p "$STATE_DIR" || { echo "WATCH-ERROR: cannot create state dir $STATE_DIR"; exit 2; }
@@ -103,14 +105,14 @@ trap 'rm -rf "$TMP"' EXIT
 
 # No limit on your own set: a capped answer would turn every request past the
 # cap into a RESOLVE line.
-osc api "/request?view=collection&roles=creator&user=$OBSUSER&states=new,review" \
-    >"$TMP/obs.xml" 2>"$TMP/obs.err"
+geectl request search --creator "$OBSUSER" --state new --state review \
+    >"$TMP/obs.json" 2>"$TMP/obs.err"
 OBS_RC=$?
 
 INCOMING_RC=1
 if [ "$NO_INCOMING" = 0 ]; then
-  osc api "/request?view=collection&roles=maintainer,reviewer&user=$OBSUSER&states=new,review&limit=250" \
-      >"$TMP/incoming.xml" 2>"$TMP/incoming.err"
+  geectl request search --reviewer "$OBSUSER" --state new --state review \
+      >"$TMP/incoming.json" 2>"$TMP/incoming.err"
   INCOMING_RC=$?
 fi
 
@@ -125,7 +127,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OBS_RC=$OBS_RC INCOMING_RC=$INCOMING_RC GITEA_RC=$GITEA_RC \
 ALLOW_EMPTY=$ALLOW_EMPTY NO_PRS=$NO_PRS NO_INCOMING=$NO_INCOMING RESOLVE=$RESOLVE \
 OBSUSER="$OBSUSER" BASE="$BASE" TMP="$TMP" SCRIPT_DIR="$SCRIPT_DIR" python3 -I -X pycache_prefix=/dev/null/opensuse-packaging - <<'PYEOF'
-import json, os, subprocess, sys, xml.etree.ElementTree as ET
+import json, os, subprocess, sys
 
 sys.path.insert(0, os.environ["SCRIPT_DIR"])
 import _sanitize   # escape/Unicode-smuggling filter for third-party text
@@ -135,12 +137,11 @@ allow_empty = os.environ["ALLOW_EMPTY"] == "1"
 no_prs = os.environ["NO_PRS"] == "1"
 no_incoming = os.environ["NO_INCOMING"] == "1"
 resolve = os.environ["RESOLVE"] == "1"
-INCOMING_LIMIT = 250  # the incoming query's limit= parameter
 GITEA_LIMIT = 50  # the PR query's limit= parameter
 obsuser = os.environ["OBSUSER"]
 
 def parse_requests(path):
-    """id -> {pkg,state,staging,creator,kind} for a request collection document.
+    """id -> {pkg,state,staging,creator,kind} for a `request search` JSON file.
 
     kind is "maintenance" when ANY action is a maintenance_incident /
     maintenance_release (the QAM+security release pipeline) and "submit"
@@ -149,23 +150,26 @@ def parse_requests(path):
     and surfacing them as ordinary incoming SRs invites an accept/decline
     review that would be wrong to act on.
     """
+    with open(path) as fh:
+        payload = json.load(fh)
+    if not isinstance(payload, dict) or not isinstance(payload.get("requests"), list):
+        raise ValueError("not a request search answer")
     out = {}
-    root = ET.parse(path).getroot()
-    for r in root.findall("request"):
-        rid = r.get("id")
-        st = r.find("state")
-        acts = r.findall("action")
+    for r in payload["requests"]:
+        if not isinstance(r, dict):
+            raise ValueError("not a request search answer")
+        rid = str(r.get("id"))
+        st = r.get("state") or {}
+        acts = [a for a in r.get("actions") or [] if isinstance(a, dict)]
         pkgs = []
         for act in acts:
-            tgt, src = act.find("target"), act.find("source")
-            p = ((tgt.get("package") if tgt is not None else None)
-                 or (src.get("package") if src is not None else None))
+            p = act.get("target_package") or act.get("source_package")
             if p and p not in pkgs:
                 pkgs.append(p)
         pkg = (pkgs[0] + (f" +{len(pkgs)-1} more" if len(pkgs) > 1 else "")) if pkgs else "?"
         stg = ""
-        for rv in r.findall("review"):
-            if rv.get("state") == "new":
+        for rv in r.get("reviews") or []:
+            if isinstance(rv, dict) and rv.get("state") == "new":
                 by = rv.get("by_project") or ""
                 if "Staging" in by:
                     parts = by.split(":")
@@ -174,7 +178,7 @@ def parse_requests(path):
                 if any((act.get("type") or "").startswith("maintenance_")
                        for act in acts)
                 else "submit")
-        out[rid] = {"pkg": pkg, "state": st.get("name") if st is not None else "?",
+        out[rid] = {"pkg": pkg, "state": st.get("name") or "?",
                     "staging": stg, "creator": r.get("creator") or "?", "kind": kind}
     return out
 
@@ -182,11 +186,11 @@ def parse_requests(path):
 if os.environ["OBS_RC"] != "0":
     err = open(f"{tmp}/obs.err").read().strip().splitlines()
     print("WATCH-ERROR: OBS request query failed "
-          f"({err[-1] if err else 'osc api rc!=0'}); baseline untouched")
+          f"({err[-1] if err else 'geectl request search rc!=0'}); baseline untouched")
     sys.exit(2)
 try:
-    obs = parse_requests(f"{tmp}/obs.xml")
-except ET.ParseError as e:
+    obs = parse_requests(f"{tmp}/obs.json")
+except (ValueError, OSError) as e:
     print(f"WATCH-ERROR: OBS response not parseable ({e}); baseline untouched")
     sys.exit(2)
 if not obs and not allow_empty:
@@ -198,15 +202,13 @@ if not obs and not allow_empty:
 # roles=maintainer,reviewer returns requests whose TARGET the user maintains /
 # is asked to review; the user's own creations are removed so nothing shows up
 # in both sets. Empty is normal here — no --allow-empty guard.
-incoming, incoming_ok, incoming_full = {}, False, False
+incoming, incoming_ok = {}, False
 if not no_incoming and os.environ["INCOMING_RC"] == "0":
     try:
-        got = parse_requests(f"{tmp}/incoming.xml")
-        # a full page may be cut: diffing it would fake RESOLVE lines
-        incoming_full = len(got) >= INCOMING_LIMIT
-        incoming_ok = not incoming_full
+        got = parse_requests(f"{tmp}/incoming.json")
+        incoming_ok = True
         incoming = {rid: v for rid, v in got.items() if v["creator"] != obsuser}
-    except ET.ParseError:
+    except (ValueError, OSError):
         incoming_ok = False
 
 # ---- Gitea leg (soft: a failure skips the PR diff, never fakes RESOLVEs) ----
@@ -255,31 +257,32 @@ def final_states(ids):
     ids; None when any call failed."""
     ids = sorted(ids, key=int)
     reqs = []
-    for i in range(0, len(ids), 50):  # 50 ids per call keeps the URL short
-        match = "+or+".join(f"@id={rid}" for rid in ids[i:i + 50])
+    for i in range(0, len(ids), 50):  # 50 ids per call keeps the argv short
+        args = ["geectl", "request", "search"]
+        for rid in ids[i:i + 50]:
+            args += ["--request-id", rid]
         try:
-            r = subprocess.run(["osc", "api", f"/search/request?match={match}"],
-                               capture_output=True, text=True, timeout=60)
-            root = ET.fromstring(r.stdout) if r.returncode == 0 else None
-        except (subprocess.TimeoutExpired, ET.ParseError):
-            root = None
-        if root is None:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=60)
+            payload = json.loads(r.stdout) if r.returncode == 0 else None
+        except (subprocess.TimeoutExpired, ValueError):
+            payload = None
+        if not isinstance(payload, dict) or not isinstance(payload.get("requests"), list):
             return None
-        reqs += root.findall("request")
+        reqs += payload["requests"]
     out = {}
     for req in reqs:
-        st = req.find("state")
-        if st is None:
+        if not isinstance(req, dict):
             continue
+        st = req.get("state") or {}
         name, who = st.get("name", "?"), _sanitize.sanitize(st.get("who") or "?")
         if name == "superseded" and st.get("superseded_by"):
-            out[req.get("id")] = f"superseded by #{st.get('superseded_by')}"
+            out[str(req.get("id"))] = f"superseded by #{st.get('superseded_by')}"
         elif name == "declined":
-            why = " ".join(_sanitize.sanitize(st.findtext("comment") or "").split())
+            why = " ".join(_sanitize.sanitize(st.get("comment") or "").split())
             why = why if len(why) <= 100 else why[:99].rstrip() + "…"
-            out[req.get("id")] = f'declined by {who}: "{why}"'
+            out[str(req.get("id"))] = f'declined by {who}: "{why}"'
         else:
-            out[req.get("id")] = f"{name} by {who}"
+            out[str(req.get("id"))] = f"{name} by {who}"
     return out
 
 gone = [rid for rid in bo if rid not in obs]
@@ -344,9 +347,7 @@ if gitea_full:
     print(f"  ! gitea leg hit its {GITEA_LIMIT} limit (PR diff skipped; PR baseline kept)")
 elif not gitea_ok and not no_prs:
     print("  ! gitea leg unavailable this run (PR diff skipped; PR baseline kept)")
-if incoming_full:
-    print(f"  ! incoming leg hit its {INCOMING_LIMIT} limit (diff skipped; baseline kept)")
-elif not incoming_ok and not no_incoming:
+if not incoming_ok and not no_incoming:
     print("  ! incoming leg unavailable this run (diff skipped; baseline kept)")
 if incoming_upgraded:
     print("  ! incoming leg initialized (baseline upgraded; deltas start next run)")

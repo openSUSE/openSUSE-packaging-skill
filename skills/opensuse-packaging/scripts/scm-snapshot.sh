@@ -27,8 +27,9 @@
 # Behavior: resolves the rev to a FULL sha (git ls-remote), writes (scaffold) or
 # re-pins in place (--update) the _service XML (obs_scm, revision=<full sha>,
 # scaffold versionformat <base>~git%cd.%h,
-# exclude .git*), runs `osc service mr` (the scaffolded service is mode="manual";
-# never `runall`, which is mode-blind) inside an .osc checkout or falls
+# exclude .git*), runs `geectl local-build service-run --mode manualrun` (the
+# scaffolded service is mode="manual"; never `runall`, which is mode-blind)
+# inside a geectl checkout or falls
 # back to the direct `/usr/lib/obs/service/obs_scm --outdir` invocation in a
 # plain git-pool checkout (see references/leap-slfo.md), then parses the
 # produced .obsinfo and prints:
@@ -140,9 +141,11 @@ EOF
 fi
 
 # ---- 3. run the service -------------------------------------------------------
-if [ -d .osc ]; then
-  # the _service written above is mode="manual" -> manualrun, NOT runall
-  osc service manualrun || { echo "osc service manualrun failed" >&2; exit 2; }
+# A geectl working copy records its project in git config (geectl.*); anywhere
+# else the service binary runs directly. The _service written above is
+# mode="manual" -> manualrun, NOT runall.
+if git config --get geectl.project >/dev/null 2>&1; then
+  geectl local-build service-run --mode manualrun . --live || { echo "geectl local-build service-run --mode manualrun failed" >&2; exit 2; }
 else
   # plain (git-pool / scratch) checkout: run the service binary directly
   svc=/usr/lib/obs/service/obs_scm
@@ -185,7 +188,7 @@ if [ "$update" = 1 ]; then
   fi
   [ "$fail" = 0 ] || exit 1
   echo "verified: version advanced, sources moved"
-  [ -n "$old_obscpio" ] && [ -f "$old_obscpio" ] && echo "(remember: osc rm $old_obscpio ; osc add $new_obscpio)"
+  [ -n "$old_obscpio" ] && [ -f "$old_obscpio" ] && echo "(remember: geectl rm $old_obscpio ; geectl add $new_obscpio)"
 fi
 
 echo

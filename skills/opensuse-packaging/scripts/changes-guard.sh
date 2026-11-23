@@ -22,7 +22,7 @@
 #                reworded, or rewritten, date refreshed — provided BOTH the
 #                committed top entry and its replacement carry AUTHOR (YOUR own
 #                name, e.g. 'Jane Packager'; never another packager's) in the
-#                header, the committed one names the `osc whois` user, and
+#                header, the committed one names the geectl user ($GEECTL_OBS_USERNAME), and
 #                openSUSE:Factory's copy of the .changes does not hold that entry
 #                yet. Use this only for an update already committed to the devel
 #                project but NOT yet accepted into openSUSE:Factory: that entry
@@ -37,7 +37,7 @@
 #                Also allow the run of YOUR OWN entries at the top to be folded
 #                into ONE new entry carrying AUTHOR, when the user asks for one
 #                entry per submission: every entry the new one replaces must
-#                name the `osc whois` user and be absent from openSUSE:Factory
+#                name the geectl user ($GEECTL_OBS_USERNAME) and be absent from openSUSE:Factory
 #                (the --amend-top checks, for each), and every entry below the
 #                folded run stays byte-for-byte identical. Another packager's
 #                entry is never folded (swift-lang: a rewrite of the whole file
@@ -45,7 +45,7 @@
 #   --released DIR
 #                openSUSE:Factory's copy of each .changes, by file name, for the
 #                --amend-top and --squash-mine checks (offline/tests; a file missing there = not in
-#                Factory; the `osc whois` check still runs). Default: `osc cat openSUSE:Factory <pkg> <file>`, the
+#                Factory; the geectl whois check still runs). Default: `geectl remote cat openSUSE:Factory <pkg> <file> --format text`, the
 #                package from .osc/_package or the git checkout's directory name;
 #                a 404 means a new package.
 #   Baseline auto-detection order: .osc/sources/<name> (classic osc checkout),
@@ -134,20 +134,27 @@ amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
 }
 
 # Are these baseline entries (by header line) the OBS user's own? AUTHOR is the
-# caller's word; `osc whois` is the login's. 0 = yes, 1 = no, 3 = cannot tell
-# (said on stderr).
+# caller's word; the geectl user is $GEECTL_OBS_USERNAME, whose name and email
+# come from `geectl remote whois`. 0 = yes, 1 = no, 3 = cannot tell (said on
+# stderr).
 top_mine() {                       # $1 = work, $2 = what ("the top entry"), $3... = header lines
-  local work=$1 what=$2 me name mail bh; shift 2
-  me=$(osc whois 2>/dev/null | head -n1) || me=""
-  name=$(sed -n 's/^[^:]*: *"\(.*\)".*/\1/p' <<<"$me"); mail=$(sed -n 's/.*<\(.*\)>.*/\1/p' <<<"$me")
+  local work=$1 what=$2 whois name mail bh; shift 2
+  [ -n "${GEECTL_OBS_USERNAME:-}" ] || { echo "$work: cannot tell whether $what is yours: set GEECTL_OBS_USERNAME" >&2; return 3; }
+  whois="$(geectl remote whois "$GEECTL_OBS_USERNAME" 2>/dev/null)" || whois=""
+  name="$(printf '%s' "$whois" | python3 -I -c 'import sys, json
+try: print(json.load(sys.stdin).get("realname") or "")
+except Exception: print("")' 2>/dev/null)"
+  mail="$(printf '%s' "$whois" | python3 -I -c 'import sys, json
+try: print(json.load(sys.stdin).get("email") or "")
+except Exception: print("")' 2>/dev/null)"
   if [ -z "$name$mail" ]; then
-    echo "$work: cannot tell whether $what is yours: osc whois failed" >&2; return 3
+    echo "$work: cannot tell whether $what is yours: geectl remote whois $GEECTL_OBS_USERNAME failed" >&2; return 3
   fi
   for bh in "$@"; do
     if { [ -n "$name" ] && [[ $bh == *" - $name <"* ]]; } || { [ -n "$mail" ] && [[ $bh == *"<$mail>"* ]]; }; then
       continue
     fi
-    echo "$work: ERROR — $what is not yours ('$bh'; osc whois: $me): another" \
+    echo "$work: ERROR — $what is not yours ('$bh'; geectl remote whois $GEECTL_OBS_USERNAME: $name <$mail>): another" \
          "packager's entry is history, never a draft. Restore it byte-for-byte and write" \
          "a new entry on top." >&2
     return 1
@@ -168,9 +175,9 @@ top_released() {                   # $1 = work, $2 = what, $3... = header lines
     if [ -z "$pkg" ]; then
       echo "$work: cannot tell whether openSUSE:Factory has $what: no package name" \
            "(no .osc/_package, not a git checkout) — pass --released DIR" >&2; r=3
-    elif ! osc cat openSUSE:Factory "$pkg" "$bn" > "$fac" 2> "$err"; then
-      grep -q '404' "$err" || { echo "$work: cannot tell whether openSUSE:Factory has $what:" \
-        "osc cat openSUSE:Factory $pkg $bn failed: $(head -n1 "$err")" >&2; r=3; }
+    elif ! geectl remote cat openSUSE:Factory "$pkg" "$bn" --format text > "$fac" 2> "$err"; then
+      grep -q -e 'not_found' -e 'returned 404' -e 'returned 410' "$err" || { echo "$work: cannot tell whether openSUSE:Factory has $what:" \
+        "geectl remote cat openSUSE:Factory $pkg $bn failed: $(head -n1 "$err")" >&2; r=3; }
       : > "$fac"
     fi
   fi

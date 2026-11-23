@@ -1,7 +1,8 @@
 #!/bin/bash
-# Summarize the last `osc build` from its build log — in ONE invocation, so a
-# session/agent gets the literal numbers without ad-hoc grep pipelines, and an
-# UNAMBIGUOUS verdict it can gate on instead of eyeballing a tail.
+# Summarize the last `geectl local-build build` from its build log — in ONE
+# invocation, so a session/agent gets the literal numbers without ad-hoc grep
+# pipelines, and an UNAMBIGUOUS verdict it can gate on instead of eyeballing
+# a tail.
 # Surfaces: VERDICT + when, %check/ctest pass count, the rpmlint badness summary
 # + every E:/W: line, the post-build check findings, and the produced RPMs.
 #
@@ -21,24 +22,23 @@
 #
 # No sudo: the preserved build log and RPMs under the build root are readable by
 # the build user. If a profile blocks reading them, capture the build yourself —
-# `osc build … 2>&1 | tee /tmp/osc-build.log` — and pass that file as the
-# argument; osc streams the identical log to stdout.
+# `geectl local-build build … --live 2>&1 | tee /tmp/geectl-build.log` — and pass
+# that file as the argument; geectl streams the identical log to stdout.
 #
 # Usage: build-summary.sh [repo-arch | flavor | root-name | root-path | logfile | --rpms DIR logfile | --list]
 #   --rpms DIR: the build's .build.packages, whose RPMS/ get the user()/group()
-#   check a bare log file cannot have. A root form reads the .build.packages of
-#   the build root its log names first (<root>, or <root>/.mount for a VM build,
-#   build-type=kvm); with no such line, <root>/.mount/.build.packages beside an
-#   image <root>/img, else <root>/.build.packages.
-#   A full root NAME (exactly what --list prints, e.g. pkg-repo-arch) or a full
-#   root PATH is honored verbatim — explicit naming overrides the wrong-package
-#   guard that protects the loose repo-arch match.
-#   The build root's name comes from `build-root` in oscrc, which is a template
-#   (default `%(repo)s-%(arch)s`, often customized to include `%(package)s`), so
-#   there is NO single right answer — the arg is matched loosely against the
-#   roots that exist. A bare flavor name also resolves (`build-summary.sh serial`
-#   finds `_repository:serial-<repo>-<arch>`, which is what `osc build -M serial`
-#   writes from a git checkout). `--list` just shows the roots, newest first.
+#   check a bare log file cannot have. A root form reads the .build.packages
+#   of that root (<root>/.build.packages).
+#   A full root NAME (exactly what --list prints, e.g.
+#   home:<you>:test/mypkg/standard-x86_64) or a full root PATH is honored
+#   verbatim — explicit naming overrides the wrong-package guard that
+#   protects the loose repo-arch match.
+#   Roots live under the local-build cache's build-roots,
+#   <cache>/build-roots/<project>/<package>/<repo>-<arch>[-<flavor>]/, so a
+#   bare <repo>-<arch> arg matches the roots of THIS checkout's package
+#   first. A bare flavor name also resolves (`build-summary.sh serial` finds
+#   the roots whose name ends in -serial). `--list` just shows the roots,
+#   newest first.
 set -uo pipefail
 case "${1:-}" in
   -h|--help) awk 'NR>1 { if (/^#/) print; else exit }' "$0"; exit 0;;
@@ -51,68 +51,36 @@ if [ "${1:-}" = --rpms ]; then
   pkgdir=$2; shift 2
 fi
 
-# --- where do build roots live? Read the oscrc template, don't assume. --------
-TMPL=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
-       | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
-: "${TMPL:=/var/tmp/build-root/%(repo)s-%(arch)s}"
+# --- where do build roots live? The local-build cache's build-roots. ----------
+CACHE=$(geectl config show 2>/dev/null | python3 -I -c \
+  'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("build_cache_dir") or "")')
+: "${CACHE:=${XDG_CACHE_HOME:-$HOME/.cache}/geectl}"
+BASE="$CACHE/build-roots"
 
-root_base() {
-  local tmpl="$TMPL"
-  # strip trailing path components that are templated (%(package)s etc.)
-  while [ -n "$tmpl" ] && case "$tmpl" in */*) [[ "${tmpl##*/}" == *'%('* ]];; *) false;; esac; do
-    tmpl="${tmpl%/*}"
-  done
-  echo "${tmpl:-/var/tmp/build-root}"
-}
-BASE=$(root_base)
-
-# The template usually embeds %(package)s, so the root is "<pkg>-<repo>-<arch>"
-# and a bare "<repo>-<arch>" arg matches NOTHING under BASE. Expanding the
-# template with the checkout's own package name is exact; globbing is the
-# fallback. Getting this wrong silently reports ANOTHER package's stale log as
+# The package is a directory level (<project>/<package>/<repo>-<arch>), so a
+# bare "<repo>-<arch>" arg matches the roots of THIS checkout's package
+# first. Getting this wrong silently reports ANOTHER package's stale log as
 # this package's verdict (seen twice: fastmcp -> zoo's log, rtk -> repose's).
-CKPKG=""; [ -r .osc/_package ] && CKPKG=$(tr -d '\n' < .osc/_package 2>/dev/null)
-# git/scmsync checkout: no .osc, but a single spec names the package.
-# NB: use an array — 'set -- *.spec' would clobber the script's own arguments
-# and silently drop the repo-arch the caller asked about.
-if [ -z "$CKPKG" ] && [ ! -d .osc ]; then
+CKPKG="$(git config --get geectl.package 2>/dev/null || true)"
+# A geectl working copy always names its package; a plain directory with a
+# single spec names the package.
+if [ -z "$CKPKG" ]; then
   specs=(*.spec)
   [ "${#specs[@]}" -eq 1 ] && [ -f "${specs[0]}" ] && CKPKG="$(basename "${specs[0]}" .spec)"
 fi
 
-expand_root() {                     # expand_root <pkg> <repo> <arch>
-  local out="$TMPL"
-  out="${out//%(package)s/$1}"; out="${out//%(repo)s/$2}"; out="${out//%(arch)s/$3}"
-  out="${out//%(project)s/${OSC_PROJECT:-}}"; out="${out//%(user)s/${USER:-}}"
-  echo "$out"
-}
-
-# A VM build (build-type=kvm) runs in <root>/.mount, and --clean wipes only that:
-# the chroot tree of an earlier build in <root> is stale, so never home/abuild.
-# The log's own BUILD_ROOT comes first: an oscrc build-device moves the image
-# out of the root, and a later chroot build leaves an old image in it.
-pkgdir_of() {
-  local b
-  b=$(sed -n '/Using BUILD_ROOT=/{s/.*Using BUILD_ROOT=//p;q;}' "$1/.build.log" 2>/dev/null)
-  if [ -n "$b" ]; then echo "$b/.build.packages"
-  elif [ -e "$1/img" ] && [ -d "$1/.mount" ]; then echo "$1/.mount/.build.packages"
-  else echo "$1/.build.packages"; fi
-}
-
-# osc records the repo/arch of the last build in the checkout — use it so a bare
-# invocation right after `osc build` answers about THAT build.
-last_repo=""; last_arch=""
-if [ -r .osc/_last_buildroot ]; then
-  last_repo=$(sed -n 1p .osc/_last_buildroot); last_arch=$(sed -n 2p .osc/_last_buildroot)
-fi
+# A geectl local-build root keeps its built packages in .build.packages; the
+# log carries no BUILD_ROOT line, so there is nothing to chase.
+pkgdir_of() { echo "$1/.build.packages"; }
 
 list_roots() {
   local d
-  for d in "$BASE"/*/ /var/tmp/build-root/*/; do
+  for d in "$BASE"/*/*/*/; do
     [ -r "$d/.build.log" ] || continue
+    d="${d%/}"
     printf '%s\t%s\t%s\n' \
       "$(date -r "$d/.build.log" '+%m-%d %H:%M' 2>/dev/null)" \
-      "$(basename "$d")" \
+      "${d#$BASE/}" \
       "$(grep -ahoE '(finished|failed) "build [^"]+"' "$d/.build.log" 2>/dev/null | tail -1)"
   done 2>/dev/null | sort -r | head -12
 }
@@ -123,8 +91,12 @@ fi
 
 if [ -n "${1:-}" ]; then
   arg="$1"
-elif [ -n "$last_repo" ] && [ -n "$last_arch" ]; then
-  arg="$last_repo-$last_arch"           # what `osc build` last used here
+elif [ -n "$CKPKG" ]; then
+  # The newest root of this checkout's package is what the last build used.
+  arg=$(for d in "$BASE"/*/"$CKPKG"/*/; do
+    [ -r "$d/.build.log" ] && printf '%s\t%s\n' "$(date -r "$d/.build.log" +%s)" "${d#$BASE/}"
+  done 2>/dev/null | sort -rn | head -1 | cut -f2- | sed 's#/$##')
+  : "${arg:=standard-aarch64}"
 else
   arg="standard-aarch64"
 fi
@@ -135,38 +107,32 @@ elif [ -r "$arg/.build.log" ]; then         # a build-root PATH, used verbatim
   log="$arg/.build.log"; pkgdir=$(pkgdir_of "$arg")
 elif [ -r "$BASE/$arg/.build.log" ]; then   # a full root NAME (what --list prints)
   # Explicitly named roots are honored as-is: naming the root IS the
-  # disambiguation, so the wrong-package guard below must not apply — it
-  # compares against "$CKPKG-$arg" and can never match once $arg already
-  # carries the package prefix (real case: the exact string --list printed
-  # was rejected with exit 2).
+  # disambiguation, so the wrong-package guard below must not apply.
   log="$BASE/$arg/.build.log"; pkgdir=$(pkgdir_of "$BASE/$arg")
 else
-  # Exact expansion of the oscrc template comes FIRST — it is the only candidate
-  # that cannot resolve to a different package.
+  # This package's roots for this repo-arch come FIRST — the only candidates
+  # that cannot resolve to a different package — then this package's roots
+  # for this flavor, then any package's roots for this repo-arch, newest
+  # log first.
   cands=()
   if [ -n "$CKPKG" ]; then
-    cands+=("$(expand_root "$CKPKG" "${arg%-*}" "${arg##*-}")")
-    cands+=("$BASE/$CKPKG-$arg")
+    cands+=("$BASE"/*/"$CKPKG/$arg")
+    cands+=("$BASE"/*/"$CKPKG"/*-"$arg")
   fi
-  cands+=("$BASE/_repository:$arg-"* "$BASE"/*":$arg-"* "$BASE/$arg-"*)
-  # package-prefixed roots for this repo-arch, newest log first
   while IFS= read -r d; do [ -n "$d" ] && cands+=("$d"); done < <(
-    for d in "$BASE"/*"-$arg"/; do
+    for d in "$BASE"/*/*/"$arg"/; do
       [ -r "$d/.build.log" ] && printf '%s\t%s\n' "$(date -r "$d/.build.log" +%s)" "${d%/}"
     done 2>/dev/null | sort -rn | cut -f2-)
-  cands+=("/var/tmp/build-root/$arg")        # last resort: the un-templated root
   for cand in "${cands[@]}"; do
     [ -r "$cand/.build.log" ] || continue
     # Never answer with another package's log when this checkout names a
-    # package. The `compgen` form of this guard only held once SOME root for
-    # CKPKG existed; with none at all it fell through and reported a foreign
-    # package's stale log as this build's verdict — which is exactly the
-    # failure this script exists to prevent. It bit a zstd checkout whose
-    # `osc build` had refused the repo name (and still exited 0), answering
-    # with gpscorrelate's GREEN. Now: if we know the package, the root must
-    # carry its name, full stop.
-    if [ -n "$CKPKG" ] && [ "${cand##*/}" != "$CKPKG-$arg" ] \
-       && [ "${cand##*/}" != "$CKPKG" ]; then continue; fi
+    # package. It bit a zstd checkout whose build had refused the repo name
+    # (and still exited 0), answering with gpscorrelate's GREEN. Now: if we
+    # know the package, the root must live under its directory, full stop.
+    if [ -n "$CKPKG" ]; then
+      pkgdir_of_cand="${cand#$BASE/}"; pkgdir_of_cand="${pkgdir_of_cand#*/}"
+      [ "${pkgdir_of_cand%%/*}" = "$CKPKG" ] || continue
+    fi
     log="$cand/.build.log"; pkgdir=$(pkgdir_of "$cand"); break
   done
 fi
@@ -227,10 +193,10 @@ fi
 # own scriptlets create must also be provided (sysusers.d does it, a useradd in
 # %pre needs Provides:), or nothing can install it. System users (root, mail, ...)
 # come from other packages and are left alone.
-# A spec build writes its source RPM (.src.rpm, or .nosrc.rpm for NoSource; obs-build
-# globs *src.rpm) unless osc's --stage skips -bs, so none means the lookup is not
-# known to be this build's; a source RPM alone (a test flavor) leaves nothing to
-# install. An RPM rpm cannot read would make the check below read as passed.
+# A spec build writes its source RPM (.src.rpm, or .nosrc.rpm for NoSource), so
+# none means the lookup is not known to be this build's; a source RPM alone (a
+# test flavor) leaves nothing to install. An RPM rpm cannot read would make the
+# check below read as passed.
 users_checked=0; unprovided=""; noquery=""; built=()
 if [ -n "$pkgdir" ]; then
   mapfile -t built < <(find "$pkgdir/RPMS" -name '*.rpm' ! -name '*debuginfo*' ! -name '*debugsource*' 2>/dev/null)
@@ -267,7 +233,7 @@ echo "log: $log  (last written $(date -r "$log" '+%Y-%m-%d %H:%M' 2>/dev/null))"
 if grep -aqE 'error: Architecture is not included' "$log"; then
   echo "!! 'Architecture is not included' — this is usually a MISSING FLAVOR FLAG,"
   echo "   not an arch problem: a _multibuild package guards the flavorless spec"
-  echo "   with 'ExclusiveArch: do_not_build'. Rebuild with 'osc build -M <flavor>'."
+  echo "   with 'ExclusiveArch: do_not_build'. Rebuild with 'geectl local-build build --flavor <flavor> --live'."
 fi
 if [ "$rc" = 3 ] && [ -z "$verdict_line" ]; then
   echo "!! No 'finished'/'failed' line. If you wrapped the build in 'timeout', it was"

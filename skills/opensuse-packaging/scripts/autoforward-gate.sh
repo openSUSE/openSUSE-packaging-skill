@@ -4,7 +4,7 @@
 #
 # THE GATE IS THE `reviewer` ROLE, NOT CO-MAINTAINERSHIP. A co-maintainer who
 # never set a reviewer role has not asked to be consulted; an explicit
-# <person role="reviewer"/> (or a group reviewer) HAS. Gating on "is anyone else
+# person role="reviewer" (or a group reviewer) HAS. Gating on "is anyone else
 # a maintainer" is the wrong test — it blocks the overwhelming majority of
 # normal packages while catching nothing the reviewer role does not already
 # catch. Real case that produced this rule: two packages that had to be handled
@@ -16,12 +16,12 @@
 #   2. the package has NO maintainer at all and you hold `maintainer` on the
 #      PROJECT — an unowned package in a project you run is yours to move.
 # Either way an explicit reviewer (package or project, person or group) blocks.
-# A project kept in git (its _meta has <scmsync>, devel:openSUSE:Factory from
-# devel-factory/_ObsPrj) has stub package _meta with no <person>: its
+# A project kept in git (its project meta has scmsync, devel:openSUSE:Factory from
+# devel-factory/_ObsPrj) has stub package meta with no persons: its
 # maintainers are in the project git's _maintainership.json (the package's
 # list, else the project's ""), and the Reviewers of its workflow.config are
 # reviewer roles too. Both are read through git-obs, at the branch or commit
-# the <scmsync> #fragment names.
+# the scmsync #fragment names.
 # And the project must be the one Factory develops the package in: a request
 # accepted anywhere else lands in the wrong devel project (real case: apache-arrow
 # accepted into Application:Geo, whose package only linked to science).
@@ -36,7 +36,7 @@
 #                        package is unmaintained and you maintain the project)
 #   exit 3  BLOCKED    — an explicit reviewer role exists; stop, report, wait
 #   exit 4  NOT_YOURS  — package has a maintainer and it is not you
-#   exit 5  package or project _meta unreadable (404, auth, network), or
+#   exit 5  package or project meta unreadable (404, auth, network), or
 #           Factory's devel project lookup failed, or the project git's
 #           _maintainership.json or workflow.config unreadable
 #   exit 6  WRONG-DEVEL — openSUSE:Factory develops the package in another
@@ -49,7 +49,7 @@
 #
 # Usage: autoforward-gate.sh <project> <package> [--user <account>]
 #        autoforward-gate.sh --batch <file>   # lines of "<project>\t<package>"
-#   --user defaults to `osc whois`.
+#   --user defaults to $GEECTL_OBS_USERNAME.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
@@ -71,27 +71,49 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$user" ]; then
-  user="$(osc whois 2>/dev/null | sed 's/:.*//')"
-  [ -n "$user" ] || { echo "cannot determine account (osc whois failed); pass --user" >&2; exit 2; }
+  user="${GEECTL_OBS_USERNAME:-}"
+  [ -n "$user" ] || { echo "cannot determine account (set GEECTL_OBS_USERNAME); pass --user" >&2; exit 2; }
 fi
 
-# role extraction. Anchor the sed: a greedy .*=" would capture role="..." instead
-# of the userid/groupid.
-_maints() { printf '%s' "$1" | grep -o '<person userid="[^"]*" role="maintainer"' \
-            | sed -E 's/^<person userid="([^"]*)".*/\1/' | sort -u; }
-_revs()   { printf '%s' "$1" \
-            | grep -o '<\(person\|group\) \(userid\|groupid\)="[^"]*" role="reviewer"' \
-            | sed -E 's/^<(person|group) (userid|groupid)="([^"]*)".*/\3/' | sort -u; }
+# Role extraction from a package/project meta JSON payload (persons and
+# groups carry {name, role}).
+_maints() { printf '%s' "$1" | python3 -I -c '
+import sys, json
+try: meta = json.load(sys.stdin)
+except json.JSONDecodeError: sys.exit()
+print("\n".join(sorted({p.get("name", "") for p in meta.get("persons", [])
+                         if p.get("role") == "maintainer" and p.get("name")})))
+'; }
+_revs()   { printf '%s' "$1" | python3 -I -c '
+import sys, json
+try: meta = json.load(sys.stdin)
+except json.JSONDecodeError: sys.exit()
+names = {p.get("name", "") for p in meta.get("persons", [])
+         if p.get("role") == "reviewer" and p.get("name")}
+names |= {g.get("name", "") for g in meta.get("groups", [])
+          if g.get("role") == "reviewer" and g.get("name")}
+print("\n".join(sorted(names)))
+'; }
 
-# The value of attribute $1 on the <link> element in $2, compared as a string.
-_attr() { printf '%s' "$2" | tr '\n' ' ' | sed -n "s/.*<link[^>]* $1=\"\([^\"]*\)\".*/\1/p" | head -1; }
+# The link target of a package, from a link-target JSON payload
+# ({target: {project, package} | null}): the $1 field, "" when it links nothing.
+_attr() { printf '%s' "$2" | python3 -I -c '
+import sys, json
+try: payload = json.load(sys.stdin)
+except json.JSONDecodeError: sys.exit()
+target = payload.get("target") or {}
+print(target.get(sys.argv[1], ""))
+' "$1"; }
 
-# What a project _meta's <scmsync> holds, all of it up to </scmsync> (trimmed),
-# "" for a project OBS keeps.
+# What a project meta JSON payload's scmsync field holds ("" for a project
+# OBS keeps).
 _scm() {
-  local v
-  v="$(printf '%s' "$1" | tr '\n' ' ' | sed -n 's|.*<scmsync>\([^<]*\)</scmsync>.*|\1|p' | head -1)"
-  v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"
+  printf '%s' "$1" | python3 -I -c '
+import sys, json
+try: meta = json.load(sys.stdin)
+except json.JSONDecodeError: sys.exit()
+print(meta.get("scmsync") or "")
+'
 }
 
 # File $2 of the project git $1 (owner/repo) at ref $3 ("": its default
@@ -196,7 +218,7 @@ _gitroles() {
 # Prints "<verdict>\t<reviewers>\t<other-maintainers>\t<why>"; returns exit code.
 check_one() {
   local p="$1" k="$2" pmeta prjmeta maints revs prjrevs others prjmaints url u ref git
-  pmeta="$(osc api "/source/$p/$k/_meta" 2>/dev/null)" || return 5
+  pmeta="$(geectl remote package-meta "$p" "$k" 2>/dev/null)" || return 5
   [ -n "$pmeta" ] || return 5
   if [ "$p" != openSUSE:Factory ]; then
     local devel drc
@@ -205,9 +227,9 @@ check_one() {
       0) if [ "${devel%/*}" != "$p" ]; then
            # the devel package may be a _link to this one, which is fine
            local link lrc lprj lpkg
-           link="$(osc api "/source/$devel/_link" 2>&1)"; lrc=$?
+           link="$(geectl remote link-target "${devel%/*}" "${devel#*/}" 2>&1)"; lrc=$?
            if [ $lrc -ne 0 ]; then
-             grep -q 'HTTP Error 404' <<<"$link" || return 5
+             grep -q 'not_found' <<<"$link" || return 5
              link=""
            fi
            lprj="$(_attr project "$link")"; lpkg="$(_attr package "$link")"
@@ -226,7 +248,7 @@ check_one() {
     prjmeta="$(cat "$cache/$p")"
   else
     # unread, a project-level reviewer would go unseen
-    prjmeta="$(osc api "/source/$p/_meta" 2>/dev/null)" || return 5
+    prjmeta="$(geectl remote project-meta "$p" 2>/dev/null)" || return 5
     [ -z "$cache" ] || printf '%s' "$prjmeta" > "$cache/$p"
   fi
 
@@ -235,16 +257,9 @@ check_one() {
   prjrevs="$(_revs "$prjmeta")"
   # a project-level reviewer gates everything inside it, same as a package one
   revs="$(printf '%s\n%s\n' "$revs" "$prjrevs" | grep -v '^$' | sort -u)"
-  # a project kept in git: the OBS _meta are stubs, its roles are in the project
-  # git <scmsync> names, at the branch or commit its #fragment names
+  # a project kept in git: the OBS meta are stubs, its roles are in the project
+  # git scmsync names, at the branch or commit its #fragment names
   url="$(_scm "$prjmeta")"
-  # sed reads the last plain <scmsync>: a CDATA section, a comment or a second
-  # <scmsync> can hide the real one or forge it, never an OBS-kept project
-  if grep -q '<scmsync' <<<"$prjmeta" && { [ -z "$url" ] || grep -qE '<!--|<!\[CDATA\[' <<<"$prjmeta" \
-       || [ "$(grep -o '<scmsync' <<<"$prjmeta" | wc -l)" -ne 1 ]; }; then
-    printf 'UNREADABLE\t-\t-\t%s is kept in a <scmsync> that is not plain text or not alone, whose maintainers this cannot read\n' "$p"
-    return 5
-  fi
   if [ -n "$url" ]; then
     u="${url%%[?#]*}"; u="${u%.git}"; ref=""
     case $url in *'#'*) ref="${url#*#}";; esac
@@ -308,7 +323,7 @@ fi
 out="$(check_one "$prj" "$pkg")"; rc=$?
 if [ $rc -eq 5 ]; then
   if [ -n "$out" ]; then echo "UNREADABLE — ${out##*$'\t'}" >&2
-  else echo "cannot read /source/$prj/$pkg/_meta, its project's or its Factory devel project (absent, auth, or network)" >&2; fi
+  else echo "cannot read the $prj/$pkg package meta, its project's or its Factory devel project (absent, auth, or network)" >&2; fi
   exit 5
 fi
 IFS=$'\t' read -r verdict revs others why <<<"$out"
