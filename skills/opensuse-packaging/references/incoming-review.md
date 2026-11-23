@@ -123,10 +123,10 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 2. Accept on the user's explicit go, as for PASS.
 3. Continue the update as the user's follow-up: it fixes every defect the comment names and
    goes through the usual build, review and devel submission.
-4. **No Factory forward until the follow-up is in devel.** pr-guard holds it: while devel's
+4. **The Factory forward waits for the follow-up, or for the user's go.** While devel's
    files still equal those of the accepted FIXABLE submission (the request's source files, or
-   the PR's files at its head) and openSUSE:Factory does not already hold them, the Factory
-   request asks for the user's go, which they give only when they decide no follow-up is
+   the PR's files at its head) and openSUSE:Factory does not already hold them, pr-guard asks
+   before the Factory request; the user says go only when they decide no follow-up is
    needed. A review record or a lookup it cannot read refuses. Once the follow-up has landed,
    forward through the normal gate.
 

@@ -139,6 +139,181 @@
     },
     "cwd": "@CLONE@"
   },
+  "push-git-dir-tilde": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=~/prclone/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-no-repo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@CLONE@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "push-git-dir-harmless": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=~/otherclone/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "push-git-dir-same": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-exec-c": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git exec -c git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-exec": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git exec git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-systemd-run": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git systemd-run --user -d --wait git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-setpriv": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git setpriv --reset-env git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-sudo": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@OTHER@/.git sudo git push fork tess-88053-16.0"
+    },
+    "cwd": "@CLONE@"
+  },
+  "push-git-dir-command": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=@CLONE@/.git command git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-subshell-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR=@CLONE@/.git; (unset GIT_DIR); git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-cond-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR=@CLONE@/.git; false && unset GIT_DIR; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-pipe-unset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR=@CLONE@/.git; unset GIT_DIR | true; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-func-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "f() { git push fork tess-88053-16.0; }; export GIT_DIR=@CLONE@/.git; f"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-func-prefix": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "f() { git push fork tess-88053-16.0; }; GIT_DIR=@CLONE@/.git f"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-loop-after": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "for i in 1 2; do git push fork tess-88053-16.0; export GIT_DIR=@CLONE@/.git; done"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-trap": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "trap 'git push fork tess-88053-16.0' EXIT; export GIT_DIR=@CLONE@/.git"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-nameref": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "declare -n R=GIT_DIR; R=@CLONE@/.git; export GIT_DIR; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-declare-x": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "declare -x GIT_DIR=@CLONE@/.git; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-arith": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR; ((GIT_DIR=5)); git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-let": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR; let GIT_DIR=5; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-subscript": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_DIR; GIT_DIR[0]=5; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-common-dir": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_COMMON_DIR=@CLONE@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-common-dir-head": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_COMMON_DIR=@CLONE@/.git git push fork HEAD:tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-config-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.fork.pushurl GIT_CONFIG_VALUE_0=gitea@src.opensuse.org:someone/tesseract-ocr.git git push fork factory:tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
   "cd-call-1": {
     "tool_name": "Bash",
     "tool_input": {
@@ -890,7 +1065,7 @@
   "push-env-unset": {
     "tool_name": "Bash",
     "tool_input": {
-      "command": "env -u GIT_DIR git push fork tess-88053-16.0"
+      "command": "env -u LC_ALL git push fork tess-88053-16.0"
     },
     "cwd": "@CLONE@"
   },
@@ -11590,6 +11765,157 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "export PATH=/var/tmp/x-review/bin:$PATH; ls"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-bundle-version": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git -C @CLONE@ bundle create --version 3 @LINKS@/state/b.bundle HEAD"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-env-unplaced": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_INDEX_FILE=/var/tmp/x-idx; git -C @CLONE@ read-tree HEAD; ls $HOME/.local/state/opensuse-packaging/gate"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "state-git-index-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_INDEX_FILE=@LINKS@/state/idx git -C @CLONE@ read-tree HEAD"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-file-proc-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat /proc/self/cwd/comment-12.txt)\""
+    },
+    "cwd": "@WORK@/evil"
+  },
+  "comment-tea-file-proc-link": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat c.txt)\""
+    },
+    "cwd": "@WORK@/evil"
+  },
+  "comment-osc-file-proc-cwd": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c \"$(cat /proc/self/cwd/c1.txt)\" request 1391001"
+    },
+    "cwd": "@WORK@/evil"
+  },
+  "comment-osc-file-stamped": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c \"$(cat c1.txt)\" request 1391001"
+    },
+    "cwd": "@WORK@"
+  },
+  "approve-git-obs-sha256": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs pr review approve --commit 1414141414141414141414141414141414141414141414141414141414141414 incorg/incgit#14"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-path-subscript": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "PATH[0]=/var/tmp/x-review/bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-nameref": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "typeset -n R=X; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-select": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "select PATH in /var/tmp/x-review/bin; do ls; break; done <<< 1"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-let": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "let PATH=5; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-printf": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf -v PATH[0] /var/tmp/x-review/bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "read PATH[0] <<< /var/tmp/x-review/bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-hash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "hash -p /var/tmp/x-review/bin/cat ls; ls -P incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-bash-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "BASH_ENV=/var/tmp/x-review/benv.sh bash -c true"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ENV=/var/tmp/x-review/env.sh sh -c true"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-subscript-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "PATH[0]=xdir; ls /var/tmp"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-hash-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "hash -p /var/tmp/x-review/bin/cat ls; ls -P incpass.spec"
     },
     "cwd": "@PLAIN@"
   }

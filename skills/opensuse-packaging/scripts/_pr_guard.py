@@ -673,8 +673,9 @@ MESSAGES = {
     "failed lookup may pass on a retry; a review record that does not read is the "
     "user's to repair or remove.",
     "incoming-path": "{0}: the guard looks command names up on its own PATH, so a "
-    "PATH the call sets could run a program it never judged. Run the tools by their "
-    "names on the session's PATH.",
+    "call of this agent that names PATH, BASH_ENV or ENV=, the hash builtin or a "
+    "nameref is refused, whatever it does with them. Run the tools by their names; "
+    "a search for such a word takes its pattern from a file (grep -f FILE).",
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
@@ -712,6 +713,10 @@ ASKS = {
     "yet, and openSUSE:Factory does not show what was accepted. Forward only on the "
     "user's go (they may decide no follow-up is needed); else commit the fix to "
     "devel, gate it, then forward.",
+    "incoming-hold-repo": "{0}: its review was FIXABLE, and as devel does not sync "
+    "from the repository reviewed, the guard could not check whether its follow-up "
+    "fix is in devel, nor compare openSUSE:Factory with what was accepted. Forward "
+    "only on the user's go.",
 }
 # The read a tea comment with no subcommand and no body may have meant.
 COMMENT_READ = (
@@ -824,7 +829,7 @@ class Ctx:
         self.unread = []  # the skill scripts being read that run unread as merged
         self.made = set()  # what the call's writers made, which may lead anywhere
         self.reading = []  # the scripts being read, innermost last
-        self.git_env = {}  # GIT_PLACE values set before a command (None: unknown)
+        self.texts = []  # every shell text judged: scripts, eval and trap strings
 
 
 def git(cwd, gargs, *args):
@@ -1241,9 +1246,37 @@ def sub_texts(writers, ctx, cwd):
     return [t.rstrip("\n") for t in texts] if writers else None
 
 
+def reader_path(path):
+    """An absolute path (placed in the event's directory) with its links
+    followed hop by hop; None when it, or a hop on the way, passes through
+    /proc or /dev, whose entries (/proc/self/cwd) name the reading process's
+    own files, not the shell's, or the links do not resolve within 40 hops."""
+    todo, cur, hops = [p for p in path.split("/") if p], "/", 0
+    while todo:
+        part = todo.pop(0)
+        if part in (".", ".."):
+            cur = os.path.dirname(cur) if part == ".." else cur
+            continue
+        cur = os.path.join(cur, part)
+        if cur.split("/")[1] in ("proc", "dev"):
+            return None
+        if os.path.islink(cur):
+            hops += 1
+            try:
+                link = os.readlink(cur)
+            except OSError:
+                return None
+            if hops > 40:
+                return None
+            todo[:0] = [p for p in link.split("/") if p]
+            cur = "/" if link[:1] == "/" else os.path.dirname(cur)
+    return cur
+
+
 def piped(out, ctx, cwd):
     """The literal-aware texts a command writes to a pipe (what output() says
-    it writes), read now; None when they cannot be."""
+    it writes), read now, its path placed and followed by reader_path(); None
+    when they cannot be."""
     how, what = out or (None, None)
     if how == "text":
         return [what]
@@ -1252,7 +1285,7 @@ def piped(out, ctx, cwd):
     text = ""
     for raw in what:
         for path in locate(raw, ctx, cwd)[0] or [None]:
-            real = path and os.path.realpath(path)
+            real = path and reader_path(path)
             if not real or written(real, ctx) or not regular(real):
                 return None
             try:
@@ -2245,7 +2278,8 @@ INCOMING_STAMPS = os.path.join("~", ".local", "state", "opensuse-packaging", "in
 STAMP_KEYS = ("v", "kind", "id", "creator", "verdict", "key", "recorded", "scan")
 STAMP_KEYS += ("build", "findings", "comment_sha256")
 HEX32 = Rx(r"[0-9a-f]{32}")
-HEX40 = Rx(r"[0-9a-f]{40}")
+# A git object id: SHA-1, or SHA-256 as src.opensuse.org's newer repositories use.
+GIT_SHA = Rx(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 HEX64 = Rx(r"[0-9a-f]{64}")
 OBS_REV = Rx(r"\d+|[0-9a-f]{32}")
 OBS_ID = Rx(r"\d{1,10}")
@@ -2325,28 +2359,27 @@ def reviewer_runs(name, run, ctx, cwd):
         block("incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-parse")
 
 
-def reviewer_path(run, changes, ctx):
-    """Refuse, in the incoming-review agent, a command that sets or exports
-    PATH: an assignment (env's too; changes, as unwrap() found them), export,
-    declare and kin, read and kin, a for loop's name, a nameref to it, or a
-    name only the shell knows. resolved() looks names up on the hook's PATH."""
+# What can change the program a command name runs, named anywhere in a call:
+# PATH as a word or a variable, BASH_ENV, ENV=, the hash builtin, a nameref.
+LOOKUP_TEXT = Rx(
+    r"(?<!\w)(?:PATH|BASH_ENV)(?!\w)|(?<![\w$])ENV\+?=|(?<![\w./-])hash(?![\w./-])"
+    r"|(?<![\w-])(?:declare|local|typeset)[ \t](?:[^;&|\n]*[ \t])?-[A-Za-z]*n"
+)
+
+
+def reviewer_text(text, ctx):
+    """Refuse shell text of the incoming-review agent that names LOOKUP_TEXT
+    in any form, as written or with its quotes dropped: resolved() looks
+    names up on the hook's own PATH, and that agent only reads."""
     if ctx.agent != INCOMING_AGENT:
         return
-    name, args = (os.path.basename(run[0]), run[1:]) if run else ("", [])
-    names = {*changes, *shell_assigned(name, args)}
-    if name in DECLARE:
-        opts, pos = parse_opts(args, "")
-        names |= {a.partition("=")[0].rstrip("+") for a in pos}
-        if any(k == "-n" for k, _ in opts):
-            names |= {a.partition("=")[2] for a in pos}
-    if name == "for":
-        names |= set(args[:1])
-    if "PATH" in names or any(VARIABLE.search(n) for n in names):
-        block(
-            "incoming-self",
-            f"setting PATH from agent {INCOMING_AGENT}",
-            "incoming-path",
-        )
+    for t in (text, flat(text)):
+        m = LOOKUP_TEXT.search(t)
+        if m:
+            what = " ".join(m.group().split())
+            block(
+                "incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-path"
+            )
 
 
 def resolved(word, ctx, cwd):
@@ -2637,7 +2670,7 @@ def git_obs_approve(rest, ctx, cwd):
         refuse("it names no one literal OWNER/REPO#N")
     if any(k == "--reviewer" for k, _ in opts):
         refuse("--reviewer approves for someone else")
-    if len(shas) != 1 or not HEX40.fullmatch(shas[0]):
+    if len(shas) != 1 or not GIT_SHA.fullmatch(shas[0]):
         refuse("it names no --commit SHA of the head reviewed")
     owner, repo, n = m.groups()
     if owner.lower() == "pool":
@@ -2815,15 +2848,14 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
             continue
         ask(
             ctx,
-            "incoming-hold",
+            "incoming-hold-repo",
             f"{what}: PR {st['id']} may hold it, and {prj}/{pkg} syncs from "
             f"{here or 'no repository'}",
         )
     if not mine:
         return
     ok, info = obs_get(f"/source/{prj}/{pkg}/_scmsync.obsinfo", ctx)
-    # src.opensuse.org's repositories name commits by SHA-256, older ones by SHA-1.
-    commit = re.search(r"^commit: ((?:[0-9a-f]{24})?[0-9a-f]{40})$", info or "", re.M)
+    commit = re.search(rf"^commit: ({GIT_SHA.pattern})$", info or "", re.M)
     if not ok or not commit:
         block("incoming-hold", f"{what}: cannot read the commit OBS synced")
     path = f"repos/{m.group(1)}/{m.group(2)}/git/trees/{commit.group(1)}"
@@ -6068,61 +6100,92 @@ def open_pool_prs(ctx, repo):
     return data
 
 
-# The variables that place git's repository and work tree, and the options
-# that stand for them: a push is judged in the repository they name.
+# The variables that re-target what git pushes from (its repository and
+# configuration) or writes to (its index and objects too).
+GIT_ENV = Rx(r"GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|CONFIG\w*)")
+GIT_ENV_WORD = Rx(r"(?<!\w)" + GIT_ENV.pattern + r"(?!\w)")
+GIT_WRITE_ONLY = {"GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}
+# Those an assignment written on git itself may set: a push is judged in the
+# repository they name as well as where git runs, a write counts their value.
 GIT_PLACE = {"GIT_DIR": "--git-dir", "GIT_WORK_TREE": "--work-tree"}
+GIT_WRITE_PLACE = {*GIT_PLACE, "GIT_INDEX_FILE"}
+# Assignment words, what may stand before them at a command's start, and what
+# follows the name in one written on git: its value, more of them, then git.
+GIT_ASSIGNS = r"(?:[A-Za-z_]\w*=[^\s;&|()<>]*[ \t]+)*"
+GIT_ENV_HEAD = Rx(r"[ \t]*(?:(?:then|do|else|elif|!)[ \t]+)*" + GIT_ASSIGNS)
+GIT_ENV_TAIL = Rx(
+    r"=[^\s;&|()<>]*[ \t]+" + GIT_ASSIGNS + r"(?:[^\s;&|()<>]*/)?git(?=[\s;&|)]|$)"
+)
 
 
-def note_git_env(words, ctx):
-    """Remember what the words before a command (env's too) set GIT_PLACE's
-    variables to; an append (+=) sets a value the guard does not know."""
-    for w in words:
-        k, _, v = w.partition("=")
-        if ASSIGN.match(w) and k.rstrip("+") in GIT_PLACE:
-            ctx.git_env.setdefault(k.rstrip("+"), []).append(
-                None if k[-1] == "+" else v
-            )
+def git_env_other(ctx, place):
+    """The GIT_ENV variables the call's shell texts name in any form but a
+    read ($NAME, ${NAME}, ${NAME:-...}) or an assignment of one in place
+    written on git itself: set, exported, unset, read into, declared, looped
+    over, assigned in arithmetic or through a subscript, a nameref's target,
+    or assigned before a function, a wrapper or any other command."""
+    key = ("git-env", len(ctx.texts), tuple(sorted(place)))
+    if key not in ctx.devel:
+        found = set()
+        for text in {ctx.command or "", *ctx.texts}:
+            t = flat(text)
+            for m in GIT_ENV_WORD.finditer(t):
+                name, head, tail = m.group(), t[: m.start()], t[m.end() :]
+                if head[-1:] == "$" or head[-2:] == "${" and not re.match(":?=", tail):
+                    continue  # a read
+                seg = head[max(head.rfind(c) for c in ";&|(){}\n") + 1 :]
+                if (
+                    name in place
+                    and GIT_ENV_HEAD.fullmatch(seg)
+                    and GIT_ENV_TAIL.match(tail)
+                ):
+                    continue  # written on git itself
+                found.add(name)
+        ctx.devel[key] = found
+    return ctx.devel[key]
 
 
-def git_placements(before, ctx, cwd):
-    """The GIT_PLACE options a push is judged under, one list per way the
-    call may place it. An assignment before the git command itself (env's
-    too) is what git sees; one made elsewhere in the call -- exported, or
-    before another command, which may run git -- may or may not reach it, so
-    the push is judged with and without each. A value only the shell knows,
-    or more than 16 ways, refuses the push. before: git_command()'s."""
+def git_placements(before, ctx, cwd, shell_cwd, gargs):
+    """The git options a push is judged under: where git runs (cwd, after
+    -C; gargs, its options), and, when GIT_DIR or GIT_WORK_TREE is assigned
+    on git itself (before: the words before git), where that places it too,
+    ~ and $PWD expanded in the call's directory (shell_cwd) as bash does;
+    where git runs then only when a repository is there. Any GIT_ENV variable
+    but the write-only ones set otherwise in the call, or a value the guard
+    cannot read, refuses the push."""
     import itertools
 
-    words, changes = before or ((), ())
-    # sudo, and env's options (-i, -u NAME), may drop what the call set.
-    sure = not any(
-        c in ("sudo", "doas") or not re.fullmatch(r"\w+", c) for c in changes
-    )
-    ways = []
-    for k, opt in GIT_PLACE.items():
-        own = [w.partition("=") for w in words if ASSIGN.match(w)]
-        own = [None if a[-1] == "+" else v for a, _, v in own if a.rstrip("+") == k]
-        if own and sure:
-            raws, vals = own[-1:], []
-        else:
-            raws = [*own, *ctx.git_env.get(k, ()), *ctx.values.get(k, ())]
-            vals = [None]
-        for raw in raws:
-            got = substitute(raw, ctx, cwd) if raw is not None else None
+    other = sorted(git_env_other(ctx, GIT_PLACE) - GIT_WRITE_ONLY)
+    if other:
+        unsure(f"{other[0]} is set in the call other than on the git command itself")
+    opts = []
+    for w in before or ():
+        k, _, v = w.partition("=")
+        if ASSIGN.match(w) and k in GIT_PLACE:
+            got = substitute(
+                os.path.expanduser(v) if v[:1] == "~" else v, ctx, shell_cwd
+            )
             if not got:
-                unsure(f"{k} is set to a value only the shell knows")
-            vals += [f"{opt}={v}" for v in got]
-        ways.append(dict.fromkeys(vals))
-    combos = list(itertools.product(*ways))
-    if len(combos) > 16:
+                unsure(f"{k} is set to a value the guard cannot read")
+            # quoted, a ~ stays literal: judged there too where such a path exists
+            here = cwd and v[:1] == "~" and os.path.lexists(os.path.join(cwd, v))
+            opts.append(
+                [f"{GIT_PLACE[k]}={s}" for s in dict.fromkeys(got + [v] * bool(here))]
+            )
+    if not opts:
+        return [[]]
+    ways = [list(c) for c in itertools.product(*opts)]
+    if len(ways) > 16:
         unsure("GIT_DIR and GIT_WORK_TREE take too many values")
-    return [[o for o in c if o] for c in combos]
+    if git(cwd, gargs, "rev-parse", "--git-dir") is not None:
+        ways.insert(0, [])
+    return ways
 
 
 def git_command(argv, ctx, cwd, lit=None, before=None):
-    """lit: argv as literal-aware text, or None. before: (the words before
-    git, the environment changes unwrap() found in them), or None."""
-    i, gargs = 1, []
+    """lit: argv as literal-aware text, or None. before: the words before git
+    (assignments, wrappers), or None."""
+    shell_cwd, i, gargs = cwd, 1, []
     while i < len(argv) and argv[i].startswith("-"):
         a = argv[i]
         if a == "-C" and i + 1 < len(argv):
@@ -6139,7 +6202,7 @@ def git_command(argv, ctx, cwd, lit=None, before=None):
             i += 1
     sub = argv[i:]
     if sub[:1] in (["push"], ["send-pack"]):
-        for placed in git_placements(before, ctx, cwd):
+        for placed in git_placements(before, ctx, cwd, shell_cwd, gargs):
             check_push(sub[1:], ctx, cwd, placed + gargs, send=sub[0] == "send-pack")
     elif sub[:1] == ["obs"]:
         ln = " ".join(["git-obs", *sub[1:]])
@@ -6647,12 +6710,13 @@ def extract_into(name, args):
     return None
 
 
-def git_paths(run, ctx=None):
+def git_paths(run, ctx=None, before=()):
     """The directories and files a git command writes into: its -C, --git-dir
-    and --work-tree, a core.worktree it sets (-c, --config-env), what the call
-    sets GIT_PLACE's variables to (ctx), the working directory without -C,
-    what clone, init, worktree and submodule name, the file bundle create
-    writes, and its subcommand's --output, -o and --prefix."""
+    and --work-tree, a core.worktree it sets (-c, --config-env), the value of
+    a GIT_ENV variable assigned before it (before: the words before git), as
+    ${NAME} one the call sets any other way (ctx), the working directory
+    without -C, what clone, init, worktree and submodule name, every argument
+    of bundle create, and its subcommand's --output, -o and --prefix."""
     out, i, here = [], 1, True
     while i < len(run) and run[i][:1] == "-":
         a = run[i]
@@ -6674,16 +6738,18 @@ def git_paths(run, ctx=None):
                 # --config-env names the variable that holds the value
                 out.append(val if a == "-c" else "${%s}" % val)
         i += 2 if a in ("-c", "--namespace", "--config-env") else 1
-    for k in GIT_PLACE if ctx else ():
-        out += [v for v in ctx.git_env.get(k, ()) if v is not None]
-        if k in ctx.values or None in ctx.git_env.get(k, ()):
-            out.append("${%s}" % k)
+    for w in before:
+        k, _, v = w.partition("=")
+        if ASSIGN.match(w) and GIT_ENV.fullmatch(k.rstrip("+")):
+            out.append(v)
+    out += [
+        "${%s}" % k for k in sorted(git_env_other(ctx, GIT_WRITE_PLACE) if ctx else ())
+    ]
     if run[i : i + 1] in (["clone"], ["init"], ["worktree"], ["submodule"]):
         out += [a for a in run[i + 1 :] if a[:1] != "-"]
     sub, rest = (run[i : i + 1] or [""])[0], run[i + 1 :]
     if sub == "bundle" and rest[:1] == ["create"]:
-        files = [a for a in rest[1:] if a[:1] != "-" or a == "-"][:1]
-        out += [a for a in files if a != "-"]  # - is stdout
+        out += rest[1:]  # its file among options and revisions
     for j, a in enumerate(rest):
         k, eq, v = a.partition("=")
         if k in GIT_OUTPUTS and ("*" in GIT_OUTPUTS[k] or sub in GIT_OUTPUTS[k]):
@@ -6792,13 +6858,14 @@ def harness_word(word, ctx, cwd, parents=False, unplaced=True, **where):
     return False
 
 
-def harness_touch(name, run, ctx, cwd):
+def harness_touch(name, run, ctx, cwd, before=()):
     """The word a command writes, moves or deletes the harness's files by, or
     None: the targets of cp, mv, install, mkdir, rm, tar, tee, ln, dd, sort -o
     and rsync (of rm and mv, a directory above them too; ~/.claude or
-    ~/.config/opencode itself, which a tree lands in) and git, the start of a
-    find that deletes or runs a command at or below those two, and the words
-    of a command that changes files in place (sed -i, chmod, touch ...)."""
+    ~/.config/opencode itself, which a tree lands in) and git (git_paths(),
+    before: the words before it), the start of a find that deletes or runs a
+    command at or below those two, and the words of a command that changes
+    files in place (sed -i, chmod, touch ...)."""
     if reads_only(name, run, ctx, cwd) or name in LOOKERS:
         return None
     if name == "find":
@@ -6811,7 +6878,7 @@ def harness_touch(name, run, ctx, cwd):
             starts.append(a)
         starts = starts or ["."]
         return next((w for w in starts if harness_word(w, ctx, cwd, under=True)), None)
-    words = git_paths(run, ctx) if name == "git" else write_words(name, run[1:])
+    words = git_paths(run, ctx, before) if name == "git" else write_words(name, run[1:])
     if words is not None:
         parents, into = name in ("rm", "mv"), name != "git"
         return next(
@@ -6828,19 +6895,22 @@ def harness_touch(name, run, ctx, cwd):
 UNPLACED = "a write the guard cannot place, in a call naming the state directory"
 
 
-def state_touch(name, run, ctx, cwd, xargs=False):
+def state_touch(name, run, ctx, cwd, xargs=False, before=()):
     """Why a command touches the state directory, as (detail, kind), or None:
     it writes there (as placed), runs inside it, names it and writes where the
     guard cannot tell, or, in a call naming it, writes anywhere the guard cannot
-    place (through what this call made too). A look, a copy out of it, git's
-    messages and the skill's own scripts run unread (as merged, gate.sh writing
-    its stamps) pass."""
+    place (through what this call made too; any git, when the call sets a
+    GIT_ENV variable other than written on git). A look, a copy out of it,
+    git's messages and the skill's own scripts run unread (as merged, gate.sh
+    writing its stamps) pass. before: the words before the command."""
     if pinned_script(name, run, ctx, cwd, STATE_WRITERS):
         return None
     if reads_only(name, run, ctx, cwd) or name in LOOKERS:
         return None
     unread = pinned_script(name, run, ctx, cwd)
-    words = git_paths(run, ctx) if name == "git" else write_words(name, run[1:])
+    if name == "git" and ctx.state_named and git_env_other(ctx, GIT_WRITE_PLACE):
+        return (f"{UNPLACED} (a GIT_ variable set in it)", "state-unplaced")
+    words = git_paths(run, ctx, before) if name == "git" else write_words(name, run[1:])
     if words is not None and not xargs:
         sources = [a for a in run[1:] if a[:1] != "-" and a not in words]
         tool = "unzip" if PYTHON.fullmatch(name) else name  # python -m zipfile -e
@@ -7022,9 +7092,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             for w in braced([t], "a redirection"):
                 cred_word(w, "a redirection", False, ctx, cwd)
     run, shell, env, chdir = unwrap(argv, cwd, ctx)
-    reviewer_path(run, env, ctx)
     before = argv[: len(argv) - len(run)]
-    note_git_env(before if run or shell is not None else (), ctx)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.
@@ -7079,8 +7147,6 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     reviewer_runs(name, run, ctx, here)
     for k in shell_assigned(name, run[1:]):
         ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
-        if k in GIT_PLACE and name != "unset":
-            ctx.git_env.setdefault(k, []).append(None)
     out = ("unknown", name)
     joined = " ".join(run)
     if name in ("cd", "pushd"):
@@ -7103,10 +7169,10 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         block("stamp", "a command touching the stamp directory")
     wrapped = argv[: len(argv) - len(run)]
     xargs = "xargs" in map(os.path.basename, wrapped)
-    hit = harness_touch(name, run, ctx, here)
+    hit = harness_touch(name, run, ctx, here, wrapped)
     if hit is not None:
         block("harness-write", f"{name} {shown(hit)}", "harness")
-    touched = state_touch(name, run, ctx, here, xargs)
+    touched = state_touch(name, run, ctx, here, xargs, wrapped)
     if touched:
         state_block(ctx, *touched)
     note_writes(name, run[1:], ctx, here)
@@ -7158,7 +7224,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here, lrun)
     elif name == "git":
-        gparts = git_command(run, ctx, here, lrun, (before, env))
+        gparts = git_command(run, ctx, here, lrun, before)
     elif name == "osc":
         ctx.apiurl = osc_apiurl(run, ctx, here)
         obs_prefetch(run, ctx, here)
@@ -7321,6 +7387,8 @@ def shell_pass(text, ctx, cwd, depth):
     pipes into a shell or interpreter. Returns what it writes to stdout, as
     literal-aware text: one output() per writer, in order."""
     ctx.state_named = ctx.state_named or names_state(text)  # a script's text too
+    ctx.texts.append(text)
+    reviewer_text(text, ctx)
     first = len(ctx.docs)
     body = split_heredocs(text, ctx)
     for doc, expands in ctx.docs[first:]:
