@@ -3,7 +3,6 @@ a call has matched its prefilter. Not a command: see pr-guard.py --help."""
 
 import json
 import os
-import posixpath
 import re
 import urllib.parse
 
@@ -54,7 +53,7 @@ STATE_TEXT = Rx(
 # Its pieces in a call's text, however the shell assembles them (quotes, braces,
 # substitutions, variables): the leaf, which names it in any directory; and with
 # it, $XDG_STATE_HOME before its name and the stamps' own layout, with which a
-# write the guard cannot place is refused. osc's state beside it is none.
+# write the guard cannot place is refused. geectl's state beside it is none.
 LEAF = (
     r"(?<![a-z])state\W{0,6}opensuse\W{0,4}packaging"
     r"|opensuse\W{0,4}packaging\W{0,6}(?:gate|incoming)(?![\w.-])"
@@ -155,7 +154,7 @@ MERGE_URL = Rx(r"/pulls/[^/\s\"']+/merge(?![-\w])")
 DO_MERGE = Rx(
     r"(?i)[\"']Do[\"']\s*:|\bDo\s*=\s*[\"']"
 )  # Go reads JSON keys in any case
-# OBS's request creation, which osc sr and friends wrap with the devel-project
+# OBS's request creation, which geectl request file and friends wrap with the devel-project
 # check and a message.
 REQUEST_CREATE = Rx(r"/request/?\?(?:[^\s\"'#]*&)?cmd=create(?![\w-])")
 # The API's pulls path, or one built from a variable. A web link to a PR
@@ -191,7 +190,7 @@ KWARG = Rx(r"\w+\s*=(?!=)")
 QUOTED = Rx(r"[bruf]*([\"'])(.*)\1")
 HTTPIE = {"http", "https", "xh", "xhs"}
 HTTP_TOOLS = HTTPIE | {"curl", "wget"}
-GUARDED = HTTP_TOOLS | {"tea", "git-obs", "git", "osc", "gh", "secret-tool"}
+GUARDED = HTTP_TOOLS | {"tea", "git-obs", "git", "osc", "gh", "secret-tool", "geectl"}
 HTTPIE_VALUED = {
     "-a", "--auth", "-A", "--auth-type", "-o", "--output", "--session",
     "--session-read-only", "--cert", "--cert-key", "--cert-key-pass", "--proxy",
@@ -255,132 +254,463 @@ CURL_VALUED = set("EKCbcdDFPHhmoxUQreXYytzTuAw")
 COPY_VALUED = {"cp": "tS", "mv": "tS", "install": "mogSt"}
 COPY_LONG = {"--suffix", "--no-preserve", "--sparse", "--mode", "--owner", "--group"}
 COPY_LONG |= {"--strip-program", "--target-directory"}
-OSC_BUILD = Rx(r"\bosc\b.*?(?<![-\w.:/])(?:build|shell|chroot)(?![-\w.])(.*)")
-ARCH = Rx(
-    r"(?<![-\w./:])(x86_64|i[3-6]86|aarch64|armv[67][a-z]*l|ppc64(?:le)?|ppc|s390x"
-    r"|riscv64|loong(?:arch)?64)(?![-\w./:])"
+# A literal osc invocation in program text: retired outright, except a bare
+# osc and osc help, which only print usage. Either spelling counts: osc with
+# its subcommand after spaces, or as the first element of an argument list
+# (subprocess.run(["osc", "sr", ...])), where the comma takes the space's place.
+# A list spelling with a global option first (["osc", "-A", url, "sr", ...])
+# is not caught: the option and its value are not skipped in the list form.
+# osc's global options, with their values: apiurl (-A), config (-c) and
+# setopt take one, the rest are flags. A literal osc invocation is refused
+# outright, except a bare osc and osc help, which only print usage.
+RETIRED_OSC = Rx(
+    r"\bosc\b(?:[ \t]+(?:--(?:apiurl|config|setopt)(?:=\S+|[ \t]+\S+)?"
+    r"|-[Ac](?:\S+|[ \t]+\S+)?"
+    r"|--(?:debug|debugger|help|http-debug|http-full-debug|no-keyring"
+    r"|no-pager|post-mortem|quiet|traceback|verbose)|-[hvqHd][\w]*))*"
+    r"[ \t]+(?!help\b|-[-\w])[A-Za-z][\w.-]*(?![\w.-]*://)"
+    r"|"
+    r"""["']osc["']\s*,\s*["'](?!help\b)[A-Za-z][\w.-]*["']"""
 )
-NATIVE = {"x86_64": {"x86_64", "i386", "i486", "i586", "i686"}}
-OSC_REQUEST = Rx(
-    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|mr|maintenancerequest"
-    r"|creq|createrequest)(?![-\w]).*?openSUSE:Backports:SLE-16"
-)
-# --nodevelproject, or a prefix argparse expands to it, on a submit request.
-NODEVEL = "|".join("--nodevelproject"[:n] for n in range(5, 17))
-OSC_NODEVEL = Rx(
-    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)"
-    rf"(?![-\w]).*?(?<![-\w])(?:{NODEVEL})(?![-\w])"
-)
-# --yes, or a prefix of it, on a submit request: it answers osc's questions.
-OSC_YES = Rx(
-    r"\bosc\b.*?(?<![-\w])(?:sr|submitreq|submitrequest|submitpac|creq|createrequest)"
-    r"(?![-\w]).*?(?<![-\w])--y(?:es?)?(?![-\w])"
+# (A subcommand is never followed by ://, so that guard keeps an option's
+# URL value from reading as the subcommand when no subcommand follows.)
+# geectl's filing leaves that take a target project: a request into
+# openSUSE:Backports:SLE-16.x is refused (scmsync'd from pool). A request
+# naming openSUSE:Factory as its target is not refused here: geectl's own
+# Factory devel check refuses it unless the source is the recorded devel.
+# The rule anchors on --target-project: the filing leaves take no positional
+# project, so a project name elsewhere on the line (a source, a message) is
+# not the target.
+GEETL_REQUEST = Rx(
+    r"\bgeectl\b.*?(?<![-\w])(?:request\s+(?:file|refile|file-maintenance-incident"
+    r"|refile-maintenance-incident|file-change-devel))(?![-\w]).*?"
+    r"--target-project[= ]openSUSE:Backports:SLE-16"
 )
 # A maintenance or update project, which takes no direct write; one under
 # home: is the user's own branch, whatever its name ends in.
 MAINT_PRJ = Rx(r"(?!home:)\S+:(?:Update|Maintenance(?::\S*)?)")
-# The project an API path writes into: its sources, or its builds.
-SOURCE_PRJ = Rx(r"(?:^|/)(?:source|build)/([^/?#\s]+)")
-# POST cmds that write nothing into the project named: osc diffs, lists links
-# and branches (into home:, unless target_project says otherwise) by them.
-READ_CMDS = {"diff", "showlinked", "branch"}
-# osc 1.27.3's long options: global ones, and those of the subcommands whose
-# operands the guard reads (with the short ones that take a value) -- the ones
-# that take a value, then ";" and the rest; argparse takes any unique prefix.
-OSC_GLOBAL = "apiurl config setopt; debug debugger help http-debug http-full-debug "
-OSC_GLOBAL += "no-keyring no-pager post-mortem quiet traceback verbose"
-OSC_OPTS = {
-    "commit": (
-        "mF",
-        "message file; no-message force skip-local-service-run noservice no-service",
+# geectl's long options: the global ones, and those of the leaves whose
+# operands the guard reads (with the short ones that take a value) -- the
+# ones that take a value, then ";" and the rest. Clap takes no abbreviated
+# long option, so a prefix is never expanded.
+GEETL_GLOBAL = "format; debug debug-body live help version"
+GEETL_OPTS = {
+    "add": ("", ";"),
+    "addremove": ("", ";"),
+    "branch": ("", "format; debug debug-body live help"),
+    "branch branch-package": (
+        "",
+        "format project package target-project target-package revision linkrev comment add-repositories-block add-repositories-rebuild; debug debug-body live no-devel-project new-package force noaccess add-repositories extend-package-names maintenance help",
     ),
-    "api": ("XmdTfa", "method data file add-header; edit"),
-    "copypac": (
-        "rtm",
-        "revision to-apiurl message; client-side-copy keep-maintainers keep-link "
-        "keep-develproject expand",
+    "branch copy-package": (
+        "",
+        "format source-project source-package target-project target-package revision comment to-apiurl; debug debug-body live keep-link expand noservice dont-update-source with-vrev help",
     ),
-    "linkpac": (
-        "Cr",
-        "cicount revision; current force disable-build disable-publish new-package",
+    "branch copy-project": (
+        "",
+        "format source-project target-project comment; debug debug-body with-binaries live with-history make-older make-origin-older noservice resign no-delay help",
     ),
-    "aggregatepac": ("m", "map-repo; nosources disable-publish"),
-    "rdelete": ("m", "message; recursive force"),
-    "undelete": ("m", "message;"),
-    "meta": (
-        "aFrms",
-        "attribute file revision message set add; attribute-defaults "
-        "attribute-project blame force edit create remove-linking-repositories delete",
+    "branch detach-branch": ("", "format project package; debug debug-body live help"),
+    "branch help": ("", "; "),
+    "branch link-package": (
+        "",
+        "format source-project source-package target-project target-package revision vrev cicount; debug debug-body live force missing-target disable-build disable-publish help",
     ),
+    "branch link-to-branch": ("", "format project package; debug debug-body live help"),
+    "branch repair-link": ("", "format project package; debug debug-body live help"),
+    "branch set-devel-project": (
+        "",
+        "format project package devel-project devel-package; debug debug-body live help",
+    ),
+    "branch set-link-rev": (
+        "",
+        "format project package revision; debug debug-body live help",
+    ),
+    "branch set-link-rev-project": (
+        "",
+        "format project revision; debug debug-body live help",
+    ),
+    "build": ("", "format; debug debug-body live help"),
+    "build abort-build": ("", "format; debug debug-body live help"),
+    "build build-history": ("", "format limit; debug debug-body live help"),
+    "build build-log": (
+        "",
+        "format start; debug last debug-body lastsucceeded live help",
+    ),
+    "build build-status": ("", "format; debug debug-body live help"),
+    "build buildconfig": ("", ";"),
+    "build buildinfo": ("", "format alternative-project; debug debug-body live help"),
+    "build check-constraints": ("", "constraints format; debug debug-body live help"),
+    "build dependson": ("", "format package; debug debug-body live help"),
+    "build download-binary": ("", "format output; debug debug-body live help all"),
+    "build fileinfo": ("", "format; ext debug debug-body live help"),
+    "build help": ("", "; "),
+    "build job-history": ("", "format package limit code; debug debug-body live help"),
+    "build job-status": ("", "format; debug debug-body live help"),
+    "build list-binaries": ("", "format package; debug debug-body live help"),
+    "build list-repositories": ("", "format; debug debug-body live help"),
+    "build rebuild-package": ("", "format; debug debug-body live help"),
+    "build restart-build": ("", "format; debug debug-body live help"),
+    "build results": (
+        "",
+        "format package repository arch code oldstate; debug debug-body live multibuild locallink lastbuild help",
+    ),
+    "build wait-for-results": (
+        "",
+        "format package repository arch code deadline-secs; debug debug-body live multibuild locallink lastbuild help",
+    ),
+    "build whatdependson": ("", "format; debug debug-body live help"),
+    "changelog generate": ("", "target-project target-package author; write"),
+    "changelog validate": ("", "target-project target-package entries;"),
+    "checkout": ("", "rev;"),
+    "commit": ("m", "message; noservice"),
+    "config": ("", "format; debug debug-body live help"),
+    "config help": ("", "; "),
+    "config init": ("", "format; debug debug-body live help"),
+    "config show": ("", "format; debug debug-body live help"),
+    "diff": ("", ";"),
+    "gitea": ("", "format; debug debug-body live help"),
+    "gitea branch-get": ("", "format; debug debug-body live help"),
+    "gitea branch-head": ("", "format; debug debug-body live help"),
+    "gitea branch-list": ("", "format; debug debug-body live help"),
+    "gitea help": ("", "; "),
+    "gitea repo-create": (
+        "",
+        "format description default-branch; private debug debug-body live help",
+    ),
+    "gitea repo-delete": ("", "format; force debug debug-body live help"),
+    "gitea repo-fork": ("", "format new-name organization; debug debug-body live help"),
+    "gitea repo-get": ("", "format; debug debug-body live help"),
+    "gitea repo-list": ("", "format owner org; debug debug-body live help"),
+    "local-build": ("", "format; debug debug-body live help"),
+    "local-build build": (
+        "",
+        "format project repo arch flavor release timeout-secs alternative-project keep-rpms prefer-packages root; debug debug-body live clean trust-all-projects refresh-image help noinit",
+    ),
+    "local-build chroot": ("", "project repo arch;"),
+    "local-build help": ("", "; "),
+    "local-build log": ("", ";"),
+    "local-build precommit": ("", "format timeout-secs; debug debug-body live help"),
+    "local-build service-run": (
+        "",
+        "format mode service timeout-secs; debug debug-body live help",
+    ),
+    "local-build spec-cleaner": ("", "format timeout-secs; debug debug-body live help"),
+    "local-build wipe": ("", "root flavor; force"),
+    "maintenance": ("", "format; debug debug-body live help"),
+    "maintenance help": ("", "; "),
+    "maintenance maintained-instances": (
+        "",
+        "format package attribute update-project-attribute; debug debug-body live help",
+    ),
+    "maintenance maintenance-branch": (
+        "",
+        "format package attribute update-project-attribute target-project; debug debug-body live help",
+    ),
+    "pull": ("", ";"),
+    "pull-request": ("", "format; debug debug-body live help"),
+    "pull-request approve": (
+        "",
+        "format message user group project package; debug debug-body live help",
+    ),
+    "pull-request cancel-review-request": (
+        "",
+        "format reviewer exclude; all debug debug-body live help",
+    ),
+    "pull-request comment": ("", "body format parent; debug debug-body live help"),
+    "pull-request comments": ("", "format; debug debug-body live help"),
+    "pull-request decline": ("", "format message; debug debug-body live help"),
+    "pull-request help": ("", "; "),
+    "pull-request merge": (
+        "",
+        "format message method; debug debug-body force live help",
+    ),
+    "pull-request reopen": ("", "format; debug debug-body live help"),
+    "pull-request request-changes": (
+        "",
+        "format message user group project package; debug debug-body live help",
+    ),
+    "pull-request search": (
+        "",
+        "backend format state creator repo; debug debug-body live help",
+    ),
+    "pull-request show": ("", "format; debug debug-body live help"),
+    "pull-request withdraw": ("", "format message; debug debug-body live help"),
+    "remote": ("", "format; debug debug-body live help"),
+    "remote aggregate-package": (
+        "",
+        "format repository-map; debug no-sources debug-body disable-publish live help",
+    ),
+    "remote cat": ("", "format rev; debug debug-body live help"),
+    "remote count-scmsync-projects": ("", "format; debug debug-body live help"),
+    "remote create-package": (
+        "",
+        "format title description scmsync; debug debug-body force live help",
+    ),
+    "remote create-project": (
+        "",
+        "format title description; debug debug-body live help",
+    ),
+    "remote create-token": ("", "operation;"),
+    "remote delete-link": ("", "format; debug debug-body live help"),
+    "remote delete-package": ("", "format message; force debug debug-body live help"),
+    "remote delete-project": (
+        "",
+        "format comment; recursive debug force debug-body live help",
+    ),
+    "remote devel-project": ("", "format target-project; debug debug-body live help"),
+    "remote diff-packages": ("", "format; debug debug-body live help"),
+    "remote download": ("", "format rev output; debug debug-body live help"),
+    "remote help": ("", "; "),
+    "remote link-target": ("", "format; debug debug-body live help"),
+    "remote list-files": ("", "format rev; debug debug-body live help"),
+    "remote list-packages": ("", "format; debug debug-body live help"),
+    "remote list-projects": ("", "format; debug debug-body live help"),
+    "remote list-staging-projects": (
+        "",
+        "format; no-requests debug no-status debug-body live help",
+    ),
+    "remote maintainers": ("", "format; debug debug-body live help"),
+    "remote owners": ("", "format; debug debug-body live help"),
+    "remote owners-for-binary": ("", "format; debug debug-body live help"),
+    "remote package-log": ("", "format range limit; debug debug-body live help"),
+    "remote package-meta": ("", "format; debug debug-body live help"),
+    "remote project-diff": (
+        "",
+        "format include exclude; debug annotate-requests debug-body live help",
+    ),
+    "remote project-meta": ("", "format; debug debug-body live help"),
+    "remote release-package": (
+        "",
+        "format repository arch target-project target-repository set-release; debug debug-body live no-delay help",
+    ),
+    "remote release-project": (
+        "",
+        "format repository arch target-project target-repository set-release; debug debug-body live no-delay help",
+    ),
+    "remote repo-add": (
+        "",
+        "arch format path; debug debug-body disable-publish live help",
+    ),
+    "remote repo-remove": ("", "format; debug debug-body live help"),
+    "remote revision-patch": ("", "format; debug debug-body live help"),
+    "remote search-packages": (
+        "",
+        "format devel-project; exact debug debug-body live help",
+    ),
+    "remote search-packages-by-person": ("", ";"),
+    "remote search-projects": ("", "format; exact debug debug-body live help"),
+    "remote search-projects-by-person": ("", "format; debug debug-body live help"),
+    "remote set-package-meta": (
+        "",
+        "format title description url scmsync releasename devel-project devel-package add-person from-file remove-person; debug debug-body live help",
+    ),
+    "remote set-project-meta": (
+        "",
+        "format title description url scmsync devel-project from-file; debug debug-body live help",
+    ),
+    "remote staging-project": (
+        "",
+        "format; no-requests debug no-status debug-body live help",
+    ),
+    "remote undelete-package": ("", "format; debug debug-body live help"),
+    "remote undelete-project": ("", "format; debug debug-body live help"),
+    "remote update-package-meta-from-spec": (
+        "",
+        "format spec; debug debug-body live help",
+    ),
+    "remote upload-file": ("", "format from; binary debug debug-body live help"),
+    "remote whois": ("", "format; debug debug-body live help"),
+    "request": ("", "format; debug debug-body live help"),
+    "request accept": ("", "comment format; debug force debug-body live help"),
+    "request add-comment": ("", "body format parent; debug debug-body live help"),
+    "request add-review": (
+        "",
+        "format user group project package comment; debug debug-body live help",
+    ),
+    "request change-state": ("", "comment format; debug force debug-body live help"),
+    "request decline": ("", "comment format; debug debug-body live help"),
+    "request diff": ("", "format; xml debug debug-body live help"),
+    "request file": (
+        "",
+        "format source-project source-package target-project target-package description changes-entry cve; debug debug-body live without-cleanup help",
+    ),
+    "request file-change-devel": (
+        "",
+        "format source-project source-package target-project target-package description; debug debug-body live help",
+    ),
+    "request file-delete": (
+        "",
+        "format target-project package repository description accept-in-hours; debug debug-body live whole-project help",
+    ),
+    "request file-maintenance-incident": (
+        "",
+        "format source-project source-package target-project release-project description; debug debug-body live with-cleanup help",
+    ),
+    "request help": ("", "; "),
+    "request list-comments": ("", "format; debug debug-body live help"),
+    "request log": ("", "format; debug debug-body live help"),
+    "request refile": (
+        "",
+        "format source-project source-package target-project target-package description changes-entry cve supersede; debug debug-body live without-cleanup help",
+    ),
+    "request refile-maintenance-incident": (
+        "",
+        "format source-project source-package target-project release-project description supersede; debug debug-body live with-cleanup help",
+    ),
+    "request revoke": ("", "comment format; debug debug-body live help"),
+    "request search": (
+        "",
+        "format request-id project package source-project source-package target-project target-package creator who state type exclude-target-project limit reviewer since; debug debug-body live with-history with-full-history help",
+    ),
+    "request show": ("", "format; debug debug-body live help"),
+    "request supersede": ("", "format; debug debug-body live help"),
+    "request try-change-state": (
+        "",
+        "comment format; debug force debug-body live help",
+    ),
+    "rm": ("", ";"),
+    "service": ("", "format; debug debug-body live help"),
+    "service help": ("", "; "),
+    "service list": ("", "format; debug debug-body live help"),
+    "service state": ("", "format; debug debug-body live help"),
+    "status": ("", ";"),
+    "update": ("", "rev;"),
+    "version": ("", "format; debug debug-body live help"),
 }
-OSC_OPTS.update(
-    {
-        "branch": (
-            "mr",
-            "message revision linkrev add-repositories-block add-repositories-rebuild; "
-            "nodevelproject checkout force add-repositories extend-package-names "
-            "noaccess maintenance new-package disable-build",
-        ),
-        "rremove": ("", "; force"),
-        "setdevelproject": ("", "; unset"),
-        "setlinkrev": ("r", "revision vrev; use-plain-revision unset"),
-        "detachbranch": ("m", "message;"),
-        "linktobranch": ("", ";"),
-        "lock": ("m", "message;"),
-        "release": (
-            "ar",
-            "arch repo target-project target-repository set-release; no-delay",
-        ),
-        "wipebinaries": (
-            "aMr",
-            "arch multibuild-package repo; build-disabled build-failed broken "
-            "unresolvable all",
-        ),
-        "rmkpac": ("", "scmsync; force"),
-        "repo": ("", "repo arch path; disable-publish yes"),
-        "updatepacmetafromspec": ("", "specfile;"),
-        "unlock": ("m", "message;"),
-        "mbranch": (
-            "au",
-            "attribute update-project-attribute; checkout dryrun noaccess "
-            "nodevelproject version",
-        ),
-        "addchannels": ("", "; skip-disabled enable-all"),
-        "addcontainers": ("", "; extend-package-names"),
-        "maintainer": (
-            "DaUGsSdrm",
-            "devel-project add user group set-bugowner set-bugowner-request delete "
-            "role message; bugowner-only bugowner email nodevelproject all",
-        ),
-    }
+# geectl has no subcommand aliases.
+# The filing leaves: request file and its kin, which name a target project.
+GEETL_FILING = {
+    "request file",
+    "request refile",
+    "request file-change-devel",
+    "request file-delete",
+    "request file-maintenance-incident",
+    "request refile-maintenance-incident",
+}
+GEETL_SUBMITS = {"request file", "request refile"}
+# The request and pull-request verbs that act on a request.
+GEETL_REQUEST_VERBS = {
+    "request accept",
+    "request decline",
+    "request revoke",
+    "request change-state",
+    "request try-change-state",
+    "request supersede",
+    "request add-review",
+    "request add-comment",
+}
+GEETL_PULL_VERBS = {
+    "pull-request approve",
+    "pull-request request-changes",
+    "pull-request merge",
+    "pull-request decline",
+    "pull-request withdraw",
+    "pull-request reopen",
+    "pull-request cancel-review-request",
+}
+# The leaves that build locally or run a build in a contributor's checkout
+# (reviewer_runs): local-build build and chroot build it, wipe clears its
+# root, and service-run, precommit and spec-cleaner run its services or parse
+# its spec.
+GEETL_BUILDS = {"local-build build", "local-build chroot", "local-build wipe"}
+GEETL_SERVICE_RUNS = {
+    "local-build service-run",
+    "local-build precommit",
+    "local-build spec-cleaner",
+}
+# The working-copy leaves that update a checkout; checkout and update never
+# run the source services.
+GEETL_CHECKOUTS = {"checkout", "update"}
+# The leaves that only read: a read passes where a write does not.
+GEETL_READS = {
+    "config show",
+    "version",
+    "help",
+    "remote project-meta",
+    "remote package-meta",
+    "remote list-files",
+    "remote link-target",
+    "remote package-log",
+    "remote cat",
+    "remote whois",
+    "remote maintainers",
+    "remote owners",
+    "remote devel-project",
+    "remote search-packages",
+    "remote search-packages-by-person",
+    "remote search-projects",
+    "remote search-projects-by-person",
+    "remote list-projects",
+    "remote list-packages",
+    "remote list-staging-projects",
+    "remote staging-project",
+    "remote project-diff",
+    "remote diff-packages",
+    "remote count-scmsync-projects",
+    "remote download",
+    "remote owners-for-binary",
+    "remote revision-patch",
+    "request show",
+    "request search",
+    "request diff",
+    "request log",
+    "request list-comments",
+    "pull-request show",
+    "pull-request search",
+    "pull-request comments",
+    "build buildinfo",
+    "build results",
+    "build job-history",
+    "build build-log",
+    "build buildconfig",
+    "build build-history",
+    "build job-status",
+    "build list-binaries",
+    "build list-repositories",
+    "build dependson",
+    "build whatdependson",
+    "build check-constraints",
+    "build fileinfo",
+    "build download-binary",
+    "service list",
+    "service state",
+    "changelog validate",
+    "maintenance maintained-instances",
+    "status",
+    "diff",
+}
+# The group words: a leaf is the group plus its second word.
+GEETL_GROUPS = {
+    "branch",
+    "build",
+    "changelog",
+    "config",
+    "gitea",
+    "local-build",
+    "maintenance",
+    "pull-request",
+    "remote",
+    "request",
+    "service",
+}
+# The options that carry a message, whose value geectl_without_message strips
+# before a rule reads the line.
+GEETL_MSG_OPTS = (
+    "-m",
+    "--message",
+    "--description",
+    "--changes-entry",
+    "--comment",
+    "--body",
+    "--title",
 )
-OSC_ALIAS = {"ci": "commit", "checkin": "commit", "bco": "branch", "branchco": "branch"}
-OSC_ALIAS.update(
-    {"getpac": "branch", "sdp": "setdevelproject", "unpublish": "wipebinaries"}
-)
-OSC_ALIAS["bugowner"] = "maintainer"
-# osc maintainer options that write into the meta of what they name: a role, or
-# (-D) the devel project
-ROLE_WRITES = {"-a", "--add", "-d", "--delete", "-s", "--set-bugowner"}
-ROLE_WRITES |= {"-D", "--devel-project"}
-OSC_ALIAS.update(
-    {
-        "metafromspec": "updatepacmetafromspec",
-        "updatepkgmetafromspec": "updatepacmetafromspec",
-    }
-)
-REQUESTS = {"sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"}
-REQUESTS |= {"mr", "maintenancerequest", "deletereq", "deleterequest", "dr"}
-REQUESTS |= {"droprequest", "dropreq", "changedevelrequest", "changedevelreq", "cr"}
-# The osc request (rq, review) verbs that open an editor without -m.
-EDITED_VERBS = {"accept", "decline", "reopen", "revoke", "supersede", "wipe", "add"}
-# Their long options that take a value (osc 1.27.3), and the -F files that
-# are stdin.
-REQUEST_VALUED = tuple(
-    "--" + o
-    for o in "message file revision supersede action attribute release-project "
-    "incident incident-project repository accept-in-hours apiurl config setopt".split()
-)
+# Every long option that takes a value, across the leaves: a value placed
+# before the leaf must not be read as a leaf word.
+GEETL_VALUED_NAMES = {
+    "--" + n for _, spec in GEETL_OPTS.values() for n in spec.split(";")[0].split()
+}
+GEETL_VALUED_NAMES |= {"--" + n for n in GEETL_GLOBAL.split(";")[0].split()}
 STDIN = ("-", "/dev/stdin")
 # printf's conversions (with any flags, width or precision), and a brace
 # expansion echo or printf would print expanded.
@@ -420,7 +750,7 @@ URLISH = Rx(r"://|^[\w.-]+@[\w.-]+:|^[/.~]")
 # Environment a canonical script would inherit from a plain assignment.
 SENSITIVE = Rx(
     r"PATH|HOME|ENV|BASH_ENV|CDPATH|SHELLOPTS|BASHOPTS|IFS|LD_\w+|PYTHON\w*|PERL\w*"
-    r"|NODE_\w+|GIT_\w+|XDG_\w+|OSC\w*|TEA_\w+|CURL_\w+|SSL_\w+|\w*_(?i:proxy)"
+    r"|NODE_\w+|GIT_\w+|XDG_\w+|OSC\w*|GEECTL\w*|TEA_\w+|CURL_\w+|SSL_\w+|\w*_(?i:proxy)"
 )
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 PYTHON = Rx(r"python[0-9.]*|pypy3?")
@@ -553,17 +883,14 @@ MESSAGES = {
     "request message carries one. Reword it.",
     "bot-directive-unknown": "cannot read {0} now, so it is refused. Pass the text "
     'inline, or write its file in one call and pass "$(cat FILE)" in the next.',
-    "emulated-build": "{0}: that build is emulated, and builds are native only. "
-    "For a foreign-arch proof run {s}/target-gate.sh DIR --remote.",
     "backports": "{0}: openSUSE:Backports:SLE-16.x is scmsync'd from pool and "
     "takes no requests; " + ROUTE + ".",
-    "nodevelproject": "{0}: the option overrides osc's devel-project check, and "
-    "factory-auto declines a Factory request whose source is not the devel "
-    "project. Submit from the devel project.",
-    "request-api": "{0}: file requests with osc (osc sr ... -s ID supersedes "
-    "exactly one), which checks the devel project and the message.",
+    "request-api": "{0}: file requests with geectl (geectl request refile ... "
+    "--supersede ID supersedes exactly the one named), which checks the devel "
+    "project and the message.",
+    "retired": "{0}: osc is retired; use geectl.",
     "maintenance": "{0}: no direct writes into maintenance/update projects — use "
-    "osc mbranch + osc mr.",
+    "geectl maintenance maintenance-branch + geectl request file-maintenance-incident.",
     "maintenance-unknown": "cannot tell where {0} lands, so it is refused. Run it in "
     "the checkout, or name the checkout or the project literally.",
     "request-message": "{0}: one headline of ≤160 characters of prose saying what it "
@@ -575,9 +902,10 @@ MESSAGES = {
     "the command literally.",
     "gate-sequence": "{0}. The guard judges the tree before the call runs, so "
     "this one can commit or file a tree the gate never saw: run {s}/gate.sh (and "
-    "--review) in one call, osc commit alone in the next, and osc sr in the one after.",
-    "request-no-message": "{0}: with no message osc opens an editor, and the call "
-    "hangs until it times out. Pass -m MSG (osc sr also takes -F FILE).",
+    "--review) in one call, geectl commit alone in the next, and geectl request file in the one after.",
+    "request-no-message": "{0}: with no message geectl opens an editor, and the call "
+    "hangs until it times out. Pass -m MSG for a commit, --description (and "
+    "--changes-entry) for a request.",
     "request-message-unknown": "cannot read {0} now, so it is refused. Pass the "
     "message inline, or write its file in one call and file the request in the next.",
     "pr-message": "{0}: a PR's title is one headline of ≤160 characters saying what it "
@@ -590,18 +918,13 @@ MESSAGES = {
     "({s}/devel-packages.sh lists it beside each name), or to the project a link "
     "points at, never to the project a sweep went through.",
     "request-target-unknown": "cannot read {0}, so it is refused. Retry, or name the "
-    "source and target literally: osc sr SRC_PRJ PKG DST_PRJ.",
-    "sr-cleanup": "{0} leaves its branch behind once accepted. Pass --cleanup so OBS "
-    "deletes it (and the subproject, if it was the last package there).",
-    "osc-prompt": "{0}: osc asks before it supersedes, forwards or commits past a "
-    "conflict, and an answer through a pipe skips that decision. Name what you "
-    "replace with -s ID, pass -m, run osc with </dev/null, and file a forward by hand.",
-    "osc-yes": "{0}: --yes answers osc's questions unread, superseding whatever "
-    "request it finds. Name what you replace with -s ID, pass -m, run osc with "
-    "</dev/null, and file a forward by hand.",
+    "source and target literally: geectl request file --source-project SRC_PRJ "
+    "--source-package PKG --target-project DST_PRJ.",
+    "sr-cleanup": "{0} leaves its branch behind once accepted. Drop --without-cleanup "
+    "so OBS deletes it (and the subproject, if it was the last package there).",
     "request-link": "{0}: the branch carries that project's package and history, so "
     "the request would rewrite the target's .changes with them. Branch from the "
-    "target (osc branch TARGET PKG) and submit from that branch.",
+    "target (geectl branch branch-package --project TARGET --package PKG) and submit from that branch.",
     "request-link-factory": "{0}: Factory takes a package from its devel project, "
     "which reviews it first. Submit the branch to the project it links to, and "
     "forward from there once it is accepted.",
@@ -611,12 +934,12 @@ MESSAGES = {
     "sleep": "{0}: a fixed wait holds the session while nothing is checked. Wait on "
     "the event: {s}/obs-wait.py build PRJ PKG (or request ID), "
     "{s}/build-wait.sh PGID LOG for a local build (--no-summary: any other local "
-    "job, such as osc service mr, a vendor or cargo run), or check back in a later call.",
+    "job, such as geectl local-build build DIR --live, a vendor or cargo run), or check back in a later call.",
     "rdelete-pending": "{0}: OBS revokes every request that still comes from what "
     "it deletes, new, review and declined alike, and a project takes its packages' "
-    "requests with it. Delete one package at a time with plain osc rdelete PRJ PKG "
-    "-m MSG, which refuses while a request involves it, then the emptied project "
-    "with osc rdelete PRJ -m MSG.",
+    "requests with it. Delete one package at a time with plain geectl remote "
+    "delete-package PRJ PKG --live, which refuses while a request involves it, then the emptied project "
+    "with geectl remote delete-project PRJ --live.",
     "rdelete-unknown": "cannot tell what {0} deletes, so it is refused. Name the "
     "project, package and options literally, or loop over a literal list.",
     "exec-unreadable": "cannot read {0} before it runs, so it is refused. Create "
@@ -631,19 +954,19 @@ MESSAGES = {
     "as arguments.",
     "canonical-read": "{0}: the skill's scripts find their siblings from their own "
     "path, so they are run by path ({s}/NAME ...), never sourced or fed on stdin.",
-    "credential": "{0}: a login is read only by the tool that owns it (osc, tea, "
+    "credential": "{0}: a login is read only by the tool that owns it (geectl, tea, "
     "git-obs, gh). Run that tool or a skill script; ls and stat may look.",
     "askpass": "{0}: an askpass program hands git or ssh a password. git-obs's "
     "credential helper and SSH carry the logins.",
-    "secret": "{0}: it prints a secret. Check a login without it: osc whois, "
+    "secret": "{0}: it prints a secret. Check a login without it: geectl config show, "
     "git-obs -G src.opensuse.org api /user.",
     "auth": "{0}: a credential on a command line lands in logs and transcripts. "
-    "Let the tool authenticate: osc api, git-obs -G src.opensuse.org api.",
-    "api": "{0} goes past the tools that hold the login. OBS: osc api PATH; "
-    "Gitea: git-obs -G src.opensuse.org api PATH; or the skill's scripts.",
+    "Let the tool authenticate: geectl, git-obs -G src.opensuse.org api.",
+    "api": "{0} goes past the tools that hold the login. OBS: geectl's typed reads "
+    "(remote/request/build); Gitea: git-obs -G src.opensuse.org api PATH; or the skill's scripts.",
     "scm-commit": "{0}: a scmsync checkout, whose sources OBS syncs from git. A "
-    "change goes by a pull request to that repository, never osc commit; its "
-    "gate.sh stamp still lets the forward (osc sr) through.",
+    "change goes by a pull request to that repository, never geectl commit; its "
+    "gate.sh stamp still lets the forward (geectl request file) through.",
     "incoming-self": "{0}: only the incoming-review agent records its review of a "
     "contributor's submission ({s}/incoming-review.sh --record), and a verdict "
     "another session wrote is no review. Start that agent, or stop and report.",
@@ -682,7 +1005,7 @@ MESSAGES = {
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
-# take and retry, never an osc, tea or git-obs command to hand the user.
+# take and retry, never a geectl, tea or git-obs command to hand the user.
 ASKS = {
     "comment": "{0}: a comment is public and speaks for the user. Post only "
     "what they asked for, as they approved it; a note for them goes in your report.",
@@ -815,8 +1138,7 @@ class Ctx:
         self.subs = []  # what each command substitution writes, as literal-aware text
         self.sub_bodies = []  # each command substitution's text, as ctx.subs counts them
         self.asks = []  # what the user must approve: ASKS findings, in order
-        self.users = {}  # the OBS account per instance, looked up once
-        self.apiurl = ""  # the instance the osc command judged names with -A
+        self.users = {}  # the OBS account, looked up once
         self.writers = []  # what in the call can write (note_write)
         self.seq = 0  # the commands judged so far, for the writers' order
         self.command = None  # the Bash call's whole text
@@ -956,56 +1278,85 @@ def expansions(words, ctx, cwd):
     ]
 
 
-def osc_rules(seg, request=None):
-    """request: the command line without its request message, which only
-    describes the request."""
-    b = OSC_BUILD.search(seg)
-    if b:
-        import platform
+def geectl_sub(run):
+    """(leaf, its arguments) of a geectl argv: the leaf is the first word, or
+    the group plus its second word, past the global options, which may stand
+    before, between or after the leaf and stay in the arguments so --live is
+    seen. A valued option before the leaf has its value skipped, so the value
+    is not read as a leaf word."""
+    leaf, args, i = [], [], 1
+    while i < len(run):
+        a = run[i]
+        if a == "--":
+            args.extend(run[i:])
+            break
+        if a.startswith("-") and a != "-":
+            args.append(a)
+            base = a.partition("=")[0]
+            if "=" not in a and base in GEETL_VALUED_NAMES and len(leaf) < 2:
+                i += 1
+                if i < len(run):
+                    args.append(run[i])
+            i += 1
+            continue
+        if not leaf:
+            leaf.append(a)
+        elif len(leaf) == 1 and leaf[0] in GEETL_GROUPS:
+            leaf.append(a)
+        else:
+            args.append(a)
+        i += 1
+    return (" ".join(leaf) if leaf else None, args)
 
-        native = os.environ.get("PR_GUARD_ARCH") or platform.machine()
-        for arch in ARCH.findall(b.group(1)):
-            if arch not in NATIVE.get(native, {native}):
-                block("emulated-build", f"an osc build for {arch} on {native}")
-    if OSC_REQUEST.search(seg if request is None else request):
-        block("backports", "an osc request to openSUSE:Backports:SLE-16.x")
-    if OSC_NODEVEL.search(seg if request is None else request):
-        block("nodevelproject", "an osc request with --nodevelproject")
-    if OSC_YES.search(seg if request is None else request):
-        block("osc-yes", "an osc request with --yes")
+
+def geectl_args(leaf, args):
+    """(options as (flag, value), operands) of the arguments of a geectl leaf,
+    which may carry geectl's global options too. An unknown leaf parses with
+    the globals only, so it passes the guard as an unknown leaf did."""
+    short, spec = GEETL_OPTS.get(leaf, ("", ";"))
+    valued, names = long_names(spec)
+    gvalued, gnames = long_names(GEETL_GLOBAL)
+    return parse_opts(args, short, valued + gvalued)
 
 
-def long_prefix(a, names):
-    """a with a long option given by an unambiguous prefix, as argparse takes
-    it, written out in full."""
-    k, eq, v = a.partition("=")
-    hits = [n for n in names if n.startswith(k)] if a[:2] == "--" and k[2:] else []
-    return hits[0] + eq + v if len(hits) == 1 else a
-
-
-def without_message(run):
-    """An osc argv without the value of -m/--message."""
+def geectl_without_message(run):
+    """A geectl argv without the value of a message option (-m/--message,
+    --description, --changes-entry, --comment, --body, --title), so a project
+    name inside message text cannot trip a rule. Clap takes no abbreviated
+    long option, so the names are matched whole."""
     out, i = [], 0
     while i < len(run):
-        a = long_prefix(run[i], ("--message",))
-        if a in ("-m", "--message"):
+        a = run[i]
+        if a in GEETL_MSG_OPTS:
             i += 2
             continue
-        if not (a.startswith("--message=") or a.startswith("-m") and len(a) > 2):
-            out.append(a)
+        if a.partition("=")[0] in GEETL_MSG_OPTS or a.startswith("-m") and len(a) > 2:
+            i += 1
+            continue
+        out.append(a)
         i += 1
     return out
 
 
-def request_args(run, ctx, cwd):
-    """osc_rules on an osc command line and on the values its variables hold
-    (a loop's words included); a request whose non-message argument holds a
-    value only the shell knows is refused: where it goes is unknown."""
-    rest = without_message(run)
+def geectl_rules(seg, request=None):
+    """The geectl rules on a command line: request is the line without its
+    message, which only describes the request. A filing into Backports is
+    refused. A filing that targets Factory directly, and a foreign-arch local
+    build, are not refused here: geectl itself refuses them (its Factory devel
+    check and its UnsupportedArch), so the guard does not repeat them."""
+    if GEETL_REQUEST.search(seg if request is None else request):
+        block("backports", "a geectl request to openSUSE:Backports:SLE-16.x")
+
+
+def geectl_request_args(run, ctx, cwd):
+    """geectl_rules on a geectl command line and on the values its variables
+    hold (a loop's words included); a filing whose non-message argument holds
+    a value only the shell knows is refused: where it goes is unknown."""
+    rest = geectl_without_message(run)
     extra, unknown = [], None
     for k, a in enumerate(rest[1:], 1):
-        if not VARIABLE.search(a) or rest[k - 1] in ("-F", "--file"):
-            continue  # a literal, or the message file request_message() reads
+        if not VARIABLE.search(a):
+            continue  # a literal
         spellings = substitute(a, ctx, cwd)
         if spellings is None:  # unknown, or past 64 spellings: each value then
             names = [x or y for x, y in VAR_REF.findall(a)]
@@ -1015,46 +1366,60 @@ def request_args(run, ctx, cwd):
                 unknown = unknown or a
             spellings = [v for n in names for v in ctx.values.get(n, ())]
         extra += spellings
-    osc_rules(" ".join([*run, *extra]), " ".join([*rest, *extra]))
-    sub = osc_sub(rest)[0]
-    if sub in REQUESTS and unknown:
-        block("request-unknown", f"osc {sub} {shown(unknown)}")
+    geectl_rules(" ".join([*run, *extra]), " ".join([*rest, *extra]))
+    leaf = geectl_sub(rest)[0]
+    if leaf in GEETL_FILING and unknown:
+        block("request-unknown", f"geectl {leaf} {shown(unknown)}")
 
 
-def request_message(run, lit, ctx, cwd):
-    """A request (or an osc request verb that would open an editor) with no
-    message, one too long for its reviewers, or one that cannot be read now. lit: the argv as literal-aware text and the stdin of the call.
-    -m of other subcommands is a commit message, or osc api's method."""
-    sub, args = osc_sub(run)
-    if sub in ("rq", "request", "review"):
-        opts, pos = osc_args("request", args, OSC_OPTS_ASK)
-        verbs = (spellings(pos[0], ctx, cwd, False) or []) if pos else []
-        edited = [v for v in verbs if v in EDITED_VERBS]
-        if edited and not {k for k, _ in opts} & {"-m", "--message"}:
-            block("request-no-message", f"osc {sub} {edited[0]} without -m")
-    if sub not in REQUESTS:
+def geectl_message(run, lit, ctx, cwd):
+    """A geectl commit, or a filing, with no message, one too long for its
+    reviewers, or one that cannot be read now. lit: the argv as literal-aware
+    text and the stdin of the call. A bare geectl commit opens an editor, as
+    does a filing without --description; a filing for file or refile also
+    needs --changes-entry, the .changes entry. Request and pull-request verbs
+    take --comment, --body or --message with a default of "", so they never
+    open an editor and need no message here."""
+    leaf, args = geectl_sub(run)
+    if leaf == "commit":
+        opts, _pos = geectl_args(leaf, args)
+        if not {k for k, _ in opts} & {"-m", "--message"}:
+            block("request-no-message", "geectl commit without -m")
+        return
+    if leaf not in GEETL_FILING:
         return
     largv, lstdin = lit or (None, None)
     if largv is not None and len(largv) >= len(args):
         args = largv[len(largv) - len(args) :]
     else:  # no literal-aware text: any $ or backtick is unknown
         args = [literal(a) if not VARIABLE.search(a) else a for a in args]
-    args = [long_prefix(a, ("--message", "--file", "--diff")) for a in args]
-    opts = parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
+    opts, _pos = geectl_args(leaf, args)
     keys = {k for k, _ in opts}
-    diff = sub in SUBMITS and keys & {"-d", "--diff"}  # shows the diff, files nothing
-    if not diff and not keys & {"-m", "--message", "-F", "--file"}:
-        block("request-no-message", f"osc {sub} without -m")
+    need = (
+        {"--description", "--changes-entry"}
+        if leaf in GEETL_SUBMITS
+        else {"--description"}
+    )
+    if not need <= keys:
+        missing = " and ".join(sorted(need - keys))
+        block("request-no-message", f"geectl {leaf} without {missing}")
     for flag, word in opts:
-        if flag not in ("-m", "--message", "-F", "--file"):
+        if flag != "--description":
             continue
-        is_file = flag in ("-F", "--file")
-        texts = message_texts(word, ctx, cwd, is_file, lstdin)
+        texts = message_texts(word, ctx, cwd, False, lstdin)
         if texts is None:
-            what = unread(word, ctx, cwd, is_file)
-            block("request-message-unknown", f"the osc {sub} message ({what})")
+            what = unread(word, ctx, cwd, False)
+            block("request-message-unknown", f"the geectl {leaf} message ({what})")
         for fault in filter(None, map(message_fault, texts)):
-            block("request-message", f"an osc {sub} message {fault}")
+            block("request-message", f"a geectl {leaf} message {fault}")
+
+
+def long_prefix(a, names):
+    """a with a long option given by an unambiguous prefix, as argparse takes
+    it, written out in full."""
+    k, eq, v = a.partition("=")
+    hits = [n for n in names if n.startswith(k)] if a[:2] == "--" and k[2:] else []
+    return hits[0] + eq + v if len(hits) == 1 else a
 
 
 def message_texts(word, ctx, cwd, is_file=False, stdin=None):
@@ -1322,12 +1687,12 @@ def piped(out, ctx, cwd):
     return [text]
 
 
-def osc_projects(raw, what, ctx, cwd):
-    """The projects an osc checkout path (a checkout, or a file in one) names
-    in its .osc/_project -- in each directory a loop's cd may leave. Refused
-    when a path cannot be placed, or holds no .osc/_project (one the call
-    checks out itself, or no checkout): unless its own components name a
-    maintenance project, it is unknown."""
+def geectl_projects(raw, what, ctx, cwd):
+    """The projects a geectl checkout path (a checkout, or a file in one)
+    names in its git config geectl.project -- in each directory a loop's cd
+    may leave. Refused when a path cannot be placed, or holds no geectl
+    project (one the call checks out itself, or no checkout): unless its own
+    components name a maintenance project, it is unknown."""
     dirs = cwd.dirs if isinstance(cwd, Dirs) else [cwd]
     got = [locate(raw, ctx, d) for d in dirs]
     why = next((w for p, w in got if p is None), False)
@@ -1338,141 +1703,278 @@ def osc_projects(raw, what, ctx, cwd):
     prjs = []
     for path in (p for paths, _ in got for p in paths):
         d = path if os.path.isdir(path) else os.path.dirname(path)
-        try:
-            with open(os.path.join(d, ".osc", "_project"), encoding="utf-8") as fh:
-                prjs.append(fh.read().strip())
-        except OSError:
+        prj = git(d, ("config", "--get"), "geectl.project")
+        if prj:
+            prjs.append(prj)
+        else:
             prjs += list(filter(MAINT_PRJ.fullmatch, path.split(os.sep)))[:1] or [None]
     if None in prjs and not any(p and MAINT_PRJ.fullmatch(p) for p in prjs):
         block(
             "maintenance-unknown",
-            f"{what} {shown(raw)} (no .osc/_project there: check out in one call, "
+            f"{what} {shown(raw)} (no geectl.project there: check out in one call, "
             "commit in the next)",
         )
     return prjs
 
 
+def checkout_package(ctx, cwd, what="package"):
+    """The package (what="project": the project) of the checkout geectl runs
+    in, or None."""
+    if not isinstance(cwd, str) or isinstance(cwd, Dirs):
+        return None
+    return git(cwd, ("config", "--get"), f"geectl.{what}") or None
+
+
+def geectl_config_text(d):
+    """The git config text of directory d itself (not its parents), or None:
+    a .git directory, or a .git file pointing at the git directory."""
+    dotgit = os.path.join(d, ".git")
+    cfg = None
+    if os.path.isdir(dotgit):
+        cfg = os.path.join(dotgit, "config")
+    elif os.path.isfile(dotgit):
+        try:
+            with open(dotgit, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("gitdir:"):
+                        cfg = os.path.join(line[7:].strip(), "config")
+                        break
+        except OSError:
+            pass
+    if not cfg:
+        return None
+    try:
+        with open(cfg, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def is_geectl_checkout(d):
+    """Whether directory d is itself a geectl checkout root: its git config
+    carries a [geectl] section."""
+    text = geectl_config_text(d)
+    return text is not None and bool(re.search(r"(?m)^\[geectl\]", text))
+
+
 def long_names(spec):
-    """(long options that take a value, all long options) of an OSC_* spec."""
+    """(long options that take a value, all long options) of an option spec."""
     valued, _, flags = spec.partition(";")
     valued = ["--" + o for o in valued.split()]
     return valued, valued + ["--" + o for o in flags.split()]
-
-
-def osc_sub(run):
-    """(subcommand, its arguments) of an osc argv."""
-    valued, names = long_names(OSC_GLOBAL)
-    i = 1
-    while i < len(run) and run[i].startswith("-"):
-        i += 2 if long_prefix(run[i], names) in ("-A", *valued) else 1
-    return (run[i], run[i + 1 :]) if i < len(run) else (None, [])
-
-
-def osc_args(sub, args, table=None):
-    """(options as (flag, value), operands) of the arguments of an OSC_OPTS
-    (or table) subcommand, which may carry osc's global options too."""
-    short, spec = (table or OSC_OPTS)[sub]
-    valued, names = long_names(spec)
-    gvalued, gnames = long_names(OSC_GLOBAL)
-    args = [long_prefix(a, names + gnames) for a in args]
-    return parse_opts(args, short + "A", valued + gvalued)
 
 
 def shown(word):
     return SUB_WORD.sub("$(...)", word)
 
 
-def osc_writes(run, ctx, cwd):
-    """osc writes into a maintenance or update project, or into one the guard
-    cannot place: commit, api, and the project arguments of osc_target()."""
-    sub, args = osc_sub(run)
-    sub = OSC_ALIAS.get(sub, sub)
-    if sub not in OSC_OPTS:
+def geectl_targets(leaf, pos, opts):
+    """The projects a geectl write names: the project of the remote leaves
+    that take one as a positional (create-project, create-package,
+    set-project-meta, set-package-meta, repo-add, repo-remove, delete-package,
+    delete-project, undelete-package, undelete-project, upload-file,
+    update-package-meta-from-spec, delete-link), the destination of
+    aggregate-package, the project and --target-project of release-package and
+    release-project, the --target-project of maintenance-branch and of the
+    branch leaves, the --project of set-devel-project, set-link-rev,
+    set-link-rev-project, repair-link, link-to-branch and detach-branch ("."
+    for the checkout's when it is not named), and the --target-project of the
+    filing leaves. Empty when the call writes into nothing it names. A
+    rebuild, restart or abort names a build, not a write, and is not judged
+    here."""
+
+    def vals(k):
+        return [v for kk, v in opts if kk == k]
+
+    if leaf in (
+        "remote create-project",
+        "remote create-package",
+        "remote set-project-meta",
+        "remote set-package-meta",
+        "remote repo-add",
+        "remote repo-remove",
+        "remote delete-package",
+        "remote delete-project",
+        "remote undelete-package",
+        "remote undelete-project",
+        "remote upload-file",
+        "remote update-package-meta-from-spec",
+        "remote delete-link",
+    ):
+        return [pos[0]] if pos else []
+    if leaf in ("remote release-package", "remote release-project"):
+        return ([pos[0]] if pos else []) + vals("--target-project")
+    if leaf == "remote aggregate-package":
+        return [pos[2]] if len(pos) > 2 else []
+    if leaf in (
+        "maintenance maintenance-branch",
+        "branch branch-package",
+        "branch copy-package",
+        "branch copy-project",
+        "branch link-package",
+    ):
+        return vals("--target-project")
+    if leaf in (
+        "branch set-devel-project",
+        "branch set-link-rev",
+        "branch set-link-rev-project",
+        "branch repair-link",
+        "branch link-to-branch",
+        "branch detach-branch",
+    ):
+        return vals("--project") or ["."]
+    if leaf in GEETL_FILING:
+        return vals("--target-project")
+    return []
+
+
+def geectl_writes(run, ctx, cwd):
+    """geectl writes into a maintenance or update project, or into one the
+    guard cannot place: commit, and the project arguments of geectl_targets()."""
+    leaf, args = geectl_sub(run)
+    if leaf is None:
         return
-    opts, pos = osc_args(sub, args)
-    if sub in ("commit", "updatepacmetafromspec"):  # checkouts, by their paths
-        rule = "maintenance-commit" if sub == "commit" else "maintenance-write"
+    opts, pos = geectl_args(leaf, args)
+    if leaf == "commit":  # a checkout, by its path
         for raw in pos or ["."]:
-            for prj in osc_projects(raw, f"osc {sub}", ctx, cwd):
+            for prj in geectl_projects(raw, f"geectl {leaf}", ctx, cwd):
                 if prj and MAINT_PRJ.fullmatch(prj):
-                    block(rule, f"an osc {sub} into {prj}")
+                    block("maintenance-commit", f"a geectl {leaf} into {prj}")
         return
-    if sub == "maintainer" and {k for k, _ in opts} & ROLE_WRITES:
-        # one name is an owner search, -U/-G a user's or group's: the role
-        # lands wherever the search points
-        keys = {k for k, _ in opts}
-        words = [w for p in pos for w in p.strip("/").split("/")]
-        if len(words) == 1 or keys & {"-U", "--user", "-G", "--group"}:
-            block(
-                "maintenance-unknown", f"a role an osc {sub} search (not PRJ PKG) finds"
-            )
-    if sub != "api":
-        for target in filter(None, osc_targets(sub, pos, opts)):
-            if target == ".":
-                prjs = [p for p in osc_projects(".", f"osc {sub} to", ctx, cwd) if p]
-            else:
-                prjs = substitute(target, ctx, cwd)
-                if prjs is None:
-                    block("maintenance-unknown", f"osc {sub} to {shown(target)}")
-            for prj in filter(MAINT_PRJ.fullmatch, prjs):
-                block("maintenance-write", f"an osc {sub} into {prj}")
-        return
-    keys = {k for k, _ in opts}
-    method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
-    # As osc: a file uploads by PUT, and --edit PUTs what it fetched.
-    if method == "GET" and keys & {"-T", "-f", "--file"} or keys & {"-e", "--edit"}:
-        method = "PUT"
-    if method.upper() in ("GET", "HEAD"):
-        return
-    for a in pos:
-        urls = substitute(a, ctx, cwd)
-        if urls is None and api_segment(a) is None:
-            block("maintenance-unknown", f"osc api {method} {shown(a)}")
-        for url in urls or [a]:
-            for prj in api_targets(method, url):
-                if VARIABLE.search(prj):
-                    block("maintenance-unknown", f"osc api {method} {shown(a)}")
-                if MAINT_PRJ.fullmatch(prj):
-                    block("maintenance-api", f"an osc api {method} into {prj}")
+    for target in filter(None, geectl_targets(leaf, pos, opts)):
+        if target == ".":
+            prjs = [p for p in geectl_projects(".", f"geectl {leaf} to", ctx, cwd) if p]
+        else:
+            prjs = substitute(target, ctx, cwd)
+            if prjs is None:
+                block("maintenance-unknown", f"geectl {leaf} to {shown(target)}")
+        for prj in filter(MAINT_PRJ.fullmatch, prjs):
+            block("maintenance-write", f"a geectl {leaf} into {prj}")
 
 
-SUBMITS = {"sr", "submitreq", "submitrequest", "submitpac"}
+def geectl_deletes(run, ctx, cwd):
+    """geectl remote delete-package with --force, or delete-project with
+    --force or --recursive. OBS revokes every request (new, review, declined)
+    whose source it deletes; geectl refuses a delete while a request involves
+    the package, and a project delete takes all its packages with it."""
+    leaf, args = geectl_sub(run)
+    if leaf not in ("remote delete-package", "remote delete-project"):
+        return
+
+    def spell(w, what):
+        if not VARIABLE.search(w):
+            return [w]
+        spellings = substitute(w, ctx, cwd)
+        if not spellings:
+            block("rdelete-unknown", f"{what} with {shown(w)}")
+        return [x for one in spellings for x in one.split()]
+
+    opts, pos = geectl_args(leaf, args)
+    held = [x for w in pos if VARIABLE.search(w) for x in spell(w, f"geectl {leaf}")]
+    keys = {k for k, _ in opts + geectl_args(leaf, held)[0]}
+    if keys & {"--force"}:
+        block("rdelete-pending", f"geectl {leaf} --force")
+    if leaf == "remote delete-project" and keys & {"--recursive"}:
+        block("rdelete-pending", f"geectl {leaf} --recursive")
+
+
+def geectl_cleanup(run, ctx, cwd):
+    """A submit request from a home subproject (scratch, topic, branches)
+    that keeps its branch once accepted: geectl request file deletes it by
+    default (cleanup); --without-cleanup keeps it."""
+    leaf, args = geectl_sub(run)
+    if leaf not in GEETL_SUBMITS:
+        return
+    opts, _pos = geectl_args(leaf, args)
+    if "--without-cleanup" not in {k for k, _ in opts}:
+        return
+    srcs = [v for k, v in opts if k == "--source-project"]
+    if not srcs:
+        srcs = [checkout_package(ctx, cwd, "project")]
+    for w in srcs:
+        values = (substitute(w, ctx, cwd) or []) if VARIABLE.search(w or "") else [w]
+        for src in values:
+            if src and HOME_SUB.fullmatch(src):
+                block("sr-cleanup", f"geectl {leaf} from {src}")
+
+
+def geectl_submit_operands(run):
+    """The operands of each submit a command files, as [source project,
+    source package, target project, target package]: geectl request file and
+    refile take them as --source-project, --source-package, --target-project
+    and --target-package. Empty when it files none."""
+    leaf, args = geectl_sub(run)
+    if leaf not in GEETL_SUBMITS:
+        return []
+    opts, _pos = geectl_args(leaf, args)
+
+    def val(k):
+        return [v for kk, v in opts if kk == k]
+
+    src, pkg, dst = (
+        val("--source-project"),
+        val("--source-package"),
+        val("--target-project"),
+    )
+    if not src or not pkg or not dst:
+        return []
+    out = [src[0], pkg[0], dst[0]]
+    if val("--target-package"):
+        out.append(val("--target-package")[0])
+    return [out]
+
+
+def geectl_sources(words, ctx, cwd):
+    """(source project, package) pairs of a submit's operands: the pair it
+    names, or the checkout's when it names none."""
+    if len(words) >= 2:
+        return [(words[0], words[1])]
+    return [(checkout_package(ctx, cwd, "project"), checkout_package(ctx, cwd))]
+
+
+def geectl_target(run, ctx, cwd):
+    """A submit request to a project other than the one Factory's _meta names
+    as the package's devel project: a sweep through a project lists its
+    aggregates, links and siblings' packages, and an SR filed to it for one of
+    those goes to the wrong project."""
+    for words in geectl_submit_operands(run):
+        if len(words) >= 3:
+            dsts, pkgs = [words[2]], [words[3] if len(words) > 3 else words[1]]
+        elif words:
+            dsts = [words[0]]
+            pkgs = [words[1]] if len(words) == 2 else [checkout_package(ctx, cwd)]
+        else:
+            continue  # geectl picks the link's or devel project's target itself
+        target_rules(geectl_sub(run)[0], dsts, pkgs, ctx, cwd)
+
+
+def geectl_link(run, ctx, cwd):
+    """A submit request from a home branch whose package links to a third
+    project: the branch holds that project's sources and .changes, so the
+    request rewrites the target's history with them (a branch of a stale
+    copy in another project, filed to the devel project). A link within the
+    branch's own project is its own source."""
+    leaf = geectl_sub(run)[0]
+    for words in geectl_submit_operands(run):
+        if len(words) >= 3:
+            srcs, pkgs, dsts = [words[0]], [words[1]], [words[2]]
+        elif words:
+            srcs = [checkout_package(ctx, cwd, "project")]
+            pkgs, dsts = [checkout_package(ctx, cwd)], [words[0]]
+        else:
+            continue  # geectl submits to the project the link points at
+        link_rules(leaf, srcs, pkgs, dsts, ctx, cwd)
+
+
 # Targets the devel-project rule leaves to the others: Factory and the products,
 # SUSE's, and home: branches.
 OWN_RULES = re.compile(r"(?:openSUSE|SUSE|home)(?::|$)")
 PKG_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*")
 
 
-def submit_operands(run):
-    """The operands of each submit a command files, slash-split as osc does:
-    osc sr's, or each `osc creq -a submit ...` group's (-a takes every word up
-    to the next option). Empty when it files none."""
-    sub, args = osc_sub(run)
-    args = [long_prefix(a, ("--message", "--file", "--action")) for a in args]
-    if sub in SUBMITS:
-        groups = [parse_opts(args, "mFrsaA", REQUEST_VALUED)[1]]
-    elif sub in ("creq", "createrequest"):
-        groups, cur, i = [], None, 0
-        while i < len(args):
-            a = args[i]
-            if a in ("-a", "--action"):
-                cur = []
-                groups.append(cur)
-            elif a.startswith("-") and a != "-":
-                cur = None
-                i += a in REQUEST_VALUED or len(a) == 2 and a[1] in "mFrs"
-            elif cur is not None:
-                cur.append(a)
-            i += 1
-        groups = [g[1:] for g in groups if g[:1] == ["submit"]]
-    else:
-        return []
-    return [[w for p in g for w in p.strip("/").split("/")] for g in groups]
-
-
 def spellings(w, ctx, cwd, project=True):
     """A request operand's values, as the call sets them; a project "." is the
-    checkout's, as osc reads it."""
+    checkout's, as geectl reads it."""
     vals = (substitute(w, ctx, cwd) or []) if VARIABLE.search(w or "") else [w]
     if not project:
         return vals
@@ -1486,25 +1988,9 @@ def spellings(w, ctx, cwd, project=True):
         p
         for v in vals
         for p in (
-            [checkout_package(ctx, d, "_project") for d in here] if v == "." else [v]
+            [checkout_package(ctx, d, "project") for d in here] if v == "." else [v]
         )
     ]
-
-
-def request_target(run, ctx, cwd):
-    """A submit request to a project other than the one Factory's _meta names
-    as the package's devel project: a sweep through a project lists its
-    aggregates, links and siblings' packages, and an SR filed to it for one of
-    those goes to the wrong project."""
-    for words in submit_operands(run):
-        if len(words) >= 3:
-            dsts, pkgs = [words[2]], [words[3] if len(words) > 3 else words[1]]
-        elif words:
-            dsts = [words[0]]
-            pkgs = [words[1]] if len(words) == 2 else [checkout_package(ctx, cwd)]
-        else:
-            continue  # osc picks the link's or devel project's target itself
-        target_rules(osc_sub(run)[0], dsts, pkgs, ctx, cwd)
 
 
 def target_rules(sub, dsts, pkgs, ctx, cwd):
@@ -1516,7 +2002,7 @@ def target_rules(sub, dsts, pkgs, ctx, cwd):
             if not pkg or not PKG_NAME.fullmatch(pkg):
                 block(
                     "request-target-unknown",
-                    f"which package osc {sub} to {dst} submits",
+                    f"which package geectl {sub} to {dst} submits",
                 )
             devel = factory_devel(pkg, ctx)
             if devel and devel != dst:
@@ -1535,139 +2021,10 @@ def target_rules(sub, dsts, pkgs, ctx, cwd):
                     block("request-target", f"{dst}/{pkg} is a _link to {origin}")
 
 
-def checkout_package(ctx, cwd, what="_package"):
-    """The package (what="_project": the project) of the checkout osc runs in,
-    or None."""
-    if not isinstance(cwd, str) or isinstance(cwd, Dirs):
-        return None
-    try:
-        with open(os.path.join(cwd, ".osc", what), encoding="utf-8") as fh:
-            return fh.read().strip() or None
-    except OSError:
-        return None
-
-
 HOME_SUB = re.compile(r"home:[^:]+:.+")
-PROMPTED = REQUESTS | {"rq", "request", "review", "ci", "commit", "checkin"}
-
-
-def osc_prompt(run, stdin):
-    """An osc request or commit fed an answer on stdin (a pipe, here-string or
-    heredoc); < FILE (/dev/null) and a message read with -F - are fine."""
-    sub, args = osc_sub(run)
-    if sub not in PROMPTED or not stdin or stdin[0] == "files":
-        return
-    args = [long_prefix(a, ("--file",)) for a in args]
-    for i, a in enumerate(args):
-        if (
-            a in ("-F-", "--file=-")
-            or a in ("-F", "--file")
-            and args[i + 1 : i + 2] == ["-"]
-        ):
-            return
-    said = stdin[1].strip()[:20] if stdin[0] == "text" else ""
-    block(
-        "osc-prompt",
-        f"osc {sub} with an answer on stdin" + (f" ({said})" if said else ""),
-    )
-
-
-# A project or package itself (not one of its files): /source/PRJ[/PKG]
-SOURCE_PATH = Rx(r"/source/[^/]+(?:/[^/]+)?")
-
-
-def source_itself(p):
-    """Whether an osc api path names a project or package itself, read as OBS
-    reads it: percent-decoded, repeated slashes collapsed, `.` and `..`
-    resolved, query and fragment dropped (`/source/P//` is project P)."""
-    path = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]*", "", p, flags=re.I)
-    path = urllib.parse.unquote(re.split(r"[?#]", path, maxsplit=1)[0])
-    path = posixpath.normpath(re.sub(r"/+", "/", "/" + path))
-    return SOURCE_PATH.fullmatch(path) is not None
-
-
-def osc_deletes(run, ctx, cwd):
-    """osc rdelete with --force or --recursive, or an osc api DELETE of
-    sources. OBS revokes every request (new, review, declined) whose source it
-    deletes; osc checks for them only on a package delete without --force,
-    and a project delete takes all its packages with it."""
-    sub, args = osc_sub(run)
-    if sub not in ("rdelete", "api"):
-        return
-
-    def spell(w, what):
-        if not VARIABLE.search(w):
-            return [w]
-        spellings = substitute(w, ctx, cwd)
-        if not spellings:
-            block("rdelete-unknown", f"{what} with {shown(w)}")
-        return [x for one in spellings for x in one.split()]
-
-    if sub == "rdelete":  # an operand only the shell knows may be an option
-        opts, pos = osc_args(sub, args)
-        held = [x for w in pos if VARIABLE.search(w) for x in spell(w, "osc rdelete")]
-        keys = {k for k, _ in opts + osc_args(sub, held)[0]}
-        if keys & {"-f", "--force"}:
-            block("rdelete-pending", "osc rdelete --force")
-        if keys & {"-r", "--recursive"}:
-            block("rdelete-pending", "osc rdelete --recursive")
-        return
-    opts, pos = osc_args(sub, args)
-    methods = [
-        m for k, v in opts if k in ("-X", "-m", "--method") for m in spell(v, "osc api")
-    ]
-    if any(m.upper() == "DELETE" for m in methods):
-        for p in (x for w in pos for x in spell(w, "an osc api DELETE")):
-            if source_itself(p):
-                block("rdelete-pending", f"an osc api DELETE of {p}")
-
-
-def request_cleanup(run, ctx, cwd):
-    """A submit request from a home subproject (scratch, topic, branches) that
-    keeps its branch once accepted: osc sr deletes it only with --cleanup,
-    submitpac unless told not to."""
-    sub, args = osc_sub(run)
-    if sub not in SUBMITS:
-        return
-    names = ("--message", "--file", "--cleanup", "--no-cleanup", "--no-update")
-    opts, pos = parse_opts(
-        [long_prefix(a, names) for a in args], "mFrsaA", REQUEST_VALUED
-    )
-    keys = {k for k, _ in opts}
-    if not keys & {"--no-cleanup", "--no-update"} and (
-        "--cleanup" in keys or sub == "submitpac"
-    ):
-        return
-    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
-    if len(words) >= 3:
-        w = words[0]
-        srcs = (substitute(w, ctx, cwd) or []) if VARIABLE.search(w) else [w]
-    else:
-        srcs = [checkout_package(ctx, cwd, "_project")]
-    for src in srcs:
-        if src and HOME_SUB.fullmatch(src):
-            block("sr-cleanup", f"osc {sub} from {src}")
 
 
 HOME_PRJ = re.compile(r"home:[^:]+(?::.+)?")
-
-
-def request_link(run, ctx, cwd):
-    """A submit request from a home branch whose package links to a third
-    project: the branch holds that project's sources and .changes, so the
-    request rewrites the target's history with them (a branch of a stale
-    copy in another project, filed to the devel project). A link within the
-    branch's own project is its own source."""
-    sub = osc_sub(run)[0]
-    for words in submit_operands(run):
-        if len(words) >= 3:
-            srcs, pkgs, dsts = [words[0]], [words[1]], [words[2]]
-        elif words:
-            srcs = [checkout_package(ctx, cwd, "_project")]
-            pkgs, dsts = [checkout_package(ctx, cwd)], [words[0]]
-        else:
-            continue  # osc submits to the project the link points at
-        link_rules(sub, srcs, pkgs, dsts, ctx, cwd)
 
 
 def link_rules(sub, srcs, pkgs, dsts, ctx, cwd):
@@ -1679,7 +2036,7 @@ def link_rules(sub, srcs, pkgs, dsts, ctx, cwd):
             if not pkg or not PKG_NAME.fullmatch(pkg):
                 block(
                     "request-target-unknown",
-                    f"which package osc {sub} from {src} sends",
+                    f"which package geectl {sub} from {src} sends",
                 )
             root = source_listing(src, pkg, ctx)
             link = root.find("linkinfo") if root is not None else None
@@ -1696,149 +2053,397 @@ def link_rules(sub, srcs, pkgs, dsts, ctx, cwd):
                     )
 
 
-# One process fetches the GETs a call needs, through osc's library (it holds
-# the login): an osc process per GET costs about a second and a half each.
-BATCH = r"""
-import json, sys
-from urllib.error import HTTPError
-import osc.conf, osc.core
-osc.conf.get_config(override_apiurl=sys.argv[1] or None)
-base, out = osc.conf.config["apiurl"].rstrip("/"), {}
-for p in sys.argv[2:]:
+# One process fetches the GETs a call needs, through geectl's typed reads
+# (it holds the login), one process per read.
+
+
+def geectl_read(args, ctx):
+    """(True, data) for a typed geectl read, (True, None) for a not-found, and
+    (False, why) for a failed, slow or over-budget one. One geectl process per
+    read, stdin closed, run from /, within the call's budget. A read is always
+    --format json: a 404 answers {"error": {"code": "not_found", ...}} with
+    exit code 3, and remote cat answers {"content": "..."}."""
+    import json
+    import subprocess
+    import time
+
+    left = ctx.deadline - time.monotonic()
+    if left <= 0:
+        return False, f"the lookups of this call ran past {NET_BUDGET} s"
     try:
-        out[p] = [200, osc.core.http_GET(base + p).read().decode("utf-8", "replace")]
-    except HTTPError as e:
-        out[p] = [e.code, ""]
-    except Exception as e:
-        out[p] = [0, type(e).__name__]
-print(json.dumps(out))
-"""
+        r = subprocess.run(
+            ["geectl", "--format", "json", *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            cwd="/",
+            timeout=left,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        why = (
+            "geectl is not installed"
+            if isinstance(e, FileNotFoundError)
+            else type(e).__name__
+        )
+        return False, f"geectl {' '.join(args)} could not run ({why})"
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        return False, f"geectl {' '.join(args)} printed no JSON"
+    if isinstance(data, dict) and "error" in data:
+        err = data["error"] or {}
+        if err.get("code") == "not_found":
+            return True, None
+        return False, f"geectl {' '.join(args)}: {err.get('message') or err}"
+    if r.returncode != 0:
+        return False, f"geectl {' '.join(args)} exited {r.returncode}"
+    return True, data
+
+
+def geectl_meta_xml(kind, data):
+    """A _meta document from a geectl remote project-meta or package-meta
+    answer: the <title>, <description>, <person>/<group> holders, <devel>
+    and <scmsync> the guard reads, as the OBS API spells them. The project
+    devel may be a string, an object or null."""
+    import xml.etree.ElementTree as ET
+
+    tag = "project" if kind == "project" else "package"
+    root = ET.Element(tag)
+    root.set("name", data.get("name") or "")
+    if kind == "package":
+        root.set("project", data.get("project") or "")
+    title = ET.SubElement(root, "title")
+    title.text = data.get("title") or ""
+    desc = ET.SubElement(root, "description")
+    desc.text = data.get("description") or ""
+    for p in data.get("persons") or []:
+        e = ET.SubElement(root, "person")
+        e.set("userid", p.get("name") or "")
+        e.set("role", p.get("role") or "")
+    for g in data.get("groups") or []:
+        e = ET.SubElement(root, "group")
+        e.set("groupid", g.get("name") or "")
+        e.set("role", g.get("role") or "")
+    devel = data.get("devel")
+    if isinstance(devel, dict) and (devel.get("project") or devel.get("package")):
+        e = ET.SubElement(root, "devel")
+        if devel.get("project"):
+            e.set("project", devel["project"])
+        if devel.get("package"):
+            e.set("package", devel["package"])
+    elif isinstance(devel, str) and devel:
+        e = ET.SubElement(root, "devel")
+        e.set("project", devel)
+    scm = data.get("scmsync")
+    if isinstance(scm, str) and scm:
+        e = ET.SubElement(root, "scmsync")
+        e.text = scm
+    if kind == "project":
+        for repo in data.get("repositories") or []:
+            e = ET.SubElement(root, "repository")
+            e.set("name", repo.get("name") or "")
+            for arch in repo.get("arch") or []:
+                a = ET.SubElement(e, "arch")
+                a.text = arch
+            for p in repo.get("paths") or []:
+                pe = ET.SubElement(e, "path")
+                if p.get("project"):
+                    pe.set("project", p["project"])
+                if p.get("repository"):
+                    pe.set("repository", p["repository"])
+    return ET.tostring(root, encoding="unicode")
+
+
+def geectl_listing_xml(prj, pkg, ctx, expand=False):
+    """(True, text) for the source listing document of prj/pkg, (True, None)
+    for a 404, (False, why) for a failed lookup: remote list-files, with the
+    link target merged as <linkinfo> and, when expand, the link target's
+    files as the entries. The directory's srcmd5 is the first entry of the
+    package log of the project whose files are listed, best-effort: when the
+    log cannot be read the listing carries no srcmd5, and a rule that needs
+    one refuses."""
+    import xml.etree.ElementTree as ET
+
+    ok, files = geectl_read(["remote", "list-files", prj, pkg], ctx)
+    if not ok:
+        return False, files
+    if files is None:
+        return True, None
+    ok, link = geectl_read(["remote", "link-target", prj, pkg], ctx)
+    if not ok:
+        return False, link
+    target = (link or {}).get("target") if isinstance(link, dict) else None
+    entries = files.get("files") or []
+    log_prj, log_pkg = prj, pkg
+    if expand and target:
+        ok, tfiles = geectl_read(
+            [
+                "remote",
+                "list-files",
+                target.get("project") or "",
+                target.get("package") or "",
+            ],
+            ctx,
+        )
+        if not ok:
+            return False, tfiles
+        if tfiles is not None:
+            entries = tfiles.get("files") or []
+            log_prj, log_pkg = (
+                target.get("project") or prj,
+                target.get("package") or pkg,
+            )
+    srcmd5 = ""
+    ok, log = geectl_read(["remote", "package-log", log_prj, log_pkg], ctx)
+    if ok and isinstance(log, dict):
+        first = (log.get("entries") or [None])[0] or {}
+        srcmd5 = first.get("srcmd5") or ""
+    root = ET.Element("directory")
+    if srcmd5:
+        root.set("srcmd5", srcmd5)
+    for f in entries:
+        e = ET.SubElement(root, "entry")
+        e.set("name", f.get("name") or "")
+        if f.get("size") is not None:
+            e.set("size", str(f["size"]))
+        if f.get("mtime") is not None:
+            e.set("mtime", str(f["mtime"]))
+        if f.get("md5"):
+            e.set("md5", f["md5"])
+    if target:
+        e = ET.SubElement(root, "linkinfo")
+        e.set("project", target.get("project") or "")
+        if target.get("package"):
+            e.set("package", target["package"])
+    return True, ET.tostring(root, encoding="unicode")
+
+
+def geectl_request_xml(data):
+    """A request document from a geectl request show answer: the <request>
+    with its <action>s (source, target, options, acceptinfo) and <state> the
+    guard reads, as the OBS API spells them."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.Element("request")
+    root.set("id", str(data.get("id") or ""))
+    if data.get("creator"):
+        root.set("creator", data["creator"])
+    for a in data.get("actions") or []:
+        ae = ET.SubElement(root, "action")
+        ae.set("type", a.get("type") or "")
+        if a.get("source_project") or a.get("source_package"):
+            se = ET.SubElement(ae, "source")
+            if a.get("source_project"):
+                se.set("project", a["source_project"])
+            if a.get("source_package"):
+                se.set("package", a["source_package"])
+            if a.get("source_rev"):
+                se.set("rev", a["source_rev"])
+        if a.get("target_project") or a.get("target_package"):
+            te = ET.SubElement(ae, "target")
+            if a.get("target_project"):
+                te.set("project", a["target_project"])
+            if a.get("target_package"):
+                te.set("package", a["target_package"])
+            if a.get("target_repository"):
+                te.set("repository", a["target_repository"])
+        if a.get("type") == "add_role":
+            for key, tag in (("person", "person"), ("group", "group")):
+                who = a.get(key) or {}
+                if who.get("name"):
+                    we = ET.SubElement(ae, tag)
+                    we.set("name", who["name"])
+                    if who.get("role"):
+                        we.set("role", who["role"])
+        if a.get("type") == "set_bugowner":
+            if a.get("person_name"):
+                we = ET.SubElement(ae, "person")
+                we.set("name", a["person_name"])
+            if a.get("group_name"):
+                we = ET.SubElement(ae, "group")
+                we.set("name", a["group_name"])
+        if a.get("type") == "submit":
+            opts = []
+            if a.get("sourceupdate"):
+                opts.append(("sourceupdate", a["sourceupdate"]))
+            if a.get("updatelink"):
+                opts.append(("updatelink", None))
+            if a.get("makeoriginolder"):
+                opts.append(("makeoriginolder", None))
+            if opts:
+                oe = ET.SubElement(ae, "options")
+                for tag, text in opts:
+                    ce = ET.SubElement(oe, tag)
+                    if text:
+                        ce.text = text
+            info = a.get("acceptinfo") or {}
+            if info:
+                ie = ET.SubElement(ae, "acceptinfo")
+                for k in (
+                    "rev",
+                    "srcmd5",
+                    "oproject",
+                    "opackage",
+                    "osrcmd5",
+                    "xsrcmd5",
+                    "oxsrcmd5",
+                ):
+                    if info.get(k):
+                        ie.set(k, info[k])
+    state = data.get("state") or {}
+    if state.get("name"):
+        se = ET.SubElement(root, "state")
+        se.set("name", state["name"])
+    return ET.tostring(root, encoding="unicode")
 
 
 def obs_get(path, ctx):
-    """(True, text) for an OBS API GET of path on the instance osc -A names,
-    (True, None) for a 404, and (False, what failed) for a failed, slow or
-    over-budget lookup."""
-    if ("get", ctx.apiurl, path) not in ctx.devel:
+    """(True, text) for a typed geectl read of path, (True, None) for a
+    404, and (False, what failed) for a failed, slow or over-budget lookup.
+    The path keys stay the OBS API's: _meta, _link, a listing (plain or
+    ?expand=1, optionally &rev=), _scmsync.obsinfo, /request/{id}."""
+    if ("get", path) not in ctx.devel:
         obs_batch([path], ctx)
-    return ctx.devel["get", ctx.apiurl, path]
+    return ctx.devel["get", path]
 
 
 def obs_batch(paths, ctx):
-    """Fetch every path not looked up yet, in one process. Offline,
-    PR_GUARD_META_DIR/api/<path, with /?&= as _> answers ("@ERR" fails), and
-    api@<host>/ for an osc -A instance."""
-    import json
-    import subprocess
-    import sys
-    import time
+    """Fetch every path not looked up yet, each through its typed geectl
+    read. Offline, PR_GUARD_META_DIR/api/<path, with /?&= as _> answers
+    ("@ERR" fails it); a missing file reads as a 404. A path no typed read
+    covers -- a rev-pinned listing, whose --rev is a filed gap -- fails
+    closed."""
+    import re
 
-    todo = [p for p in dict.fromkeys(paths) if ("get", ctx.apiurl, p) not in ctx.devel]
+    todo = [p for p in dict.fromkeys(paths) if ("get", p) not in ctx.devel]
     if not todo:
         return
-    got, stub, why = {}, os.environ.get("PR_GUARD_META_DIR"), "no answer"
-    if stub:
-        host = urllib.parse.urlparse(ctx.apiurl).netloc or ctx.apiurl
-        base = os.path.join(stub, "api" + (f"@{host}" if host else ""))
-        for p in todo:
-            f = os.path.join(base, p.translate(str.maketrans("/?&=", "____")))
-            text = open(f, encoding="utf-8").read() if os.path.exists(f) else ""
-            got[p] = (
-                [0, "failed"]
-                if text.strip() == "@ERR"
-                else [200 if text else 404, text]
-            )
-    elif ctx.deadline - time.monotonic() > 0:
-        try:
-            r = subprocess.run(
-                [sys.executable, "-P", "-c", BATCH, ctx.apiurl, *todo],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                cwd="/",
-                timeout=ctx.deadline - time.monotonic(),
-            )
-            got = json.loads(r.stdout) if r.returncode == 0 else None
-        except subprocess.TimeoutExpired:
-            why = f"the lookups of this call ran past {NET_BUDGET} s"
-        except (OSError, ValueError):
-            got = None
-        if got is None:  # a python3 without osc's library: one osc api each
-            got = osc_api_each(todo, ctx)
-    else:
-        why = f"the lookups of this call ran past {NET_BUDGET} s"
+    stub = os.environ.get("PR_GUARD_META_DIR")
     for p in todo:
-        code, text = got.get(p) or [0, why]
-        ctx.devel["get", ctx.apiurl, p] = (
-            (True, text)
-            if code == 200
-            else (True, None)
-            if code == 404
-            else (False, f"{p} ({text or code})")
-        )
-
-
-def osc_api_each(paths, ctx):
-    """obs_batch's answers through one osc api process per path, while the
-    call's budget lasts."""
-    import subprocess
-    import time
-
-    got = {}
-    for p in paths:
-        left = ctx.deadline - time.monotonic()
-        if left <= 0:
-            break
-        try:
-            r = subprocess.run(
-                ["osc", *(["-A", ctx.apiurl] if ctx.apiurl else []), "api", p],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=left,
+        if stub:
+            f = os.path.join(stub, "api", p.translate(str.maketrans("/?&=", "____")))
+            text = open(f, encoding="utf-8").read() if os.path.exists(f) else ""
+            ctx.devel["get", p] = (
+                (False, f"{p} (failed)")
+                if text.strip() == "@ERR"
+                else (True, text)
+                if text
+                else (True, None)
             )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            got[p] = [0, type(e).__name__]
-            break
-        got[p] = (
-            [200, r.stdout]
-            if r.returncode == 0
-            else [404, ""]
-            if "HTTP Error 404" in r.stderr
-            else [0, f"osc exited {r.returncode}"]
-        )
-    return got
+            continue
+        m = re.fullmatch(r"/source/([^/]+)/([^/?]+)/_meta", p)
+        if m:
+            ok, data = geectl_read(
+                ["remote", "package-meta", m.group(1), m.group(2)], ctx
+            )
+            ctx.devel["get", p] = (
+                (True, geectl_meta_xml("package", data))
+                if ok and data is not None
+                else (True, None)
+                if ok
+                else (False, data)
+            )
+            continue
+        m = re.fullmatch(r"/source/([^/]+)/_meta", p)
+        if m:
+            ok, data = geectl_read(["remote", "project-meta", m.group(1)], ctx)
+            ctx.devel["get", p] = (
+                (True, geectl_meta_xml("project", data))
+                if ok and data is not None
+                else (True, None)
+                if ok
+                else (False, data)
+            )
+            continue
+        m = re.fullmatch(r"/source/([^/]+)/([^/?]+)/_link", p)
+        if m:
+            ok, data = geectl_read(
+                ["remote", "link-target", m.group(1), m.group(2)], ctx
+            )
+            target = (data or {}).get("target") if ok and data is not None else None
+            if ok and data is None:
+                ctx.devel["get", p] = (True, None)
+            elif ok and not target:
+                ctx.devel["get", p] = (True, None)
+            elif ok:
+                import xml.etree.ElementTree as ET
+
+                e = ET.Element("link")
+                e.set("project", target.get("project") or "")
+                if target.get("package"):
+                    e.set("package", target["package"])
+                ctx.devel["get", p] = (True, ET.tostring(e, encoding="unicode"))
+            else:
+                ctx.devel["get", p] = (False, data)
+            continue
+        m = re.fullmatch(r"/source/([^/]+)/([^/?]+)(\?expand=1(?:&rev=([^&]+))?)?", p)
+        if m:
+            if m.group(4):
+                ctx.devel["get", p] = (
+                    False,
+                    f"{p} (no typed read for a rev-pinned listing)",
+                )
+                continue
+            ok, text = geectl_listing_xml(
+                m.group(1), m.group(2), ctx, m.group(3) is not None
+            )
+            ctx.devel["get", p] = (ok, text)
+            continue
+        m = re.fullmatch(r"/source/([^/]+)/([^/?]+)/_scmsync\.obsinfo", p)
+        if m:
+            ok, data = geectl_read(
+                ["remote", "cat", m.group(1), m.group(2), "_scmsync.obsinfo"], ctx
+            )
+            ctx.devel["get", p] = (
+                (True, (data or {}).get("content", ""))
+                if ok and data is not None
+                else (True, None)
+                if ok
+                else (False, data)
+            )
+            continue
+        m = re.fullmatch(r"/request/(\d+)", p)
+        if m:
+            ok, data = geectl_read(["request", "show", m.group(1)], ctx)
+            ctx.devel["get", p] = (
+                (True, geectl_request_xml(data))
+                if ok and data is not None
+                else (True, None)
+                if ok
+                else (False, data)
+            )
+            continue
+        ctx.devel["get", p] = (False, f"{p} (no typed geectl read covers it)")
 
 
 def obs_user(ctx):
     """The OBS account this session acts as: PR_GUARD_OBS_USER, else geectl
-    remote whois, asked once per call and instance and kept in memory only
-    (a file a call can write could name someone else); "" when neither says.
-    remote whois has no instance flag, so the plain call answers for the
-    default URL (entry 20 owns per-call selection); the cache stays keyed
-    per apiurl."""
+    config show, asked once per call and kept in memory only (a file a call
+    can write could name someone else); "" when neither says. A Bearer login
+    carries no username, so it reads as unknown."""
     import json
     import subprocess
     import time
 
-    if ctx.apiurl in ctx.users:
-        return ctx.users[ctx.apiurl]
+    if "user" in ctx.users:
+        return ctx.users["user"]
     user = os.environ.get("PR_GUARD_OBS_USER", "")
     left = ctx.deadline - time.monotonic()
     if not user and left > 0:
         try:
             r = subprocess.run(
-                ["geectl", "remote", "whois"],
+                ["geectl", "--format", "json", "config", "show"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=left,
             )
             if r.returncode == 0:
-                user = json.loads(r.stdout).get("login", "") or ""
+                auth = json.loads(r.stdout).get("obs_auth") or {}
+                user = auth.get("username") or ""
         except (OSError, subprocess.TimeoutExpired, ValueError):
             pass
-    ctx.users[ctx.apiurl] = user
+    ctx.users["user"] = user
     return user
 
 
@@ -1868,7 +2473,7 @@ def maintains(prj, pkg, ctx):
     whose _meta has <scmsync> is judged by its project git (git_maintained())."""
     user = obs_user(ctx)
     if not user:
-        return False, "the account is unknown (geectl remote whois failed)"
+        return False, "the account is unknown (geectl config show failed)"
     obs_batch([f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"], ctx)
     metas = []
     for path in (f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"):
@@ -1905,13 +2510,12 @@ def maintains(prj, pkg, ctx):
 
 def eligible(prj, pkg, ctx):
     """(True, "") when this account may move prj/pkg unattended, decided as
-    autoforward-gate.sh decides ELIGIBLE (the suite runs both on the same
-    fixtures); else (False, why). A project whose _meta has <scmsync> takes
+    autoforward-gate.sh decides ELIGIBLE; else (False, why). A project whose _meta has <scmsync> takes
     its maintainers from its project git's _maintainership.json and adds the
     Reviewers of its workflow.config."""
     user = obs_user(ctx)
     if not user:
-        return False, "the account is unknown (geectl remote whois failed)"
+        return False, "the account is unknown (geectl config show failed)"
     obs_batch(
         [
             f"/source/{prj}/{pkg}/_meta",
@@ -1969,66 +2573,285 @@ def eligible(prj, pkg, ctx):
     return False, f"{prj}/{pkg} is maintained by {', '.join(sorted(maints))}"
 
 
-# osc 1.27.3's own options (osc.commandline's parser) of the commands the asks
-# read: request, also spelled rq and review, and comment.
-OSC_OPTS_ASK = {
-    "request": (
-        "SmtsDUGPp",
-        "superseded-request message type state days user group project package "
-        "exclude-target-project target-package-filter; diff unified no-devel all "
-        "force brief mine bugowner edit interactive or-revoke non-interactive "
-        "keep-packages-locked incoming involved-projects source-buildstatus",
-    ),
-    "comment": ("cp", "comment parent;"),
-}
-
-
-def osc_runs(run, ctx, cwd):
-    """The osc argv once per spelling of its subcommand, as the call holds it
-    in a variable; [None] when only the shell knows it."""
-    sub = osc_sub(run)[0]
-    if not sub or not VARIABLE.search(sub):
-        return [run]
-    vals = substitute(sub, ctx, cwd)
-    if not vals:
-        return [None]
-    i = len(run) - 1 - len(osc_sub(run)[1])
-    return [[*run[:i], v, *run[i + 1 :]] for v in vals]
-
-
-def osc_apiurl(run, ctx, cwd):
-    """The instance an osc argv names with -A/--apiurl (osc takes it before or
-    after the subcommand), as the call sets it; "" for osc's default."""
-    _, names = long_names(OSC_GLOBAL)
-    got, i = "", 1
+def geectl_runs(run, ctx, cwd):
+    """The geectl argv once per spelling of its leaf, as the call holds it in
+    a variable; [None] when only the shell knows it."""
+    idx, leaf, i = [], [], 1
     while i < len(run):
-        a, i = run[i], i + 1
-        k, eq, v = long_prefix(a, names).partition("=")
-        if k in ("-A", "--apiurl"):
-            v, i = (v, i) if eq else (run[i] if i < len(run) else "", i + 1)
-        elif a[:2] == "-A" and len(a) > 2:
-            v = a[2:]
-        else:
+        a = run[i]
+        if a == "--":
+            break
+        if a.startswith("-") and a != "-":
+            base = a.partition("=")[0]
+            if "=" not in a and base in GEETL_VALUED_NAMES and len(leaf) < 2:
+                i += 2
+            else:
+                i += 1
             continue
-        got = (spellings(v, ctx, cwd, False) or [v])[0]
-    return got
+        idx.append(i)
+        leaf.append(a)
+        i += 1
+        if len(leaf) == 1 and leaf[0] not in GEETL_GROUPS:
+            break
+        if len(leaf) == 2:
+            break
+    if not leaf or not any(VARIABLE.search(w) for w in leaf):
+        return [run]
+    runs = [run]
+    for pos, word in zip(idx, leaf):
+        if not VARIABLE.search(word):
+            continue
+        vals = substitute(word, ctx, cwd)
+        if not vals:
+            return [None]
+        runs = [[*r[:pos], v, *r[pos + 1 :]] for r in runs for v in vals]
+    return runs
 
 
-def obs_prefetch(run, ctx, cwd):
-    """Fetch, in one process, the GETs the submit rules below make for this
-    osc command: the source's listings and _meta, its project's, Factory's
-    _meta and the target's listing."""
-    sub, args = osc_sub(run)
-    revs = [
-        v
-        for k, v in parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
-        if k in ("-r", "--revision")
+def geectl_accept_forward(run, ctx, cwd):
+    """An accept, approve or decline of a request (geectl request, or the
+    pull-request surface), or a forward of a devel package to Factory, that
+    autoforward-gate.sh would not call ELIGIBLE: a reviewer set, a package
+    someone else (or a group) maintains. A request someone else filed is
+    accepted only through its incoming review and the user's go
+    (foreign_accept()). A decline is always the user's call, and so is
+    closing, reopening or forcing a request someone else filed
+    (others_request())."""
+    for one in geectl_runs(run, ctx, cwd):
+        if one is None:
+            ask(
+                ctx,
+                "accept-forward",
+                f"cannot tell which geectl command {shown(geectl_sub(run)[0])} is",
+            )
+            continue
+        leaf, args = geectl_sub(one)
+        if leaf in GEETL_REQUEST_VERBS:
+            geectl_request_verbs(leaf, args, ctx, cwd)
+        elif leaf in GEETL_PULL_VERBS:
+            geectl_pull_verbs(leaf, args, ctx, cwd)
+        elif leaf in GEETL_FILING:
+            geectl_forwards(one, ctx, cwd)
+            geectl_supersedes(one, ctx, cwd)
+
+
+def geectl_supersedes(run, ctx, cwd):
+    """A refile (request refile, or refile-maintenance-incident) that
+    supersedes, with --supersede ID, a request someone else filed."""
+    leaf, args = geectl_sub(run)
+    if leaf not in ("request refile", "request refile-maintenance-incident"):
+        return
+    opts, _pos = geectl_args(leaf, args)
+    ids = [
+        r
+        for k, v in opts
+        if k == "--supersede"
+        for r in spellings(v, ctx, cwd, False) or [""]
     ]
-    query = "?expand=1" + (f"&rev={revs[-1]}" if revs else "")
+    if ids:
+        reviewer_acts(ctx, f"geectl {leaf} --supersede")
+    obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+    for rid in ids:
+        others_request(rid, f"geectl {leaf} --supersede", ctx)
+
+
+def geectl_request_verbs(leaf, args, ctx, cwd):
+    """accept_forward's rules on a geectl request verb: accept per request,
+    decline always; a revoke, supersede or change-state to revoked, new or
+    review, and an accept with --force, of a request someone else filed. A
+    change-state without --live changes nothing and is not judged, and
+    try-change-state is a dry-run probe by definition. add-review and
+    add-comment carry no action to judge here; the comment's text is judged
+    for bot directives."""
+    opts, pos = geectl_args(leaf, args)
+    keys = {k for k, _ in opts}
+    if (
+        leaf in ("request change-state", "request try-change-state")
+        and "--live" not in keys
+    ):
+        return
+    if leaf == "request accept":
+        forced = "--force" if "--force" in keys else ""
+        ids = [r for w in pos for r in spellings(w, ctx, cwd, False) or [""]]
+        if pos and not any(spellings(w, ctx, cwd, False) for w in pos):
+            ask(
+                ctx,
+                "accept-forward",
+                f"cannot tell what geectl {leaf} {shown(pos[0])} does",
+            )
+        obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+        for rid in ids or [""]:
+            accept_one(rid, ctx, forced)
+        return
+    if leaf == "request decline":
+        reviewer_acts(ctx, "geectl request decline")
+        ask(
+            ctx,
+            "accept-forward",
+            "geectl request decline: a decline is the user's call",
+        )
+        return
+    if leaf == "request revoke":
+        reviewer_acts(ctx, "geectl request revoke")
+        ids = [r for w in pos for r in spellings(w, ctx, cwd, False) or [""]]
+        obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+        for rid in ids or [""]:
+            others_request(rid, "geectl request revoke", ctx)
+        return
+    if leaf in ("request change-state", "request try-change-state"):
+        ids = [r for w in pos[:1] for r in spellings(w, ctx, cwd, False) or [""]]
+        state = (spellings(pos[1], ctx, cwd, False) or [""])[0] if len(pos) > 1 else ""
+        forced = "--force" if "--force" in keys else ""
+        if state == "accepted":
+            obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+            for rid in ids or [""]:
+                accept_one(rid, ctx, forced)
+        elif state == "declined":
+            reviewer_acts(ctx, "geectl request change-state declined")
+            ask(
+                ctx,
+                "accept-forward",
+                "geectl request change-state declined: a decline is the user's call",
+            )
+        elif state in ("revoked", "new", "review"):
+            reviewer_acts(ctx, f"geectl request change-state {state}")
+            obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+            for rid in ids or [""]:
+                others_request(rid, f"geectl request change-state {state}", ctx)
+        else:
+            ask(
+                ctx,
+                "accept-forward",
+                f"cannot tell what geectl {leaf} {shown(pos[1]) if len(pos) > 1 else ''} does",
+            )
+        return
+    if leaf == "request supersede":
+        reviewer_acts(ctx, "geectl request supersede")
+        ids = [r for w in pos[:1] for r in spellings(w, ctx, cwd, False) or [""]]
+        obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
+        for rid in ids or [""]:
+            others_request(rid, "geectl request supersede", ctx)
+        return
+
+
+def geectl_pull_verbs(leaf, args, ctx, cwd):
+    """accept_forward's rules on a geectl pull-request verb, by the reference
+    it names: obs:<id> is an OBS request, judged as one; gitea:<owner>/<repo>#<n>
+    is a Gitea PR. Approving a PR names no --commit SHA of the head reviewed,
+    so it is refused; merging a PR is never an agent's. cancel-review-request
+    cancels review requests only, changes no state, and is not judged."""
+    if leaf == "pull-request cancel-review-request":
+        return
+    opts, pos = geectl_args(leaf, args)
+    keys = {k for k, _ in opts}
+    refs = [r for w in pos for r in spellings(w, ctx, cwd, False) or [""]]
+    for ref in refs or [""]:
+        if leaf == "pull-request approve":
+            by = next(
+                (
+                    k
+                    for k in ("--user", "--group", "--project", "--package")
+                    if k in keys
+                ),
+                None,
+            )
+            if by:
+                block(
+                    "incoming-approve",
+                    f"approving {ref}: {by} approves for someone else",
+                )
+        m = re.fullmatch(r"obs:(\d+)", ref or "")
+        if m:
+            rid = m.group(1)
+            if leaf == "pull-request approve":
+                accept_one(rid, ctx, "", True)
+            elif leaf == "pull-request merge":
+                accept_one(rid, ctx, "--force" if "--force" in keys else "")
+            elif leaf == "pull-request request-changes":
+                reviewer_acts(ctx, "geectl pull-request request-changes")
+                ask(
+                    ctx,
+                    "accept-forward",
+                    "geectl pull-request request-changes: a decline is the user's call",
+                )
+            elif leaf in (
+                "pull-request decline",
+                "pull-request withdraw",
+                "pull-request reopen",
+            ):
+                reviewer_acts(ctx, f"geectl {leaf}")
+                others_request(rid, f"geectl {leaf}", ctx)
+            continue
+        m = re.fullmatch(r"gitea:([^/]+)/([^#]+)#(\d+)", ref or "")
+        if m:
+            if leaf == "pull-request approve":
+                block(
+                    "incoming-approve",
+                    f"approving {ref}: it names no --commit SHA of the head reviewed",
+                )
+            if leaf == "pull-request merge":
+                block("merge", f"geectl {leaf} {ref}")
+            if leaf == "pull-request request-changes":
+                reviewer_acts(ctx, "geectl pull-request request-changes")
+                ask(
+                    ctx,
+                    "accept-forward",
+                    "geectl pull-request request-changes: a decline is the user's call",
+                )
+            if leaf in (
+                "pull-request decline",
+                "pull-request withdraw",
+                "pull-request reopen",
+            ):
+                reviewer_acts(ctx, f"geectl {leaf}")
+                ask(
+                    ctx,
+                    "others-request",
+                    f"geectl {leaf} {ref}: closing a PR someone else opened is the user's call",
+                )
+            continue
+        ask(
+            ctx,
+            "accept-forward",
+            f"cannot tell which request geectl {leaf} {shown(ref)} takes",
+        )
+
+
+def geectl_forwards(run, ctx, cwd):
+    """accept_forward's rules on a submit to Factory from outside home:."""
+    leaf = geectl_sub(run)[0]
+    for words in geectl_submit_operands(run):
+        to = [d for d in spellings(words[2], ctx, cwd)] if len(words) >= 3 else [None]
+        if 0 < len(words) < 3:
+            to = spellings(words[0], ctx, cwd)
+        if to and all(d not in (None, "openSUSE:Factory") for d in to):
+            continue
+        for src, pkg in geectl_sources(words, ctx, cwd):
+            if src and src.startswith("home:"):
+                continue
+            if not src or not pkg or not PKG_NAME.fullmatch(pkg):
+                ask(ctx, "accept-forward", f"cannot tell what geectl {leaf} forwards")
+                continue
+            fixable_pending(src, pkg, ctx)
+            ok, why = eligible(src, pkg, ctx)
+            if not ok:
+                ask(
+                    ctx,
+                    "accept-forward",
+                    f"geectl {leaf} {src}/{pkg} to Factory: {why}",
+                )
+
+
+def geectl_prefetch(run, ctx, cwd):
+    """Fetch, in one batch, the GETs the submit rules below make for this
+    geectl command: the source's listings and _meta, its project's, Factory's
+    _meta and the target's listing. request file names no revision, so the
+    query is always ?expand=1."""
+    query = "?expand=1"
     paths = []
-    for words in submit_operands(run):
+    for words in geectl_submit_operands(run):
         dsts = spellings(words[2], ctx, cwd) if len(words) >= 3 else []
-        for src, pkg in sources(words, ctx, cwd):
+        for src, pkg in geectl_sources(words, ctx, cwd):
             if not src or not pkg or not PKG_NAME.fullmatch(pkg):
                 continue
             paths += [f"/source/{src}/{pkg}", f"/source/{src}/{pkg}{query}"]
@@ -2038,44 +2861,6 @@ def obs_prefetch(run, ctx, cwd):
                 f"/source/{d}/{words[3] if len(words) > 3 else pkg}" for d in dsts if d
             ]
     obs_batch(paths[:256], ctx)
-
-
-def accept_forward(run, ctx, cwd):
-    """An accept, approve or decline of a request (osc request, rq or review,
-    or the API's changestate), or a forward of a devel package to Factory,
-    that autoforward-gate.sh would not call ELIGIBLE: a reviewer set, a
-    package someone else (or a group) maintains. A request someone else filed
-    is accepted only through its incoming review and the user's go
-    (foreign_accept()). A decline is always the user's call, and so is closing,
-    reopening or forcing a request someone else filed (others_request())."""
-    for one in osc_runs(run, ctx, cwd):
-        if one is None:
-            ask(
-                ctx,
-                "accept-forward",
-                f"cannot tell which osc command {shown(osc_sub(run)[0])} is",
-            )
-            continue
-        sub, args = osc_sub(one)
-        if sub in ("rq", "request", "review"):
-            request_verbs(sub, args, ctx, cwd)
-        elif sub == "api":
-            api_changestate(args, ctx, cwd)
-        else:
-            forwards(one, ctx, cwd)
-            supersedes(one, ctx, cwd)
-
-
-# The osc request verbs that close or reopen a request; osc sr's and creq's long
-# options, which argparse takes by any unique prefix.
-CLOSING_VERBS = {"revoke", "supersede", "reopen", "wipe"}
-CREQ_LONG = ("--cleanup", "--help", "--message", "--no-cleanup", "--nodevelproject")
-CREQ_LONG += ("--no-update", "--revision", "--supersede", "--yes")
-SR_LONG = CREQ_LONG + ("--diff", "--file", "--separate-requests", "--update-link")
-CREQ_LONG += ("--action",)
-MR_LONG = ("--attribute", "--cleanup", "--enforce-branching", "--help", "--incident")
-MR_LONG += ("--incident-project", "--message", "--no-cleanup", "--release-project")
-MR_LONG += ("--supersede",)
 
 
 def others_request(rid, what, ctx):
@@ -2091,146 +2876,12 @@ def others_request(rid, what, ctx):
         return
     user, creator = obs_user(ctx), req.get("creator") or "no one named"
     if not user:
-        why = "the account is unknown (geectl remote whois failed)"
+        why = "the account is unknown (geectl config show failed)"
     elif creator != user:
         why = f"filed by {creator}"
     else:
         return
     ask(ctx, "others-request", f"{what} {rid}: {why}")
-
-
-def supersedes(run, ctx, cwd):
-    """A submit or maintenance request (osc sr, creq, mr) that supersedes,
-    with -s ID, a request someone else filed."""
-    sub, args = osc_sub(run)
-    if sub in SUBMITS:
-        names = SR_LONG
-    elif sub in ("creq", "createrequest"):
-        names = CREQ_LONG
-    elif sub in ("mr", "maintenancerequest"):
-        names = MR_LONG
-    else:
-        return
-    args = [long_prefix(a, names) for a in args]
-    opts = parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
-    ids = [
-        r
-        for k, v in opts
-        if k in ("-s", "--supersede")
-        for r in spellings(v, ctx, cwd, False) or [""]
-    ]
-    if ids:
-        reviewer_acts(ctx, f"osc {sub} -s")
-    obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
-    for rid in ids:
-        others_request(rid, f"osc {sub} -s", ctx)
-
-
-def request_verbs(sub, args, ctx, cwd):
-    """accept_forward's rules on osc request: accept and approve per request,
-    decline and approvenew always; a revoke, supersede, reopen or wipe, and an
-    accept with --force (or --or-revoke), of a request someone else filed."""
-    opts, pos = osc_args("request", args, OSC_OPTS_ASK)
-    forced = [k for k, _ in opts if k in ("-f", "--force", "--or-revoke")]
-    verbs = spellings(pos[0], ctx, cwd, False) if pos else []
-    if pos and not verbs:
-        ask(ctx, "accept-forward", f"cannot tell what osc {sub} {shown(pos[0])} does")
-    ids = [r for w in pos[1:] for r in spellings(w, ctx, cwd, False) or [""]]
-    for verb in verbs:
-        closed = ids[:1] if verb == "supersede" else ids  # supersede ID BY_ID
-        if verb in CLOSING_VERBS:
-            reviewer_acts(ctx, f"osc {sub} {verb}")
-        if verb in CLOSING_VERBS or verb in ("accept", "approve") and forced:
-            flag = "" if verb in CLOSING_VERBS else f" {forced[0]}"
-            what = f"osc {sub} {verb}{flag}"
-            obs_batch([f"/request/{r}" for r in closed if r.isdigit()], ctx)
-            for rid in closed or [""]:
-                others_request(rid, what, ctx)
-        if verb == "decline":
-            reviewer_acts(ctx, f"osc {sub} decline")
-            ask(
-                ctx,
-                "accept-forward",
-                f"osc {sub} decline: a decline is the user's call",
-            )
-        elif verb == "approvenew":
-            reviewer_acts(ctx, f"osc {sub} approvenew")
-            ask(
-                ctx,
-                "accept-forward",
-                f"osc {sub} approvenew: it approves every new request there",
-            )
-        elif verb in ("accept", "approve"):
-            obs_batch([f"/request/{r}" for r in ids if r.isdigit()], ctx)
-            for rid in ids or [""]:  # a word that is no id is refused
-                accept_one(rid, ctx, forced[0] if forced else "", sub == "review")
-
-
-def api_changestate(args, ctx, cwd):
-    """An osc api POST that accepts, declines, closes or reopens a request:
-    /request/N?cmd=changestate|changereviewstate&newstate=accepted|declined|
-    revoked|superseded|new (and force), its parameters in the query or in a -d
-    body, & or ; between them."""
-    opts, pos = osc_args("api", args)
-    keys = {k for k, _ in opts}
-    method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or [""])[-1]
-    method = method or (
-        "POST" if keys & {"-d", "--data", "-T", "-f", "--file"} else "GET"
-    )
-    if method.upper() != "POST":
-        return
-    bodies = [v for k, v in opts if k in ("-d", "--data")]
-    bodies = [b for v in bodies for b in substitute(v, ctx, cwd) or [v]]
-    for url in (u for a in pos for u in substitute(a, ctx, cwd) or [a]):
-        m = re.search(r"/request/([^/?#;]+)/*(?:\?([^#]*))?", url)
-        if not m:
-            continue
-        params = "&".join([m.group(2) or "", *bodies]).replace(";", "&")
-        q = urllib.parse.parse_qs(params, keep_blank_values=True)
-        forced = "force" if "force" in q else ""
-        if "approve" in q.get("cmd", []):  # staged, then accepted by OBS
-            accept_one(m.group(1), ctx, forced)
-        if not set(q.get("cmd", [])) & {"changestate", "changereviewstate"}:
-            continue
-        states = set(q.get("newstate", []))
-        if "declined" in states:
-            reviewer_acts(ctx, "a decline through osc api")
-            ask(
-                ctx,
-                "accept-forward",
-                "a decline through osc api: a decline is the user's call",
-            )
-        if "accepted" in states:
-            review = "changestate" not in q.get("cmd", [])  # changereviewstate alone
-            accept_one(m.group(1), ctx, forced, review)
-        closing = sorted(states & {"revoked", "superseded", "new", "review", "deleted"})
-        if closing:
-            reviewer_acts(ctx, f"osc api newstate={closing[0]}")
-        if "force" in q and "accepted" in states:
-            closing.append("accepted with force")
-        for state in closing:
-            others_request(m.group(1), f"osc api newstate={state}", ctx)
-
-
-def forwards(run, ctx, cwd):
-    """accept_forward's rules on a submit to Factory from outside home:."""
-    sub = osc_sub(run)[0]
-    for words in submit_operands(run):
-        to = [d for d in spellings(words[2], ctx, cwd)] if len(words) >= 3 else [None]
-        if 0 < len(words) < 3:
-            to = spellings(words[0], ctx, cwd)
-        if to and all(d not in (None, "openSUSE:Factory") for d in to):
-            continue  # osc picks the target of a bare osc sr itself: maybe Factory
-        for src, pkg in sources(words, ctx, cwd):
-            if src and src.startswith("home:"):  # a branch, not a forward
-                continue
-            if not src or not pkg or not PKG_NAME.fullmatch(pkg):
-                ask(ctx, "accept-forward", f"cannot tell what osc {sub} forwards")
-                continue
-            fixable_pending(src, pkg, ctx)
-            ok, why = eligible(src, pkg, ctx)
-            if not ok:
-                ask(ctx, "accept-forward", f"osc {sub} {src}/{pkg} to Factory: {why}")
 
 
 def sources(words, ctx, cwd):
@@ -2257,7 +2908,7 @@ def accept_one(rid, ctx, forced="", review=False):
     if not rid.isdigit():
         block(
             "incoming-accept",
-            "cannot tell which request osc request accept takes, nor who filed it",
+            "cannot tell which request geectl request accept takes, nor who filed it",
         )
     ok, text = obs_get(f"/request/{rid}", ctx)
     req = xml_root(text) if ok and text else None
@@ -2265,7 +2916,10 @@ def accept_one(rid, ctx, forced="", review=False):
         block("incoming-accept", f"cannot read request {rid}, nor who filed it")
     user = obs_user(ctx)
     if not user:
-        block("incoming-accept", f"request {rid}: the account is unknown (geectl remote whois)")
+        block(
+            "incoming-accept",
+            f"request {rid}: the account is unknown (geectl config show)",
+        )
     if req.get("creator") != user:
         foreign_accept(rid, req, forced, ctx)
         return
@@ -2276,7 +2930,11 @@ def accept_eligible(rid, ctx):
     """An accept asked unless each action is a plain submit to a package
     this account maintains and autoforward-gate.sh would call ELIGIBLE."""
     if not rid.isdigit():
-        ask(ctx, "accept-forward", "cannot tell which request osc request accept takes")
+        ask(
+            ctx,
+            "accept-forward",
+            "cannot tell which request geectl request accept takes",
+        )
         return
     ok, text = obs_get(f"/request/{rid}", ctx)
     req = xml_root(text) if ok and text else None
@@ -2322,12 +2980,6 @@ BUILD_LABEL = Rx(r"[\w.+-]+/[\w.+-]+(?::[\w.+-]+)?")
 # the source services, a source service, quilt setup, and the skill's scripts
 # that do one of these.
 RPM_FAMILY = Rx(r"rpm[\w.+-]*")
-OSC_BUILDS = {"build", "chroot", "shell", "wipe"}
-OSC_CHECKOUTS = {"co", "checkout", "up", "update"}
-OSC_CO_LONG = ("--source-service-files", "--server-side-source-service-files")
-OSC_CO_LONG += ("--revision", "--linkrev", "--expand-link", "--deleted", "--meta")
-OSC_CO_LONG += ("--unexpand-link", "--current-dir", "--output-dir", "--limit-size")
-OSC_CO_LONG += ("--native-obs-package",)
 PARSER_SCRIPTS = ("gate.sh", "target-gate.sh", "scm-snapshot.sh", "pool-pr.sh")
 PARSER_SCRIPTS += ("leap-sync.sh",)
 QUILT_SCRIPT = Rx(r"(?<![\w.-])quilt-[\w.-]*\.sh\b")
@@ -2342,13 +2994,14 @@ def reviewer_acts(ctx, what):
 
 def reviewer_runs(name, run, ctx, cwd):
     """Refuse, in the incoming-review agent, what parses or runs a submission:
-    the rpm family, quilt setup, osc build (chroot, shell, wipe), osc checkout
-    or update with -s, osc service but wait, osc commit (ci, checkin: it runs
-    the local source services), and the skill's scripts that parse
-    a spec, run a service or build (gate.sh, target-gate.sh, scm-snapshot.sh,
-    pool-pr.sh, leap-sync.sh, quilt-*.sh); a command, osc subcommand or osc
-    checkout argument only the shell knows too. Its review reads the
-    submission as text; gate.sh parses it in its sandbox once the user said go."""
+    the rpm family, quilt setup, geectl local-build (build, chroot, wipe),
+    a local-build service run, precommit or spec-cleaner, and the skill's
+    scripts that parse a spec, run a service or build (gate.sh,
+    target-gate.sh, scm-snapshot.sh, pool-pr.sh, leap-sync.sh, quilt-*.sh); a
+    command, geectl leaf or checkout argument only the shell knows too. A
+    geectl checkout or update never runs the source services, so it is not
+    refused here. Its review reads the submission as text; gate.sh parses it
+    in its sandbox once the user said go."""
     if ctx.agent != INCOMING_AGENT:
         return
     names = resolved(run[0], ctx, cwd)
@@ -2360,18 +3013,17 @@ def reviewer_runs(name, run, ctx, cwd):
         what += "" if RPM_FAMILY.fullmatch(what) else f" ({family[0]})"
     elif "quilt" in names and "setup" in [a for a in run[1:] if a[:1] != "-"]:
         what = "quilt setup"
-    elif "osc" in names:
-        for one in osc_runs(run, ctx, cwd):
-            sub, args = osc_sub(one) if one else (None, [])
-            pos = [a for a in args if a[:1] != "-"]
+    elif "geectl" in names:
+        for one in geectl_runs(run, ctx, cwd):
+            leaf, args = geectl_sub(one) if one else (None, [])
             if one is None:
-                what = "an osc subcommand only the shell knows"
-            elif sub in OSC_BUILDS or sub == "service" and pos[:1] != ["wait"]:
-                what = f"osc {sub}" + (f" {pos[0]}" if sub == "service" and pos else "")
-            elif sub in OSC_CHECKOUTS and services_run(args, ctx, cwd):
-                what = f"osc {sub} with the source services"
-            elif OSC_ALIAS.get(sub, sub) == "commit":
-                what = f"osc {sub}"
+                what = "a geectl leaf only the shell knows"
+            elif (
+                leaf in GEETL_BUILDS
+                or leaf in GEETL_SERVICE_RUNS
+                or leaf == "changelog generate"
+            ):
+                what = f"geectl {leaf}"
     if names & SHELLS:
         word = shell_script(run)
     elif names & {"source", "."}:
@@ -2494,27 +3146,6 @@ def shell_script(run):
             i += 1
     i += run[i : i + 1] == ["--"]
     return run[i] if i < len(run) else None
-
-
-def services_run(args, ctx, cwd):
-    """Whether osc checkout or update arguments run the source services: -s
-    (in a cluster too, before a valued letter), --source-service-files or a
-    prefix of it, or an argument only the shell knows."""
-    for a in args:
-        if a == "--":
-            break
-        if VARIABLE.search(a) and substitute(a, ctx, cwd) is None:
-            return True
-        if a[:2] == "--":
-            if long_prefix(a, OSC_CO_LONG).split("=")[0] == OSC_CO_LONG[0]:
-                return True
-        elif a[:1] == "-":
-            for ch in a[1:]:
-                if ch == "s":
-                    return True
-                if ch in "rol":
-                    break
-    return False
 
 
 def load_stamp(path, kind):
@@ -2757,7 +3388,7 @@ def git_obs_approve(rest, ctx, cwd):
         refuse("a pool PR is never an agent's to approve")
     user = obs_user(ctx)
     if not user:
-        refuse("the account is unknown (geectl remote whois failed)")
+        refuse("the account is unknown (geectl config show failed)")
     ok, pr = gitea_get(f"repos/{owner}/{repo}/pulls/{n}", ctx)
     full = field(pr, "base", "repo", "full_name")
     if not ok or not isinstance(full, str) or full.lower() != f"{owner}/{repo}".lower():
@@ -3064,7 +3695,7 @@ def tea_item(owner, repo, n, ctx, text=None):
     always asks, after the maintainer check of Factory's devel project."""
     user = obs_user(ctx)
     if not user:
-        return "the account is unknown (geectl remote whois failed)"
+        return "the account is unknown (geectl config show failed)"
     ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
     if not ok:
         return f"cannot read {item}"
@@ -3354,70 +3985,47 @@ def tea_comment(args, ctx, cwd, api=False, text=None):
 
 def comment_rules(name, run, ctx, cwd, lit=None):
     """A command that posts a comment or a review on OBS or src.opensuse.org:
-    osc comment create, tea comment, git-obs pr comment|review, a close with a
+    geectl request add-comment / pull-request comment, tea comment, git-obs pr comment|review, a close with a
     comment (git-obs -m), and an API write to comments or reviews. gh is not
     judged: GitHub is outside the packaging forges, as for merges. lit: the
     argv as literal-aware text, which comment_text() reads."""
     args = run[1:]
-    if name == "osc":
-        for one in osc_runs(run, ctx, cwd):
+    if name == "geectl":
+        for one in geectl_runs(run, ctx, cwd):
             if one is None:
                 ask(
                     ctx,
                     "comment",
-                    f"cannot tell which osc command {shown(osc_sub(run)[0])} is",
+                    f"cannot tell which geectl command {shown(geectl_sub(run)[0])} is",
                 )
                 continue
-            sub, rest = osc_sub(one)
-            if sub == "comment":
-                pos = osc_args("comment", rest, OSC_OPTS_ASK)[1]
-                words = [w for p in pos for w in p.strip("/").split("/")]
-                verbs = spellings(words[0], ctx, cwd, False) if words else []
-                if words and not verbs:
-                    ask(
-                        ctx,
-                        "comment",
-                        f"cannot tell what osc comment {shown(words[0])} does",
-                    )
-                for v in verbs:
-                    if v in ("create", "delete"):
-                        reviewer_acts(ctx, f"osc comment {v}")
-                    if v == "create" and words[1:2] == ["request"]:
-                        ids = [
-                            r
-                            for w in words[2:]
-                            for r in spellings(w, ctx, cwd, False) or [""]
-                        ]
-                        text = comment_text("osc", run, lit, ctx, cwd)
-                        why = maintained_requests(ids, ctx, text)
+            leaf, args = geectl_sub(one)
+            if leaf not in ("request add-comment", "pull-request comment"):
+                continue
+            reviewer_acts(ctx, f"geectl {leaf}")
+            opts, pos = geectl_args(leaf, args)
+            text = comment_text("geectl", run, lit, ctx, cwd)
+            if leaf == "request add-comment":
+                ids = [
+                    r for w in pos[:1] for r in spellings(w, ctx, cwd, False) or [""]
+                ]
+                why = maintained_requests(ids, ctx, text)
+                if why:
+                    ask(ctx, "comment", f"geectl request add-comment: {why}")
+                else:
+                    ask(ctx, "comment", "geectl request add-comment")
+            else:
+                refs = [
+                    r for w in pos[:1] for r in spellings(w, ctx, cwd, False) or [""]
+                ]
+                for ref in refs or [""]:
+                    m = re.fullmatch(r"obs:(\d+)", ref or "")
+                    if m:
+                        why = maintained_requests([m.group(1)], ctx, text)
                         if why:
-                            ask(ctx, "comment", f"osc comment create: {why}")
-                    elif v in ("create", "delete"):
-                        ask(ctx, "comment", f"osc comment {v}")
-            elif sub == "api":
-                opts, pos = osc_args("api", rest)
-                keys = {k for k, _ in opts}
-                method = (
-                    [v for k, v in opts if k in ("-X", "-m", "--method")] or [""]
-                )[-1]
-                method = method or (
-                    "POST" if keys & {"-d", "--data", "-T", "-f", "--file"} else "GET"
-                )
-                urls = [u for a in pos for u in substitute(a, ctx, cwd) or [a]]
-                if method.upper() not in ("GET", "HEAD") and any(
-                    COMMENT_API.search(u) for u in urls
-                ):
-                    reviewer_acts(ctx, f"osc api {method} to comments")
-                    on = [REQUEST_COMMENT.search(u) for u in urls]
-                    mine = all(on) and not maintained_requests(
-                        [m.group(1) for m in on], ctx
-                    )
-                    if not mine:
-                        ask(
-                            ctx,
-                            "comment",
-                            f"osc api {method} {shown(pos[0]) if pos else ''}",
-                        )
+                            ask(ctx, "comment", f"geectl pull-request comment: {why}")
+                            continue
+                    ask(ctx, "comment", "geectl pull-request comment")
         return
     if name == "tea":
         words = tea_words(args)
@@ -3476,7 +4084,7 @@ def comment_rules(name, run, ctx, cwd, lit=None):
 
 
 def comment_text(name, run, lit, ctx, cwd):
-    """The one text an osc comment create -c or a plain tea comment posts, as
+    """The one text a geectl request add-comment --body or a plain tea comment posts, as
     the shell passes it; None when it carries none, several, a file's, or one
     the guard cannot read now."""
     largs = lit[1:] if lit and len(lit) == len(run) else None
@@ -3501,7 +4109,7 @@ def others_pr(owner, repo, n, ctx):
     PR is an issue too, which the issues endpoint returns with its author."""
     user = obs_user(ctx)
     if not user:
-        return "the account is unknown (geectl remote whois failed)"
+        return "the account is unknown (geectl config show failed)"
     ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
     if not ok:
         return f"cannot read {item}"
@@ -3656,9 +4264,9 @@ def split_args(args, largs, short, valued, names=()):
 
 def comment_bodies(name, args, largs, ctx, cwd):
     """(what, literal-aware word, whether it names a file) for each comment,
-    review or request message an osc, tea or git-obs command line carries.
+    review or request message a geectl, tea or git-obs command line carries.
     largs: args as literal-aware text, or None."""
-    bodies = {"tea": tea_bodies, "git-obs": git_obs_bodies, "osc": osc_bodies}
+    bodies = {"tea": tea_bodies, "git-obs": git_obs_bodies, "geectl": geectl_bodies}
     return bodies[name](args, largs, ctx, cwd) if name in bodies else []
 
 
@@ -3722,27 +4330,50 @@ def git_obs_bodies(args, largs, ctx, cwd):
     return [("the git-obs api body", v, False) for k, v in opts if k == "--data"]
 
 
-def osc_bodies(args, largs, ctx, cwd):
-    """comment_bodies() of osc: comment -c, a request verb's -m, and an api
-    write's -d (or the file -f names) to a comments endpoint."""
-    sub, rest = osc_sub(["osc", *args])
-    if sub not in ("comment", "rq", "request", "review", "api"):
+def geectl_bodies(args, largs, ctx, cwd):
+    """comment_bodies() of geectl: a filing's --description and
+    --changes-entry, a commit's -m, a comment or review's --body, --comment
+    or --message. Clap takes no abbreviated long option, so split_args gets
+    no names to expand a prefix against."""
+    leaf, rest = geectl_sub(["geectl", *args])
+    if leaf is None:
         return []
     lrest = largs[len(args) - len(rest) :] if largs else None
-    table = OSC_OPTS if sub == "api" else OSC_OPTS_ASK
-    short, spec = table["request" if sub in ("rq", "review") else sub]
-    (valued, names), (gvalued, gnames) = long_names(spec), long_names(OSC_GLOBAL)
-    opts, pos = split_args(rest, lrest, short + "A", valued + gvalued, names + gnames)
-    if sub == "api":
-        if not to_comments(pos, ctx, cwd):
-            return []
-        files = ("-T", "-f", "--file")
-        data = ("-d", "--data", *files)
-        return [("the osc api body", v, k in files) for k, v in opts if k in data]
-    flags = ("-c", "--comment") if sub == "comment" else ("-m", "--message")
-    kind = "body" if sub == "comment" else "message"
-    what = " ".join(["the osc", sub, *unlit(pos[:1]), kind])
+    short, spec = GEETL_OPTS.get(leaf, ("", ";"))
+    valued, _names = long_names(spec)
+    gvalued, _gnames = long_names(GEETL_GLOBAL)
+    opts, pos = split_args(rest, lrest, short, valued + gvalued)
+    flags = {
+        "request file": ("--description", "--changes-entry"),
+        "request refile": ("--description", "--changes-entry"),
+        "request file-change-devel": ("--description",),
+        "request file-delete": ("--description",),
+        "request file-maintenance-incident": ("--description",),
+        "request refile-maintenance-incident": ("--description",),
+        "commit": ("-m", "--message"),
+        "request add-comment": ("--body",),
+        "request add-review": ("--comment",),
+        "pull-request comment": ("--body",),
+        "pull-request approve": ("--message",),
+        "pull-request request-changes": ("--message",),
+        "pull-request merge": ("--message",),
+        "pull-request decline": ("--message",),
+        "pull-request withdraw": ("--message",),
+    }.get(leaf)
+    if not flags:
+        return []
+    kind = "message" if leaf in GEETL_FILING or leaf == "commit" else "body"
+    what = f"the geectl {leaf} {kind}"
     return [(what, v, False) for k, v in opts if k in flags]
+
+
+def geectl_secret(run, ctx, cwd):
+    """geectl printing a secret: remote create-token prints the token's
+    secret, so an agent never runs it. config show never prints a secret, and
+    --debug/--debug-body print redacted bodies, never headers."""
+    leaf, _args = geectl_sub(run)
+    if leaf == "remote create-token":
+        block("secret-geectl", "geectl remote create-token")
 
 
 def bot_directives(name, run, lit, ctx, cwd):
@@ -3763,8 +4394,8 @@ def bot_directives(name, run, lit, ctx, cwd):
             block("bot-directive", f"{what} {fault}")
 
 
-# What a call may run beside an osc commit or a submit the gate stamp lets
-# through: commands that only read, osc and git subcommands that only read.
+# What a call may run beside a geectl commit or a submit the gate stamp lets
+# through: commands that only read, geectl and git subcommands that only read.
 READERS = {
     "cd",
     "pushd",
@@ -3792,30 +4423,6 @@ READERS |= {"readlink", "command", "type", "which", "set", "export", "local"}
 READERS |= {"trap", "wait"}
 READERS |= {"for", "in", "do", "done", "if", "then", "else", "elif", "fi", "while"}
 READERS |= {"until", "case", "esac", "select", "function", "time", "{", "}", "!"}
-OSC_READS = {
-    "status",
-    "st",
-    "diff",
-    "di",
-    "ldiff",
-    "linkdiff",
-    "rdiff",
-    "pdiff",
-    "results",
-}
-OSC_READS |= {"r", "prjresults", "pr", "log", "cat", "less", "ls", "list", "ll", "info"}
-OSC_READS |= {"buildlog", "bl", "blt", "buildlogtail", "remotebuildlog", "rbl", "rblt"}
-OSC_READS |= {
-    "buildhistory",
-    "buildhist",
-    "jobhistory",
-    "jobhist",
-    "search",
-    "se",
-    "bse",
-}
-OSC_READS |= {"whois", "user", "who", "maintainer", "bugowner", "develproject", "dp"}
-OSC_READS |= SUBMITS | {"creq", "createrequest", "version", "help"}
 GIT_READS = {
     "status",
     "log",
@@ -3830,21 +4437,14 @@ GIT_READS = {
 
 def note_writer(name, run, ctx, cwd):
     """Remember a command of this call that can write (judge() turns a
-    stamped commit or submit in such a call into an ask). osc commit is its
+    stamped commit or submit in such a call into an ask). geectl commit is its
     own kind: other commits do not change a checkout, but do change a source."""
     what = name
-    if name == "osc":
-        sub, args = osc_sub(run)
-        sub = OSC_ALIAS.get(sub, sub)
-        if sub in OSC_READS:
+    if name == "geectl":
+        leaf, args = geectl_sub(run)
+        if leaf in GEETL_READS:
             return
-        if sub in ("rq", "request", "review"):
-            verb = (osc_args("request", args, OSC_OPTS_ASK)[1] or [""])[0]
-            if verb in ("list", "ls", "show", "log"):
-                return
-        if sub == "comment" or sub == "api" and comment_or_get(args):
-            return
-        what = "osc commit" if sub == "commit" else f"osc {sub}"
+        what = "geectl commit" if leaf == "commit" else f"geectl {leaf}"
     elif name == "git":
         i = 1
         while i < len(run) and run[i][:1] == "-":
@@ -3960,13 +4560,6 @@ def within(path, d):
     return a == b or a.startswith(b.rstrip("/") + "/")
 
 
-def comment_or_get(args):
-    """Whether osc api arguments only read (a GET) or only post a comment."""
-    opts, pos = osc_args("api", args)
-    method = ([v for k, v in opts if k in ("-X", "-m", "--method")] or ["GET"])[-1]
-    return method.upper() in ("GET", "HEAD") or all(COMMENT_API.search(p) for p in pos)
-
-
 GATE_STAMPS = os.path.join("~", ".local", "state", "opensuse-packaging", "gate", "obs")
 
 
@@ -3984,30 +4577,20 @@ def stamp_of(prj, pkg):
 
 
 def checkout_files(d, want):
-    """Whether the files osc commits from checkout d are want ({name: md5}),
-    as gate.sh keys them: .osc/_files with _to_be_added and _to_be_deleted,
-    no _link or _service:*, each file's md5 (the names first, then the md5s,
-    stopping at the first that differs)."""
+    """Whether the files geectl commits from checkout d are want ({name:
+    md5}), as gate.sh keys them: the tracked files (git ls-files: the index,
+    what commit would commit), no _link or _service:*, each file's md5 (the
+    names first, then the md5s, stopping at the first that differs)."""
     import hashlib
-    import xml.etree.ElementTree as ET
 
-    try:
-        names = {
-            e.get("name")
-            for e in ET.parse(os.path.join(d, ".osc", "_files"))
-            .getroot()
-            .findall("entry")
-        }
-    except (OSError, ET.ParseError):
+    out = git(d, ("ls-files",))
+    if out is None:
         return False
-    for extra, add in (("_to_be_added", True), ("_to_be_deleted", False)):
-        try:
-            with open(os.path.join(d, ".osc", extra), encoding="utf-8") as fh:
-                for n in fh.read().split():
-                    (names.add if add else names.discard)(n)
-        except OSError:
-            pass
-    names = {n for n in names if n and n != "_link" and not n.startswith("_service:")}
+    names = {
+        n
+        for n in out.splitlines()
+        if n and n != "_link" and not n.startswith("_service:")
+    }
     if not isinstance(want, dict) or names != set(want):
         return False
     for n in sorted(names):
@@ -4024,13 +4607,13 @@ def checkout_files(d, want):
 
 
 def gate_commit(run, ctx, cwd):
-    """An osc commit of a tree gate.sh did not judge GREEN: no stamp, files
+    """A geectl commit of a tree gate.sh did not judge GREEN: no stamp, files
     changed since, or a whole project checkout. A stamped tree is let through
     only by judge(), once the whole call holds no other writer."""
-    sub, args = osc_sub(run)
-    if OSC_ALIAS.get(sub, sub) != "commit":
+    leaf, args = geectl_sub(run)
+    if leaf != "commit":
         return
-    pos = osc_args("commit", args)[1]
+    pos = geectl_args(leaf, args)[1]
     for raw in pos or ["."]:
         for d in cwd.dirs if isinstance(cwd, Dirs) else [cwd]:
             paths = locate(raw, ctx, d)[0]
@@ -4038,18 +4621,22 @@ def gate_commit(run, ctx, cwd):
                 ask(
                     ctx,
                     "gate-stamp",
-                    f"osc commit {shown(raw)}: which checkout is unknown",
+                    f"geectl commit {shown(raw)}: which checkout is unknown",
                 )
             for p in paths or ():
                 co = p if os.path.isdir(p) else os.path.dirname(p)
-                prj = checkout_package(ctx, co, "_project")
+                prj = checkout_package(ctx, co, "project")
                 pkg = checkout_package(ctx, co)
                 if not prj or not pkg or "/" in prj + pkg or pkg[:1] == ".":
                     what = f"the project checkout {prj}" if prj else co
-                    ask(ctx, "gate-stamp", f"osc commit of {what}: no package checkout")
+                    ask(
+                        ctx,
+                        "gate-stamp",
+                        f"geectl commit of {what}: no package checkout",
+                    )
                     continue
-                what = f"osc commit of {prj}/{pkg}"
-                if os.path.exists(os.path.join(co, ".osc", "_scm")):
+                what = f"geectl commit of {prj}/{pkg}"
+                if git(co, ("config", "--get"), "geectl.backend") == "git":
                     block("scm-commit", what)
                 st = stamp_of(prj, pkg)
                 if (
@@ -4070,21 +4657,18 @@ def gate_submit(run, ctx, cwd):
     A match is let through only by judge(), once the call holds no writer."""
     import glob
 
-    sub, args = osc_sub(run)
-    revs = [
-        v
-        for k, v in parse_opts(args, "mFrsaA", REQUEST_VALUED)[0]
-        if k in ("-r", "--revision")
-    ]
-    query = "?expand=1" + (f"&rev={revs[-1]}" if revs else "")
-    for words in submit_operands(run):
-        # Factory takes no --no-entry stamp; a target osc picks itself may be Factory
+    leaf, args = geectl_sub(run)
+    if leaf not in GEETL_SUBMITS:
+        return
+    query = "?expand=1"  # request file names no revision
+    for words in geectl_submit_operands(run):
+        # Factory takes no --no-entry stamp; a target geectl picks itself may be Factory
         dst = words[2] if len(words) >= 3 else words[0] if words else None
         dsts = spellings(dst, ctx, cwd) if dst else []
         factory = not dsts or any(d in (None, "openSUSE:Factory") for d in dsts)
-        for src, pkg in sources(words, ctx, cwd):
+        for src, pkg in geectl_sources(words, ctx, cwd):
             if not src or not pkg or not PKG_NAME.fullmatch(pkg):
-                ask(ctx, "gate-stamp", f"cannot tell what osc {sub} sends")
+                ask(ctx, "gate-stamp", f"cannot tell what geectl {leaf} sends")
                 continue
             if factory and not src.startswith("home:"):
                 fixable_pending(src, pkg, ctx)
@@ -4094,7 +4678,7 @@ def gate_submit(run, ctx, cwd):
                 ask(
                     ctx,
                     "gate-stamp",
-                    f"osc {sub}: cannot read the files of {src}/{pkg}",
+                    f"geectl {leaf}: cannot read the files of {src}/{pkg}",
                 )
                 continue
             files = {
@@ -4114,12 +4698,12 @@ def gate_submit(run, ctx, cwd):
                     if any(reviewed(path, files) for path in paths)
                     else "no GREEN gate.sh run with a recorded review PASS has these files"
                 )
-                ask(ctx, "gate-stamp", f"osc {sub} of {src}/{pkg}: {why}")
+                ask(ctx, "gate-stamp", f"geectl {leaf} of {src}/{pkg}: {why}")
             elif not any(reviewed(path, files, True, factory) for path in paths):
                 ask(
                     ctx,
                     "build-evidence",
-                    f"osc {sub} of {src}/{pkg}: the reviewed tree has no GREEN build "
+                    f"geectl {leaf} of {src}/{pkg}: the reviewed tree has no GREEN build "
                     "recorded",
                 )
             elif not any(
@@ -4128,21 +4712,22 @@ def gate_submit(run, ctx, cwd):
                 ask(
                     ctx,
                     "build-evidence",
-                    f"osc {sub} of {src}/{pkg}: its OBS build judged no repo of "
+                    f"geectl {leaf} of {src}/{pkg}: its OBS build judged no repo of "
                     f"{dst or 'the target'}",
                 )
             else:
-                what = f"osc {sub} of {src}/{pkg}"
+                what = f"geectl {leaf} of {src}/{pkg}"
                 ctx.gate_pending.append(
                     ("submit", what, None, ctx.seq, tuple(ctx.loops), ctx.cur_pipe)
                 )
 
 
 def in_checkout(path):
-    """Whether path lies in an osc checkout (a directory above it holds .osc)."""
+    """Whether path lies in a geectl checkout (a directory above it is a
+    geectl checkout root)."""
     d = path if os.path.isdir(path) else os.path.dirname(path)
     while d:
-        if os.path.isdir(os.path.join(d, ".osc")):
+        if is_geectl_checkout(d):
             return True
         if os.path.dirname(d) == d:
             return False
@@ -4151,11 +4736,13 @@ def in_checkout(path):
 
 
 def holds_checkout(path):
-    """Whether directory path holds an osc checkout one level down (a project
-    directory, or the parent of a package checkout)."""
+    """Whether directory path holds a geectl checkout one level down (a
+    project directory, or the parent of a package checkout)."""
     try:
         return any(
-            os.path.isdir(os.path.join(path, n, ".osc")) for n in os.listdir(path)
+            os.path.isdir(os.path.join(path, n))
+            and is_geectl_checkout(os.path.join(path, n))
+            for n in os.listdir(path)
         )
     except OSError:
         return False
@@ -4174,7 +4761,7 @@ def gate_writers(ctx):
         def counts(ws, wh, targets, wl, wp):
             if kind == "commit":
                 return (
-                    wh != "osc commit"
+                    wh != "geectl commit"
                     and (
                         ws < seq
                         or set(wl) & set(loops)
@@ -4483,86 +5070,6 @@ def target_kind(dst, pkg, ctx):
     return got
 
 
-def osc_targets(sub, pos, opts):
-    """The projects an osc write names, "." for the checkout's: the
-    destination of copypac, linkpac, aggregatepac and branch (from a
-    checkout, linkpac's operands are the destination), release's project and
-    --target-project, the project of meta prj|pkg with -F or -e, and the one
-    of the rest (rdelete, rremove, setdevelproject, lock ...). Empty when the
-    call writes into nothing it names."""
-    keys = {k for k, _ in opts}
-
-    def project(args):  # osc's PROJECT PACKAGE, or PROJECT/PACKAGE
-        a = args.pop(0) if args else None
-        if a and a.count("/") != 1 and args:
-            args.pop(0)
-        return a and a.split("/")[0]
-
-    words = [w for p in pos for w in p.strip("/").split("/")]  # osc's slash_split
-    if sub == "meta":
-        if words[:1] not in (["prj"], ["pkg"]):
-            return []
-        if not keys & {"-F", "--file", "-e", "--edit"}:
-            return []
-        rest = words[1:]
-        return [rest[0] if len(rest) > (words[0] == "pkg") else "."]
-    if sub == "branch":
-        return words[2:3]
-    if sub == "maintainer":  # PRJ [PKG], or the checkout's
-        return (words[:1] or ["."]) if keys & ROLE_WRITES else []
-    if sub in ("copypac", "linkpac", "aggregatepac"):
-        rest = list(pos)
-        project(rest)
-        return [project(rest) or project(list(pos))]
-    if sub == "setdevelproject" and (
-        len(pos) < 2 or len(pos) == 2 and "/" not in pos[0]
-    ):
-        return ["."]  # the devel project is what it names
-    if sub == "release":
-        return [project(list(pos)) or "."] + [
-            v for k, v in opts if k == "--target-project"
-        ]
-    if sub in ("rdelete", "undelete", "rremove", "lock", "rmkpac"):
-        return [project(list(pos))]
-    if sub == "repo":  # add or remove change the project's meta; list reads it
-        return (
-            [project(pos[1:]) or "."]
-            if pos[:1] in (["add"], ["remove"], ["rm"])
-            else []
-        )
-    if sub == "mbranch":  # a second operand is the project it branches into
-        return pos[1:2]
-    return [project(list(pos)) or "."]
-
-
-def api_segment(url):
-    """The first path segment of an API URL (or path), when the text before
-    the first $ or backtick spells it out whole; else None."""
-    head = re.split(r"[$`]", url)[0]
-    if "://" in head:
-        head = head.split("://", 1)[1].partition("/")[2] if "/" in head[8:] else ""
-    parts = re.sub(r"/+", "/", head).lstrip("/").split("/")
-    return parts[0] if len(parts) > 1 else None
-
-
-def api_targets(method, url):
-    """The projects an osc api write to url writes into."""
-    import posixpath
-    import urllib.parse
-
-    if "://" in url:
-        parts = urllib.parse.urlsplit(url)
-        path, query = parts.path, parts.query
-    else:  # a path, which may start with // (osc prefixes the API URL)
-        path, _, query = url.partition("#")[0].partition("?")
-    path = posixpath.normpath(re.sub(r"/+", "/", urllib.parse.unquote(path)) or "/")
-    query = urllib.parse.parse_qs(query)
-    cmds = query.get("cmd", [])
-    if method.upper() == "POST" and cmds and set(cmds) <= READ_CMDS:
-        return query.get("target_project", []) if "branch" in cmds else []
-    return [m.group(1) for m in SOURCE_PRJ.finditer(path)]
-
-
 def call_args(text, i):
     """The top-level arguments of the call whose "(" ends at i."""
     args, cur, depth, q, end = [], [], 0, None, min(len(text), i + 2000)
@@ -4753,8 +5260,6 @@ def code_reads(text):
 def norm_urls(text):
     """text for the URL rules: percent-encoding decoded, runs of / collapsed
     (a scheme's // kept), dot segments removed."""
-    import urllib.parse
-
     text = re.sub(r"(?<!:)//+", "/", urllib.parse.unquote(text))
     end = r"(?=/|[?#\s\"'`]|$)"
     prev = None
@@ -4794,7 +5299,9 @@ def line_rules(ln, ctx, cwd):
     for seg in re.split(r"[;&|]", ln):
         if PUSH.search(seg) and not STASH_PUSH.search(seg) and PUSH_POOL.search(seg):
             block("push-pool", "a push naming pool/ or AGit refs")
-        osc_rules(seg)
+        geectl_rules(seg)
+        if RETIRED_OSC.search(seg):
+            block("retired-osc", "an osc command")
 
 
 # What runs the text it is given in this shell, by name or held in a variable.
@@ -4802,13 +5309,13 @@ RUNNERS = SHELLS | {"eval", "trap"}
 
 
 # The tools the asks judge, and what runs a command from its arguments.
-TOOL_WORDS = {"osc", "tea", "git-obs", "gh", "git", "eval", "trap", "coproc"}
+TOOL_WORDS = {"osc", "tea", "git-obs", "gh", "git", "eval", "trap", "coproc", "geectl"}
 
 
 def starts_tool(args):
     """Whether arguments hand a command word only the shell knows a judged
     tool or a runner to start: their first word, or one of them read as a
-    command line ('osc rq accept N', bash -c)."""
+    command line ('geectl request accept N', bash -c)."""
     words = [w for a in args for w in a.split()]
     if any(os.path.basename(w) in TOOL_WORDS for w in words[:1]):
         return True
@@ -5583,7 +6090,7 @@ def read_script(path, real, raw, kind, ctx, cwd, depth):
             where = "" if path == raw else f"{path}: "
             block("exec-unreadable", f"{raw} ({where}{e.strerror or e})")
         return
-    if data.startswith(b"\x7fELF"):
+    if data[:4] in BINARY_MAGIC:
         return
     text = data.decode("utf-8", "replace")
     if kind == "auto":
@@ -5642,7 +6149,8 @@ def assign(word, lword, ctx):
 def unwrap(argv, cwd=None, ctx=None):
     """Strip keywords, assignments and command wrappers: (argv, shell string or
     None, environment changes, the directory env -C moves to). A word named
-    like a wrapper is one only as a bare name or a path to an ELF binary, its
+    like a wrapper is one only as a bare name or a path to an ELF or Mach-O
+    binary, its
     variables the values this call (ctx) gave them and cwd placing a relative
     one: any other is a script, read as such, and one only the shell can place
     is refused (wrapper_binary())."""
@@ -5765,7 +6273,7 @@ def unwrap(argv, cwd=None, ctx=None):
 
 def wrapper_binary(word, ctx, cwd):
     """Whether a path named like a wrapper runs the real one: every spelling
-    this call's values give it is an ELF binary (binary()). One whose value
+    this call's values give it is an ELF or Mach-O binary (binary()). One whose value
     only the shell knows is refused as unresolved, so it is neither unwrapped
     nor read; without a call (ctx None) it is no wrapper."""
     if not VARIABLE.search(word):
@@ -5776,9 +6284,23 @@ def wrapper_binary(word, ctx, cwd):
     return bool(spelled) and all(binary(w, cwd) for w in spelled)
 
 
+# The first four bytes of a program file: ELF, and Mach-O in its six
+# forms (32/64-bit, both byte orders, fat and fat64).
+BINARY_MAGIC = (
+    b"\x7fELF",
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xca\xfe\xba\xbf",
+)
+
+
 def binary(word, cwd=None):
     """Whether a command word is a program rather than a script: a bare name,
-    or a path (placed in cwd when relative) whose target is an ELF file."""
+    or a path (placed in cwd when relative) whose target is an ELF or Mach-O
+    file."""
     if "/" not in word:
         return True
     p = os.path.expanduser(word)
@@ -5789,7 +6311,7 @@ def binary(word, cwd=None):
         if not regular(real):
             return False
         with open(real, "rb") as fh:
-            return fh.read(4) == b"\x7fELF"
+            return fh.read(4) in BINARY_MAGIC
     except OSError:
         return False
 
@@ -6465,8 +6987,9 @@ def git_obs_reads(args):
 
 def guess(run, ctx, cwd, own=False):
     """A command whose name only the shell knows, judged as each guarded tool
-    -- as osc only when it could be osc: a value naming osc, or none known and
-    a variable named for it. A refusal names the variable. own: a command the
+    -- as geectl only when it could be geectl: a value naming geectl, or none
+    known and a variable named for it; as osc only when it could be osc, which
+    is retired and refused. A refusal names the variable. own: a command the
     agent runs, which the credential rules judge too."""
     rest = run[1:]
     try:
@@ -6480,28 +7003,35 @@ def guess(run, ctx, cwd, own=False):
         if rest[:1] in (["push"], ["obs"]) or own and creds:
             gparts = git_command(["git", *rest], ctx, cwd)
         held = substitute(run[0], ctx, cwd)
+        geectl = (
+            held is None
+            and re.search(r"(?i)geectl", run[0])
+            or any(os.path.basename(h) == "geectl" for h in held or ())
+        )
         osc = (
             held is None
             and re.search(r"(?i)osc", run[0])
             or any(os.path.basename(h) == "osc" for h in held or ())
         )
+        if geectl:
+            geectl_request_args(["geectl", *rest], ctx, cwd)
+            geectl_message(["geectl", *rest], None, ctx, cwd)
+            geectl_writes(["geectl", *rest], ctx, cwd)
+            geectl_target(["geectl", *rest], ctx, cwd)
+            geectl_link(["geectl", *rest], ctx, cwd)
+            geectl_cleanup(["geectl", *rest], ctx, cwd)
+            geectl_deletes(["geectl", *rest], ctx, cwd)
         if osc:
-            request_args(["osc", *rest], ctx, cwd)
-            request_message(["osc", *rest], None, ctx, cwd)
-            osc_writes(["osc", *rest], ctx, cwd)
-            request_target(["osc", *rest], ctx, cwd)
-            request_link(["osc", *rest], ctx, cwd)
-            request_cleanup(["osc", *rest], ctx, cwd)
-            osc_deletes(["osc", *rest], ctx, cwd)
+            block("retired-osc", "an osc command")
         if own:
             for tool in ("gh", "tea", "git-obs", "secret-tool"):
                 secret_rules(tool, [tool, *rest], ctx, cwd)
-            if osc:
-                osc_secret(["osc", *rest], ctx, cwd)
+            if geectl:
+                geectl_secret(["geectl", *rest], ctx, cwd)
             if gparts:
                 git_secrets(["git", *rest], *gparts, ctx, cwd)
             auth_rules("curl", rest, " ".join(rest))
-            if not re.search(r"(?i)osc|obs|tea", run[0]):
+            if not re.search(r"(?i)osc|obs|tea|geectl", run[0]):
                 direct_api("curl", " ".join(rest))
     except Blocked as b:
         raise Blocked(b.rule, b.kind, f"{run[0]}: {b.detail}") from None
@@ -6612,13 +7142,13 @@ def note_writes(name, args, ctx, cwd):
 
 
 def checkout_units(top):
-    """The osc checkouts an rm of top deletes, top included: a package checkout
-    (.osc/_package) is one; a project checkout counts its packages, or itself
-    when it holds none (osc co PRJ PKG is one); plain directories are searched
-    two levels down."""
+    """The geectl checkouts an rm of top deletes, top included: a package
+    checkout (a git config with geectl.package) is one; a directory holding
+    package checkouts counts them, or itself when it holds none; plain
+    directories are searched two levels down."""
 
-    def osc(d):
-        return os.path.isdir(os.path.join(d, ".osc"))
+    def geectl(d):
+        return is_geectl_checkout(d)
 
     def subdirs(d):
         try:
@@ -6626,24 +7156,24 @@ def checkout_units(top):
                 return sorted(
                     e.path
                     for e in it
-                    if e.is_dir(follow_symlinks=False) and e.name != ".osc"
+                    if e.is_dir(follow_symlinks=False) and e.name != ".git"
                 )
         except OSError:
             return []
 
     def unit(d):
-        if os.path.isfile(os.path.join(d, ".osc", "_package")):
+        if git(d, ("config", "--get"), "geectl.package"):
             return [d]
-        return [s for s in subdirs(d) if osc(s)] or [d]
+        return [s for s in subdirs(d) if geectl(s)] or [d]
 
-    if osc(top):
+    if geectl(top):
         return unit(top)
     found, level = [], [top]
     for _ in range(2):
         below = []
         for d in level[:4096]:
             for s in subdirs(d):
-                if osc(s):
+                if geectl(s):
                     found += unit(s)
                 else:
                     below.append(s)
@@ -6657,7 +7187,7 @@ FIND_NAMED = {"-name", "-iname", "-path", "-ipath", "-wholename", "-regex", "-ir
 
 def rm_checkouts(name, run, ctx, cwd):
     """A recursive rm, or a find -delete with no name test, that deletes two or
-    more osc checkouts at once: siblings' work may live there. An operand only
+    more geectl checkouts at once: siblings' work may live there. An operand only
     the shell knows is not judged."""
     args = run[1:]
     if name == "find":
@@ -6691,7 +7221,7 @@ def rm_checkouts(name, run, ctx, cwd):
         ask(
             ctx,
             "rm-checkouts",
-            f"{name} deletes {len(units)} osc checkouts at once: {few}",
+            f"{name} deletes {len(units)} geectl checkouts at once: {few}",
         )
 
 
@@ -6952,17 +7482,12 @@ LOOKERS |= {"comm", "read", "unset", "shift", "exit", "return", "break", "contin
 
 
 def reader(name, run):
-    """Whether a command writes no file of its own: osc and git subcommands that
+    """Whether a command writes no file of its own: geectl and git subcommands that
     only read, sort without -o, uniq without a second operand, and READERS
     (note_writer() skips the same)."""
-    if name == "osc":
-        sub, args = osc_sub(run)
-        if OSC_ALIAS.get(sub, sub) in OSC_READS:
-            return True
-        if sub in ("rq", "request", "review"):
-            verb = (osc_args("request", args, OSC_OPTS_ASK)[1] or [""])[0]
-            return verb in ("list", "ls", "show", "log")
-        return sub == "comment" or sub == "api" and comment_or_get(args)
+    if name == "geectl":
+        leaf, args = geectl_sub(run)
+        return leaf in GEETL_READS
     if name == "sort":
         return not write_words("sort", run[1:])
     if name == "uniq":
@@ -7383,7 +7908,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             scan_file(run[0], "auto", ctx, here, depth, env, run=True)
         else:
             guess(run, ctx, here, depth == 0)
-    elif name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
+    elif name in ("tea", "git-obs", "git", "osc", "geectl") and asks_help(run[1:]):
         pass
     elif name == "tea":
         args = [TEA_LONG.sub("--", a) for a in run[1:]]  # Go takes -repo as --repo
@@ -7410,25 +7935,26 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         comment_rules("git-obs", run, ctx, here, lrun)
     elif name == "git":
         gparts = git_command(run, ctx, here, lrun, before)
-    elif name == "osc":
-        ctx.apiurl = osc_apiurl(run, ctx, here)
-        obs_prefetch(run, ctx, here)
-        wide = " ".join([joined, *expansions(run[1:], ctx, here)])
-        if osc_sub(run)[0] == "api" and REQUEST_CREATE.search(norm_urls(wide)):
-            block("request-api", "a request created through the API")
-        request_args(run, ctx, here)
-        request_message(run, (lrun, lit[1]), ctx, here)
-        bot_directives("osc", run, (lrun, lit[1]), ctx, here)
-        osc_writes(run, ctx, here)
-        request_target(run, ctx, here)
-        request_link(run, ctx, here)
-        request_cleanup(run, ctx, here)
-        osc_deletes(run, ctx, here)
-        osc_prompt(run, stdin)
-        comment_rules("osc", run, ctx, here, lrun)
-        accept_forward(run, ctx, here)
+    elif name == "geectl":
+        geectl_prefetch(run, ctx, here)
+        geectl_request_args(run, ctx, here)
+        geectl_message(run, (lrun, lit[1]), ctx, here)
+        bot_directives("geectl", run, (lrun, lit[1]), ctx, here)
+        geectl_writes(run, ctx, here)
+        geectl_target(run, ctx, here)
+        geectl_link(run, ctx, here)
+        geectl_cleanup(run, ctx, here)
+        geectl_deletes(run, ctx, here)
+        comment_rules("geectl", run, ctx, here, lrun)
+        geectl_accept_forward(run, ctx, here)
         gate_commit(run, ctx, here)
         gate_submit(run, ctx, here)
+    elif name == "osc":
+        # Retired: every osc invocation is refused, but a bare osc and
+        # osc help only print usage, as -h/--help do.
+        words = [a for a in run[1:] if a[:1] != "-"]
+        if words and words[:1] != ["help"]:
+            block("retired-osc", "an osc command")
     elif name in HTTP_TOOLS:
         # A URL held in a variable this call assigned is judged by its value.
         held = [
@@ -7701,7 +8227,7 @@ def lit_output(argv, redirs, out, lit):
 # cookie jar, an MCP server's key, an SSH private key (id_*, not its .pub), the
 # opencode server's password (service.json, service-<version>.json).
 CRED_PATH = Rx(
-    r"/\.config/(?:tea|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
+    r"/\.config/(?:tea|geectl|osc|gh)(?:/|$)|/\.local/state/osc(?:/|$)"
     r"|/\.local/state/opencode/service[^/]*\.json$"
     r"|/\.(?:netrc|oscrc|git-credentials|config/git/credentials)$"
     r"|/\.config/mcp-[^/]*/api-key$"
@@ -7709,14 +8235,20 @@ CRED_PATH = Rx(
 )
 # The same as a word spells them, for a path the guard cannot place.
 CRED_WORD = Rx(
-    r"(?<![\w.\\-])\.(?:config\}?/+(?:tea|osc|gh|git/+credentials|mcp-[^/]*/+api-key)"
+    r"(?<![\w.\\-])\.(?:config\}?/+(?:tea|geectl|osc|gh|git/+credentials|mcp-[^/]*/+api-key)"
     r"|local/+state/+osc|local/+state/+opencode/+service[\w.-]*\.json|netrc|oscrc"
     r"|git-credentials|ssh/+id_[\w-]+)(?![\w.-])"
-    r"|\$\{?XDG_CONFIG_HOME\}?/+(?:tea|osc|gh|git/+credentials)(?![\w.-])"
+    r"|\$\{?XDG_CONFIG_HOME\}?/+(?:tea|geectl|osc|gh|git/+credentials)(?![\w.-])"
     r"|\$\{?XDG_STATE_HOME\}?/+opencode/+service[\w.-]*\.json(?![\w.-])"
 )
 # The same below $HOME, for a recursive read of a directory above them.
-CRED_ROOTS = ("/.config/tea", "/.config/osc", "/.config/gh", "/.local/state/osc")
+CRED_ROOTS = (
+    "/.config/tea",
+    "/.config/geectl",
+    "/.config/osc",
+    "/.config/gh",
+    "/.local/state/osc",
+)
 CRED_ROOTS += ("/.netrc", "/.oscrc", "/.git-credentials", "/.config/git/credentials")
 CRED_ROOTS += ("/.config/mcp-", "/.ssh/id_", "/.local/state/opencode/service")
 # Names that are credential files wherever they sit.
@@ -7763,15 +8295,10 @@ KEY_LINE = Rx(rf"\^{SPACES}build-[\w-]+{SPACES}=")
 # by the variable.
 ASKPASS_SET = Rx(r"(?:GIT|SSH)_ASKPASS\+?=|\w+\+?=.*(?i:core\.askpass)")
 ASKPASS_REF = Rx(r"\$\{?(?:GIT|SSH)_ASKPASS\b")
-# The tools' own secret printers: gh auth and tea login subcommands, and osc's
-# HTTP debugging (-H, a --setopt or environment key) and token path.
+# The tools' own secret printers: gh auth and tea login subcommands.
 SECRET_GH = {"token", "status", "git-credential"}
 SECRET_TEA = {"helper", "git-credential", "edit", "e"}
 TEA_VALUED = {"-l", "--login", "-r", "--repo", "-R", "--remote", "-o", "--output"}
-OSC_H = Rx(r"-[vqh]*H\w*")
-HTTP_DEBUG = Rx(r"(?i)\bhttp_(?:full_)?debug\b")
-OSC_DEBUG_ENV = Rx(r"(?i)OSC_HTTP(?:_FULL)?_DEBUG\+?=")
-PERSON_TOKEN = Rx(r"/person/[^/?#\s]+/token(?![\w-])")
 # Header names that carry a credential, a URL's userinfo, wget's password
 # options.
 AUTH_HEADER = Rx(
@@ -7891,7 +8418,7 @@ def cred_word(word, what, deep, ctx, cwd):
 
 def cred_operands(name, run):
     """The words of a command that may name a file it reads: all but a search
-    tool's pattern, sed's or awk's program, and osc's or git-obs's own config
+    tool's pattern, sed's or awk's program, and git-obs's own config
     file, which the tool reads itself. A recursive search with no operand
     reads the working directory."""
     base = SEARCH.get(name, name)
@@ -7907,13 +8434,9 @@ def cred_operands(name, run):
         if base in ("grep", "rg") and deep and not pos and not files:
             pos = ["."]
         return [*files, *pos]
-    if name not in ("osc", "git-obs"):
+    if name != "git-obs":
         return run[1:]
-    opt, own, names = (
-        ("--config", r"(?:^|/)\.?oscrc$|/\.config/osc/", long_names(OSC_GLOBAL)[1])
-        if name == "osc"
-        else ("--gitea-config", r"/\.config/tea/", list(GIT_OBS_LONG))
-    )
+    opt, own, names = ("--gitea-config", r"/\.config/tea/", list(GIT_OBS_LONG))
     out, i = [], 1
     while i < len(run):
         k, eq, v = long_prefix(run[i], names).partition("=")
@@ -7962,13 +8485,10 @@ def credential_read(name, argv, run, ctx, cwd):
 
 
 def assignment_rules(words):
-    """Assignments that hand git or ssh an askpass program, or turn on osc's
-    HTTP debugging."""
+    """Assignments that hand git or ssh an askpass program."""
     for w in words:
         if ASSIGN.match(w) and ASKPASS_SET.match(w):
             block("askpass", "setting " + w.split("=", 1)[0].rstrip("+"))
-        if ASSIGN.match(w) and OSC_DEBUG_ENV.match(w):
-            block("secret-osc", "osc HTTP debugging")
 
 
 def tea_words(args):
@@ -7988,7 +8508,7 @@ def secret_rules(name, run, ctx, cwd):
     """The tools' own secret printers: gh auth token|status|git-credential,
     tea login(s) helper|git-credential|edit|e, git-obs login list and
     gitcredentials-helper, a git-credential-* helper's get, secret-tool
-    lookup|search, and osc's (osc_secret)."""
+    lookup|search, and geectl's (geectl_secret)."""
     args = run[1:]
     pos = [a for a in args if a[:1] != "-"]
     if name == "gh" and pos[:1] == ["auth"] and pos[1:2] and pos[1] in SECRET_GH:
@@ -8004,35 +8524,8 @@ def secret_rules(name, run, ctx, cwd):
         block("secret-git", name + " get")
     if name == "secret-tool" and pos[:1] in (["lookup"], ["search"]):
         block("secret-tool", "secret-tool " + pos[0])
-    if name == "osc":
-        osc_secret(run, ctx, cwd)
-
-
-def osc_secret(run, ctx, cwd):
-    """osc printing a secret: HTTP debugging (-H, --http-debug,
-    --http-full-debug, http_debug in --setopt), config --dump-full, token,
-    config ... pass|passx, and api on a /person/<login>/token path."""
-    rest = without_message(run)
-    names = long_names(OSC_GLOBAL)[1] + ["--dump", "--dump-full"]
-    for a in rest[1:]:
-        if a == "--":
-            break
-        full = long_prefix(a, names).partition("=")[0]
-        if full in ("--http-debug", "--http-full-debug") or OSC_H.fullmatch(a):
-            block("secret-osc", "osc HTTP debugging")
-        if HTTP_DEBUG.search(a):
-            block("secret-osc", "osc HTTP debugging")
-        if full == "--dump-full":
-            block("secret-osc", "osc config --dump-full")
-    sub, sargs = osc_sub(rest)
-    if sub == "token":
-        block("secret-osc", "osc token")
-    if sub == "config" and {"pass", "passx"} & set(sargs):
-        block("secret-osc", "osc config " + ("passx" if "passx" in sargs else "pass"))
-    if sub == "api":
-        urls = [norm_urls(a) for a in [*sargs, *expansions(sargs, ctx, cwd)]]
-        if any(PERSON_TOKEN.search(u) for u in urls):
-            block("secret-osc", "osc api /person/<login>/token")
+    if name == "geectl":
+        geectl_secret(run, ctx, cwd)
 
 
 def auth_rules(what, args, text):
@@ -8070,7 +8563,7 @@ def api_shown(m):
 
 
 def direct_api(what, text):
-    """HTTP to the OBS or Gitea API past osc and git-obs, which hold the login."""
+    """HTTP to the OBS or Gitea API past geectl and git-obs, which hold the login."""
     m = API_WORD.search(norm_urls(text))
     if m:
         block("api-direct", f"{what} to {api_shown(m)}")
@@ -8078,15 +8571,15 @@ def direct_api(what, text):
 
 def credential_rules(name, argv, run, gparts, ctx, cwd):
     """The credential rules for a command the agent runs, after the pool rules:
-    askpass and osc debug assignments, the tools' secret printers, a credential
+    askpass assignments, the tools' secret printers, a credential
     on an HTTP tool's, tea api's or git-obs api's command line, and HTTP to the
-    OBS or Gitea API past osc and git-obs. gparts: git's options and
+    OBS or Gitea API past geectl and git-obs. gparts: git's options and
     subcommand, as git_command() parsed them."""
     assignment_rules(argv[: len(argv) - len(run)])
     assignment_rules(run[1:] if name in DECLARE else ())
     if VARIABLE.search(name):
         return  # guess() judged it
-    if name in ("tea", "git-obs", "git", "osc") and asks_help(run[1:]):
+    if name in ("tea", "git-obs", "git", "osc", "geectl") and asks_help(run[1:]):
         return
     secret_rules(name, run, ctx, cwd)
     if gparts:

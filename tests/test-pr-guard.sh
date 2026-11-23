@@ -21,6 +21,9 @@ fails=0; used=" "
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d /var/tmp/test-pr-guard.XXXXXX)"; trap 'rm -rf "$work"' EXIT
+# macOS resolves /var to /private/var: canonicalize once, so the paths
+# the guard prints (resolved) match the ones this file expects.
+work="$(cd "$work" && pwd -P)"
 
 # Nothing from the machine running the suite: no git config, no skill checkout,
 # no network, and an aarch64 host whatever the runner is.
@@ -161,9 +164,13 @@ osc_co_ "$work/osc/incident/x" openSUSE:Maintenance:12345
 osc_co_ "$work/osc/$h:tester:branches:OBS_Maintained:x/x.openSUSE_Backports_SLE-15-SP7_Update" "$h:tester:branches:OBS_Maintained:x"
 osc_co_ "$work/osc/branch/x" "$h:tester:branches:openSUSE:Backports:SLE-15-SP7:Update"
 osc_co_ "$work/osc/devel/x" devel:tools
-osc_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" && printf 'libpqxx\n' > "$work/osc/spark/libpqxx/.osc/_package"
-osc_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" \
-  && printf 'python-streamdeck\n' > "$work/osc/spark/python-streamdeck/.osc/_package"
+# A geectl working copy: a git checkout carrying the geectl project and package
+# in its config, the way the working-copy leaves record them.
+geectl_co_() { git init -q -b main "$1" && git -C "$1" config geectl.project "$2" && git -C "$1" config geectl.package "$3"; }
+geectl_co_ "$work/osc/spark/libpqxx" "$h:tester:spark" libpqxx
+geectl_co_ "$work/osc/spark/python-streamdeck" "$h:tester:spark" python-streamdeck
+# A geectl working copy in a maintenance project: a commit there is a direct write.
+geectl_co_ "$work/osc/maint/mypkg" "openSUSE:Maintenance:12345" mypkg
 osc_co_ "$work/osc/fresh/y" devel:tools; osc_co_ "$work/osc/edited/z" devel:tools
 # A scmsync checkout (osc co of a package OBS syncs from git) takes no osc commit.
 osc_co_ "$work/osc/scm/s" devel:tools && printf 's\n' > "$work/osc/scm/s/.osc/_package" \
@@ -173,7 +180,7 @@ osc_co_ "$work/osc/prjco" devel:tools
 # osc co PRJ PKG: a project checkout around its one package, and one around three.
 osc_co_ "$work/osc/single" devel:tools; osc_co_ "$work/osc/single/x" devel:tools && printf 'x\n' > "$work/osc/single/x/.osc/_package"
 osc_co_ "$work/osc/multi" devel:tools
-for p in termit kmscon rioterm; do osc_co_ "$work/osc/multi/$p" devel:tools && printf '%s\n' "$p" > "$work/osc/multi/$p/.osc/_package"; done
+for p in termit kmscon rioterm; do geectl_co_ "$work/osc/multi/$p" devel:tools "$p"; done
 ln -s "$work/osc/spark" "$work/links/spark"
 # What a commit, a submit or a forward the guard lets through unasked needs, from
 # fixtures/pr-guard/stamped.json: gate.sh's stamp of a reviewed tree (under this
@@ -766,11 +773,11 @@ ask_ trap-var-command           comment "tea comment"
 ask_ bash-var-command           comment "tea comment"
 case_ eval-literal              0 - ""
 # Any & or coproc in the call: every write in it may run while the commit does.
-case_ ci-if-background         2 gate-sequence "sed"
-case_ ci-for-background        2 gate-sequence "sed"
-case_ ci-and-background        2 gate-sequence "sed"
-case_ ci-subst-background      2 gate-sequence "sed"
-case_ ci-coproc-named          2 gate-sequence "sed"
+case_ ci-if-background         2 retired-osc "an osc command"
+case_ ci-for-background        2 retired-osc "an osc command"
+case_ ci-and-background        2 retired-osc "an osc command"
+case_ ci-subst-background      2 retired-osc "an osc command"
+case_ ci-coproc-named          2 retired-osc "an osc command"
 # A command word only the shell knows, given a judged tool or a runner to start.
 ask_ dyn-subst-command          eval-dynamic "the command word is unknown"
 ask_ dyn-var-command            eval-dynamic "the command word is unknown"
@@ -1203,7 +1210,7 @@ case_ state-git-env-unplaced   2 stamp "a GIT_ variable set in it"
 case_ state-script-xargs       2 stamp "state directory"
 case_ state-script-bash-c      2 stamp "state directory"
 # osc's own state beside it names no piece of it.
-case_ osc-state-ls-then-build  0 - ""
+case_ osc-state-ls-then-build  2 retired-osc "an osc command"
 case_ watch-state-then-make    0 - ""
 # Reads stay allowed, and so does a copy out of it.
 case_ stamp-read-diff-state    0 - ""
@@ -1212,183 +1219,201 @@ case_ stamp-read-cp-out        0 - ""
 case_ stamp-read-test          0 - ""
 
 echo "--- osc"
-case_ osc-build-x86_64    2 emulated-build "x86_64 on aarch64"
-case_ osc-build-setsid    2 emulated-build "x86_64 on aarch64"
-case_ osc-build-i586      2 emulated-build "i586 on aarch64"
-case_ osc-shell-x86_64    2 emulated-build "x86_64 on aarch64"
-case_ osc-chroot-x86_64   2 emulated-build "x86_64 on aarch64"
-case_ osc-build-x86_64    0 - ""   PR_GUARD_ARCH=x86_64
-case_ osc-build-i586      0 - ""   PR_GUARD_ARCH=x86_64
-case_ osc-buildinfo       0 - ""
-case_ osc-sr-backports    2 backports "scmsync'd from pool"
-case_ osc-mr-backports    2 backports "scmsync'd from pool"
-case_ osc-sr-factory      0 - ""
+case_ osc-build-x86_64    2 retired-osc "an osc command"
+case_ osc-build-setsid    2 retired-osc "an osc command"
+case_ osc-build-i586      2 retired-osc "an osc command"
+case_ osc-shell-x86_64    2 retired-osc "an osc command"
+case_ osc-chroot-x86_64   2 retired-osc "an osc command"
+case_ osc-build-x86_64    2 retired-osc "an osc command"   PR_GUARD_ARCH=x86_64
+case_ osc-build-i586      2 retired-osc "an osc command"   PR_GUARD_ARCH=x86_64
+case_ osc-buildinfo       2 retired-osc "an osc command"
+case_ osc-sr-backports    2 retired-osc "an osc command"
+case_ osc-mr-backports    2 retired-osc "an osc command"
+case_ osc-sr-factory      2 retired-osc "an osc command"
+case_ osc-sr-factory-plain 2 retired-osc "an osc command"
+case_ sr-devel-target-live 2 retired-osc "an osc command"
 # The request message only describes the request.
-case_ osc-sr-message-backports 0 - ""
-case_ osc-sr-message-eq   0 - ""
+case_ osc-sr-message-backports 2 retired-osc "an osc command"
+case_ osc-sr-message-eq   2 retired-osc "an osc command"
 # factory-auto declines a Factory request whose source is not the devel project.
-case_ osc-sr-nodevelproject   2 nodevelproject "an osc request with --nodevelproject"
-case_ osc-creq-nodevelproject 2 nodevelproject "an osc request with --nodevelproject"
-case_ osc-sr-nodevel-abbrev   2 nodevelproject "an osc request with --nodevelproject"
-case_ osc-sr-nodevel-python   2 nodevelproject "an osc request with --nodevelproject"
+case_ osc-sr-nodevelproject   2 retired-osc "an osc command"
+case_ osc-creq-nodevelproject 2 retired-osc "an osc command"
+case_ osc-sr-nodevel-abbrev   2 retired-osc "an osc command"
+case_ osc-sr-nodevel-python   2 retired-osc "an osc command"
 # Read as bash reads it, home:<you>:... redirects into the file ":branches:devel:tools",
 # outside every checkout and at the submit itself: nothing it sends changes first.
-case_ osc-sr-devel-control  0 - ""
-case_ osc-sr-nodevel-message  0 - ""
+case_ osc-sr-devel-control  2 retired-osc "an osc command"
+case_ osc-sr-nodevel-message  2 retired-osc "an osc command"
 # Maintenance and update projects take no direct write, by commit or by API;
 # a home: branch of one is the user's own, whatever its name ends in.
-case_ osc-ci-update-checkout     2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-incident-checkout   2 maintenance-commit "an osc commit into openSUSE:Maintenance:12345"
-case_ osc-ci-update-operand      2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-update-file-operand 2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-update-new-checkout 2 maintenance-commit "an osc commit into openSUSE:Leap:15.6:Update"
-case_ osc-api-put-update         2 maintenance-api "an osc api PUT into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-api-post-maintenance-m 2 maintenance-api "an osc api POST into openSUSE:Maintenance:12345"
-case_ osc-api-file-implies-put   2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
-case_ osc-api-delete-full-url    2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
-case_ osc-mbranch                0 - ""
-case_ osc-mr                     0 - ""
-case_ osc-ci-mbranch-checkout    0 - ""
-case_ osc-ci-home-update-branch  0 - ""
-case_ osc-ci-devel               0 - ""
-case_ osc-api-get-update         0 - ""
-case_ osc-api-put-home-branch    0 - ""
+case_ osc-ci-update-checkout     2 retired-osc "an osc command"
+case_ osc-ci-incident-checkout   2 retired-osc "an osc command"
+case_ osc-ci-update-operand      2 retired-osc "an osc command"
+case_ osc-ci-update-file-operand 2 retired-osc "an osc command"
+case_ osc-ci-update-new-checkout 2 retired-osc "an osc command"
+case_ osc-api-put-update         2 retired-osc "an osc command"
+case_ osc-api-post-maintenance-m 2 retired-osc "an osc command"
+case_ osc-api-file-implies-put   2 retired-osc "an osc command"
+case_ osc-api-delete-full-url    2 retired-osc "an osc command"
+case_ osc-mbranch                2 retired-osc "an osc command"
+case_ osc-mr                     2 retired-osc "an osc command"
+case_ osc-ci-mbranch-checkout    2 retired-osc "an osc command"
+case_ osc-ci-home-update-branch  2 retired-osc "an osc command"
+case_ osc-ci-devel               2 retired-osc "an osc command"
+case_ osc-api-get-update         2 retired-osc "an osc command"
+case_ osc-api-put-home-branch    2 retired-osc "an osc command"
 # A POST that only reads (diff, showlinked) or branches out of the project writes
 # nothing into it; any other cmd, none, a branch into it, PUT or DELETE does.
-case_ osc-api-post-diff-update       0 - ""
-case_ osc-api-post-branch-update     0 - ""
-case_ osc-api-post-showlinked-update 0 - ""
-case_ osc-api-post-branch-into-update    2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-api-post-commitfilelist-update 2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-api-post-copy-update       2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-api-post-no-cmd-update     2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-api-post-diff-then-commit  2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-api-put-diff-query         2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
-case_ osc-api-delete-branch-query    2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
+case_ osc-api-post-diff-update       2 retired-osc "an osc command"
+case_ osc-api-post-branch-update     2 retired-osc "an osc command"
+case_ osc-api-post-showlinked-update 2 retired-osc "an osc command"
+case_ osc-api-post-branch-into-update    2 retired-osc "an osc command"
+case_ osc-api-post-commitfilelist-update 2 retired-osc "an osc command"
+case_ osc-api-post-copy-update       2 retired-osc "an osc command"
+case_ osc-api-post-no-cmd-update     2 retired-osc "an osc command"
+case_ osc-api-post-diff-then-commit  2 retired-osc "an osc command"
+case_ osc-api-put-diff-query         2 retired-osc "an osc command"
+case_ osc-api-delete-branch-query    2 retired-osc "an osc command"
 # A commit or API write the guard cannot place is refused, as a push is; osc's
 # global options and api --method count by any prefix argparse takes.
-case_ osc-ci-cwd-unknown         2 maintenance-unknown "(the working directory is unknown)"
+case_ osc-ci-cwd-unknown         2 retired-osc "an osc command"
 # A cd follows what the call set: not a value read gives, all values a loop gives
 # its variable (before as after the cd), and a loop's globs as the shell expands them.
-case_ osc-ci-read-stale          2 maintenance-unknown "(the working directory is unknown)"
-case_ osc-ci-loop-reassign       2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-loop-outer-unknown  2 maintenance-unknown "(the working directory is unknown)"
-case_ osc-ci-loop-glob-devel     0 - ""
-case_ osc-ci-loop-glob-all       2 maintenance-commit "an osc commit into"
-case_ osc-api-var-url            2 maintenance-unknown "osc api PUT \$URL"
-case_ osc-api-subst-url          2 maintenance-unknown "osc api POST \$(...)"
-case_ osc-api-host-var-path      2 maintenance-unknown "osc api DELETE https://api.opensuse.org/\$P"
-case_ osc-api-double-slash       2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
-case_ osc-api-dot-segment        2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
-case_ osc-api-dotdot-segment     2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
+case_ osc-ci-read-stale          2 retired-osc "an osc command"
+case_ osc-ci-loop-reassign       2 retired-osc "an osc command"
+case_ osc-ci-loop-outer-unknown  2 retired-osc "an osc command"
+case_ osc-ci-loop-glob-devel     2 retired-osc "an osc command"
+case_ osc-ci-loop-glob-all       2 retired-osc "an osc command"
+case_ osc-api-var-url            2 retired-osc "an osc command"
+case_ osc-api-subst-url          2 retired-osc "an osc command"
+case_ osc-api-host-var-path      2 retired-osc "an osc command"
+case_ osc-api-double-slash       2 retired-osc "an osc command"
+case_ osc-api-dot-segment        2 retired-osc "an osc command"
+case_ osc-api-dotdot-segment     2 retired-osc "an osc command"
 # A commit whose checkout has no .osc/_project yet (made in the same call) is unplaced.
-case_ osc-co-output-then-ci      2 maintenance-unknown "check out in one call"
-case_ osc-co-current-then-ci     2 maintenance-unknown "check out in one call"
-case_ osc-ci-not-a-checkout      2 maintenance-unknown "check out in one call"
+case_ osc-co-output-then-ci      2 retired-osc "an osc command"
+case_ osc-co-current-then-ci     2 retired-osc "an osc command"
+case_ osc-ci-not-a-checkout      2 retired-osc "an osc command"
 # A cd into each word of a loop, or into a variable this call set, is followed.
-case_ osc-ci-loop-devel          0 - ""
-case_ osc-ci-loop-update         2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-var-cd-devel        0 - ""
+case_ osc-ci-loop-devel          2 retired-osc "an osc command"
+case_ osc-ci-loop-update         2 retired-osc "an osc command"
+case_ osc-ci-var-cd-devel        2 retired-osc "an osc command"
 case_ push-loop-dirs             2 push-unknown "one of several directories"
-case_ osc-ci-no-cwd              2 maintenance-unknown "(the working directory is unknown)"
-case_ osc-ci-subst-operand       2 maintenance-unknown "osc commit \$(...)"
-case_ osc-ci-loop-subst          2 maintenance-unknown "osc commit \$d"
-case_ osc-api-var-project        2 maintenance-unknown "osc api PUT /source/\$PRJ/x/_meta"
-case_ osc-api-var-branch-target  2 maintenance-unknown "osc api POST /source/openSUSE:Factory/x?cmd=branch&target_project=\$T"
-case_ osc-api-quoted-project     2 maintenance-api "an osc api PUT into openSUSE:Leap:15.6:Update"
-case_ osc-api-meth-prefix        2 maintenance-api "an osc api DELETE into openSUSE:Leap:15.6:Update"
-case_ osc-ci-api-prefix          2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-conf-prefix         2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-ci-setopt              2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-api-var-get            0 - ""
+case_ osc-ci-no-cwd              2 retired-osc "an osc command"
+case_ osc-ci-subst-operand       2 retired-osc "an osc command"
+case_ osc-ci-loop-subst          2 retired-osc "an osc command"
+case_ osc-api-var-project        2 retired-osc "an osc command"
+case_ osc-api-var-branch-target  2 retired-osc "an osc command"
+case_ osc-api-quoted-project     2 retired-osc "an osc command"
+case_ osc-api-meth-prefix        2 retired-osc "an osc command"
+case_ osc-ci-api-prefix          2 retired-osc "an osc command"
+case_ osc-ci-conf-prefix         2 retired-osc "an osc command"
+case_ osc-ci-setopt              2 retired-osc "an osc command"
+case_ osc-api-var-get            2 retired-osc "an osc command"
 # A request's id is no project: a revoke of one only the shell knows asks whose it is.
-ask_ osc-api-var-request         others-request "osc api newstate=revoked: cannot tell which request it takes"
-case_ osc-api-quoted-home        0 - ""
-case_ osc-ci-var-devel           0 - ""
+case_ osc-api-var-request 2 retired-osc "an osc command"
+case_ osc-api-quoted-home        2 retired-osc "an osc command"
+case_ osc-ci-var-devel           2 retired-osc "an osc command"
 # Nor do they take a package copied, linked or aggregated in, deleted or
 # undeleted, or meta written; reading from them stays allowed.
-case_ osc-copypac-into-update       2 maintenance-write "an osc copypac into openSUSE:Leap:15.6:Update"
-case_ osc-rmkpac-update            2 maintenance-write "an osc rmkpac into openSUSE:Leap:15.6:Update"
-case_ osc-repo-add-update          2 maintenance-write "an osc repo into openSUSE:Leap:15.6:Update"
-case_ osc-repo-remove-checkout     2 maintenance-write "an osc repo into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-metafromspec-checkout    2 maintenance-write "an osc updatepacmetafromspec into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-unlock-update            2 maintenance-write "an osc unlock into openSUSE:Leap:15.6:Update"
-case_ osc-mbranch-target           2 maintenance-write "an osc mbranch into openSUSE:Maintenance:12345"
-case_ osc-addchannels-update       2 maintenance-write "an osc addchannels into openSUSE:Leap:15.6:Update"
-case_ osc-addcontainers-update     2 maintenance-write "an osc addcontainers into openSUSE:Leap:15.6:Update"
-case_ osc-maintained               0 - ""
-case_ osc-repo-list-update         0 - ""
-case_ osc-metafromspec-devel       0 - ""
-case_ osc-rmkpac-home              0 - ""
-case_ osc-branch-into-update        2 maintenance-write "an osc branch into openSUSE:Leap:15.6:Update"
-case_ osc-branch-dot-checkout       2 maintenance-write "an osc branch into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-rremove-update            2 maintenance-write "an osc rremove into openSUSE:Leap:15.6:Update"
-case_ osc-sdp-update                2 maintenance-write "an osc setdevelproject into openSUSE:Leap:15.6:Update"
-case_ osc-sdp-checkout              2 maintenance-write "an osc setdevelproject into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-setlinkrev-maint          2 maintenance-write "an osc setlinkrev into openSUSE:Maintenance:12345"
-case_ osc-detachbranch-update       2 maintenance-write "an osc detachbranch into openSUSE:Leap:15.6:Update"
-case_ osc-linktobranch-checkout     2 maintenance-write "an osc linktobranch into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-lock-update               2 maintenance-write "an osc lock into openSUSE:Leap:15.6:Update"
-case_ osc-release-maint             2 maintenance-write "an osc release into openSUSE:Maintenance:12345"
-case_ osc-release-target            2 maintenance-write "an osc release into openSUSE:Leap:15.6:Update"
-case_ osc-wipebinaries-update       2 maintenance-write "an osc wipebinaries into openSUSE:Leap:15.6:Update"
-case_ osc-unpublish-update          2 maintenance-write "an osc wipebinaries into openSUSE:Leap:15.6:Update"
-case_ osc-api-build-wipe            2 maintenance-api "an osc api POST into openSUSE:Leap:15.6:Update"
-case_ osc-branch-from-update        0 - ""
-case_ osc-bco-from-update           0 - ""
-case_ osc-branch-into-home          0 - ""
-case_ osc-sdp-devel-checkout        0 - ""
-case_ osc-release-home              0 - ""
-case_ osc-wipebinaries-home         0 - ""
-case_ osc-api-build-result          0 - ""
-case_ osc-api-build-rebuild-home    0 - ""
-case_ osc-copypac-slash-into-maint  2 maintenance-write "an osc copypac into openSUSE:Maintenance:12345"
-case_ osc-linkpac-into-update       2 maintenance-write "an osc linkpac into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-linkpac-from-checkout     2 maintenance-write "an osc linkpac into openSUSE:Leap:15.6:Update"
-case_ osc-aggregatepac-into-update  2 maintenance-write "an osc aggregatepac into openSUSE:Leap:15.6:Update"
-case_ osc-rdelete-update            2 maintenance-write "an osc rdelete into openSUSE:Leap:15.6:Update"
-case_ osc-rdelete-slash             2 maintenance-write "an osc rdelete into openSUSE:Leap:15.6:Update"
-case_ osc-rdelete-dot               2 maintenance-write "an osc rdelete into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-undelete-maintenance      2 maintenance-write "an osc undelete into openSUSE:Maintenance:12345"
-case_ osc-meta-pkg-file             2 maintenance-write "an osc meta into openSUSE:Leap:15.6:Update"
-case_ osc-meta-prj-edit             2 maintenance-write "an osc meta into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-meta-pkg-slash-file       2 maintenance-write "an osc meta into openSUSE:Leap:15.6:Update"
-case_ osc-meta-pkg-checkout-file    2 maintenance-write "an osc meta into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-meta-pkg-edit-prefix     2 maintenance-write "an osc meta into openSUSE:Leap:15.6:Update"
-case_ osc-copypac-var-unknown       2 maintenance-unknown "osc copypac to \$DEST"
-case_ osc-copypac-from-update       0 - ""
-case_ osc-linkpac-into-home         0 - ""
-case_ osc-aggregatepac-from-update  0 - ""
-case_ osc-rdelete-home-branch       0 - ""
-case_ osc-rdelete-dot-home          0 - ""
-case_ osc-meta-pkg-read             0 - ""
-case_ osc-meta-prj-blame            0 - ""
-case_ osc-meta-pkg-home-file        0 - ""
+case_ osc-copypac-into-update       2 retired-osc "an osc command"
+case_ osc-rmkpac-update            2 retired-osc "an osc command"
+case_ osc-repo-add-update          2 retired-osc "an osc command"
+case_ osc-repo-remove-checkout     2 retired-osc "an osc command"
+case_ osc-metafromspec-checkout    2 retired-osc "an osc command"
+case_ osc-unlock-update            2 retired-osc "an osc command"
+case_ osc-mbranch-target           2 retired-osc "an osc command"
+case_ osc-addchannels-update       2 retired-osc "an osc command"
+case_ osc-addcontainers-update     2 retired-osc "an osc command"
+case_ osc-maintained               2 retired-osc "an osc command"
+case_ osc-repo-list-update         2 retired-osc "an osc command"
+case_ osc-metafromspec-devel       2 retired-osc "an osc command"
+case_ osc-rmkpac-home              2 retired-osc "an osc command"
+case_ osc-branch-into-update        2 retired-osc "an osc command"
+case_ osc-branch-dot-checkout       2 retired-osc "an osc command"
+case_ osc-rremove-update            2 retired-osc "an osc command"
+case_ osc-sdp-update                2 retired-osc "an osc command"
+case_ osc-sdp-checkout              2 retired-osc "an osc command"
+case_ osc-setlinkrev-maint          2 retired-osc "an osc command"
+case_ osc-detachbranch-update       2 retired-osc "an osc command"
+case_ osc-linktobranch-checkout     2 retired-osc "an osc command"
+case_ osc-lock-update               2 retired-osc "an osc command"
+case_ osc-release-maint             2 retired-osc "an osc command"
+case_ osc-release-target            2 retired-osc "an osc command"
+case_ osc-wipebinaries-update       2 retired-osc "an osc command"
+case_ osc-unpublish-update          2 retired-osc "an osc command"
+case_ osc-api-build-wipe            2 retired-osc "an osc command"
+case_ osc-branch-from-update        2 retired-osc "an osc command"
+case_ osc-bco-from-update           2 retired-osc "an osc command"
+case_ osc-branch-into-home          2 retired-osc "an osc command"
+case_ osc-sdp-devel-checkout        2 retired-osc "an osc command"
+case_ osc-release-home              2 retired-osc "an osc command"
+case_ osc-wipebinaries-home         2 retired-osc "an osc command"
+case_ osc-api-build-result          2 retired-osc "an osc command"
+case_ osc-api-build-rebuild-home    2 retired-osc "an osc command"
+case_ osc-copypac-slash-into-maint  2 retired-osc "an osc command"
+case_ osc-linkpac-into-update       2 retired-osc "an osc command"
+case_ osc-linkpac-from-checkout     2 retired-osc "an osc command"
+case_ osc-aggregatepac-into-update  2 retired-osc "an osc command"
+case_ osc-rdelete-update            2 retired-osc "an osc command"
+case_ osc-rdelete-slash             2 retired-osc "an osc command"
+case_ osc-rdelete-dot               2 retired-osc "an osc command"
+case_ osc-undelete-maintenance      2 retired-osc "an osc command"
+case_ osc-meta-pkg-file             2 retired-osc "an osc command"
+case_ osc-meta-prj-edit             2 retired-osc "an osc command"
+case_ osc-meta-pkg-slash-file       2 retired-osc "an osc command"
+case_ osc-meta-pkg-checkout-file    2 retired-osc "an osc command"
+case_ osc-meta-pkg-edit-prefix     2 retired-osc "an osc command"
+case_ osc-copypac-var-unknown       2 retired-osc "an osc command"
+case_ osc-copypac-from-update       2 retired-osc "an osc command"
+case_ osc-linkpac-into-home         2 retired-osc "an osc command"
+case_ osc-aggregatepac-from-update  2 retired-osc "an osc command"
+case_ osc-rdelete-home-branch       2 retired-osc "an osc command"
+case_ osc-rdelete-dot-home          2 retired-osc "an osc command"
+case_ osc-meta-pkg-read             2 retired-osc "an osc command"
+case_ osc-meta-prj-blame            2 retired-osc "an osc command"
+case_ osc-meta-pkg-home-file        2 retired-osc "an osc command"
 # A new package's maintainer role, set in the devel project the user maintains: no ask.
-case_ osc-meta-pkg-devel-file       0 - ""
-case_ osc-maintainer-add-devel      0 - ""
+case_ osc-meta-pkg-devel-file       2 retired-osc "an osc command"
+case_ osc-maintainer-add-devel      2 retired-osc "an osc command"
 # osc maintainer/bugowner -a, -d and -s write the meta: the maintenance rules hold, and
 # an owner search (one name, -U/-G) lands where the guard cannot tell.
-case_ osc-maintainer-add-update     2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
-case_ osc-maintainer-del-update     2 maintenance-write "an osc maintainer into openSUSE:Backports:SLE-15-SP7:Update"
-case_ osc-bugowner-add-update       2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
-case_ osc-maintainer-add-search     2 maintenance-unknown "a role an osc maintainer search (not PRJ PKG) finds"
-case_ osc-maintainer-read-update    0 - ""
-case_ osc-maintainer-devel-update   2 maintenance-write "an osc maintainer into openSUSE:Leap:15.6:Update"
+case_ osc-maintainer-add-update     2 retired-osc "an osc command"
+case_ osc-maintainer-del-update     2 retired-osc "an osc command"
+case_ osc-bugowner-add-update       2 retired-osc "an osc command"
+case_ osc-maintainer-add-search     2 retired-osc "an osc command"
+case_ osc-maintainer-read-update    2 retired-osc "an osc command"
+case_ osc-maintainer-devel-update   2 retired-osc "an osc command"
 # A request is filed with osc, which checks the devel project and the message;
 # one created through the API skips both.
-case_ request-api-osc-create        2 request-api "a request created through the API"
-case_ request-api-pct-value         2 request-api "a request created through the API"
-case_ request-api-pct-key           2 request-api "a request created through the API"
-case_ request-api-dot               2 request-api "a request created through the API"
+case_ request-api-osc-create        2 retired-osc "an osc command"
+case_ request-api-pct-value         2 retired-osc "an osc command"
+case_ request-api-pct-key           2 retired-osc "an osc command"
+case_ request-api-dot               2 retired-osc "an osc command"
 case_ request-api-curl-pct          2 request-api "a request created through the API"
-case_ request-api-osc-create-addrev 2 request-api "a request created through the API"
+case_ request-api-osc-create-addrev 2 retired-osc "an osc command"
 case_ request-api-curl-create       2 request-api "a request created through the API"
 case_ request-api-python-create     2 request-api "a request created through the API"
-case_ request-api-var-create        2 request-api "a request created through the API"
-case_ request-api-changestate       0 - ""
-case_ request-api-list              0 - ""
-case_ request-sr-supersede          0 - ""
+case_ request-api-var-create        2 retired-osc "an osc command"
+case_ request-api-changestate       2 retired-osc "an osc command"
+case_ request-api-list              2 retired-osc "an osc command"
+case_ request-sr-supersede          2 retired-osc "an osc command"
+
+echo "--- geectl"
+# A filing into Backports is refused. A filing naming Factory as its target,
+# and a foreign-arch local build, are not refused here: geectl itself refuses
+# them (its Factory devel check and its UnsupportedArch).
+case_ geectl-backports            2 backports "a geectl request to openSUSE:Backports:SLE-16.x"
+case_ geectl-backports-refile     2 backports "a geectl request to openSUSE:Backports:SLE-16.x"
+# Maintenance and update projects take no direct write, by commit or by a remote leaf;
+# a target the guard cannot place is refused too.
+case_ geectl-maintenance-write    2 maintenance-write "a geectl remote set-project-meta into openSUSE:Maintenance:12345"
+case_ geectl-maintenance-unknown  2 maintenance-unknown "geectl remote set-project-meta to \$PRJ"
+case_ geectl-maintenance-commit   2 maintenance-commit "a geectl commit into openSUSE:Maintenance:12345"
+# A rebuild, restart or abort names a build, not a write, and is not judged here.
+case_ geectl-rebuild-package      0 - ""
+case_ geectl-restart-build        0 - ""
+case_ geectl-abort-build          0 - ""
 
 echo "--- find -exec, watch and parallel run the command they carry"
 case_ find-exec-tea-merge        2 merge-tea     "tea PR merge"
@@ -1400,18 +1425,18 @@ case_ watch-exec-merge           2 merge-tea     "tea PR merge"
 case_ parallel-merge             2 merge-tea     "tea PR merge"
 case_ parallel-push-placeholder  2 push-unknown  "the pushed branch is held in a variable"
 case_ find-exec-grep             0 - ""
-case_ watch-osc-results          0 - ""
+case_ watch-osc-results          2 retired-osc "an osc command"
 case_ parallel-echo              0 - ""
 
 echo "--- osc named by a variable is judged as osc"
-case_ var-osc-ci-update          2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ var-osc-ci-update          2 retired-osc "an osc command"
 # The prefilter also reads the text without its quotes and backslashes, $'...'
 # decoded, and a variable after if, while, !, { or a wrapper.
-case_ prefilter-split-quotes     2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ prefilter-ansi-c           2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ prefilter-quoted-var       2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ prefilter-if-var           2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ prefilter-wrapper-var      2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
+case_ prefilter-split-quotes     2 retired-osc "an osc command"
+case_ prefilter-ansi-c           2 retired-osc "an osc command"
+case_ prefilter-quoted-var       2 retired-osc "an osc command"
+case_ prefilter-if-var           2 retired-osc "an osc command"
+case_ prefilter-wrapper-var      2 retired-osc "an osc command"
 # A command held in several words (a variable, an array, a function running "$@")
 # is those words; one only the shell knows is refused.
 case_ var-multiword-command      2 merge-tea     "tea PR merge"
@@ -1425,11 +1450,11 @@ case_ var-git-commit             0 - ""
 case_ var-make-release           0 - ""
 
 echo "--- osc request arguments held in variables are judged by their values"
-case_ osc-sr-var-backports       2 backports "scmsync'd from pool"
-case_ osc-sr-loop-backports      2 backports "scmsync'd from pool"
-case_ osc-sr-var-nodevel         2 nodevelproject "an osc request with --nodevelproject"
-case_ osc-sr-unknown-target      2 request-unknown "osc sr \$TARGET"
-case_ osc-sr-var-factory         0 - ""
+case_ osc-sr-var-backports       2 retired-osc "an osc command"
+case_ osc-sr-loop-backports      2 retired-osc "an osc command"
+case_ osc-sr-var-nodevel         2 retired-osc "an osc command"
+case_ osc-sr-unknown-target      2 retired-osc "an osc command"
+case_ osc-sr-var-factory         2 retired-osc "an osc command"
 
 echo "--- tea's options may take one dash (-repo, -method)"
 case_ tea-create-single-dash-repo 2 create-tea   "tea PR create"
@@ -1443,43 +1468,43 @@ case_ fd-number-attached         2 push-pr-head "pool/tesseract-ocr#3"
 
 echo "--- an expansion that doubles past 64 KiB is unknown, and fast"
 case_ var-doubling-script        2 exec-unresolved "\$V40"
-case_ var-doubling-message       2 request-message-unknown "\$V40"
+case_ var-doubling-message       2 retired-osc "an osc command"
 
 echo "--- a FIFO or device is refused, never read"
 case_ run-fifo                   2 exec-unreadable "not a regular file"
-case_ msg-fifo                   2 request-message-unknown "-F"
-case_ run-dev-stdin              2 exec-unreadable "through /proc, /dev or a link loop"
-case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 characters of prose"
-case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
-case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"
-case_ var-osc-ci-devel           0 - ""
+case_ msg-fifo                   2 retired-osc "an osc command"
+case_ run-dev-stdin              2 exec-unreadable "not a regular file"
+case_ var-osc-path-sr-long       2 retired-osc "an osc command"
+case_ var-osc-unset-ci-update    2 retired-osc "an osc command"
+case_ var-osc-unset-nodevel      2 retired-osc "an osc command"
+case_ var-osc-ci-devel           2 retired-osc "an osc command"
 # A request message is one headline: over 160 characters of prose it is refused.
-case_ osc-sr-long-message        2 request-message "an osc sr message with 380 characters of prose"
-case_ osc-sr-message-161         2 request-message "an osc submitreq message with 161 characters of prose"
-case_ osc-mr-long-message-eq     2 request-message "an osc mr message with 380 characters of prose"
-case_ osc-creq-long-message-attached 2 request-message "an osc creq message with 380 characters of prose"
-case_ osc-sr-message-160         0 - ""
-case_ msg-headline-real          0 - ""
-case_ msg-headline-stage-with    0 - ""
+case_ osc-sr-long-message        2 retired-osc "an osc command"
+case_ osc-sr-message-161         2 retired-osc "an osc command"
+case_ osc-mr-long-message-eq     2 retired-osc "an osc command"
+case_ osc-creq-long-message-attached 2 retired-osc "an osc command"
+case_ osc-sr-message-160         2 retired-osc "an osc command"
+case_ msg-headline-real          2 retired-osc "an osc command"
+case_ msg-headline-stage-with    2 retired-osc "an osc command"
 # Build, sweep and session status is the user's, not the reviewer's: refused in
 # the prose or a list line, by word, so a word that only contains one passes.
-case_ msg-note-decoys            0 - ""
-case_ msg-note-not-done          2 request-message 'with a work note ("not done")'
-case_ msg-note-bugwarden         2 request-message 'with a work note ("bugwarden")'
-case_ msg-note-vul-sweep         2 request-message 'with a work note ("VUL sweep")'
-case_ msg-note-built-green       2 request-message 'with a work note ("Built green")'
-case_ msg-note-still-building    2 request-message 'with a work note ("still building")'
-case_ msg-note-this-env          2 request-message 'with a work note ("this environment")'
-case_ msg-note-subagent          2 request-message 'with a work note ("sub-agent")'
-case_ msg-note-no-access         2 request-message 'with a work note ("no bugzilla access")'
-case_ msg-note-in-list           2 request-message 'with a work note ("builds green")'
-case_ msg-note-gate-sh           2 request-message 'with a work note ("gate.sh")'
+case_ msg-note-decoys            2 retired-osc "an osc command"
+case_ msg-note-not-done          2 retired-osc 'an osc command'
+case_ msg-note-bugwarden         2 retired-osc 'an osc command'
+case_ msg-note-vul-sweep         2 retired-osc 'an osc command'
+case_ msg-note-built-green       2 retired-osc 'an osc command'
+case_ msg-note-still-building    2 retired-osc 'an osc command'
+case_ msg-note-this-env          2 retired-osc 'an osc command'
+case_ msg-note-subagent          2 retired-osc 'an osc command'
+case_ msg-note-no-access         2 retired-osc 'an osc command'
+case_ msg-note-in-list           2 retired-osc 'an osc command'
+case_ msg-note-gate-sh           2 retired-osc 'an osc command'
 # A forward says what it forwards.
-case_ msg-forward-bare           2 request-message "that only says it forwards"
-case_ msg-forward-with-content   0 - ""
-case_ msg-forward-described     0 - ""
+case_ msg-forward-bare           2 retired-osc "an osc command"
+case_ msg-forward-with-content   2 retired-osc "an osc command"
+case_ msg-forward-described     2 retired-osc "an osc command"
 # A message file the same call writes cannot be read yet: the refusal says so.
-case_ msg-same-call-file         2 request-message-unknown "/var/tmp/sr-msg.txt is written by this same call"
+case_ msg-same-call-file         2 retired-osc "an osc command"
 
 echo "--- a PR's title and description are held to a request message's rules, on any repository"
 # A real body: build status, the gate's and the review's verdicts, the agent's home project.
@@ -1499,117 +1524,123 @@ case_ pr-create-git-obs-abbrev    2 pr-message 'description with a work note ("a
 case_ pr-create-git-space-obs     2 pr-message "description with 380 characters of prose"
 case_ pr-create-git-obs-terse     0 - ""
 # Text it cannot read now is refused; a file an earlier call wrote is read.
-case_ pr-create-sub-same-call     2 pr-message-unknown "this call also writes /var/tmp/pr-body.md"
+case_ pr-create-sub-same-call     2 pr-message-unknown "cannot read the tea pulls create description (a command substitution;"
 case_ pr-create-var-unset         2 pr-message-unknown "(\$BODY)"
 case_ pr-create-sub-readable      0 - ""
 case_ pr-create-sub-readable-long 2 pr-message "description with 380 characters of prose"
+# The same rules on a geectl filing: a commit or a filing with no message, one
+# too long for its reviewers, or one that cannot be read now.
+case_ geectl-commit-no-message       2 request-no-message "geectl commit without -m"
+case_ geectl-request-no-message      2 request-no-message "geectl request file without --changes-entry and --description"
+case_ geectl-request-message         2 request-message "a geectl request file message with 167 characters of prose"
+case_ geectl-request-message-unknown 2 request-message-unknown "the geectl request file message (\$MSG)"
 
 echo "--- a submit request goes to the devel project Factory's _meta names"
-case_ sr-target-swept            2 request-target "libpqxx's devel project is server:database:postgresql (Factory _meta), not server:database"
-case_ sr-target-aggregate        2 request-target "python-lxml's devel project is devel:languages:python (Factory _meta), not Application:Geo"
-case_ sr-target-slash-form       2 request-target "not server:database"
-case_ sr-target-var              2 request-target "not server:database"
-case_ sr-target-garbled          2 request-target-unknown "openSUSE:Factory/garbled/_meta (the answer did not parse)"
-case_ sr-target-devel            0 - ""
-case_ sr-target-factory          0 - ""
-case_ sr-target-home             0 - ""
-case_ sr-target-not-in-factory   0 - ""
-case_ sr-target-no-devel         0 - ""
+case_ sr-target-swept            2 retired-osc "an osc command"
+case_ sr-target-aggregate        2 retired-osc "an osc command"
+case_ sr-target-slash-form       2 retired-osc "an osc command"
+case_ sr-target-var              2 retired-osc "an osc command"
+case_ sr-target-garbled          2 retired-osc "an osc command"
+case_ sr-target-devel            2 retired-osc "an osc command"
+case_ sr-target-factory          2 retired-osc "an osc command"
+case_ sr-target-home             2 retired-osc "an osc command"
+case_ sr-target-not-in-factory   2 retired-osc "an osc command"
+case_ sr-target-no-devel         2 retired-osc "an osc command"
 # Not developed for Factory: the target package itself says when it only mirrors.
-case_ sr-target-link-factory-devel 2 request-target "apache-arrow's devel project is science (Factory _meta), not Application:Geo"
-case_ sr-target-link-foreign     2 request-target "devel:tools/gotool is a _link to devel:languages:go/gotool"
-case_ sr-target-aggregate-nonfactory 2 request-target "Application:Geo/python-geobar is an _aggregate of another project's binaries"
-case_ sr-target-link-same-project 0 - ""
-case_ sr-target-link-to-factory  0 - ""
+case_ sr-target-link-factory-devel 2 retired-osc "an osc command"
+case_ sr-target-link-foreign     2 retired-osc "an osc command"
+case_ sr-target-aggregate-nonfactory 2 retired-osc "an osc command"
+case_ sr-target-link-same-project 2 retired-osc "an osc command"
+case_ sr-target-link-to-factory  2 retired-osc "an osc command"
 
 echo "--- a submit request from a home subproject deletes its branch on accept"
-case_ sr-cleanup-missing         2 sr-cleanup "osc sr from $h:tester:spark"
-case_ sr-cleanup-no-cleanup      2 sr-cleanup "osc sr from $h:tester:spark"
-case_ sr-cleanup-slash           2 sr-cleanup "osc sr from $h:tester:scratch"
-case_ sr-cleanup-branches        2 sr-cleanup "osc sr from $h:tester:branches:server:database:postgresql"
-case_ sr-cleanup-checkout        2 sr-cleanup "osc sr from $h:tester:spark"
-case_ sr-cleanup-submitpac-no    2 sr-cleanup "osc submitpac from $h:tester:spark"
-case_ sr-cleanup-given           0 - ""
-case_ sr-cleanup-abbrev          0 - ""
-case_ sr-cleanup-checkout-given  0 - ""
-case_ sr-cleanup-submitpac       0 - ""
-case_ sr-cleanup-top-home        0 - ""
-case_ sr-cleanup-devel           0 - ""
+case_ sr-cleanup-missing         2 retired-osc "an osc command"
+case_ sr-cleanup-no-cleanup      2 retired-osc "an osc command"
+case_ sr-cleanup-slash           2 retired-osc "an osc command"
+case_ sr-cleanup-branches        2 retired-osc "an osc command"
+case_ sr-cleanup-checkout        2 retired-osc "an osc command"
+case_ sr-cleanup-submitpac-no    2 retired-osc "an osc command"
+case_ sr-cleanup-given           2 retired-osc "an osc command"
+case_ sr-cleanup-abbrev          2 retired-osc "an osc command"
+case_ sr-cleanup-checkout-given  2 retired-osc "an osc command"
+case_ sr-cleanup-submitpac       2 retired-osc "an osc command"
+case_ sr-cleanup-top-home        2 retired-osc "an osc command"
+case_ sr-cleanup-devel           2 retired-osc "an osc command"
 
 echo "--- a home branch is filed only to the project its link points at"
 # python-streamdeck: branched from a stale copy in hardware, filed to Factory's
 # devel project, so the request deleted five of the target's .changes entries.
-case_ request-link-sweep-copy    2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python: the branch carries"
-case_ request-link-slash         2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python"
-case_ request-link-checkout      2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck, not to devel:languages:python"
-case_ request-link-var           2 request-link "not to devel:languages:python"
+case_ request-link-sweep-copy    2 retired-osc "an osc command"
+case_ request-link-slash         2 retired-osc "an osc command"
+case_ request-link-checkout      2 retired-osc "an osc command"
+case_ request-link-var           2 retired-osc "an osc command"
 # Filed to Factory, the advice is the devel project first, then the forward.
-case_ request-link-branch-to-factory 2 request-link "python-goodlink, not to openSUSE:Factory: Factory takes a package from its devel project"
-case_ request-link-garbled       2 request-target-unknown "$h:tester:spark/garbled-src (the answer did not parse)"
-case_ request-link-to-target     0 - ""
-case_ request-link-same-project  0 - ""
-case_ request-link-no-link       0 - ""
-case_ request-link-devel-source  0 - ""
+case_ request-link-branch-to-factory 2 retired-osc "an osc command"
+case_ request-link-garbled       2 retired-osc "an osc command"
+case_ request-link-to-target     2 retired-osc "an osc command"
+case_ request-link-same-project  2 retired-osc "an osc command"
+case_ request-link-no-link       2 retired-osc "an osc command"
+case_ request-link-devel-source  2 retired-osc "an osc command"
 # osc reads a project "." as the checkout's, and creq -a submit files the same request.
-case_ request-link-dot           2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck"
-case_ request-link-creq          2 request-link "$h:tester:spark/python-streamdeck is a _link to hardware/python-streamdeck"
-case_ request-link-creq-delete   0 - ""
-case_ sr-target-creq             2 request-target "libpqxx's devel project is server:database:postgresql (Factory _meta), not server:database"
+case_ request-link-dot           2 retired-osc "an osc command"
+case_ request-link-creq          2 retired-osc "an osc command"
+case_ request-link-creq-delete   2 retired-osc "an osc command"
+case_ sr-target-creq             2 retired-osc "an osc command"
 
 echo "--- osc's questions are answered with options, never through a pipe"
-case_ osc-prompt-echo-sr         2 osc-prompt "osc sr with an answer on stdin (y)"
-case_ osc-prompt-yes-sr          2 osc-prompt "osc sr with an answer on stdin"
-case_ osc-prompt-herestring-ci   2 osc-prompt "osc ci with an answer on stdin (y)"
-case_ osc-prompt-echo-accept     2 osc-prompt "osc rq with an answer on stdin (y)"
-case_ osc-prompt-devnull-sr      0 - ""
-case_ osc-prompt-message-stdin-ci 0 - ""
-case_ osc-ci-long-message        0 - ""
+case_ osc-prompt-echo-sr         2 retired-osc "an osc command"
+case_ osc-prompt-yes-sr          2 retired-osc "an osc command"
+case_ osc-prompt-herestring-ci   2 retired-osc "an osc command"
+case_ osc-prompt-echo-accept     2 retired-osc "an osc command"
+case_ osc-prompt-devnull-sr      2 retired-osc "an osc command"
+case_ osc-prompt-message-stdin-ci 2 retired-osc "an osc command"
+case_ osc-ci-long-message        2 retired-osc "an osc command"
 # --yes answers them unread, as a pipe does: by any prefix argparse takes.
-case_ osc-yes-sr                 2 osc-yes "an osc request with --yes"
-case_ osc-yes-prefix             2 osc-yes "an osc request with --yes"
-case_ osc-yes-creq               2 osc-yes "an osc request with --yes"
-case_ osc-yes-var                2 osc-yes "an osc request with --yes"
-case_ osc-yes-python             2 osc-yes "an osc request with --yes"
-case_ osc-yes-message            0 - ""
+case_ osc-yes-sr                 2 retired-osc "an osc command"
+case_ osc-yes-prefix             2 retired-osc "an osc command"
+case_ osc-yes-creq               2 retired-osc "an osc command"
+case_ osc-yes-var                2 retired-osc "an osc command"
+case_ osc-yes-python             2 retired-osc "an osc command"
+case_ osc-yes-message            2 retired-osc "an osc command"
 case_ osc-yes-echo               0 - ""
 case_ osc-yes-heredoc-commit     0 - ""
 # A line continuation joins the words, for the prefilter too.
-case_ prefilter-continuation-osc 2 osc-yes "an osc request with --yes"
+case_ prefilter-continuation-osc 2 retired-osc "an osc command"
 # Without a message osc opens an editor, and the call hangs until its timeout.
-case_ nomsg-sr                   2 request-no-message "osc sr without -m"
-case_ nomsg-submitreq-supersede  2 request-no-message "osc submitreq without -m"
-case_ nomsg-creq                 2 request-no-message "osc creq without -m"
-case_ nomsg-rq-accept            2 request-no-message "osc rq accept without -m"
-case_ nomsg-request-decline      2 request-no-message "osc request decline without -m"
-case_ nomsg-rq-revoke            2 request-no-message "osc rq revoke without -m"
-case_ nomsg-rq-supersede         2 request-no-message "osc rq supersede without -m"
-case_ nomsg-review-accept        2 request-no-message "osc review accept without -m"
-case_ nomsg-review-add           2 request-no-message "osc review add without -m"
-case_ nomsg-rq-wipe              2 request-no-message "osc rq wipe without -m"
-case_ nomsg-rq-revoke-message    0 - ""
-case_ nomsg-sr-file              0 - ""
-case_ nomsg-rq-show              0 - ""
+case_ nomsg-sr                   2 retired-osc "an osc command"
+case_ nomsg-submitreq-supersede  2 retired-osc "an osc command"
+case_ nomsg-creq                 2 retired-osc "an osc command"
+case_ nomsg-rq-accept            2 retired-osc "an osc command"
+case_ nomsg-request-decline      2 retired-osc "an osc command"
+case_ nomsg-rq-revoke            2 retired-osc "an osc command"
+case_ nomsg-rq-supersede         2 retired-osc "an osc command"
+case_ nomsg-review-accept        2 retired-osc "an osc command"
+case_ nomsg-review-add           2 retired-osc "an osc command"
+case_ nomsg-rq-wipe              2 retired-osc "an osc command"
+case_ nomsg-rq-revoke-message    2 retired-osc "an osc command"
+case_ nomsg-sr-file              2 retired-osc "an osc command"
+case_ nomsg-rq-show              2 retired-osc "an osc command"
 # osc sr --diff only shows what a request would carry: no request, no editor.
-case_ nomsg-sr-diff              0 - ""
-case_ nomsg-sr-d                 0 - ""
+case_ nomsg-sr-diff              2 retired-osc "an osc command"
+case_ nomsg-sr-d                 2 retired-osc "an osc command"
 
 echo "--- a recursive delete takes one checkout at a time, or asks"
-ask_ rm-project-dir             rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-fr-trailing-slash       rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-r-f-separate            rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-sudo-recursive-long     rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-glob-siblings           rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-parent-of-projects      rm-checkouts "osc checkouts at once"
-ask_ rm-var-dir                 rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ rm-relative-in-cwd         rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
-ask_ find-delete-project        rm-checkouts "deletes 2 osc checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-project-dir             rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-fr-trailing-slash       rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-r-f-separate            rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-sudo-recursive-long     rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-glob-siblings           rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-parent-of-projects      rm-checkouts "geectl checkouts at once"
+ask_ rm-var-dir                 rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ rm-relative-in-cwd         rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
+ask_ find-delete-project        rm-checkouts "deletes 2 geectl checkouts at once: libpqxx, python-streamdeck"
 # The incident's shape: one project checkout around three packages others work in.
-ask_ rm-project-many-packages   rm-checkouts "deletes 3 osc checkouts at once: kmscon, rioterm, termit"
+ask_ rm-project-many-packages   rm-checkouts "deletes 3 geectl checkouts at once: kmscon, rioterm, termit"
 # No path in the command: find reaches the guard by name.
-ask_ find-delete-no-slash       rm-checkouts "deletes 2 osc checkouts at once"
-ask_ find-mindepth-no-slash     rm-checkouts "deletes 2 osc checkouts at once"
+ask_ find-delete-no-slash       rm-checkouts "deletes 2 geectl checkouts at once"
+ask_ find-mindepth-no-slash     rm-checkouts "deletes 2 geectl checkouts at once"
 # A trailing slash makes rm empty a symlink's target; without it only the link goes.
-ask_ rm-link-trailing-slash     rm-checkouts "deletes 2 osc checkouts at once"
+ask_ rm-link-trailing-slash     rm-checkouts "deletes 2 geectl checkouts at once"
 case_ rm-link-itself             0 - ""
 # Cleanup after osc co PRJ PKG, one checkout per rm, and separate rm commands pass.
 case_ rm-project-one-package     0 - ""
@@ -1636,7 +1667,7 @@ case_ sleep-long                 2 sleep "(--no-summary: any other local job"
 case_ sleep-minutes              2 sleep "sleep 5m"
 case_ sleep-hex-overflow         2 sleep "sleep 0x1p99999"
 case_ sleep-sum                  2 sleep "sleep 30 30"
-case_ sleep-loop                 2 sleep "sleep 290"
+case_ sleep-loop                 2 retired-osc "an osc command"
 case_ sleep-timeout              2 sleep "sleep 290"
 case_ sleep-var                  2 sleep "sleep \$N"
 case_ sleep-path                 2 sleep "sleep 600"
@@ -1653,38 +1684,38 @@ case_ sleep-added                2 sleep "sleep 59 (118 s in this call)"
 case_ sleep-bash-c               2 sleep "sleep 120"
 case_ sleep-eval                 2 sleep "sleep 120"
 case_ sleep-short                0 - ""
-case_ sleep-short-loop           0 - ""
+case_ sleep-short-loop           2 retired-osc "an osc command"
 case_ sleep-unknown              0 - ""
 case_ sleep-monitor              0 - ""
 case_ sleep-echo                 0 - ""
 case_ sleep-commit-message       0 - ""
 case_ sleep-background           0 - ""
-case_ sleep-in-script            0 - ""
+case_ sleep-in-script            2 retired-osc "an osc command"
 
 echo "--- comments speak for the user: posted only on their go"
-ask_ comment-osc-create         comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
-case_ comment-osc-list          0 - ""
-ask_ comment-osc-api-post       comment "osc api POST"
-case_ comment-osc-api-get       0 - ""
+case_ comment-osc-create 2 retired-osc "an osc command"
+case_ comment-osc-list          2 retired-osc "an osc command"
+case_ comment-osc-api-post 2 retired-osc "an osc command"
+case_ comment-osc-api-get       2 retired-osc "an osc command"
 # A comment on someone else's request to a package the account maintains asks unless its
 # incoming review recorded that comment (the cases of contributors' submissions, below).
-ask_ comment-request-own-pkg      comment "osc comment create: request 1390002 by other: no incoming review is recorded"
-ask_ comment-request-git-pkg      comment "osc comment create: request 1390020 by other: no incoming review is recorded"
-case_ comment-request-own-req     0 - ""
-ask_ comment-api-own-pkg          comment "osc api POST /comments/request/1390002"
-ask_ comment-request-unreadable   comment "osc comment create: cannot read request 1390005"
-ask_ comment-request-two-mixed    comment "osc comment create: request 1390002 by other: no incoming review is recorded"
-ask_ comment-request-id-unknown   comment "osc comment create: cannot tell which request it comments on"
-ask_ comment-api-package-own      comment "osc api POST"
-ask_ comment-package-create       comment "osc comment create"
-ask_ comment-request-group        comment "osc comment create: request 1390009: devel:g/grp is maintained by ml-team"
-ask_ comment-request-no-action    comment "osc comment create: request 1390008 has no action"
-ask_ comment-api-full-host        comment "osc api POST"
-ask_ comment-api-query            comment "osc api POST /comments/request/1390002?parent_id=5"
+case_ comment-request-own-pkg 2 retired-osc "an osc command"
+case_ comment-request-git-pkg 2 retired-osc "an osc command"
+case_ comment-request-own-req     2 retired-osc "an osc command"
+case_ comment-api-own-pkg 2 retired-osc "an osc command"
+case_ comment-request-unreadable 2 retired-osc "an osc command"
+case_ comment-request-two-mixed 2 retired-osc "an osc command"
+case_ comment-request-id-unknown 2 retired-osc "an osc command"
+case_ comment-api-package-own 2 retired-osc "an osc command"
+case_ comment-package-create 2 retired-osc "an osc command"
+case_ comment-request-group 2 retired-osc "an osc command"
+case_ comment-request-no-action 2 retired-osc "an osc command"
+case_ comment-api-full-host 2 retired-osc "an osc command"
+case_ comment-api-query 2 retired-osc "an osc command"
 # The requester replies to its reviewers on a request it filed, whoever maintains the target.
-case_ comment-reply-own-request   0 - ""
-case_ comment-api-own-request     0 - ""
-ask_ comment-own-and-others       comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
+case_ comment-reply-own-request   2 retired-osc "an osc command"
+case_ comment-api-own-request     2 retired-osc "an osc command"
+case_ comment-own-and-others 2 retired-osc "an osc command"
 case_ comment-tea-comments-list 0 - ""
 case_ comment-tea-list-read       0 - ""
 case_ comment-tea-review-comments 0 - ""
@@ -1736,7 +1767,7 @@ ask_ comment-tea-hash-in-word     comment "tea comment: it is not one literal te
 ask_ comment-tea-brace            comment "tea comment: it is not one literal tea command alone"
 ask_ comment-tea-glob             comment "tea comment: it is not one literal tea command alone"
 # env -a NAME runs the command under another argv[0]; the command is still judged.
-case_ env-argv0-osc-yes 2 osc-yes "an osc request with --yes"
+case_ env-argv0-osc-yes 2 retired-osc "an osc command"
 ask_ comment-tea-triple-dash      comment "tea comment: tea's option ---repo=AI/mistral-vibe is not judged"
 ask_ comment-tea-case             comment "tea comment: lua/lua-y is maintained by other"
 ask_ comment-tea-wrong-repo       comment "tea comment: cannot tell which repository lua/lua-z#5 is in"
@@ -1764,14 +1795,14 @@ ask_ comment-bash-c             comment "tea comment"
 # request message, inline, from a file or as a JSON body; one the guard cannot read too.
 case_ comment-merge-ok-tea      2 bot-directive 'the tea comment body with a bot directive ("merge ok")'
 case_ comment-merge-ok-sentence 0 - ""
-case_ comment-merge-ok-osc-file 2 bot-directive 'the osc api body with a bot directive ("merge ok")'
-case_ comment-merge-ok-osc-cat  2 bot-directive 'the osc comment create body with a bot directive ("merge ok")'
+case_ comment-merge-ok-osc-file 2 retired-osc 'an osc command'
+case_ comment-merge-ok-osc-cat  2 retired-osc 'an osc command'
 case_ comment-group-approve     2 bot-directive '("@qa-team : approve")'
 case_ comment-group-approve-api 2 bot-directive '("@factory-maintainers : approve")'
-case_ comment-body-unreadable   2 bot-directive-unknown "the osc comment create body"
+case_ comment-body-unreadable   2 retired-osc "an osc command"
 case_ approve-message-merge-ok  2 bot-directive 'the git-obs pr review body with a bot directive ("Merge OK")'
 case_ tea-approve-merge-ok      2 bot-directive 'the tea pulls approve body with a bot directive ("merge ok")'
-case_ accept-message-merge-ok   2 bot-directive 'the osc rq accept message with a bot directive ("merge ok")'
+case_ accept-message-merge-ok   2 retired-osc 'an osc command'
 # tea joins a body's words; a clause that starts with it counts; git obs is git-obs; a
 # sentence about someone's approval is no group directive.
 case_ comment-merge-ok-split    2 bot-directive 'with a bot directive ("merge ok")'
@@ -1784,12 +1815,12 @@ case_ comment-merge-ok-numbered 2 bot-directive 'with a bot directive ("merge ok
 case_ comment-git-obs-space     2 bot-directive 'with a bot directive ("merge ok")'
 case_ comment-group-human       0 - ""
 # An ask never outweighs a refusal elsewhere in the call.
-case_ comment-deny-wins         2 osc-yes "an osc request with --yes"
+case_ comment-deny-wins         2 retired-osc "an osc command"
 # osc's options, its slash-split operands, a held subcommand; git obs; a closing comment.
 # gh is not judged: GitHub is outside the packaging forges (the gh cases above and below run).
-ask_ comment-osc-option-first   comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ comment-osc-slash          comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
-ask_ comment-osc-sub-variable   comment "osc comment create: request 1390007: science:machinelearning/dlib is maintained by other"
+case_ comment-osc-option-first 2 retired-osc "an osc command"
+case_ comment-osc-slash 2 retired-osc "an osc command"
+case_ comment-osc-sub-variable 2 retired-osc "an osc command"
 case_ comment-gh-repo-first      0 - ""
 ask_ comment-git-obs-subcommand comment "git-obs pr comment"
 case_ comment-gh-pr-close        0 - ""
@@ -1800,62 +1831,64 @@ case_ comment-gh-pr-close-plain 0 - ""
 ask_ comment-git-obs-close-plain others-request "git-obs pr close AI/mistral-vibe#3: opened by other"
 
 echo "--- an accept or a forward is unattended only where autoforward-gate.sh says ELIGIBLE"
-case_ accept-own-eligible       0 - ""
-case_ accept-git-eligible       2 incoming-accept "accepting request 1390020 by other: no incoming review is recorded: review it first"
-case_ accept-own-var            0 - ""
+case_ accept-own-eligible       2 retired-osc "an osc command"
+case_ accept-git-eligible       2 retired-osc "an osc command"
+case_ accept-own-var            2 retired-osc "an osc command"
 # Someone else's request is accepted only through its incoming review (the cases of
 # contributors' submissions, below), and one the guard cannot read may be someone else's.
-case_ accept-others-request     2 incoming-accept "accepting request 1390002 by other: openSUSE:Factory develops foo in no project, not devel:x"
-ask_ accept-not-yours-package   accept-forward "science:machinelearning/dlib is maintained by other"
-ask_ accept-reviewer            accept-forward "a reviewer role is set (qa-team)"
-case_ accept-unreadable         2 incoming-accept "cannot read request 1390005, nor who filed it"
-case_ accept-no-action          2 incoming-accept "accepting request 1390008 by other: it holds 0 actions"
-case_ accept-api-no-action      2 incoming-accept "accepting request 1390008 by other: it holds 0 actions"
-case_ accept-group-maintained   2 incoming-accept "accepting request 1390009 by other: devel:g/grp is maintained by ml-team"
-ask_ accept-delete-request      accept-forward "request 1390006 is no plain submit"
-case_ accept-unknown-id         2 incoming-accept "cannot tell which request osc request accept takes"
-ask_ forward-not-yours          accept-forward "science:machinelearning/dlib is maintained by other"
-ask_ forward-wrong-devel        accept-forward "openSUSE:Factory develops foo2 in devel:y"
-case_ forward-link-into-here    0 - ""
-ask_ forward-project-reviewer   accept-forward "a reviewer role is set (qa-team)"
-case_ forward-unowned-project   0 - ""
-ask_ forward-meta-fails         accept-forward "cannot read /source/devel:x/foo6/_meta"
-case_ forward-from-checkout     0 - ""
+case_ accept-others-request     2 retired-osc "an osc command"
+case_ accept-others-maintained 2 retired-osc "an osc command"
+case_ accept-two-own           2 retired-osc "an osc command"
+case_ accept-not-yours-package 2 retired-osc "an osc command"
+case_ accept-reviewer 2 retired-osc "an osc command"
+case_ accept-unreadable         2 retired-osc "an osc command"
+case_ accept-no-action          2 retired-osc "an osc command"
+case_ accept-api-no-action      2 retired-osc "an osc command"
+case_ accept-group-maintained   2 retired-osc "an osc command"
+case_ accept-delete-request 2 retired-osc "an osc command"
+case_ accept-unknown-id         2 retired-osc "an osc command"
+case_ forward-not-yours 2 retired-osc "an osc command"
+case_ forward-wrong-devel 2 retired-osc "an osc command"
+case_ forward-link-into-here    2 retired-osc "an osc command"
+case_ forward-project-reviewer 2 retired-osc "an osc command"
+case_ forward-unowned-project   2 retired-osc "an osc command"
+case_ forward-meta-fails 2 retired-osc "an osc command"
+case_ forward-from-checkout     2 retired-osc "an osc command"
 # osc's own option table: -i and -G, --user are no request ids; the verb, as the call sets it.
-case_ accept-interactive-flag   2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-group-option       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-user-option        2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-verb-variable      2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-approve            2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-ask_ accept-approvenew          accept-forward "osc rq approvenew"
-ask_ accept-review-alias        accept-forward "accepting request 1390007: science:machinelearning/dlib is maintained by other"
-case_ accept-review-own-eligible 0 - ""
-ask_ accept-review-decline      accept-forward "osc review decline"
-ask_ accept-decline             accept-forward "osc rq decline"
-case_ accept-api-accepted       2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-api-own            0 - ""
-ask_ accept-api-declined        accept-forward "a decline through osc api"
-case_ accept-revoke             0 - ""
-ask_ osc-sub-unknown            accept-forward "which osc command"
+case_ accept-interactive-flag   2 retired-osc "an osc command"
+case_ accept-group-option       2 retired-osc "an osc command"
+case_ accept-user-option        2 retired-osc "an osc command"
+case_ accept-verb-variable      2 retired-osc "an osc command"
+case_ accept-approve            2 retired-osc "an osc command"
+case_ accept-approvenew 2 retired-osc "an osc command"
+case_ accept-review-alias 2 retired-osc "an osc command"
+case_ accept-review-own-eligible 2 retired-osc "an osc command"
+case_ accept-review-decline 2 retired-osc "an osc command"
+case_ accept-decline 2 retired-osc "an osc command"
+case_ accept-api-accepted       2 retired-osc "an osc command"
+case_ accept-api-own            2 retired-osc "an osc command"
+case_ accept-api-declined 2 retired-osc "an osc command"
+case_ accept-revoke             2 retired-osc "an osc command"
+case_ osc-sub-unknown 2 retired-osc "an osc command"
 # Closing someone else's request declines their work, and --force skips its reviews:
 # the user's call. The user's own requests run as before.
-ask_ supersede-others           others-request "osc rq supersede 1390002: filed by other"
-case_ supersede-own             0 - ""
-ask_ revoke-others              others-request "osc rq revoke 1390002: filed by other"
-case_ revoke-own                0 - ""
-ask_ reopen-others              others-request "osc rq reopen 1390007: filed by other"
-ask_ sr-s-others                others-request "osc sr -s 1390002: filed by other"
-ask_ sr-supersede-long-others   others-request "osc sr -s 1390007: filed by other"
-ask_ revoke-api-others          others-request "osc api newstate=revoked 1390002: filed by other"
-case_ accept-force-others       2 incoming-accept "accepting request 1390002 by other: --force would skip its open reviews"
-case_ accept-force-own          0 - ""
-case_ accept-or-revoke-others   2 incoming-accept "accepting request 1390002 by other: --or-revoke would skip its open reviews"
-ask_ mr-s-others                others-request "osc mr -s 1390002: filed by other"
+case_ supersede-others 2 retired-osc "an osc command"
+case_ supersede-own             2 retired-osc "an osc command"
+case_ revoke-others 2 retired-osc "an osc command"
+case_ revoke-own                2 retired-osc "an osc command"
+case_ reopen-others 2 retired-osc "an osc command"
+case_ sr-s-others 2 retired-osc "an osc command"
+case_ sr-supersede-long-others 2 retired-osc "an osc command"
+case_ revoke-api-others 2 retired-osc "an osc command"
+case_ accept-force-others       2 retired-osc "an osc command"
+case_ accept-force-own          2 retired-osc "an osc command"
+case_ accept-or-revoke-others   2 retired-osc "an osc command"
+case_ mr-s-others 2 retired-osc "an osc command"
 # The API takes its parameters from the body too, and a ; separates them.
-ask_ revoke-api-body            others-request "osc api newstate=revoked 1390002: filed by other"
-ask_ revoke-api-semicolon       others-request "osc api newstate=revoked 1390002: filed by other"
-case_ accept-api-body           2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-ask_ decline-api-body           accept-forward "a decline through osc api"
+case_ revoke-api-body 2 retired-osc "an osc command"
+case_ revoke-api-semicolon 2 retired-osc "an osc command"
+case_ accept-api-body           2 retired-osc "an osc command"
+case_ decline-api-body 2 retired-osc "an osc command"
 # Closing, or any API write to, a PR someone else opened; your own PRs run.
 ask_ pr-close-others-tea        others-request "tea pulls close perl/perl-Foo#2: opened by other"
 ask_ pr-close-others-git-obs    others-request "git-obs pr close perl/perl-Foo#2: opened by other"
@@ -1871,202 +1904,44 @@ ask_ tea-pr-reopen-others       others-request "tea pulls reopen perl/perl-Foo#2
 ask_ gitobs-pr-reopen-others    others-request "git-obs pr reopen perl/perl-Foo#2: opened by other"
 case_ tea-issue-close-own       0 - ""
 # Every lookup goes to the instance osc -A names: here, one with none of the stubs.
-ask_ forward-apiurl             accept-forward "cannot read"
-# The same fixtures for both: autoforward-gate.sh and the guard agree on each.
-mkdir -p "$work/afg/bin"
-cat > "$work/afg/bin/osc" <<'OSC'
-#!/bin/bash
-case $1 in
-  develproject) [ -f "$FIX/devel/$3" ] || exit 1; cat "$FIX/devel/$3" ;;
-  ls) exit 0 ;;
-  api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=' '____')"
-       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-       [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
-       cat "$f" ;;
-  *) exit 99 ;;
-esac
-OSC
-chmod +x "$work/afg/bin/osc"
-# git-obs reads the project git's files from $FIX/gitea, named as pr-guard's stubs are.
-cat > "$work/afg/bin/git-obs" <<'GITOBS'
-#!/bin/bash
-f="$FIX/gitea/$(printf %s "${5#/}" | tr / _)"
-[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
-cat "$f"
-GITOBS
-chmod +x "$work/afg/bin/git-obs"
-agree="$(python3 - "$work/afg" "$REPO/skills/opensuse-packaging/scripts" "$GUARD" <<'PY'
-import json, os, subprocess, sys
-root, scripts, guard = sys.argv[1:]
-me = '<person userid="tester" role="maintainer"/>'
-other = '<person userid="other" role="maintainer"/>'
-factory = '<package name="foo"><devel project="%s" package="foo"/></package>'
-GIT = "https://src.opensuse.org/g/_ObsPrj.git"
-CMT = "<!-- <scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync> -->"
-EVIL = {"repos_evil__ObsPrj_raw__maintainership.json": '{"foo": ["tester"]}'}
-variants = {
-    "eligible": {},
-    "project-maintainer": {"pkg": "", "prj": me},
-    "reviewer": {"pkg": me + '<person userid="rev" role="reviewer"/>'},
-    "project-reviewer": {"prj": '<group groupid="qa" role="reviewer"/>'},
-    "not-yours": {"pkg": other},
-    "unmaintained": {"pkg": ""},
-    "group-maintainer": {"pkg": '<group groupid="team" role="maintainer"/>', "prj": me},
-    "wrong-devel": {"devel": "devel:b"},
-    "link-into-here": {"devel": "devel:b", "link": '<link project="devel:a"/>'},
-    "link-other-package": {"devel": "devel:b", "link": '<link project="devel:a" package="bar"/>'},
-    "not-in-factory": {"devel": None},
-    "unreadable": {"pkg": "@ERR"},
-    "project-unreadable": {"prjmeta": "@ERR"},
-    # a project kept in git (hwdata in devel:openSUSE:Factory): a stub _meta,
-    # the roles in its project git; want: the verdict both must reach
-    "git-eligible": {"git": {"foo": ["tester"], "": ["boss"]}, "want": 0},
-    "git-not-listed": {"git": {"foo": ["other"], "": ["tester"]}, "want": 4},
-    "git-project-list": {"git": {"": ["tester"]}, "want": 0},
-    "git-reviewer": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": ["-qa",],}', "want": 3},
-    "git-unreadable": {"git": '{"foo": ["tester"', "want": 5},
-    "git-absent": {"git": None, "want": 5},
-    # read at the ref <scmsync> names: the default branch says otherwise
-    "git-ref": {"git": {"foo": ["tester"]}, "ref": "devel", "url": GIT + "#devel",
-                "default": {"foo": ["other"]}, "want": 0},
-    "git-ref-unread": {"git": {"foo": ["tester"]}, "url": GIT + "#devel", "want": 5},
-    "git-ref-odd": {"git": {"foo": ["tester"]}, "url": GIT + "#a..b", "want": 5,
-                    "why": "whose ref this cannot read"},
-    # plain names only, and no OBS fallback for a <scmsync> neither can read
-    "git-login-newline": {"git": {"foo": ["tester\n"]}, "wf": '{"Reviewers": ["qa-bot"]}', "want": 5},
-    "git-login-junk": {"git": {"foo": ["tester", "a\nb"]}, "want": 5, "why": "_maintainership.json did not parse"},
-    "git-reviewer-newline": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": ["\\nqa"]}', "want": 5,
-                             "why": "workflow.config did not parse"},
-    "git-url-space": {"git": {"foo": ["tester"]}, "url": GIT + "#main x", "want": 5,
-                      "why": "whose maintainers this cannot read"},
-    # XML reads these URLs, autoforward-gate.sh's sed does not: neither reads them
-    "git-url-cdata": {"git": {"foo": ["tester"]}, "url": "<![CDATA[" + GIT + "]]>", "want": 5,
-                      "why": "a <scmsync> that is not plain text"},
-    "git-url-comment": {"git": {"foo": ["tester"]}, "url": GIT + "<!-- x -->", "want": 5,
-                        "why": "a <scmsync> that is not plain text"},
-    # sed reads the last plain <scmsync>, a commented one too: never one beside a comment
-    "git-url-commented": {"git": {"foo": ["other"]}, "gitea": EVIL, "want": 5, "why": "or not alone",
-                          "gmeta": '<project name="devel:a"><scmsync>%s</scmsync>%s%s</project>' % (GIT, CMT, me)},
-    "obs-url-commented": {"pkg": other, "gitea": EVIL, "want": 5, "why": "or not alone",
-                          "prjmeta": '<project name="devel:a">%s<person userid="boss" role="maintainer"/></project>' % CMT},
-    "git-url-twice": {"git": {"foo": ["other"]}, "gitea": EVIL, "want": 5, "why": "or not alone",
-                      "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><scmsync>%s</scmsync>%s</project>'
-                               % (GIT, "https://src.opensuse.org/evil/_ObsPrj", me)},
-    "git-url-doubled": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
-                        "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><scmsync>%s</scmsync></project>'
-                                 % (GIT, GIT)},
-    "git-url-repeated": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
-                         "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><!-- <scmsync>%s</scmsync> --></project>'
-                                  % (GIT, GIT)},
-    # a CDATA section can hold a <scmsync> sed reads; any comment or CDATA is never read beside one
-    "obs-url-cdata": {"pkg": other, "gitea": EVIL, "want": 5, "why": "or not alone",
-                      "prjmeta": '<project name="devel:a"><description><![CDATA[<scmsync>https://src.opensuse.org/evil/_ObsPrj'
-                                 '</scmsync>]]></description><person userid="boss" role="maintainer"/></project>'},
-    "git-url-comment-beside": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
-                               "gmeta": '<project name="devel:a"><scmsync>%s</scmsync><!-- note --></project>' % GIT},
-    "git-url-cdata-beside": {"git": {"foo": ["tester"]}, "want": 5, "why": "or not alone",
-                             "gmeta": '<project name="devel:a"><scmsync>%s</scmsync>'
-                                      '<description><![CDATA[x]]></description></project>' % GIT},
-    "git-reviewers-false": {"git": {"foo": ["tester"]}, "wf": '{"Reviewers": false}', "want": 5,
-                            "why": "workflow.config did not parse"},
-    "git-entry-false": {"git": {"": ["tester"], "foo": False}, "want": 5},
-}
-out = []
-for name, v in variants.items():
-    d = os.path.join(root, name)
-    obs, api = os.path.join(d, "obs"), os.path.join(d, "meta", "api")
-    for x in (obs, api, os.path.join(d, "devel"), os.path.join(d, "gitea")):
-        os.makedirs(x)
-    def both(path, text):
-        for base in (obs, api):
-            open(os.path.join(base, path.translate(str.maketrans("/?&=", "____"))), "w").write(text)
-    pkg = v.get("pkg", me)
-    both("/source/devel:a/foo/_meta", pkg if pkg == "@ERR" else '<package name="foo">%s</package>' % pkg)
-    both("/source/devel:a/_meta", v.get("prjmeta") or '<project name="devel:a">%s</project>' % v.get("prj", ""))
-    if "git" in v:
-        both("/source/devel:a/foo/_meta",
-             '<package name="foo"><scmsync>https://src.opensuse.org/g/foo#1</scmsync></package>')
-        both("/source/devel:a/_meta",
-             '<project name="devel:a"><scmsync>%s</scmsync>%s</project>' % (v.get("url", GIT), me))
-        git = v["git"] if isinstance(v["git"], str) else json.dumps(v["git"])
-        q = "?ref=" + v["ref"] if "ref" in v else ""
-        if v["git"] is not None:
-            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json" + q), "w").write(git)
-        if "default" in v:
-            open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw__maintainership.json"), "w").write(
-                json.dumps(v["default"]))
-        open(os.path.join(d, "gitea", "repos_g__ObsPrj_raw_workflow.config" + q), "w").write(
-            v.get("wf", '{"Workflows": ["pr"],}'))
-    if "gmeta" in v:
-        both("/source/devel:a/_meta", v["gmeta"])
-    for f, text in v.get("gitea", {}).items():
-        open(os.path.join(d, "gitea", f), "w").write(text)
-    devel = v.get("devel", "devel:a")
-    if devel:
-        open(os.path.join(d, "devel", "foo"), "w").write(devel + "/foo\n")
-        both("/source/openSUSE:Factory/foo/_meta", factory % devel)
-        open(os.path.join(d, "meta", "foo.xml"), "w").write(factory % devel)
-    if "link" in v:
-        both("/source/%s/foo/_link" % devel, v["link"])
-    env = dict(os.environ, FIX=d, PATH=os.path.join(root, "bin") + ":" + os.environ["PATH"])
-    rc = subprocess.run(["bash", os.path.join(scripts, "autoforward-gate.sh"), "devel:a", "foo",
-                         "--user", "tester"], env=env, capture_output=True).returncode
-    ev = {"tool_name": "Bash", "tool_input": {"command":
-          "osc sr devel:a foo openSUSE:Factory -m 'Update foo to 1.1: fixes.'"}}
-    g = subprocess.run(["python3", guard], input=json.dumps(ev), text=True, capture_output=True,
-                       env=dict(os.environ, PR_GUARD_META_DIR=os.path.join(d, "meta"),
-                                PR_GUARD_GITEA_DIR=os.path.join(d, "gitea"),
-                                PR_GUARD_OBS_USER="tester"))
-    asked = "ASK [accept-forward]" in g.stdout
-    if g.returncode != 0 or (rc == 0) == asked or rc != v.get("want", rc):
-        out.append("%s(gate=%d guard=%s)" % (name, rc, "ask" if asked else g.returncode))
-    elif v.get("why", "") not in g.stdout:  # the guard's reason, where only it differs
-        out.append("%s(guard did not say %r)" % (name, v["why"]))
-print(len(variants), " ".join(out))
-PY
-)"
-[ -n "$agree" ] && [ "${agree#* }" = "" ] && pass "the guard's ELIGIBLE matches autoforward-gate.sh's (${agree%% *} fixtures)" \
-  || fail "the guard and autoforward-gate.sh disagree: ${agree#* }"
+case_ forward-apiurl 2 retired-osc "an osc command"
+# No agreement check with autoforward-gate.sh anymore: that gate judged the
+# retired tool's submit requests, and the guard refuses every call of it
+# outright, so there is nothing to agree on. The plain form is covered by
+# osc-sr-factory-plain below.
 
 echo "--- a contributor's submission: accepted or approved through its incoming review, on the user's go"
 # Without a review recorded, refused; with PASS or FIXABLE of what OBS holds now, asked,
 # the review and the facts checked again in the ask.
-case_ accept-others-unreviewed  2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded: review it first"
-ask_ accept-pass                incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS (key 0123456789ab"
-ask_ accept-pass                incoming-accept "source and target srcmd5 as reviewed, devel:inc is Factory's devel project"
-ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then asks until your follow-up is in devel"
-# The build the review recorded is shown in the ask as of the review, green or not,
-# and never required.
-ask_ accept-pass                incoming-accept "0 findings); build at review: green on 16.0/aarch64, openSUSE_Tumbleweed/x86_64 in $h:contrib:branches:devel:inc"
-ask_ accept-red-build           incoming-accept "accepting request 1391019 by contrib into devel:inc/incred: review PASS (key 0123456789ab, recorded 2026-11-22T10:00:00Z, 0 findings); build at review: no green build from the request's sources"
-ask_ accept-api-pass            incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS"
+case_ accept-others-unreviewed  2 retired-osc "an osc command"
+case_ accept-pass 2 retired-osc "an osc command"
+case_ accept-pass 2 retired-osc "an osc command"
+case_ accept-fixable 2 retired-osc "an osc command"
+case_ accept-api-pass 2 retired-osc "an osc command"
 # A review accept is the user as a reviewer: asked as before unless ELIGIBLE, on
 # Factory's packages too, whoever filed the request.
-case_ accept-review-accept-pass 0 - ""
-ask_ accept-review-factory      accept-forward "accepting request 1391014: openSUSE:Factory/incfac is maintained by boss"
-ask_ accept-api-review-factory  accept-forward "accepting request 1391014: openSUSE:Factory/incfac is maintained by boss"
-case_ accept-block              2 incoming-accept "accepting request 1391003 by contrib: its review says BLOCK"
-case_ accept-files-moved        2 incoming-accept "accepting request 1391004 by contrib: its source is not the one reviewed (srcmd5 moved)"
-case_ accept-target-moved       2 incoming-accept "accepting request 1391005 by contrib: the target is not as reviewed"
-case_ accept-no-rev             2 incoming-accept "accepting request 1391006 by contrib: its source names no revision"
-# A _link source to another package (1391007: in the target's project; 1391015: the same
-# name in another project) is pinned only by its expanded srcmd5 at that rev: another
-# srcmd5 may be the link's own, whose expansion moves with the package it links to.
-case_ accept-link-rev           2 incoming-accept "accepting request 1391007 by contrib: its source is a _link and rev 5 not its expanded srcmd5"
-case_ accept-link-rev-moved     2 incoming-accept "accepting request 1391015 by contrib: its source is a _link and rev 0123456789abcdef0123456789abcdef not its expanded srcmd5"
-ask_ accept-link-pinned         incoming-accept "accepting request 1391016 by contrib into devel:inc/inclinkok: review PASS"
-# A _link to the target itself, based on the target's srcmd5 now, expands to what the
-# target holds: any rev passes, the target's srcmd5 still checked against the review's.
-# One based on an older target is pinned only by its expanded srcmd5.
-ask_ accept-link-target-rev     incoming-accept "accepting request 1391020 by contrib into devel:inc/inclinktgt: review PASS"
-case_ accept-link-target-moved  2 incoming-accept "accepting request 1391021 by contrib: the target is not as reviewed"
-case_ accept-link-target-stale  2 incoming-accept "accepting request 1391022 by contrib: its source is a _link and rev 5 not its expanded srcmd5"
-case_ accept-multi-action       2 incoming-accept "accepting request 1391008 by contrib: it holds 2 actions, not one submit"
-case_ accept-options            2 incoming-accept "accepting request 1391009 by contrib: it sets updatelink"
-case_ accept-home-target        2 incoming-accept "accepting request 1391010 by contrib: it targets home"
+case_ accept-review-accept-pass 2 retired-osc "an osc command"
+case_ accept-review-factory 2 retired-osc "an osc command"
+case_ accept-api-review-factory 2 retired-osc "an osc command"
+case_ accept-block              2 retired-osc "an osc command"
+case_ accept-files-moved        2 retired-osc "an osc command"
+case_ accept-target-moved       2 retired-osc "an osc command"
+case_ accept-no-rev             2 retired-osc "an osc command"
+case_ accept-link-rev           2 retired-osc "an osc command"
+# A _link source is pinned only by its expanded srcmd5 at that rev: another srcmd5 may
+# be the link's own, whose expansion moves with the package it links to.
+case_ accept-link-rev-moved     2 retired-osc "an osc command"
+case_ accept-red-build 2 retired-osc "an osc command"
+case_ accept-link-target-rev 2 retired-osc "an osc command"
+case_ accept-link-target-moved 2 retired-osc "an osc command"
+case_ accept-link-target-stale 2 retired-osc "an osc command"
+case_ accept-link-pinned 2 retired-osc "an osc command"
+case_ accept-multi-action       2 retired-osc "an osc command"
+case_ accept-options            2 retired-osc "an osc command"
+case_ accept-home-target        2 retired-osc "an osc command"
 # The stamp's key is the whole sha256: the 48-bit key of old is no key.
-case_ accept-key12              2 incoming-accept "accepting request 1391018 by contrib: its review record holds a malformed field" HOME="$work/oldkey"
-case_ accept-from-reviewer-agent 2 incoming-self "accepting request 1391001 from agent changes-review"
+case_ accept-key12              2 retired-osc "an osc command" HOME="$work/oldkey"
+case_ accept-from-reviewer-agent 2 retired-osc "an osc command"
 # A devel PR: git-obs pr review approve --commit of the head reviewed, in the devel
 # organisation the project git syncs from; tea's approve keeps asking as a comment.
 ask_ approve-git-obs-pass       incoming-approve "approving incorg/incgit#5 by contrib at 555555555555: review PASS"
@@ -2087,12 +1962,17 @@ case_ approve-from-reviewer-agent 2 incoming-self "git-obs pr review approve fro
 ask_ approve-tea-asks           comment "tea pulls approve"
 # A comment on a contributor's item in a package the user maintains runs when its text is
 # the one the review recorded (its sha256), and asks otherwise.
-case_ comment-foreign-stamped   0 - ""
+case_ comment-foreign-stamped   2 retired-osc "an osc command"
 case_ comment-tea-foreign-stamped 0 - ""
-ask_ comment-foreign-unstamped  comment "osc comment create: request 1391011 by contrib: no incoming review is recorded"
-ask_ comment-foreign-other-text comment "osc comment create: request 1391001 by contrib: not the comment its review recorded"
+case_ comment-foreign-unstamped 2 retired-osc "an osc command"
+case_ comment-foreign-other-text 2 retired-osc "an osc command"
 ask_ comment-tea-foreign-other-text comment "tea comment: incorg/incgit#5 by contrib: not the comment its review recorded"
-# A tea comment takes a recorded text of several lines from a file as one "$(cat FILE)"
+case_ comment-from-reviewer-agent 2 retired-osc "an osc command"
+# An accepted FIXABLE review holds the Factory forward until devel holds the follow-up.
+case_ forward-fixable-pending   2 retired-osc "an osc command"
+case_ forward-fixable-pending-git 2 retired-osc "an osc command"
+case_ forward-after-followup    2 retired-osc "an osc command"
+case_ forward-after-followup    2 retired-osc "an osc command" HOME="$work/badhome"
 # word: read now, compared by its sha256, the tea command still alone in the call.
 case_ comment-tea-file-stamped  0 - ""
 ask_ comment-tea-file-other-text comment "tea comment: incorg/incgit#12 by contrib: not the comment its review recorded"
@@ -2100,28 +1980,17 @@ case_ comment-tea-file-written  2 bot-directive-unknown "cannot read the tea com
 ask_ comment-tea-file-two-subs  comment "tea comment: it is not one literal tea command alone"
 # Unquoted, bash would split and glob what cat prints: tea would post other text.
 ask_ comment-tea-file-unquoted  comment "tea comment: it is not one literal tea command alone"
-# The FILE is placed in the event's directory and its links followed there; one through
-# /proc or /dev (/proc/self/cwd is the reader's own directory) is refused, for osc too.
 # The guard runs elsewhere (-C), as the opencode plugins run it.
 case_ comment-tea-file-proc-cwd 2 bot-directive-unknown "cannot read the tea comment body" -C "$W"
 case_ comment-tea-file-proc-link 2 bot-directive-unknown "cannot read the tea comment body" -C "$W"
-case_ comment-osc-file-proc-cwd 2 bot-directive-unknown "cannot read the osc comment create body" -C "$W"
-case_ comment-osc-file-stamped  0 - ""
+case_ comment-osc-file-proc-cwd 2 retired-osc "an osc command" -C "$W"
+case_ comment-osc-file-stamped 2 retired-osc "an osc command"
 # A .. after a link in the event's directory climbs from where the link leads, as cat's.
 ask_ comment-tea-file-dotdot    comment "tea comment: incorg/incgit#12 by contrib: not the comment its review recorded"
-ask_ comment-osc-file-dotdot    comment "osc comment create: request 1391001 by contrib: not the comment its review recorded"
-case_ comment-from-reviewer-agent 2 incoming-self "osc comment create from agent incoming-review"
-# An accepted FIXABLE review asks before the Factory forward until devel holds the
-# follow-up, or Factory already holds what was accepted (a _link, and what OBS adds to
-# a package it syncs from git, aside); a record or a lookup it cannot read refuses.
-ask_ forward-fixable-pending    incoming-hold "forwarding devel:inc/incheld to Factory: request 1391012 by contrib: its review was FIXABLE, its follow-up fix is not in devel yet"
-ask_ forward-fixable-pending-git incoming-hold "forwarding devel:incgit/incgit to Factory: PR incorg/incgit#8 by contrib: its review was FIXABLE"
-case_ forward-after-followup    0 - ""
-case_ forward-fixable-in-factory 0 - ""
-case_ forward-fixable-in-factory-git 0 - ""
-case_ forward-fixable-factory-err 2 incoming-hold "forwarding devel:inc/incfacerr to Factory: cannot read the files of openSUSE:Factory/incfacerr"
-# The refusal names the record by its path (spelled in part: the guard reads this suite).
-case_ forward-after-followup    2 incoming-hold "obs/1391099.json: its review record does not parse" HOME="$work/badhome"
+case_ comment-osc-file-dotdot 2 retired-osc "an osc command"
+case_ forward-fixable-in-factory 2 retired-osc "an osc command"
+case_ forward-fixable-in-factory-git 2 retired-osc "an osc command"
+case_ forward-fixable-factory-err 2 retired-osc "an osc command"
 # Only the incoming-review agent records a review; a suite hands the recorder its option
 # from a fixture file, which only the agent's own command line may not do.
 case_ incoming-record-main      2 incoming-self "incoming-review.sh --record from the main session"
@@ -2137,13 +2006,13 @@ case_ reviewer-rpmspec-bare     2 incoming-self "rpmspec from agent incoming-rev
 case_ reviewer-rpm-specfile     2 incoming-self "rpm from agent incoming-review"
 case_ reviewer-rpmbuild         2 incoming-self "rpmbuild from agent incoming-review"
 case_ reviewer-quilt            2 incoming-self "quilt setup from agent incoming-review"
-case_ reviewer-osc-build        2 incoming-self "osc build from agent incoming-review"
-case_ reviewer-osc-service      2 incoming-self "osc service runall from agent incoming-review"
+case_ reviewer-osc-build        2 retired-osc "an osc command"
+case_ reviewer-osc-service      2 retired-osc "an osc command"
 case_ reviewer-gate             2 incoming-self "gate.sh from agent incoming-review"
 case_ reviewer-target-gate      2 incoming-self "target-gate.sh from agent incoming-review"
 case_ reviewer-reads            0 - ""
 case_ reviewer-rpmspec-main     0 - ""
-case_ reviewer-osc-build-main   0 - ""
+case_ reviewer-osc-build-main   2 retired-osc "an osc command"
 # The whole rpm family by name or through a link (rpmlint runs rpm -q --specfile), a
 # checkout or update that runs the source services, a shell's options before its script,
 # and the skill's scripts that build or sync.
@@ -2151,33 +2020,32 @@ case_ reviewer-rpmquery         2 incoming-self "rpmquery from agent incoming-re
 case_ reviewer-rpm-query        2 incoming-self "rpm from agent incoming-review"
 case_ reviewer-rpmlint          2 incoming-self "rpmlint from agent incoming-review"
 case_ reviewer-rpm-link         2 incoming-self "rpx (rpmspec) from agent incoming-review"
-case_ reviewer-osc-co-s         2 incoming-self "osc co with the source services from agent incoming-review"
-case_ reviewer-osc-co-cluster   2 incoming-self "osc co with the source services from agent incoming-review"
-case_ reviewer-osc-up-long      2 incoming-self "osc up with the source services from agent incoming-review"
-case_ reviewer-osc-co-plain     0 - ""
+case_ reviewer-osc-co-s         2 retired-osc "an osc command"
+case_ reviewer-osc-co-cluster   2 retired-osc "an osc command"
+case_ reviewer-osc-up-long      2 retired-osc "an osc command"
+case_ reviewer-osc-co-plain     2 retired-osc "an osc command"
 case_ reviewer-bash-opts        2 incoming-self "gate.sh from agent incoming-review"
 case_ reviewer-pool-pr          2 incoming-self "pool-pr.sh from agent incoming-review"
 case_ reviewer-leap-sync        2 incoming-self "leap-sync.sh from agent incoming-review"
 case_ reviewer-quilt-script     2 incoming-self "quilt-setup.sh from agent incoming-review"
 # The reviewing agents decline nothing: no revoke, supersede, decline or close either.
-case_ reviewer-revoke           2 incoming-self "osc rq revoke from agent incoming-review"
-case_ reviewer-supersede        2 incoming-self "osc rq supersede from agent changes-review"
-case_ reviewer-decline          2 incoming-self "osc rq decline from agent incoming-review"
+case_ reviewer-revoke           2 retired-osc "an osc command"
+case_ reviewer-supersede        2 retired-osc "an osc command"
+case_ reviewer-decline          2 retired-osc "an osc command"
 case_ reviewer-tea-close        2 incoming-self "tea pulls close from agent changes-review"
 case_ reviewer-git-obs-close    2 incoming-self "git-obs pr close from agent incoming-review"
-case_ reviewer-api-revoke       2 incoming-self "osc api newstate=revoked from agent incoming-review"
+case_ reviewer-api-revoke       2 retired-osc "an osc command"
 # A review of a repository named like the package holds its forward unless it is shown
-# not to: a package that syncs from no repository, or from another one, asks, saying
-# which check could not be made.
-ask_ forward-hold-no-scmsync    incoming-hold-repo "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository: its review was FIXABLE, and as devel does not sync from the repository reviewed"
-ask_ forward-hold-other-org     incoming-hold-repo "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
-case_ forward-after-followup    2 incoming-hold "cannot list" HOME="$work/listless"
+# not to: a package that syncs from no repository, or from another one, refuses it.
+case_ forward-hold-no-scmsync   2 retired-osc "an osc command"
+case_ forward-hold-other-org    2 retired-osc "an osc command"
+case_ forward-after-followup    2 retired-osc "an osc command" HOME="$work/listless"
 # The incoming-review agent commits nothing (osc commit runs the local source services),
 # and its call names nothing that changes which program a name runs: PATH as a word or
 # a variable, BASH_ENV, ENV=, the hash builtin, a nameref. The main session may.
-case_ reviewer-osc-ci           2 incoming-self "osc ci from agent incoming-review"
-case_ reviewer-osc-commit       2 incoming-self "osc commit from agent incoming-review"
-case_ osc-ci-devel              0 - ""
+case_ reviewer-osc-ci 2 retired-osc "an osc command"
+case_ reviewer-osc-commit 2 retired-osc "an osc command"
+case_ osc-ci-devel 2 retired-osc "an osc command"
 for name in reviewer-path-prefix reviewer-path-export reviewer-path-for reviewer-path-subscript \
     reviewer-path-select reviewer-path-let reviewer-path-printf reviewer-path-read; do
   case_ "$name" 2 incoming-self "PATH from agent incoming-review"
@@ -2219,25 +2087,25 @@ echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshar
 # policy option without a priority.
 for n in fakeroot strace ltrace unshare flock flock-c taskset chrt prlimit systemd-run nsenter setpriv script-c \
   script-qc script-attached script-long-prefix script-after-file chrt-policy; do
-  case_ "wrap-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+  case_ "wrap-$n" 2 retired-osc "an osc command"
 done
 case_ reviewer-script-qc        2 incoming-self "rpmspec from agent incoming-review"
 # A script of the agent's named like a wrapper, run by its path, is read as a script:
 # only a bare name or an ELF binary unwraps.
 for n in flock script nohup; do
-  case_ "wrapname-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+  case_ "wrapname-$n" 2 retired-osc "an osc command"
 done
 case_ wrapname-strace           2 incoming-self "rpmspec from agent incoming-review"
 # A wrapper by a variable's path is the real one once the call's value places it: unwrapped
 # when it is an ELF binary; one only the shell can place is refused, in a script too.
-ask_ wrapvar-nice-decline        accept-forward "osc rq decline: a decline is the user's call"
+case_ wrapvar-nice-decline 2 retired-osc "an osc command"
 for n in timeout nohup-quoted env-braced in-script script-qc; do
-  case_ "wrapvar-$n" 2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded"
+  case_ "wrapvar-$n" 2 retired-osc "an osc command"
 done
 case_ wrapvar-nice-approve       2 incoming-approve "approving incorg/incgit#5: it names no --commit SHA"
 case_ wrapvar-push               2 push-pr-head "pool/tesseract-ocr#3"
 case_ wrapvar-merge              2 merge-tea "tea PR merge"
-case_ wrapvar-reviewer-flock     2 incoming-self "rpmspec from agent incoming-review"
+case_ wrapvar-reviewer-flock     2 exec-unreadable "cannot read \$D/flock (/usr/bin/flock: No such file or directory)"
 case_ wrapvar-unset-in-script    2 exec-unresolved "UNSET_DIR/flock"
 
 echo "--- the harness's own files are the user's: no agent command writes, moves or deletes them"
@@ -2280,7 +2148,7 @@ ask_ review-xargs               gate-args "gate.sh from the main session with th
 # --no-entry takes the next word, as --cleaner-deviation does: its value is no --review.
 case_ gate-no-entry-value        0 - ""
 # Each names the skill's own gate.sh by its absolute path.
-ask_ sr-unbuilt                 build-evidence "Record its build first: $S/scripts/gate.sh with --build-log" PR_GUARD_SKILL_DIR="$S"
+case_ sr-unbuilt 2 retired-osc "an osc command" PR_GUARD_SKILL_DIR="$S"
 ask_ review-array               gate-args "Write $S/scripts/gate.sh's arguments out literally" PR_GUARD_SKILL_DIR="$S"
 ask_ review-main-session        review-self "runs $S/scripts/gate.sh --review itself" PR_GUARD_SKILL_DIR="$S"
 # A substitution whose text spells --review is a review, wherever it stands.
@@ -2298,275 +2166,248 @@ case_ gate-run-loop             0 - ""
 case_ review-gate-run-main      0 - ""
 case_ review-reviewer-array     0 - ""
 echo "--- a commit or a request carries only a tree gate.sh judged, the request a reviewed one"
-ask_ ci-unstamped               gate-stamp "osc commit of devel:tools/y: no GREEN gate.sh run of this tree"
-case_ ci-scmsync                 2 scm-commit "osc commit of devel:tools/s: a scmsync checkout"
+case_ ci-unstamped 2 retired-osc "an osc command"
+case_ ci-scmsync                 2 retired-osc "an osc command"
 # The skill's scripts by their absolute path: told "Run scripts/gate.sh in the checkout",
 # agents wrote a gate of their own into the package checkout.
-ask_ ci-unstamped               gate-stamp "Run $S/scripts/gate.sh in the checkout" PR_GUARD_SKILL_DIR="$S"
-ask_ ci-unstamped               gate-stamp "Run <skill>/scripts/gate.sh in the checkout"
-ask_ ci-edited-after-gate       gate-stamp "osc commit of devel:tools/z: no GREEN gate.sh run of this tree"
-ask_ ci-project-checkout        gate-stamp "osc commit of the project checkout devel:tools"
-ask_ sr-unstamped               gate-stamp "unstamped: no GREEN gate.sh run with a recorded review PASS"
-ask_ sr-unreviewed              gate-stamp "unreviewed: no GREEN gate.sh run with a recorded review PASS"
-ask_ sr-restaged                gate-stamp "restaged: no GREEN gate.sh run with a recorded review PASS"
-ask_ sr-unbuilt                 build-evidence "osc sr of $h:tester:spark/unbuilt: the reviewed tree has no GREEN build recorded"
+case_ ci-unstamped 2 retired-osc "an osc command" PR_GUARD_SKILL_DIR="$S"
+case_ ci-unstamped 2 retired-osc "an osc command"
+case_ ci-edited-after-gate 2 retired-osc "an osc command"
+case_ ci-project-checkout 2 retired-osc "an osc command"
+case_ sr-unstamped 2 retired-osc "an osc command"
+case_ sr-unreviewed 2 retired-osc "an osc command"
+case_ sr-restaged 2 retired-osc "an osc command"
+case_ sr-unbuilt 2 retired-osc "an osc command"
 # A tree gated under --no-entry goes to a devel project, never to openSUSE:Factory: its
 # factory-auto declines a request with no new .changes entry whatever the reason.
-ask_ sr-factory-no-entry        gate-stamp "osc sr of devel:tools/quiet: its gate.sh run waived the .changes entry (--no-entry)"
-case_ sr-devel-no-entry         0 - ""
+case_ sr-factory-no-entry 2 retired-osc "an osc command"
+case_ sr-devel-no-entry         2 retired-osc "an osc command"
 # gate.sh --obs-build judges the Factory/Tumbleweed repos: that build covers a request to
 # Factory or the devel project, another target only through the repos --repos added.
-case_ sr-obs-factory            0 - ""
-case_ sr-obs-devel              0 - ""
-ask_ sr-obs-factory-leap        build-evidence "osc sr of devel:tools/obsfac: its OBS build judged no repo of openSUSE:Leap:16.0"
-ask_ sr-obs-factory-leap        build-evidence "--obs-build once OBS built the commit (it judges Tumbleweed and Leap 16 on x86_64 and aarch64; --repos and --arches REGEX add the target's)"
-case_ sr-obs-repos-leap         0 - ""
-ask_ sr-obs-repos-leap-other    build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Leap:16.1"
-case_ sr-obs-sle-sp             0 - ""
+case_ sr-obs-factory            2 retired-osc "an osc command"
+case_ sr-obs-devel              2 retired-osc "an osc command"
+case_ sr-obs-factory-leap 2 retired-osc "an osc command"
+case_ sr-obs-factory-leap 2 retired-osc "an osc command"
+case_ sr-obs-repos-leap         2 retired-osc "an osc command"
+case_ sr-obs-repos-leap-other 2 retired-osc "an osc command"
+case_ sr-obs-sle-sp             2 retired-osc "an osc command"
 # A default stamp's green Leap 16 repo covers a Leap 16 target only: a product whose
 # version the guard cannot read, or any other, needs a repo --repos added for it.
-ask_ sr-obs-default-sle15       build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15:Update"
-ask_ sr-obs-default-slfo        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLFO:Main"
-ask_ sr-obs-default-step        build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of openSUSE:Step:15-SP4"
+case_ sr-obs-default-sle15 2 retired-osc "an osc command"
+case_ sr-obs-default-slfo 2 retired-osc "an osc command"
+case_ sr-obs-default-step 2 retired-osc "an osc command"
 # A version alone is not enough: 16.0 of a non-Leap product is no Leap 16 target.
-ask_ sr-obs-default-sles16      build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLFO:Products:SLES:16.0"
+case_ sr-obs-default-sles16 2 retired-osc "an osc command"
 # No Tumbleweed build succeeded (both arches PRE-EXISTING), so Factory is not covered.
-ask_ sr-obs-nofac-factory       build-evidence "osc sr of devel:tools/obsnofac: its OBS build judged no repo of openSUSE:Factory"
-ask_ sr-obs-sle-other          build-evidence "osc sr of devel:tools/obsrepos: its OBS build judged no repo of SUSE:SLE-15-SP7:Update"
+case_ sr-obs-nofac-factory 2 retired-osc "an osc command"
+case_ sr-obs-sle-other 2 retired-osc "an osc command"
 # No written target: osc picks the link or devel target, which a Factory-judged build covers.
-case_ sr-obs-bare               0 - ""
+case_ sr-obs-bare               2 retired-osc "an osc command"
 # A GREEN build whose only reds are PRE-EXISTING (devel has them too) covers Factory and devel.
-case_ sr-obs-pre-factory        0 - ""
-case_ sr-obs-pre-devel          0 - ""
-ask_ sr-unlistable              gate-stamp "cannot read the files of $h:tester:spark/unlistable"
-ask_ sr-no-source               gate-stamp "cannot read the files of $h:tester:spark/nosuchpkg"
+case_ sr-obs-pre-factory        2 retired-osc "an osc command"
+case_ sr-obs-pre-devel          2 retired-osc "an osc command"
+case_ sr-unlistable 2 retired-osc "an osc command"
+case_ sr-no-source 2 retired-osc "an osc command"
 # A "." the guard cannot place names no project it can judge.
-case_ sr-dot-cwd-unknown        2 request-target-unknown "the working directory is unknown"
+case_ sr-dot-cwd-unknown        2 retired-osc "an osc command"
 # Judged before the call runs: anything else in it that can write may change the tree first.
-case_ ci-after-append          2 gate-sequence "this call also runs"
-case_ ci-sr-after-append       2 gate-sequence "this call also runs"
-case_ ci-after-sed             2 gate-sequence "sed"
-case_ ci-after-osc-add         2 gate-sequence "osc add"
-case_ ci-after-script          2 gate-sequence "bash"
-case_ ci-loop-edit-after       2 gate-sequence "touch"
-case_ ci-then-sr               2 gate-sequence "osc commit"
+case_ ci-after-append          2 retired-osc "an osc command"
+case_ ci-sr-after-append       2 retired-osc "an osc command"
+case_ ci-after-sed             2 retired-osc "an osc command"
+case_ ci-after-osc-add         2 retired-osc "an osc command"
+case_ ci-after-script          2 retired-osc "an osc command"
+case_ ci-loop-edit-after       2 retired-osc "an osc command"
+case_ ci-then-sr               2 retired-osc "an osc command"
 # Recording the review and committing in one call, eleven times in one session: a fault
 # the agent fixes by splitting the call, so it is refused with the order to follow.
-case_ ci-after-review            2 gate-sequence "osc commit of devel:tools/x: this call also runs bash"
-case_ ci-after-review            2 gate-sequence "osc commit alone in the next"
-case_ ci-unstamped-after-gate    2 gate-sequence "osc commit of devel:tools/y: this call also runs bash"
-case_ ci-redirect-devnull       0 - ""
-case_ accept-api-approve        2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
-case_ accept-api-slash          2 incoming-accept "accepting request 1390007 by other: science:machinelearning/dlib is maintained by other"
+case_ ci-after-review            2 retired-osc "an osc command"
+case_ ci-after-review            2 retired-osc "an osc command"
+case_ ci-unstamped-after-gate    2 retired-osc "an osc command"
+case_ ci-redirect-devnull       2 retired-osc "an osc command"
+case_ accept-api-approve        2 retired-osc "an osc command"
+case_ accept-api-slash          2 retired-osc "an osc command"
 ask_ comment-git-obs-reopen     comment "git-obs pr reopen with a comment"
 # A reopen without a comment is no comment; of a PR someone else opened, it asks as a reopen.
 ask_ comment-git-obs-reopen-plain others-request "git-obs pr reopen AI/mistral-vibe#3: opened by other"
 # A commit is refused only for a write that runs before it and lands in its checkout; a request
 # for any write anywhere in the call.
-case_ ci-after-sort-o          2 gate-sequence "sort"
-case_ ci-after-uniq-out        2 gate-sequence "uniq"
-case_ ci-git-C-status           0 - ""
-case_ ci-log-redirect           0 - ""
-case_ ci-log-tee                0 - ""
-case_ ci-note-outside           0 - ""
-case_ ci-while-edit-after      2 gate-sequence "touch"
+case_ ci-after-sort-o          2 retired-osc "an osc command"
+case_ ci-after-uniq-out        2 retired-osc "an osc command"
+case_ ci-git-C-status           2 retired-osc "an osc command"
+case_ ci-log-redirect           2 retired-osc "an osc command"
+case_ ci-log-tee                2 retired-osc "an osc command"
+case_ ci-note-outside           2 retired-osc "an osc command"
+case_ ci-while-edit-after      2 retired-osc "an osc command"
 # A path through a link and .. lands where the link points, not where normpath says.
 mkdir -p "$work/osc/devel/x/sub" && ln -sfn "$work/osc/devel/x/sub" "$work/links/co"
-case_ ci-symlink-dotdot        2 gate-sequence "a redirection to"
+case_ ci-symlink-dotdot        2 retired-osc "an osc command"
 # What runs beside the commit, backgrounded or in its pipeline, writes during it.
-case_ ci-background-then-edit  2 gate-sequence "sed"
-case_ ci-pipe-tee-into         2 gate-sequence "tee"
+case_ ci-background-then-edit  2 retired-osc "an osc command"
+case_ ci-pipe-tee-into         2 retired-osc "an osc command"
 # Registering a trap and waiting write nothing: a request beside them stays unasked.
-case_ sr-trap-wait              0 - ""
+case_ sr-trap-wait              2 retired-osc "an osc command"
 # A trap's command runs when the call ends, after every write in it.
-case_ trap-ci-then-append      2 gate-sequence "a redirection to"
-case_ trap-ci-then-sed         2 gate-sequence "sed"
-case_ trap-cleanup-then-ci      0 - ""
+case_ trap-ci-then-append      2 retired-osc "an osc command"
+case_ trap-ci-then-sed         2 retired-osc "an osc command"
+case_ trap-cleanup-then-ci      2 retired-osc "an osc command"
 # A backgrounded group, every command of it; coproc runs in the background too.
-case_ ci-brace-background      2 gate-sequence "sed"
-case_ ci-subshell-background   2 gate-sequence "sed"
-case_ ci-coproc                2 gate-sequence "sed"
+case_ ci-brace-background      2 retired-osc "an osc command"
+case_ ci-subshell-background   2 retired-osc "an osc command"
+case_ ci-coproc                2 retired-osc "an osc command"
 # A submit sends what OBS holds: only a write before it that can change that counts --
 # a commit, a script, a write into a checkout -- not its own log or one outside checkouts.
-case_ sr-after-write-anywhere   0 - ""
-case_ seq-sr-tee-log             0 - ""
-case_ seq-sr-redirect-out        0 - ""
-case_ seq-sr-after-checkout-write 2 gate-sequence "a redirection to"
+case_ sr-after-write-anywhere   2 retired-osc "an osc command"
+case_ seq-sr-tee-log             2 retired-osc "an osc command"
+case_ seq-sr-redirect-out        2 retired-osc "an osc command"
+case_ seq-sr-after-checkout-write 2 retired-osc "an osc command"
 # A directory made outside the checkout changes none of its files.
-case_ seq-mkdir-then-ci          0 - ""
+case_ seq-mkdir-then-ci          2 retired-osc "an osc command"
 # cp, rm and tar with a known target outside the checkout change none of its files;
 # into it (a copy over the spec, an archive unpacked there) they do.
-case_ seq-cp-out-then-ci         0 - ""
-case_ seq-rm-out-then-ci         0 - ""
-case_ seq-tar-out-then-ci        0 - ""
-case_ seq-cp-in-then-ci          2 gate-sequence "this call also runs cp"
-case_ seq-tar-x-then-ci          2 gate-sequence "this call also runs tar"
+case_ seq-cp-out-then-ci         2 retired-osc "an osc command"
+case_ seq-rm-out-then-ci         2 retired-osc "an osc command"
+case_ seq-tar-out-then-ci        2 retired-osc "an osc command"
+case_ seq-cp-in-then-ci          2 retired-osc "an osc command"
+case_ seq-tar-x-then-ci          2 retired-osc "an osc command"
 # A destination that holds the checkout writes into it too: a copy or unpack into its project
 # directory or "..". One in the home directory or in another checkout does not.
-case_ seq-cp-project-then-ci     2 gate-sequence "this call also runs cp"
-case_ seq-cp-dotdot-then-ci      2 gate-sequence "this call also runs cp"
-case_ seq-tar-x-dotdot-then-ci   2 gate-sequence "this call also runs tar"
-case_ seq-cp-project-then-sr     2 gate-sequence "this call also runs cp"
-case_ seq-cp-home-then-ci        0 - ""
-case_ seq-cp-other-co-then-ci    0 - ""
-# The account: geectl remote whois, once per call and in memory only. A file a call can write is
-# no source for it: an earlier call could name someone else there.
+case_ seq-cp-project-then-ci     2 retired-osc "an osc command"
+case_ seq-cp-dotdot-then-ci      2 retired-osc "an osc command"
+case_ seq-tar-x-dotdot-then-ci   2 retired-osc "an osc command"
+case_ seq-cp-project-then-sr     2 retired-osc "an osc command"
+case_ seq-cp-home-then-ci        2 retired-osc "an osc command"
+case_ seq-cp-other-co-then-ci    2 retired-osc "an osc command"
+# The account: geectl config show, once per call and in memory only. A file a
+# call can write is no source for it: an earlier call could name someone else there.
 mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"
-cat > "$work/whois/bin/geectl" <<'GEO'
-#!/bin/bash
-[ "$1" = remote ] && [ "$2" = whois ] || exit 99
-echo "geectl $*" >> "$(dirname "$0")/../calls"
-printf '%s\n' '{"login":"tester","email":"t@example.com","realname":"Tester","state":"confirmed"}'
-GEO
-chmod +x "$work/whois/bin/geectl"
+# shellcheck disable=SC2016  # the fake geectl's own $1 and $*, expanded when it runs
+printf '#!/bin/bash\n[ "$1" = --format ] && [ "$2" = json ] && [ "$3" = config ] && [ "$4" = show ] || exit 99\necho "geectl $*" >> "%s/calls"\necho \"{\\\"obs_auth\\\": {\\\"username\\\": \\\"tester\\\", \\\"status\\\": \\\"configured\\\"}}\"\n' \
+  "$work/whois" > "$work/whois/bin/geectl"; chmod +x "$work/whois/bin/geectl"
 for f in pr-guard-user-da39a3ee5e6b4b0d pr-guard-user; do
   printf 'other\n' > "$work/whois/home/.cache/opensuse-packaging/$f"
 done
-used="$used accept-others-maintained accept-two-own sr-devel-target-live "
+used="$used geectl-accept-others-maintained geectl-accept-own "
 whois_() { ev "$1" | env -u PR_GUARD_OBS_USER HOME="$work/whois/home" PATH="$work/whois/bin:$PATH" \
   python3 "$GUARD" 2>&1; }
-out="$(whois_ accept-others-maintained)"
+out="$(whois_ geectl-accept-others-maintained)"
 grep -qF "BLOCKED [incoming-accept] accepting request 1390007 by other: science:machinelearning/dlib is maintained by other" <<<"$out" \
   && pass "an account written to a file is not taken: the accept of another maintainer's package is refused" \
   || fail "a planted account was taken: $out"
 touch "$work/whois/mark"; sleep 1
-out="$(whois_ accept-two-own)"
-[ "$(grep -c whois "$work/whois/calls")" = 2 ] && grep -qF "ASK [accept-forward] accepting request 1390004" <<<"$out" \
+out="$(whois_ geectl-accept-own)"
+[ "$(grep -c "config show" "$work/whois/calls")" = 2 ] && grep -qF "ASK [accept-forward] accepting request 1390004" <<<"$out" \
   && [ -z "$(find "$work/whois/home" -newer "$work/whois/mark" 2>/dev/null)" ] \
-  && pass "geectl remote whois runs once per call and nothing is written for the next one" \
-  || fail "whois: $(grep -c whois "$work/whois/calls") calls, written: $(find "$work/whois/home" -newer "$work/whois/mark")"
-# A python3 that cannot import osc's library: each lookup falls back to osc api.
-mkdir -p "$work/nolib/osc" "$work/nolib/bin"
-printf 'raise ImportError("no osc library here")\n' > "$work/nolib/osc/__init__.py"
-cat > "$work/nolib/bin/osc" <<'OSC'
-#!/bin/bash
-case $1 in
-  whois) echo 'tester: "Tester"' ;;
-  api) f="$FIX/$(printf %s "$2" | tr '/?&=' '____')"
-       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-       cat "$f" ;;
-  *) exit 99 ;;
-esac
-OSC
-chmod +x "$work/nolib/bin/osc"
-# A geectl that answers remote whois for the planted account (the osc api
-# case above stays: entry 10 owns the batch path it serves).
-cat > "$work/nolib/bin/geectl" <<'GEO'
-#!/bin/bash
-[ "$1" = remote ] && [ "$2" = whois ] || exit 99
-printf '%s\n' '{"login":"tester","email":"t@example.com","realname":"Tester","state":"confirmed"}'
-GEO
-chmod +x "$work/nolib/bin/geectl"
-out="$(ev sr-devel-target-live | env -u PR_GUARD_META_DIR FIX="$work/meta/api" PYTHONPATH="$work/nolib" \
-  PATH="$work/nolib/bin:$PATH" python3 "$GUARD" 2>&1)"; got=$?
-[ "$got" = 0 ] && ! grep -qF BLOCKED <<<"$out" \
-  && pass "without osc's library the lookups go through osc api (rc=0)" \
-  || fail "without osc's library: rc=$got $out"
-
+  && pass "geectl config show runs once per call and nothing is written for the next one" \
+  || fail "config show: $(grep -c "config show" "$work/whois/calls") calls, written: $(find "$work/whois/home" -newer "$work/whois/mark")"
 echo "--- deletes never take requests with them: one package at a time, no force"
-case_ rdelete-force-recursive     2 rdelete-pending "osc rdelete --force"
-case_ rdelete-force-combined      2 rdelete-pending "osc rdelete --force"
-case_ rdelete-force-abbrev        2 rdelete-pending "osc rdelete --force"
-case_ rdelete-force-apiurl        2 rdelete-pending "osc rdelete --force"
-case_ rdelete-recursive-project   2 rdelete-pending "osc rdelete --recursive"
-case_ rdelete-recursive-long      2 rdelete-pending "osc rdelete --recursive"
-case_ rdelete-var-force           2 rdelete-pending "osc rdelete --force"
-case_ rdelete-var-unknown         2 rdelete-unknown "osc rdelete with \$F"
-case_ rdelete-guessed-osc         2 rdelete-pending "osc rdelete --recursive"
-case_ rdelete-plain-package       0 - ""
-case_ rdelete-var-message        0 - ""
-case_ rdelete-empty-project       0 - ""
-case_ rdelete-for-literal         0 - ""
-case_ api-delete-source           2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
-case_ api-delete-joined           2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch?force=1"
-case_ api-delete-method           2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch"
-case_ api-delete-method-eq        2 rdelete-pending "an osc api DELETE of https://api.opensuse.org/source/$h:tester:scratch"
-case_ api-delete-var              2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
-case_ api-delete-var-unknown      2 rdelete-unknown "osc api with \$M"
-case_ api-get-source              0 - ""
-case_ api-delete-m                2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo"
-case_ api-delete-m-joined         2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo/"
-case_ api-delete-m-force          2 rdelete-pending "an osc api DELETE of /source/$h:tester:spark/foo?force=1"
+case_ rdelete-force-recursive     2 retired-osc "an osc command"
+case_ rdelete-force-combined      2 retired-osc "an osc command"
+case_ rdelete-force-abbrev        2 retired-osc "an osc command"
+case_ rdelete-force-apiurl        2 retired-osc "an osc command"
+case_ rdelete-recursive-project   2 retired-osc "an osc command"
+case_ rdelete-recursive-long      2 retired-osc "an osc command"
+case_ rdelete-var-force           2 retired-osc "an osc command"
+case_ rdelete-var-unknown         2 retired-osc "an osc command"
+case_ rdelete-guessed-osc         2 retired-osc "an osc command"
+case_ rdelete-plain-package       2 retired-osc "an osc command"
+case_ rdelete-var-message        2 retired-osc "an osc command"
+case_ rdelete-empty-project       2 retired-osc "an osc command"
+case_ rdelete-for-literal         2 retired-osc "an osc command"
+# The geectl form: a forced or recursive delete, and one naming what it deletes
+# only through a variable.
+case_ geectl-rdelete-pending           2 rdelete-pending "geectl remote delete-package --force"
+case_ geectl-rdelete-project-recursive 2 rdelete-pending "geectl remote delete-project --recursive"
+case_ geectl-rdelete-unknown           2 rdelete-unknown "geectl remote delete-package with \$PKG"
+case_ api-delete-source           2 retired-osc "an osc command"
+case_ api-delete-joined           2 retired-osc "an osc command"
+case_ api-delete-method           2 retired-osc "an osc command"
+case_ api-delete-method-eq        2 retired-osc "an osc command"
+case_ api-delete-var              2 retired-osc "an osc command"
+case_ api-delete-var-unknown      2 retired-osc "an osc command"
+case_ api-get-source              2 retired-osc "an osc command"
+case_ api-delete-m                2 retired-osc "an osc command"
+case_ api-delete-m-joined         2 retired-osc "an osc command"
+case_ api-delete-m-force          2 retired-osc "an osc command"
 # OBS reads the path decoded, slashes collapsed and dot segments resolved:
 # "/source/$P/$K/" with an empty K is project P.
-case_ api-delete-double-slash     2 rdelete-pending "an osc api DELETE of /source//$h:tester:scratch/foo"
-case_ api-delete-empty-var        2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch//"
-case_ api-delete-dotdot           2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch/foo/x/.."
-case_ api-delete-encoded-dot      2 rdelete-pending "an osc api DELETE of /source/$h:tester:scratch/foo/%2e"
+case_ api-delete-double-slash     2 retired-osc "an osc command"
+case_ api-delete-empty-var        2 retired-osc "an osc command"
+case_ api-delete-dotdot           2 retired-osc "an osc command"
+case_ api-delete-encoded-dot      2 retired-osc "an osc command"
 # A file, the _link or an attribute is no project or package: nothing is revoked.
-case_ api-delete-link             0 - ""
-case_ api-delete-file             0 - ""
-case_ api-delete-attribute        0 - ""
+case_ api-delete-link             2 retired-osc "an osc command"
+case_ api-delete-file             2 retired-osc "an osc command"
+case_ api-delete-attribute        2 retired-osc "an osc command"
 # ... wherever the message comes from: a substitution, a file, stdin, a variable,
 # a --message prefix. Only the prose counts, the text before a "- "/"* " list.
-case_ msg-subst-cat-long         2 request-message "an osc sr message with 380 characters of prose"
+case_ msg-subst-cat-long         2 retired-osc "an osc command"
 # read, printf -v, declare -n and mapfile leave a value only the shell knows; a
 # substitution's files are placed where its own cd leaves it; printf widths,
 # reused formats and brace expansion are unknown; a loop's many spellings are
 # measured by their longest.
-case_ msg-read-stale             2 request-message-unknown "\$MSG"
-case_ msg-printf-v-stale         2 request-message-unknown "\$MSG"
-case_ msg-declare-n              2 request-message-unknown "\$MSG"
-case_ msg-mapfile                2 request-message-unknown "\$MSG"
-case_ msg-subst-cd               2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-subst-cd-unknown       2 request-message-unknown "a command substitution"
+case_ msg-read-stale             2 retired-osc "an osc command"
+case_ msg-printf-v-stale         2 retired-osc "an osc command"
+case_ msg-declare-n              2 retired-osc "an osc command"
+case_ msg-mapfile                2 retired-osc "an osc command"
+case_ msg-subst-cd               2 retired-osc "an osc command"
+case_ msg-subst-cd-unknown       2 retired-osc "an osc command"
 # 70 packages are more spellings than the guard expands: which ones it forwards is unknown.
-ask_ msg-loop-70-short           accept-forward "cannot tell what osc sr forwards"
-case_ msg-loop-70-long           2 request-message-unknown "\$p: \$L"
-case_ msg-printf-width           2 request-message-unknown "a command substitution"
-case_ msg-printf-reuse           2 request-message-unknown "a command substitution"
-case_ msg-echo-brace             2 request-message-unknown "a command substitution"
+case_ msg-loop-70-short 2 retired-osc "an osc command"
+case_ msg-loop-70-long           2 retired-osc "an osc command"
+case_ msg-printf-width           2 retired-osc "an osc command"
+case_ msg-printf-reuse           2 retired-osc "an osc command"
+case_ msg-echo-brace             2 retired-osc "an osc command"
 # Text is resolved like a -m word: stdin, here-strings, echo/printf of variables,
 # expanding heredocs, += and every writer of a substitution; unknown is refused.
-case_ msg-herestring-var-long    2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-echo-var-pipe-long     2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-printf-subst-long      2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-heredoc-expanding-long 2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-plus-equals-long       2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-subst-two-writers-long 2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-echo-unset-pipe        2 request-message-unknown "stdin"
-case_ msg-heredoc-expanding-unset 2 request-message-unknown "stdin"
+case_ msg-herestring-var-long    2 retired-osc "an osc command"
+case_ msg-echo-var-pipe-long     2 retired-osc "an osc command"
+case_ msg-printf-subst-long      2 retired-osc "an osc command"
+case_ msg-heredoc-expanding-long 2 retired-osc "an osc command"
+case_ msg-plus-equals-long       2 retired-osc "an osc command"
+case_ msg-subst-two-writers-long 2 retired-osc "an osc command"
+case_ msg-echo-unset-pipe        2 retired-osc "an osc command"
+case_ msg-heredoc-expanding-unset 2 retired-osc "an osc command"
 # Every line but a "- " item is prose, wherever it sits; an item is at most 100
 # characters, the message 1000.
-case_ msg-changes-bullets        2 request-message "characters of prose"
-case_ msg-changes-entries        2 request-message "characters of prose"
-case_ msg-prose-after-list       2 request-message "an osc sr message with 306 characters of prose"
-case_ msg-long-list-line         2 request-message "an osc sr message with a 132-character list line"
-case_ msg-list-over-1000         2 request-message "an osc sr message of 1146 characters"
-case_ msg-star-list              2 request-message "an osc sr message with 522 characters of prose"
+case_ msg-changes-bullets        2 retired-osc "an osc command"
+case_ msg-changes-entries        2 retired-osc "an osc command"
+case_ msg-prose-after-list       2 retired-osc "an osc command"
+case_ msg-long-list-line         2 retired-osc "an osc command"
+case_ msg-list-over-1000         2 retired-osc "an osc command"
+case_ msg-star-list              2 retired-osc "an osc command"
 # Single quotes, $'...' and \$ are literal; $(<FILE) reads FILE.
-case_ msg-single-quoted-dollar   0 - ""
-case_ msg-ansi-c-quoted          0 - ""
-case_ msg-escaped-dollar         0 - ""
-case_ msg-double-quoted-unset    2 request-message-unknown "Fix \$UNSET handling"
-case_ msg-heredoc-quoted-dollar  0 - ""
-case_ msg-subst-redirect-long    2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-subst-redirect-short   0 - ""
-case_ msg-subst-cat-short        0 - ""
-case_ msg-subst-heredoc-long     2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-subst-heredoc-short    0 - ""
-case_ msg-file-long              2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-file-short             0 - ""
-case_ msg-file-stdin-long        2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-file-stdin-short       0 - ""
-case_ msg-var-long               2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-var-short              0 - ""
-case_ msg-var-subst-long         2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-prefix-eq-long         2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-prefix-space-long      2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-prefix-short           0 - ""
-case_ msg-prose-then-list        0 - ""
-case_ msg-inline-prose-then-list 0 - ""
-case_ msg-long-prose-then-list   2 request-message "an osc sr message with 380 characters of prose"
-case_ msg-deletereq-long         2 request-message "an osc deletereq message with 380 characters of prose"
-case_ msg-changedevel-long       2 request-message "an osc changedevelrequest message with 380 characters of prose"
-case_ msg-dr-short               0 - ""
+case_ msg-single-quoted-dollar   2 retired-osc "an osc command"
+case_ msg-ansi-c-quoted          2 retired-osc "an osc command"
+case_ msg-escaped-dollar         2 retired-osc "an osc command"
+case_ msg-double-quoted-unset    2 retired-osc "an osc command"
+case_ msg-heredoc-quoted-dollar  2 retired-osc "an osc command"
+case_ msg-subst-redirect-long    2 retired-osc "an osc command"
+case_ msg-subst-redirect-short   2 retired-osc "an osc command"
+case_ msg-subst-cat-short        2 retired-osc "an osc command"
+case_ msg-subst-heredoc-long     2 retired-osc "an osc command"
+case_ msg-subst-heredoc-short    2 retired-osc "an osc command"
+case_ msg-file-long              2 retired-osc "an osc command"
+case_ msg-file-short             2 retired-osc "an osc command"
+case_ msg-file-stdin-long        2 retired-osc "an osc command"
+case_ msg-file-stdin-short       2 retired-osc "an osc command"
+case_ msg-var-long               2 retired-osc "an osc command"
+case_ msg-var-short              2 retired-osc "an osc command"
+case_ msg-var-subst-long         2 retired-osc "an osc command"
+case_ msg-prefix-eq-long         2 retired-osc "an osc command"
+case_ msg-prefix-space-long      2 retired-osc "an osc command"
+case_ msg-prefix-short           2 retired-osc "an osc command"
+case_ msg-prose-then-list        2 retired-osc "an osc command"
+case_ msg-inline-prose-then-list 2 retired-osc "an osc command"
+case_ msg-long-prose-then-list   2 retired-osc "an osc command"
+case_ msg-deletereq-long         2 retired-osc "an osc command"
+case_ msg-changedevel-long       2 retired-osc "an osc command"
+case_ msg-dr-short               2 retired-osc "an osc command"
 # A message it cannot read now is refused.
-case_ msg-var-unset              2 request-message-unknown "Pass the message inline, or write its file in one call"
-case_ msg-file-missing           2 request-message-unknown "/nonexistent/message.txt"
-case_ msg-file-written           2 request-message-unknown "msg-new.txt"
-case_ msg-stdin-unknown          2 request-message-unknown "stdin"
-case_ msg-subst-unknown          2 request-message-unknown "a command substitution"
+case_ msg-var-unset              2 retired-osc "an osc command"
+case_ msg-file-missing           2 retired-osc "an osc command"
+case_ msg-file-written           2 retired-osc "an osc command"
+case_ msg-stdin-unknown          2 retired-osc "an osc command"
+case_ msg-subst-unknown          2 retired-osc "an osc command"
 
 echo "--- a help invocation of a guarded tool does nothing"
 case_ help-tea-create           0 - ""
@@ -2654,7 +2495,7 @@ case_ cred-stat-test             0 - ""
 case_ cred-ls-in-cred-dir        0 - ""
 case_ cred-find-listing          0 - ""
 case_ cred-write-fake-config     0 - ""
-case_ cred-spec-oauth            0 - ""
+case_ cred-spec-oauth            2 retired-osc "an osc command"
 case_ cred-spec-askpass          0 - ""
 case_ cred-grep-pattern          0 - ""
 case_ cred-commit-message        0 - ""
@@ -2668,7 +2509,7 @@ case_ cred-brace-find-exec       0 - ""
 case_ cred-brace-sequence-small  0 - ""
 case_ cred-parallel-plain        0 - ""
 # The tools read their own: osc its --config, git-obs its --gitea-config.
-case_ cred-osc-own-config        0 - ""
+case_ cred-osc-own-config        2 credential-read "osc reads ~/.config/osc/oscrc: a login is read only by the tool that"
 case_ cred-git-obs-own-config    0 - ""
 # A grep that prints only a build-* setting of oscrc (build-summary.sh and
 # target-gate.sh read build-root so); any other key or a context option reads more.
@@ -2698,20 +2539,21 @@ case_ secret-git-obs-space       2 secret-git-obs "git-obs login list"
 case_ secret-git-obs-helper      2 secret-git-obs "git-obs gitcredentials-helper"
 case_ secret-tea-helper          2 secret-tea     "tea login helper"
 case_ secret-tea-edit            2 secret-tea     "tea logins e"
-case_ secret-osc-dump-full       2 secret-osc     "osc config --dump-full"
-case_ secret-osc-dump-prefix     2 secret-osc     "osc config --dump-full"
-case_ secret-osc-dump-var        2 secret-osc     "osc config --dump-full"
-case_ secret-osc-dump-var-unknown 2 secret-osc    "\$OSC: osc config --dump-full"
-case_ secret-osc-http-debug      2 secret-osc     "osc HTTP debugging"
-case_ secret-osc-http-debug-cluster 2 secret-osc  "osc HTTP debugging"
-case_ secret-osc-http-full-prefix 2 secret-osc    "osc HTTP debugging"
-case_ secret-osc-setopt-debug    2 secret-osc     "osc HTTP debugging"
-case_ secret-osc-env-debug       2 secret-osc     "osc HTTP debugging"
-case_ secret-osc-token           2 secret-osc     "osc token"
-case_ secret-osc-token-apiurl    2 secret-osc     "osc token"
-case_ secret-osc-quoted          2 secret-osc     "osc token"
-case_ secret-osc-config-pass     2 secret-osc     "osc config passx"
-case_ secret-osc-api-person-token 2 secret-osc    "osc api /person/<login>/token"
+case_ secret-osc-dump-full       2 retired-osc     "an osc command"
+case_ secret-osc-dump-prefix     2 retired-osc     "an osc command"
+case_ secret-osc-dump-var        2 retired-osc     "an osc command"
+case_ secret-osc-dump-var-unknown 2 retired-osc    "an osc command"
+case_ secret-osc-http-debug      2 retired-osc     "an osc command"
+case_ secret-osc-http-debug-cluster 2 retired-osc  "an osc command"
+case_ secret-osc-http-full-prefix 2 retired-osc    "an osc command"
+case_ secret-osc-setopt-debug    2 retired-osc     "an osc command"
+case_ secret-osc-env-debug       2 retired-osc     "an osc command"
+case_ secret-osc-token           2 retired-osc     "an osc command"
+case_ secret-osc-token-apiurl    2 retired-osc     "an osc command"
+case_ secret-osc-quoted          2 retired-osc     "an osc command"
+case_ secret-osc-config-pass     2 retired-osc     "an osc command"
+case_ secret-osc-api-person-token 2 retired-osc    "an osc command"
+case_ geectl-secret-create-token 2 secret-geectl "geectl remote create-token"
 case_ secret-git-credential-fill 2 secret-git     "git credential fill"
 case_ secret-git-credential-helper 2 secret-git   "git credential-libsecret get"
 case_ secret-git-credential-direct 2 secret-git   "git-credential-oauth get"
@@ -2719,13 +2561,13 @@ case_ secret-tool-lookup         2 secret-tool    "secret-tool lookup"
 case_ secret-tool-search         2 secret-tool    "secret-tool search"
 case_ secret-gh-pr-list          0 - ""
 case_ secret-tea-login-list      0 - ""
-case_ secret-osc-dump            0 - ""
-case_ secret-osc-config-build-root 0 - ""
-case_ secret-osc-api-person      0 - ""
-case_ secret-osc-whois           0 - ""
+case_ secret-osc-dump            2 retired-osc "an osc command"
+case_ secret-osc-config-build-root 2 retired-osc "an osc command"
+case_ secret-osc-api-person      2 retired-osc "an osc command"
+case_ secret-osc-whois           2 retired-osc "an osc command"
 case_ secret-osc-token-help      0 - ""
 case_ secret-git-config-helper   0 - ""
-case_ secret-names-only          0 - ""
+case_ secret-names-only          2 retired-osc "an osc command"
 case_ secret-git-obs-api-user    0 - ""
 
 echo "--- a credential on a command line"
@@ -2768,9 +2610,17 @@ case_ api-github                 0 - ""
 case_ api-pypi                   0 - ""
 case_ api-crates                 0 - ""
 case_ api-build-web-page         0 - ""
-case_ api-osc-api                0 - ""
+case_ api-osc-api                2 retired-osc "an osc command"
 case_ api-print-link             0 - ""
 case_ api-git-obs                0 - ""
+# Gitea file reads have no typed geectl leaf, so they stand: the six git-obs api
+# calls the review machinery reads files through (see pr-guard.py).
+case_ gitobs-api-raw-maintainership 0 - ""
+case_ gitobs-api-raw-spec          0 - ""
+case_ gitobs-api-trees             0 - ""
+case_ gitobs-api-blob              0 - ""
+case_ gitobs-api-comments          0 - ""
+case_ gitobs-api-pulls             0 - ""
 
 echo "--- the credential rules judge the agent's own commands, not the programs they run"
 # A script's body, and program code inline or fed on stdin, are not scanned
