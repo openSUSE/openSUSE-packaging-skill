@@ -184,7 +184,7 @@ python3 -m pip install osc==1.27.3
 # geectl for check-geectl.py: no released tarball ships the CLI yet
 # (v0.2.0 predates the rollout), so build it from the pinned source commit.
 git clone https://github.com/scarabeusiv/geectl.git /tmp/geectl
-git -C /tmp/geectl checkout b22368db276e3a012ffaccd98acfc5ee1725c440
+git -C /tmp/geectl checkout d4f2f0158b11f94b350aa323dadcc505dde66e47
 cargo build --locked --manifest-path /tmp/geectl/Cargo.toml
 export GEectl_BIN=/tmp/geectl/target/debug/geectl
 (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)

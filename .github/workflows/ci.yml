@@ -54,7 +54,7 @@ jobs:
       - name: Build geectl
         run: |
           git clone https://github.com/scarabeusiv/geectl.git /tmp/geectl
-          git -C /tmp/geectl checkout b22368db276e3a012ffaccd98acfc5ee1725c440
+          git -C /tmp/geectl checkout d4f2f0158b11f94b350aa323dadcc505dde66e47
           cargo build --locked --manifest-path /tmp/geectl/Cargo.toml
       - name: Script suites
         env:
