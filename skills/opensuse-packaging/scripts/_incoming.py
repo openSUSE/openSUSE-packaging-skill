@@ -15,14 +15,17 @@ Unknown: preflight.sh must not read it as "not yours".
 stamp() reads the verdict incoming-review.sh recorded for a submission:
 <id>.json for an OBS request, <owner>_<repo>_<N>.json for a PR (owner and
 repo lowercased, each % written %25 and each _ %5F). Only its verdict and
-key (64 hex) are read, and a stamp that is missing, unreadable or
-malformed, or names another submission, is "not reviewed".
+key (64 hex), and a PR's head, are read, and a stamp that is missing,
+unreadable or malformed, or names another submission, is "not reviewed".
+A PR's stamp of another head than the PR has now reads "reviewed at an
+older head: review again", and is not reviewed either.
 
 preflight.sh runs it, and reads anything but 0 or 3 from maintains as a
 failed check (an uncaught exception is 2 too, never "no"):
   _incoming.py maintains USER PRJ PKG   exit 0 yes, 3 no (why on stdout),
                                         2 unknown (why on stdout)
-  _incoming.py stamp sr#N|OWNER/REPO#N  prints the annotation; 2 bad item
+  _incoming.py stamp sr#N | OWNER/REPO#N HEAD
+                                        prints the annotation; 2 bad item
 """
 
 import html
@@ -47,6 +50,8 @@ PR_ITEM = re.compile(
     r"([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*)#([0-9]+)"
 )
 VERDICTS = ("PASS", "FIXABLE", "BLOCK")
+# A PR's head: a SHA-1 or a SHA-256 commit id.
+GIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 class Unknown(Exception):
@@ -197,16 +202,22 @@ def maintains(user, prj, pkg, run=run, cache=None):
     return False, f"{prj}/{pkg} is maintained by {', '.join(sorted(maints))}"
 
 
-def stamp(item):
-    """'reviewed: VERDICT (key KEY)' for item (sr#N or OWNER/REPO#N) from its
-    incoming-review.sh stamp, or 'not reviewed'; ValueError for another item."""
+def stamp(item, head=None):
+    """'reviewed: VERDICT (key KEY)' for item (sr#N, or OWNER/REPO#N and the
+    head it has now) from its incoming-review.sh stamp, 'reviewed at an older
+    head: review again' for a PR's stamp of another head, or 'not reviewed';
+    ValueError for another item, or a head missing or given out of place."""
     m = SR_ITEM.fullmatch(item)
     if m:
+        if head is not None:
+            raise ValueError(f"a request has no head: {head!r}")
         kind, name, ident = "obs", m.group(1), m.group(1)
     else:
         m = PR_ITEM.fullmatch(item)
         if not m:
             raise ValueError(f"not an sr#N or OWNER/REPO#N item: {item!r}")
+        if not isinstance(head, str) or not GIT_ID.fullmatch(head):
+            raise ValueError(f"no 40- or 64-hex head for {item}: {head!r}")
         owner, repo = (
             x.lower().replace("%", "%25").replace("_", "%5F") for x in m.groups()[:2]
         )
@@ -235,6 +246,16 @@ def stamp(item):
         and re.fullmatch(r"[0-9a-f]{64}", st["key"])
     ):
         return "not reviewed"
+    if kind == "gitea":
+        was = (
+            st.get("gitea", {}).get("head")
+            if isinstance(st.get("gitea"), dict)
+            else None
+        )
+        if not isinstance(was, str) or not GIT_ID.fullmatch(was):
+            return "not reviewed"
+        if was != head:
+            return "reviewed at an older head: review again"
     return f"reviewed: {st['verdict']} (key {st['key']})"
 
 
@@ -246,8 +267,8 @@ def main(argv):
             if why:
                 print(why)
             return 0 if ok else 3
-        if argv[1:2] == ["stamp"] and len(argv) == 3:
-            print(stamp(argv[2]))
+        if argv[1:2] == ["stamp"] and len(argv) in (3, 4):
+            print(stamp(*argv[2:]))
             return 0
         sys.stderr.write(__doc__.split("\n\n")[-1])
     except Unknown as e:

@@ -153,11 +153,15 @@ calls="$(cat "$dir/calls")"
 SCM="echo '<project name=\"devel:example\"><scmsync>https://src.opensuse.org/example/_ObsPrj</scmsync></project>' \
   > \$B/obs/_source_devel:example__meta && mkdir -p \$B/gitea/repos/example/foo"
 PULLS='gitea/repos/example/foo/pulls_state_open'
+# A PR's head: the one it has now, and an older one a review may have been of.
+HEAD1=1111111111111111111111111111111111111111; HEAD0=0000000000000000000000000000000000000000
+HD="\"head\": {\"sha\": \"$HEAD1\"}"
 case_ scm-no-prs 4 "open PRs:       none" "$SCM && echo '[]' > \$B/$PULLS"
 no_curl() { ! grep -q '^curl ' "$work/$1/calls" && pass "$1: git-obs, not curl" || fail "$1: curl was called"; }
 no_curl scm-no-prs
 case_ scm-pr-open 3 "VERDICT: STOP - already in flight: PR #5 -> factory: Update foo to 1.2" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+! grep -qF "$HEAD1" <<<"$LAST" && pass "scm-pr-open: the head is not shown" || fail "scm-pr-open: $LAST"
 case_ scm-pr-lookup-failed 2 "CHECK FAILED: could not query open PRs on example/foo: ERROR: 404 Not Found" "$SCM"
 grep -qF "VERDICT: CHECK-FAILED" <<<"$LAST" && ! grep -qF "open PRs:       none" <<<"$LAST" \
   && pass "scm-pr-lookup-failed: not read as none" || fail "scm-pr-lookup-failed: $LAST"
@@ -180,7 +184,10 @@ case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: git-
 XPATH=""
 ! grep -qF "open PRs:       none" <<<"$LAST" && pass "scm-pr-hang: not read as none" || fail "scm-pr-hang: $LAST"
 case_ scm-pr-no-author 2 "unparseable PR list for example/foo" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+# Without a head nobody can tell whether a review is still of the PR.
+case_ scm-pr-no-head 2 "unparseable PR list for example/foo" \
+  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
 
 # A contributor's open SR or devel PR on a package you maintain is reviewed
 # before your update: INCOMING (5), each item annotated from its review stamp,
@@ -204,9 +211,9 @@ grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "incoming
 case_ own-and-incoming 3 "VERDICT: STOP - already in flight: SR 2000011 [new] devel:other/foo -> devel:example by tester" \
   "$MAINT && echo '<collection>$SR_C$SR_OWN</collection>' > $INQ"
 grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "own-and-incoming: the contributor's SR is listed" || fail "own-and-incoming: $LAST"
-case_ incoming-pr 5 "example/foo#5 by someone-else: not reviewed" \
-  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+PR_C="$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+case_ incoming-pr 5 "example/foo#5 by someone-else: not reviewed" "$PR_C"
 grep -qF "VERDICT: INCOMING" <<<"$LAST" && pass "incoming-pr: INCOMING" || fail "incoming-pr: $LAST"
 case_ others-forward 3 "VERDICT: STOP - already in flight: SR 2000012 [new] devel:example/foo -> openSUSE:Factory by someone-else" \
   "$MAINT && echo '<collection>$SR_FWD</collection>' > $INQ && echo '<collection>$SR_FWD</collection>' > \$B/obs/*states_new_review_project_openSUSE*"
@@ -233,13 +240,13 @@ done
 # Your own PR in flight beats a contributor's.
 case_ own-pr-and-incoming 3 "VERDICT: STOP - already in flight: PR #6 -> factory: My update (None) by tester" \
   "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}},
-             {\"number\": 6, \"base\": {\"ref\": \"factory\"}, \"title\": \"My update\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}},
+             {\"number\": 6, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"My update\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
 # Who maintains it is no answer when the lookup crashed, came back empty or
 # does not parse: CHECK-FAILED, never "not yours".
 case_ maintainer-deep-json 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
   "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && printf '%*s' 100000 '' | tr ' ' '[' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
 case_ maintainer-empty-answer 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
   "$CONTRIB && : > \$B/obs/_source_devel:example_foo__meta"
 case_ incoming-no-creator 2 "unparseable SR collection (incoming)" "$MAINT && echo '<collection>${SR_C/ creator=\"someone-else\"/}</collection>' > $INQ"
@@ -260,11 +267,31 @@ case_ incoming-stamp-other-sr 5 "sr#2000010 by someone-else: not reviewed" \
   "$MAINT && $CONTRIB && stamp obs 2000010 '$(st_ obs 2000099 "$K64")'"
 case_ incoming-stamp-short-key 5 "sr#2000010 by someone-else: not reviewed" \
   "$MAINT && $CONTRIB && stamp obs 2000010 '$(st_ obs 2000010 0123456789ab)'"
+# A PR's review counts at the head it was recorded at: one of another head is
+# reviewed again, and a stamp that names no head is no review.
+stg_() { printf '{"v": 1, "kind": "gitea", "id": "%s", "verdict": "BLOCK", "key": "%s", "gitea": {"head": "%s"}}' "$@"; }
+case_ incoming-pr-reviewed 5 "example/foo#5 by someone-else: reviewed: BLOCK (key $K64)" \
+  "$PR_C && stamp gitea example_foo_5 '$(stg_ example/foo#5 "$K64" "$HEAD1")'"
+case_ incoming-pr-older-head 5 "example/foo#5 by someone-else: reviewed at an older head: review again" \
+  "$PR_C && stamp gitea example_foo_5 '$(stg_ example/foo#5 "$K64" "$HEAD0")'"
+! grep -qF "reviewed: BLOCK" <<<"$LAST" && pass "incoming-pr-older-head: not counted as reviewed" || fail "incoming-pr-older-head: $LAST"
+# A SHA-256 repository's head is 64 hex.
+HEAD64=2222222222222222222222222222222222222222222222222222222222222222
+case_ incoming-pr-sha256 5 "example/foo#5 by someone-else: reviewed: BLOCK (key $K64)" \
+  "${PR_C//$HEAD1/$HEAD64} && stamp gitea example_foo_5 '$(stg_ example/foo#5 "$K64" "$HEAD64")'"
+case_ incoming-pr-stamp-no-head 5 "example/foo#5 by someone-else: not reviewed" \
+  "$PR_C && stamp gitea example_foo_5 '$(st_ gitea example/foo#5 "$K64")'"
 # A PR's stamp is <owner>_<repo>_<N>.json, owner and repo lowercased and each
 # % and _ escaped (%25, %5F), as incoming-review.sh writes it.
-B="$work/stamp-gitea" stamp gitea 'ex%5Fample_my%5Fpkg_5' "$(st_ gitea 'Ex_ample/My_Pkg#5' "$K64")"
-out="$(HOME="$work/stamp-gitea/home" python3 -I -B "$HERE/../skills/opensuse-packaging/scripts/_incoming.py" stamp 'Ex_ample/My_Pkg#5' 2>&1)"
+B="$work/stamp-gitea" stamp gitea 'ex%5Fample_my%5Fpkg_5' "$(stg_ 'Ex_ample/My_Pkg#5' "$K64" "$HEAD1")"
+INC="$HERE/../skills/opensuse-packaging/scripts/_incoming.py"
+out="$(HOME="$work/stamp-gitea/home" python3 -I -B "$INC" stamp 'Ex_ample/My_Pkg#5' "$HEAD1" 2>&1)"
 [ "$out" = "reviewed: BLOCK (key $K64)" ] && pass "stamp-gitea-name: lowercased and escaped" || fail "stamp-gitea-name: $out"
+# A PR item needs the head it has now, and a request takes none.
+HOME="$work/stamp-gitea/home" python3 -I -B "$INC" stamp 'Ex_ample/My_Pkg#5' > /dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && pass "stamp-pr-no-head: exit 2" || fail "stamp-pr-no-head: exit $rc"
+HOME="$work/stamp-gitea/home" python3 -I -B "$INC" stamp sr#2000010 "$HEAD1" > /dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && pass "stamp-sr-head: exit 2" || fail "stamp-sr-head: exit $rc"
 
 # _incoming.maintains() mirrors _pr_guard.maintains(): both judge each case
 # from the same answers (the guard's offline stand-ins, a fake run for ours).
