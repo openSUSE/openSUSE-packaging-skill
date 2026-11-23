@@ -2194,7 +2194,7 @@ grep -qF "## rpmspec: rc=1" <<<"$out" && grep -qF "RED: the sandbox does not sta
 # parse-surface runs before the parses, and its OK line says how they run.
 psbar ok < /dev/null
 while IFS='|' read -r name says; do
-  PSGATE="$work/sk-$name/gate.sh" ps_ "$work/ps-ok/bar"
+  PSGATE="$work/sk-$name/gate.sh" ps_ "$work/ps-ok/bar" < /dev/null
   grep -qF "$PSOK $says" <<<"$out" && pass "sandbox-$name: the parse-surface OK line says ${says%% (*}" \
     || { fail "sandbox-$name: the parse-surface OK line"; printf '%s\n' "$out" | grep -F -A3 '## parse-surface' | sed 's/^/    /'; }
 done <<'EOF'

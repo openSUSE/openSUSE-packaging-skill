@@ -317,6 +317,9 @@ expect "a source service still running at the timeout: exit 1, repeat the call" 
 new svc-results; echo "$SVC" > "$FIX/results"
 run svc-results build $P $K --timeout 0
 expect "the same words from another lookup stay no answer" 3 "VERDICT: UNKNOWN — osc results --xml failed"
+new svc-jobhist; res results x86_64=succeeded; src source $CUR; echo "$SVC" > "$FIX/jobhist"
+run svc-jobhist build $P $K --timeout 0
+expect "  ...from the job history too" 3 "VERDICT: UNKNOWN — osc api /build/$P/standard/x86_64/_jobhistory"
 
 # An arch that only waits for a worker: no wait shortens it. Reported as
 # QUEUED-STUCK (exit 4, not green) once the rest is green from the current
