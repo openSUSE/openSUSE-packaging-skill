@@ -2807,14 +2807,15 @@ for f in "$REPO"/skills/opensuse-packaging/scripts/*.sh "$REPO"/skills/opensuse-
   case $f in *.py) run=python3;; *) run=bash;; esac
   out="$(python3 -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[2],
     "tool_input": {"command": sys.argv[1]}}))' "$run $f --help" "$work/plain" | python3 "$GUARD" 2>&1)"; got=$?
-  asked=$(grep -oE 'ASK \[[a-z-]+\]' <<<"$out" | sed 's/^ASK \[//; s/\]$//' | sort -u | tr '\n' ' ')
-  allowed=" $(asks_ok "${f##*/}") "; bad=""
-  for r in $asked; do case $allowed in *" $r "*) ;; *) bad+="$r ";; esac; done; bad=${bad% }
+  asked=$(grep -oE 'ASK \[[a-z-]+\]' <<<"$out" | sed 's/^ASK \[//; s/\]$//' | sort -u | tr '\n' ' '); asked=${asked% }
+  allowed=$(asks_ok "${f##*/}"); bad=""; gone=""
+  for r in $asked; do case " $allowed " in *" $r "*) ;; *) bad+=" $r";; esac; done
+  for r in $allowed; do case " $asked " in *" $r "*) ;; *) gone+=" $r";; esac; done
   if [ "$got" != 0 ]; then fail "${f##*/} is refused: $out"
-  elif grep -qF '"permissionDecision": "ask"' <<<"$out" && { [ -z "$asked" ] || [ -n "$bad" ]; }; then
-    fail "${f##*/} asks (${bad:-no rule named}): $out"
-  elif [ -n "${allowed// /}" ] && [ -z "$asked" ]; then fail "${f##*/} asks nothing: drop it from asks_ok"
-  else pass "runs unrefused${asked:+, asking only ${asked% }}: ${f##*/}"; fi
+  elif [ -n "$bad" ]; then fail "${f##*/} asks (${bad# }): $out"
+  elif [ -z "$asked" ] && grep -qE '"permissionDecision": *"ask"' <<<"$out"; then fail "${f##*/} asks, no rule named: $out"
+  elif [ -n "$gone" ]; then fail "${f##*/} no longer asks${gone}: drop it from asks_ok"
+  else pass "runs unrefused${asked:+, asking only $asked}: ${f##*/}"; fi
 done
 
 echo "--- the opencode plugins carry the same prefilter"
