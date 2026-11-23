@@ -36,7 +36,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl add FILE... --live` / `geectl rm FILE... --live` / `geectl addremove --live` — track new, dropped, or both.
 - `geectl commit -m MSG --live` — commit the checkout; `--noservice` skips the services it would run first, so a gated tree is committed as judged.
 - `geectl changelog validate DIR` — validate the `.changes` entries (`--target-project PRJ --target-package PKG` adds the target-relative rules).
-- `geectl changelog generate DIR` — emit the skeleton entry (`--write` prepends it); prefer `scripts/changes-prepend.sh`.
+- `geectl changelog generate DIR` — emit the skeleton entry (`--write` prepends it; `--author AUTHOR` sets the author line, in `Name <email>` form); prefer `scripts/changes-prepend.sh`.
 - `geectl branch branch-package --project PRJ --package PKG [--target-project TGT_PRJ [--target-package TGT_PKG]] --live` — branch into `home:<you>:branches:PRJ` (or TGT_PRJ).
 - `geectl branch copy-package --source-project SRC_PRJ --source-package SRC_PKG --target-project DST_PRJ --target-package DST_PKG --live` — server-side copy; `--expand` copies a linked source expanded, `--keep-link` keeps a link a link.
 - `geectl branch link-package --source-project SRC_PRJ --source-package SRC_PKG --target-project DST_PRJ --target-package DST_PKG --live` — rewrites the target's package meta: re-check its build flags after.
@@ -88,6 +88,8 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl request list-comments ID` — a request's comments.
 - `geectl request add-comment --body TEXT [--parent COMMENT_ID] ID --live` — post one, `--parent` as a reply in that thread; `--body "$(cat FILE)"` for the same shell safety as `--description` (`references/request-text.md` "Answering a reviewer").
 - `geectl request accept --comment MSG ID --live` · `geectl request decline --comment MSG ID --live` · `geectl request revoke --comment MSG ID --live` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: after a devel accept, file the onward `geectl request file` yourself.
+- `geectl pull-request merge REFERENCE --live` · `geectl pull-request decline REFERENCE --live` · `geectl pull-request withdraw REFERENCE --live` — act on a submission through the unified surface: an OBS submit request or a Gitea pull request, named by `obs:<id>` or `gitea:<owner>/<repo>#<number>`. Merge accepts (OBS) or merges (Gitea); decline declines (OBS) or closes (Gitea); withdraw revokes (OBS) or closes (Gitea).
+- `geectl pull-request approve REFERENCE --live` — approve a submission as the review asked of the target (OBS: the acting user's review; Gitea: the token owner's review).
 - `geectl request add-review --user USER --comment MSG ID --live` — ask a user to review a request (`--group`, `--project`, `--package` address the other review forms).
 
 ## Lookup
