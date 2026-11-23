@@ -29,7 +29,7 @@ You are the **submit / watch** stage. Goal: get a green package's change committ
 |---|---|
 | a reviewer asks a question, or you post a comment | `request-text.md` "Answering a reviewer", "Comments: what OBS renders" |
 | a decline or a reviewer comment | `submit-watch.md` "Triaging your declined submit requests", then `decline-catalog.md` "What human Factory reviewers decline for" to class it; a factory-auto decline → `decline-catalog.md` "factory-auto declines that point the wrong way" |
-| git/scmsync package (PR, not `geectl request file`) | `git-workflow.md` "Submitting changes — PR, not `osc sr`", "Verify a push/PR actually landed"; its Factory forward, "Forwarding to Factory" |
+| git/scmsync package (PR, not `geectl request file`) | `git-workflow.md` "Submitting changes — PR, not `geectl request file`", "Verify a push/PR actually landed"; its Factory forward, "Forwarding to Factory" |
 | the target is Leap 16.x / SLFO / Backports | `leap-slfo.md` "1. Where does the package come from?" (routing); a released product → `maintenance-updates.md` "Maintenance updates (Backports / Leap)" |
 | a Leap `pool/` PR (a `leap-16.x` branch) | `leap-slfo.md` "The pool PR gate — build, review, open, watch", then `script-usage.md` "Leap" |
 | brand-new package (Factory does not have it) | `new-package.md` "Submitting a brand-new package — go via the devel project, not straight to Factory" |

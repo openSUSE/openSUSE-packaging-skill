@@ -2,7 +2,7 @@
 
 Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --help`. CI checks every `geectl` citation in this skill against geectl's own `--help` (the built binary; the target-state leaves in `tests/repo/geectl-target-state.json` are checked against that file until they land): the command exists, every cited option is accepted, and each command the skill uses has a line here. Positionals are not machine-checked, so copy them as written. `PRJ`/`PKG` are OBS project/package names; one line per command.
 
-**Install:** `cargo install geectl` (version 0.2.1 or later, the first release shipping the CLI). Until that publish lands, `cargo install --git https://github.com/scarabeusiv/geectl` instead. GitHub release tarballs are the other form: `geectl-<version>-x86_64-unknown-linux-gnu.tar.gz` or `geectl-<version>-aarch64-unknown-linux-gnu.tar.gz`, each with a `.sha256` checksum and a detached `.asc` signature plus a combined `SHA256SUMS`. Fetch the tarball for the release, verify its checksum, and put the `geectl` binary on `PATH`. **Auth:** geectl reads its own config (`$XDG_CONFIG_HOME/geectl/config.toml`, default `~/.config/geectl/config.toml`); credentials come from the environment (`GEECTL_OBS_USERNAME` + `GEECTL_OBS_PASSWORD`, or `GEECTL_OBS_PASSWORD_FILE`) or the config file. `geectl config show` reports endpoint URLs and credential status, never a secret value.
+**Install:** `cargo install geectl` (version 0.2.1 or later, the first release shipping the CLI). Until that publish lands, `cargo install --git https://github.com/scarabeusiv/geectl` instead. GitHub release tarballs are the other form: `geectl-<version>-x86_64-unknown-linux-gnu.tar.gz` or `geectl-<version>-aarch64-unknown-linux-gnu.tar.gz`, each with a `.sha256` checksum and a detached `.asc` signature plus a combined `SHA256SUMS`. Fetch the tarball for the release, verify its checksum, and put the `geectl` binary on `PATH`. **Auth:** geectl reads its own config (`$XDG_CONFIG_HOME/geectl/config.toml`, default `~/.config/geectl/config.toml`); credentials come from the environment only — `GEECTL_OBS_USERNAME` + `GEECTL_OBS_PASSWORD` (or `GEECTL_OBS_PASSWORD_FILE`), a token via `GEECTL_OBS_APIKEY_<ALIAS>`, each with an optional `_<ALIAS>` per-instance suffix. The config file holds endpoints only and refuses credential-shaped keys. `geectl config show` reports endpoint URLs and credential status, never a secret value.
 
 **Where checkouts live:** one geectl working area, with projects as subdirectories (`<area>/<prj>/<pkg>`). Run `geectl checkout` from the area itself, never from inside a `<prj>/` checkout (that nests one), and never check out into `/tmp` or a scratchpad — the build, the gates and the commit all run from the checkout, and a throwaway location loses them. → `references/update-build.md` "Avoid full-project checkouts"
 
@@ -26,6 +26,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 ## Package and checkout
 
 - `geectl remote create-package --title TITLE --description DESC PRJ PKG --live` — **creates a new package**; `--scmsync URL` creates it git-backed.
+- `geectl remote create-project --title TITLE --description DESC PROJECT --live` — **creates a new project**; set its repositories and meta with `geectl remote set-project-meta --from-file`.
 - `geectl remote set-package-meta --from-file meta.xml PRJ PKG --live` — replace a package's meta wholesale (write `meta.xml` first: `<package name="PKG" project="PRJ"><title/><description/></package>`, plus `<person>`/`<url>` as needed).
 - `geectl remote package-meta PRJ PKG` — print a package's meta.
 - `geectl remote project-meta PRJ` — print project meta (maintainers, reviewers, repositories).
@@ -48,6 +49,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl gitea repo-fork OWNER REPO --live` — Gitea fork of an scmsync package; see `references/git-workflow.md`.
 - `geectl remote cat PRJ PKG FILE [--rev REV]` — print one remote file without checking anything out; `--rev` takes a revision number or a srcmd5.
 - `geectl remote download PRJ PKG FILE --output PATH` — download one remote file (the binary counterpart of `cat`).
+- `geectl remote link-target PRJ PKG` — the link target of a package, when it is a link.
 - `geectl remote list-packages PRJ` · `geectl remote list-files PRJ PKG [--rev REV]` · `geectl remote package-log PRJ PKG [--limit N]` — remote file list · files of a package · commit history.
 - `geectl remote diff-packages OLD_PRJ OLD_PKG NEW_PRJ NEW_PKG` · `geectl remote project-diff OLD_PRJ NEW_PRJ` — diff two remote packages · two projects.
 - `geectl remote update-package-meta-from-spec PRJ PKG --live` — copy the spec's URL/summary/description into the package meta.
@@ -87,7 +89,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl request show ID` · `geectl request log ID` · `geectl request diff ID [--xml]` — one request · its history · its diff.
 - `geectl request list-comments ID` — a request's comments.
 - `geectl request add-comment --body TEXT [--parent COMMENT_ID] ID --live` — post one, `--parent` as a reply in that thread; `--body "$(cat FILE)"` for the same shell safety as `--description` (`references/request-text.md` "Answering a reviewer").
-- `geectl request accept --comment MSG ID --live` · `geectl request decline --comment MSG ID --live` · `geectl request revoke --comment MSG ID --live` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: after a devel accept, file the onward `geectl request file` yourself.
+- `geectl request accept --comment MSG ID --live` · `geectl request decline --comment MSG ID --live` · `geectl request revoke --comment MSG ID --live` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting does not forward: geectl has no form that files a request into openSUSE:Factory — after a devel accept, report the accepted request as ready to forward and stop (`references/submit-watch.md` "Filing an SR").
 - `geectl pull-request merge REFERENCE --live` · `geectl pull-request decline REFERENCE --live` · `geectl pull-request withdraw REFERENCE --live` — act on a submission through the unified surface: an OBS submit request or a Gitea pull request, named by `obs:<id>` or `gitea:<owner>/<repo>#<number>`. Merge accepts (OBS) or merges (Gitea); decline declines (OBS) or closes (Gitea); withdraw revokes (OBS) or closes (Gitea).
 - `geectl pull-request approve REFERENCE --live` — approve a submission as the review asked of the target (OBS: the acting user's review; Gitea: the token owner's review).
 - `geectl request add-review --user USER --comment MSG ID --live` — ask a user to review a request (`--group`, `--project`, `--package` address the other review forms).
@@ -97,9 +99,12 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl remote devel-project PKG [--target-project PRJ]` — the registered devel project.
 - `geectl remote maintainers PRJ PKG` — maintainers of a package.
 - `geectl remote owners PRJ PKG` — owners of a package (project/package scope); bugowners included, not the maintainer set.
+- `geectl remote owners-for-binary BINARY` — owners of the source package shipping that binary.
 - `geectl remote project-meta PRJ` — a project's persons (maintainers, reviewers).
 - `geectl remote search-packages-by-person USER` — the packages a user maintains.
+- `geectl remote search-projects-by-person USERID` — the projects whose meta names the login in a role.
 - `geectl remote set-package-meta --add-person USER:maintainer PRJ PKG --live` — adds USER's `maintainer` role to PKG's `_meta` (write access to it needed). `--remove-person USER` removes a person. `geectl remote search-packages-by-person USER` lists what a user maintains.
+- `geectl remote staging-project PRJ NAME` — one staging project of a workflow project: its staged, untracked and obsolete requests and its overall state (both included by default; `--no-requests` / `--no-status` leave them out).
 - `geectl remote whois LOGIN` — account name and email.
 - `geectl remote search-packages TERM` · `geectl remote search-projects TERM` — find packages/projects; `--exact` matches names only.
 - `geectl remote search-packages --devel-project PRJ` — the packages a devel project develops.
@@ -115,6 +120,6 @@ Each was actually run by an agent, and each failed or did damage. The correct fo
 
 - Running `geectl checkout PRJ PKG` from `/tmp` instead of the working area — the build, the gates and the commit all run from the checkout, and a throwaway location loses them → run it from the area.
 - `geectl local-build service-run --mode runall` — no such mode → name the service and its mode.
-- `geectl request accept` expecting a forward — there is no forward option; accept, then `geectl request file` the next hop.
+- `geectl request accept` expecting a forward — there is no forward option, and no `geectl request file` form takes openSUSE:Factory as its target; accept, then report the request as ready to forward (`references/submit-watch.md` "Filing an SR").
 - `geectl local-build build …` in a devel checkout, offered as proof for a Leap pool PR — another tree, built against another project than the PR bot's → `scripts/target-gate.sh <pool clone> --build`.
 - `geectl request show ID` expecting the diff — there is no diff flag on `show` → `geectl request diff ID`.

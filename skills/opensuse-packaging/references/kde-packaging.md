@@ -30,7 +30,7 @@ macros, the `%{_kf6_*dir}` paths and `kf6-extra-cmake-modules`.
 | `%{_datadir}/<app>` | `%{_kf6_sharedir}/<app>` — not `%{_kf6_datadir}` (= `/usr/share/kf6`) |
 | `BuildRequires: extra-cmake-modules` | `BuildRequires: kf6-extra-cmake-modules >= X.Y` (the version `find_package(ECM …)` asks for, usually `${KF_MIN_VERSION}`; take it from upstream, not from a sampled spec) |
 
-The full set is in `macros.kf6` (`osc cat openSUSE:Factory kf6-filesystem macros.kf6`).
+The full set is in `macros.kf6` (`geectl remote cat openSUSE:Factory kf6-filesystem macros.kf6`).
 `%{_kf6_includedir}`, `%{_kf6_localedir}` and `%{_kf6_libexecdir}` are framework paths
 (`…/KF6`, `…/kf6`); an app keeps `%{_includedir}` and `%{_libexecdir}`.
 
@@ -68,7 +68,7 @@ The full set is in `macros.kf6` (`osc cat openSUSE:Factory kf6-filesystem macros
   the flags for what it installs — `--all-name` when catalog names differ from `%{name}`,
   `--with-html` for KDocTools handbooks, `--with-qt` for Qt `.qm`, `--with-man` for localized
   man pages; and `%files lang -f %{name}.lang` (6 of the 8 sampled specs).
-- **Sample before writing a new one:** `osc cat KDE:Extra <pkg> <pkg>.spec` for two or three
+- **Sample before writing a new one:** `geectl remote cat KDE:Extra <pkg> <pkg>.spec` for two or three
   current specs — for layout, not correctness (klevernotes never builds its upstream
   `src/autotests`, and its version floors lag upstream's). This is in addition to the
   cross-distro survey of Core directive item 9, not a substitute.

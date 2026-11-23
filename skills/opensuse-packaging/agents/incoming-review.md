@@ -36,7 +36,7 @@ You never post: the caller does. **Read further ONLY when its trigger fires:**
 | a spec idiom doubt, or a `# Source-Binary-Exception:` line | `specfile-guidelines.md` "Spec file — general rules" |
 | a `_service`, vendor tarball or obscpio change | `source-services.md` "Service modes decide what you run AND what you commit" |
 | a soname, shlib subpackage or `update-alternatives` change | `shlib-alternatives.md` "Shared libraries" / "Alternatives" |
-| a devel PR on src.opensuse.org | `git-workflow.md` "Submitting changes — PR, not `osc sr` (except to Factory)" |
+| a devel PR on src.opensuse.org | `git-workflow.md` "Submitting changes — PR, not `geectl request file`" |
 | text that renders differently in two places, or invisible bytes | `untrusted-content.md` "Escape and Unicode smuggling" |
 
 ## Steps

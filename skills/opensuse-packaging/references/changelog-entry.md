@@ -10,8 +10,7 @@ fixing patch as a `*` sub-bullet), the umbrella-bullet norm, the SR-must-carry-a
 the never-edit-old-entries rule with its narrow exceptions — live in
 `references/changelog-rules.md` "Changelog (`*.changes`)".
 
-The canonical command is `osc vc`, which opens an editor with a fresh template. Since that is
-interactive, when working from this skill **write the entry directly** to `<name>.changes` using
+The canonical command is `geectl changelog generate DIR`, which writes a fresh entry skeleton. When working from this skill **write the entry directly** to `<name>.changes` using
 the mechanics below.
 
 ## The entry template
@@ -46,7 +45,7 @@ reviewers will reject the entry. (`%_d` is the space-padded day: `Thu Jul  9`, n
 ## Author line — HARD RULE: always the full `Full Name <email>` form
 
 The header line is `<date> - Full Name <email>` (e.g. `Jane Packager <jane@example.com>`), never a
-bare email. Your own entries carry **exactly what a bare `osc vc` writes** — the same name and the
+bare email. Your own entries carry **exactly what `geectl changelog generate` writes** — the same name and the
 same address (`scripts/vc-identity.sh` prints it) — not your git identity, and not an address an
 older entry happens to use (real case: sr#1385844 shipped the git address under the right name).
 `gate.sh`'s changes-lint refuses an entry that shares only the name or only the address. If a source service (`changesgenerate`) stamps the entry
@@ -64,7 +63,7 @@ file into a variable and write `new_entry + old_content` as **two separate state
 **every previous entry is silently deleted**.
 
 After writing, **always verify**: the previous top entry is still present, the `-------` separator
-count went up by exactly one (`grep -c '^----' <name>.changes`), and `osc diff`/the PR diff shows a
+count went up by exactly one (`grep -c '^----' <name>.changes`), and `geectl diff`/the PR diff shows a
 **pure insertion**. Losing prior entries is a guaranteed Factory decline (*"please preserve
 changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
 `open(f,"w").write(hdr+open(f).read())` one-liner truncated all three `.changes`, dropping the
@@ -88,7 +87,7 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   your OWN top entry while it is committed to devel (or pushed to an open PR/SR branch) but **not
   yet accepted into Factory** — on a git branch the auto-detected baseline is the *branch HEAD*,
   which already contains your unmerged entry. AUTHOR is always your own name: the guard checks the
-  entry against `osc whois` and Factory's copy, and refuses another packager's entry, an entry
+  entry against your OBS identity (the identity `scripts/vc-identity.sh` prints) and Factory's copy, and refuses another packager's entry, an entry
   Factory already has, any change from the second entry down, and emptying the entry. Stop using
   it once the submission is accepted; the entry is history then.
 - **`changes-guard.sh --squash-mine "<Your Name>"`** (and `gate.sh --squash-mine`) folds the run of

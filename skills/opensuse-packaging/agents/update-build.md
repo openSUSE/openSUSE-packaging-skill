@@ -42,7 +42,7 @@ You are the **update / build / cleanup** stage for **one package**. Goal: reach 
 | soname change, shlib subpackage, `update-alternatives` | `shlib-alternatives.md` "Shared libraries" / "Alternatives" |
 | the target is Leap 16.x / SLFO / Backports | `leap-slfo.md` "1. Where does the package come from?" (routing) |
 | a Leap `pool/` branch (`leap-16.x`) | `leap-slfo.md` "The pool PR gate — build, review, open, watch" |
-| git/scmsync package, not a geectl working copy | `git-workflow.md` "Local build in a git checkout — the gotchas", "Submitting changes — PR, not `osc sr`" |
+| git/scmsync package, not a geectl working copy | `git-workflow.md` "Local build in a git checkout — the gotchas", "Submitting changes — PR, not `geectl request file`" |
 | brand-new package | `new-package.md` "New package from scratch" |
 | unattended / multi-package run | `remote-builds.md` "Unattended / remote-build mode" |
 | picking LOCAL vs OBS-ONLY, a `.changes`-only change, aborting a build | `update-build.md` "Build modes" |

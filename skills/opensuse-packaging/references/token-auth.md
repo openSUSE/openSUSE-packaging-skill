@@ -6,14 +6,14 @@ implemented alongside this contract as a draft in open-build-service
 (`Token::APIToken`: `Authorization: Bearer` authentication, SHA256-hashed
 secret storage, optional expiry, web UI plus API issuance/revocation —
 a draft branch in a fork of open-build-service); this document
-fixes what the client — `osc`, scripts, and agents — must do so both sides
+fixes what the client — `geectl`, scripts, and agents — must do so both sides
 stay aligned.
 
 ## Token model
 
 - A general API token is a bearer credential: whoever holds it can act as
   the account that created it, across the whole API.
-- It is distinct from the operation-scoped tokens `osc token` manages
+- It is distinct from the operation-scoped tokens `geectl remote create-token --operation <op> --live` manages
   (`rebuild`, `release`, `service`, `workflow`): those are single-operation
   trigger tokens, not a login replacement, and this document does not change
   them.
@@ -24,17 +24,17 @@ stay aligned.
 
 When authenticating to an apiurl, the first configured source wins:
 
-1. `OSC_TOKEN` environment variable — ephemeral, for CI and agents.
-2. `token = <value>` in the oscrc `[https://<apiurl>]` section — persistent.
-3. Username/password (`OSC_USERNAME`/`OSC_PASSWORD`, or the oscrc
-   `user`/`pass` entries) — the legacy path, kept for API instances without
+1. `GEECTL_OBS_APIKEY_<ALIAS>` environment variable — ephemeral, for CI and agents.
+2. Username/password (`GEECTL_OBS_USERNAME[_<ALIAS>]`/`GEECTL_OBS_PASSWORD[_<ALIAS>]`, or the `*_FILE` variants) — the legacy path, kept for API instances without
    token support.
-4. Interactive prompt — humans only. An agent must never block on it: fail
+3. Interactive prompt — humans only. An agent must never block on it: fail
    with "no OBS credential configured" instead.
 
-Like the other `OSC_*` variables, `OSC_TOKEN` is only honoured when a
-config file already exists — it supplements the config, it does not replace
-it.
+The config file holds endpoints only, never credentials: geectl refuses
+credential-shaped keys in it. Like the other `GEECTL_*` variables, a token
+for a named instance needs that instance's entry in the config file — the
+variable supplements the config, it does not replace it. `geectl config show`
+reports credential status, never a secret value.
 
 ## Auth transport
 
@@ -49,7 +49,7 @@ trains the user to keep typing a password.
 Tokens may carry an expiry. Where the server issues expiring tokens with a
 refresh mechanism, the client refreshes proactively ahead of expiry and
 stores the new token back into the source it came from — with one exception:
-a token injected via `OSC_TOKEN` is never written to disk; the caller
+a token injected via `GEECTL_OBS_APIKEY_<ALIAS>` is never written to disk; the caller
 re-injects the fresh value. The refresh endpoint itself is server-side; the
 client contract is only: refresh early, update the same store, never persist
 an environment-provided token.
@@ -59,8 +59,8 @@ an environment-provided token.
 - Never print, log, or echo a token — not in `--debug` output, not in
   transcripts, not in error messages.
 - Never pass a token as a command-line argument: it is visible in the
-  process list. Environment variable or config file only.
-- An oscrc holding a token must be mode `0600` and must never be committed
+  process list. Environment variable only — never a config file: geectl's config refuses credential-shaped keys.
+- A file holding a credential must be mode `0600` and must never be committed
   to any repository.
 - Tokens never appear in SR messages, comments, `.changes` entries, commit
   messages, or URLs.

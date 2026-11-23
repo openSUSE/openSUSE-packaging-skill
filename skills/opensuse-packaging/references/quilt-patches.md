@@ -6,7 +6,7 @@ categories, upstream-reference, `.changes`) are `references/specfile-guidelines.
 "Patches"; apply both.
 
 Quilt works on the spec+patch files in the checkout, not the VCS — same
-mechanics for a classic `osc co` or a git clone (`references/git-workflow.md`).
+mechanics for a geectl working copy or a git clone (`references/git-workflow.md`).
 
 **HARD RULE — check `command -v quilt` before using anything here; never
 assume it's installed** (not in a base openSUSE install). If missing:
@@ -58,7 +58,7 @@ quilt's bookkeeping and causes confusing conflicts later.
 ## CVE patch backporting (quilt + spec)
 
 Backporting published CVE fixes into an old lineage missing them — the
-classic-osc/maintenance flow, once `references/leap-slfo.md` §6 has decided
+the maintenance flow, once `references/leap-slfo.md` §6 has decided
 **backport** over bump.
 
 1. **Fetch each fix as a raw diff from its own upstream URL** —
