@@ -1,10 +1,11 @@
 # Desktop themes, icon themes and branding
 
 Owner of: packaging a theme (icon, GTK, GNOME Shell, Plasma, SDDM, Plymouth, Firefox, Sway)
-and its desktop-specific pieces: naming, what rpmlint's branding check judges, directory
-ownership, per-desktop `Supplements`, shipped defaults, and keeping a theme `noarch`. The
-generic spec rules stay in `references/specfile-guidelines.md`. Every rule below was checked
-against Factory specs and build logs (2026-10).
+and its desktop-specific pieces: naming, what the build log's rpmlint branding check judges
+(and where rpmcrab differs), directory ownership, per-desktop `Supplements`, shipped
+defaults, and keeping a theme `noarch`. The generic spec rules stay in
+`references/specfile-guidelines.md`. Every rule below was checked against Factory specs and
+build logs (2026-10).
 
 ## Branding package or plain theme
 
@@ -40,6 +41,11 @@ with nothing.
   fails only past the threshold of 999. Factory's own themes leave them unfiltered
   (adwaita-xfce-icon-theme and elementary-xfce-icon-theme have no rpmlintrc); if you filter
   one, filter that exact dependency with a comment.
+- **rpmcrab, run over the built RPMs, diverges.** It charges the provides, conflicts and
+  supplements trio only to `-branding-` names, so a plain `<base>-theme-<flavor>` gets none
+  of the three (rpmcrab#954). It reports `branding-requires-unversioned` as `W:` and
+  only for a generic `<base>-branding` or `<base>-theme` name, so `lxqt-themes`,
+  `hicolor-icon-theme` and `pkgconfig(adwaita-icon-theme)` pass (rpmcrab#857, #953).
 
 **Require an icon theme by its package name, never by `pkgconfig()`**: `Requires:
 adwaita-icon-theme`, as every Factory theme does — the `.pc` file is a build-time artifact.
@@ -151,7 +157,8 @@ comes from plymouth-branding-openSUSE.
   `%{?_isa}` makes the wrong-arch build uninstallable.
 - firefox-esr has its own progdir (`%{_libdir}/firefox-esr`, as in
   MozillaFirefox-branding-openSUSE's multibuild); `E: no-binary` on 32-bit builds is harmless
-  (rpmlint exempts only lib64 paths).
+  (rpmlint exempts only lib64 paths). rpmcrab exempts each arch's libdir and reports
+  `no-binary` as `W:` (rpmcrab#444).
 
 ## One arch-specific piece in a noarch theme
 
@@ -170,5 +177,6 @@ Two Factory-accepted shapes:
   ```
   with `BuildArch: noarch` in the default flavor's branch and every other `%package`,
   `%description` and `%files` inside it. Expect `E: invalid-spec-name` on the flavor's src
-  rpm and `W: libdir-macro-in-noarch-package` (rpmcrab credits the noarch declaration here — the `%files` lines share its branch — so the check still fires); both
-  are noise. The flavor reruns the whole build, `%check` included.
+  rpm and `W: libdir-macro-in-noarch-package` (rpmlint's spec check ignores `%if`); both
+  are noise. rpmcrab does not report the second here (rpmcrab#1171). The flavor
+  reruns the whole build, `%check` included.
