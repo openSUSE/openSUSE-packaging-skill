@@ -3,7 +3,7 @@
 # intact. `--amend-top` may rework only an unreleased top entry: it once passed
 # with another packager's name on that packager's entry (sr#1385744).
 # Adding a bug/CVE reference to an older entry passes only with a new entry on
-# top. Offline: --released DIR or a fake osc stands in for openSUSE:Factory.
+# top. Offline: --released DIR or a fake geectl stands in for openSUSE:Factory.
 # Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -44,26 +44,27 @@ mk mid; { old1; old2; } > "$work/mid/base/foo.changes"
 { new1; old1 | sed 's/(upstreamed)/(upstreamed; drop leftover file)/'; old2; } > "$work/mid/foo.changes"
 case_ old-entry-reworded 1 "not an exact suffix" --base "$work/mid/base/foo.changes" "$work/mid/foo.changes"
 
-# --amend-top: the top entry must be the OBS user's (osc whois) and not yet in
-# Factory (the --released dir, else osc cat). A fake osc answers both.
+# --amend-top: the top entry must be the OBS user's (geectl remote whois) and not yet in
+# Factory (the --released dir, else geectl remote cat). A fake geectl answers both.
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'OSC'
+cat > "$work/bin/geectl" <<'GEectl'
 #!/bin/bash
-case "$1" in
-  whois) [ "${WHOIS_MODE:-ok}" = ok ] || { echo "Server returned an error: HTTP Error 401" >&2; exit 1; }
-         echo 'jpackager: "Jane Packager" <jane@example.com>' ;;
-  cat) [ "$2 $3 $4" = "openSUSE:Factory foo foo.changes" ] || { echo "fake osc: unexpected $*" >&2; exit 9; }
-       case "${OSC_MODE:-}" in
-         404) echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1 ;;
+case "$1 $2" in
+  "remote whois") [ "${WHOIS_MODE:-ok}" = ok ] || { echo "geectl: whois failed" >&2; exit 1; }
+         printf '%s' '{"login": "jpackager", "email": "jane@example.com", "realname": "Jane Packager", "state": "confirmed"}' ;;
+  "remote cat") [ "$3 $4 $5 $6 $7" = "openSUSE:Factory foo foo.changes --format text" ] || { echo "fake geectl: unexpected $*" >&2; exit 9; }
+       case "${CAT_MODE:-}" in
+         404) printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "$3" "$4" "$5" >&2; exit 3 ;;
          err) echo "Server returned an error: HTTP Error 503: Service Unavailable" >&2; exit 1 ;;
-         ok) cat "$OSC_FILE" ;;
-         *) echo "fake osc: cat without OSC_MODE" >&2; exit 9 ;;
+         ok) cat "$CAT_FILE" ;;
+         *) echo "fake geectl: cat without CAT_MODE" >&2; exit 9 ;;
        esac ;;
-  *) echo "fake osc: unexpected $*" >&2; exit 9 ;;
+  *) echo "fake geectl: unexpected $*" >&2; exit 9 ;;
 esac
-OSC
-chmod +x "$work/bin/osc"
+GEectl
+chmod +x "$work/bin/geectl"
 export PATH="$work/bin:$PATH"
+export GEECTL_OBS_USERNAME=jpackager
 
 mk own; mkdir -p "$work/own/factory"; old2 > "$work/own/factory/foo.changes"
 { entry "Sat Oct 17 10:00:00 UTC 2026" "$JANE" "- Update to 2.3"; old2; } > "$work/own/base/foo.changes"
@@ -87,12 +88,12 @@ mk ownrel; mkdir -p "$work/ownrel/factory"
 case_ amend-own-released 1 "already in openSUSE:Factory" --amend-top 'Jane Packager' \
   --released "$work/ownrel/factory" --base "$work/ownrel/base/foo.changes" "$work/ownrel/foo.changes"
 
-# no --released: Factory is asked through osc for the package in .osc/_package
-OSC_MODE=404 case_ amend-new-package 0 "the top entry is yours" --amend-top 'Jane Packager' \
+# no --released: Factory is asked through geectl for the package in .osc/_package
+CAT_MODE=404 case_ amend-new-package 0 "the top entry is yours" --amend-top 'Jane Packager' \
   --base "$work/own/base/foo.changes" "$work/own/foo.changes"
-OSC_MODE=ok OSC_FILE="$work/ownrel/factory/foo.changes" case_ amend-released-via-osc 1 "already in openSUSE:Factory" \
+CAT_MODE=ok CAT_FILE="$work/ownrel/factory/foo.changes" case_ amend-released-via-geectl 1 "already in openSUSE:Factory" \
   --amend-top 'Jane Packager' --base "$work/ownrel/base/foo.changes" "$work/ownrel/foo.changes"
-OSC_MODE=err case_ amend-factory-unreadable 3 "cannot tell whether openSUSE:Factory" --amend-top 'Jane Packager' \
+CAT_MODE=err case_ amend-factory-unreadable 3 "cannot tell whether openSUSE:Factory" --amend-top 'Jane Packager' \
   --base "$work/own/base/foo.changes" "$work/own/foo.changes"
 mkdir -p "$work/nopkg"; cp "$work/own/foo.changes" "$work/nopkg/"
 case_ amend-no-package-name 3 "cannot tell whether openSUSE:Factory" --amend-top 'Jane Packager' \

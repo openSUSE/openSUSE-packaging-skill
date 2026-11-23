@@ -3,9 +3,10 @@
 # RPM requires a user() or group() its own scriptlets create but no built RPM
 # provides: rpm derives the dependency from %attr ownership, so the package
 # cannot be installed (owntone sr#1385677: "nothing provides group(owntone)").
-# The RPMs it queries are the build's own: a chroot root's .build.packages, a
-# VM root's (build-type=kvm) .mount/.build.packages, or --rpms DIR for a
-# captured log, and a lookup with no source RPM there is no verdict.
+# The RPMs it queries are the build's own: a root's .build.packages (a geectl
+# local-build root keeps them there; the log carries no BUILD_ROOT line, so
+# there is nothing to chase), or --rpms DIR for a captured log, and a lookup
+# with no source RPM there is no verdict.
 # A fake rpm on PATH answers the queries. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -58,6 +59,7 @@ expect() {
 }
 
 expect "a user/group its %pre creates, provided by nothing: red" 1 'nothing provides group(owntone)' "$work/root"
+! grep -qF 'Traceback' <<<"$last" && pass "no traceback when geectl config is unreadable" || fail "traceback in output: $last"
 grep -qF 'user(owntone)' <<<"$last" && ! grep -qF 'group(mail)' <<<"$last" \
   && pass "the red names user(owntone), not the system group(mail)" || fail "unprovided list: $last"
 PROVIDE_USERS=1 expect "the package provides its own user and group: green" 0 'OK: every user()/group() a built RPM requires' "$work/root"
@@ -101,39 +103,29 @@ PROVIDE_USERS=1 expect "--rpms: an RPM rpm cannot read: no verdict" 3 'rpm canno
   || fail "--rpms unreadable RPM: printed the OK of a check that did not run"
 
 # --- root forms: the RPM directory is the build's, never home/abuild ---------------
-# A VM root (build-type=kvm) builds in <root>/.mount; --clean wipes only that, so
-# the chroot tree an earlier build left in the root stays, with its own RPMs.
+# A root keeps its built packages in .build.packages; the stale chroot tree
+# an earlier build left beside it is never read.
 K="$work/kvm"
-mkdir -p "$K/.mount/.build.packages/RPMS/x86_64" "$K/.mount/.build.packages/SRPMS" \
+mkdir -p "$K/.build.packages/RPMS/x86_64" "$K/.build.packages/SRPMS" \
   "$K/home/abuild/rpmbuild/RPMS/x86_64" "$K/home/abuild/rpmbuild/SRPMS"
-: > "$K/img"
 printf '%s\n' "$green" > "$K/.build.log"
-: > "$K/.mount/.build.packages/RPMS/x86_64/owntone-29.3-0.x86_64.rpm"
-: > "$K/.mount/.build.packages/SRPMS/owntone-29.3-0.src.rpm"
+: > "$K/.build.packages/RPMS/x86_64/owntone-29.3-0.x86_64.rpm"
+: > "$K/.build.packages/SRPMS/owntone-29.3-0.src.rpm"
 : > "$K/home/abuild/rpmbuild/RPMS/x86_64/stale-1.0-0.x86_64.rpm"
 : > "$K/home/abuild/rpmbuild/SRPMS/stale-1.0-0.src.rpm"
-ln -s home/abuild/rpmbuild "$K/.build.packages"
-expect "kvm root: the RPMs of .mount/.build.packages are checked" 1 'nothing provides group(owntone)' "$K"
+expect "a root: the RPMs of .build.packages are checked" 1 'nothing provides group(owntone)' "$K"
 grep -qF 'owntone-29.3-0.x86_64.rpm' <<<"$last" && ! grep -qF 'stale-1.0-0' <<<"$last" \
-  && pass "kvm root: the RPMs produced are the VM's, not the stale chroot tree's" || fail "kvm root RPM list: $last"
-# No extracted packages (the VM never handed any back): the stale tree is no stand-in.
-rm -rf "$K/.mount/.build.packages"
-expect "kvm root without .mount/.build.packages: no verdict, not the stale RPMs' OK" 3 \
-  "no source RPM under $K/.mount/.build.packages/SRPMS" "$K"
-# The log names its build root: a VM build with an oscrc build-device has no
-# <root>/img, and still builds in <root>/.mount.
-D="$work/bdev"
-mkdir -p "$D/.mount/.build.packages/RPMS/x86_64" "$D/.mount/.build.packages/SRPMS"
-printf '[    0s] Using BUILD_ROOT=%s/.mount\n%s\n' "$D" "$green" > "$D/.build.log"
-: > "$D/.mount/.build.packages/RPMS/x86_64/owntone-29.3-0.x86_64.rpm"
-: > "$D/.mount/.build.packages/SRPMS/owntone-29.3-0.src.rpm"
-expect "build-device root: the log's BUILD_ROOT, not the layout, names the RPMs" 1 'nothing provides group(owntone)' "$D"
-# A VM build's log carries a NUL from the guest's boot (and, captured from osc, CRs):
+  && pass "a root: the RPMs produced are the build's, not the stale chroot tree's" || fail "root RPM list: $last"
+# A build log carries a NUL from the guest's boot (and, captured, CRs):
 # grep must still read it as text.
-printf '[    0s] Using BUILD_ROOT=%s/.mount\n[    5s] \000\n%s\n' "$D" "$green" > "$D/.build.log"
-PROVIDE_USERS=1 expect "kvm root whose log holds a NUL: green" 0 'VERDICT: GREEN' "$D"
+printf '[    5s] \000\n%s\n' "$green" > "$K/.build.log"
+PROVIDE_USERS=1 expect "a root whose log holds a NUL: green" 0 'VERDICT: GREEN' "$K"
 printf '[    5s] boot\r\n[    5s] \000\r\n%s\r\n' "$green" > "$work/nul.log"
-expect "a captured kvm log with CRs and a NUL: green" 0 'VERDICT: GREEN' "$work/nul.log"
+expect "a captured log with CRs and a NUL: green" 0 'VERDICT: GREEN' "$work/nul.log"
+# No built packages: the stale tree is no stand-in.
+rm -rf "$K/.build.packages"
+expect "a root without .build.packages: no verdict, not the stale RPMs' OK" 3 \
+  "no source RPM under $K/.build.packages/SRPMS" "$K"
 # A kiwi or Dockerfile build writes no source RPM.
 mkdir -p "$work/kiwi/.build.packages"
 printf '%s\n' '[  10s] ... finished "build foo.kiwi" at Mon Oct 19 2026.' > "$work/kiwi/.build.log"
@@ -143,13 +135,13 @@ V="$work/vm2chroot"
 mkdir -p "$V/.mount/.build.packages/RPMS/x86_64" "$V/.mount/.build.packages/SRPMS" \
   "$V/home/abuild/rpmbuild/RPMS/x86_64" "$V/home/abuild/rpmbuild/SRPMS"
 : > "$V/img"
-printf '[    0s] Using BUILD_ROOT=%s\n%s\n' "$V" "$green" > "$V/.build.log"
+printf '%s\n' "$green" > "$V/.build.log"
 : > "$V/.mount/.build.packages/RPMS/x86_64/stale-1.0-0.x86_64.rpm"
 : > "$V/.mount/.build.packages/SRPMS/stale-1.0-0.src.rpm"
 : > "$V/home/abuild/rpmbuild/RPMS/x86_64/owntone-29.3-0.x86_64.rpm"
 : > "$V/home/abuild/rpmbuild/SRPMS/owntone-29.3-0.src.rpm"
 ln -s home/abuild/rpmbuild "$V/.build.packages"
-expect "chroot build beside an old VM image: the log's BUILD_ROOT names the RPMs" 1 'nothing provides group(owntone)' "$V"
+expect "chroot build beside an old VM image: the root's .build.packages names the RPMs" 1 'nothing provides group(owntone)' "$V"
 ! grep -qF 'stale-1.0-0' <<<"$last" && pass "chroot build beside an old VM image: the old VM's RPMs are not listed" \
   || fail "chroot build beside an old VM image RPM list: $last"
 # A chroot root whose RPM tree holds no source RPM is not this build's.

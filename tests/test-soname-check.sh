@@ -3,9 +3,10 @@
 # root's .build.packages, a VM root's (build-type=kvm) .mount/.build.packages,
 # or those of the build root the root's log names, never the stale chroot tree
 # an earlier build left in that root. That holds for the newest root under the
-# oscrc build-root (no arguments) and for --build-root. HOME holds an oscrc
-# whose build-root is inside this suite's own directory, so no other root is
-# read; a fake rpm on PATH answers the queries. Exit 0 = all assertions hold.
+# local-build cache (no arguments) and for --build-root. The cache is this
+# suite's own directory, so no other root is read; a fake geectl on PATH
+# answers `config show` with that cache dir, and a fake rpm on PATH answers
+# the queries. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -17,9 +18,16 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)" || exit 1
 trap 'rm -rf "$work"' EXIT
 B="$work/roots"
-export HOME="$work/home"
-mkdir -p "$work/bin" "$B" "$HOME/.config/osc"
-printf '[general]\nbuild-root = %s/%%(package)s-%%(repo)s-%%(arch)s\n' "$B" > "$HOME/.config/osc/oscrc"
+export HOME="$work/home" XDG_CACHE_HOME="$work/cache"
+mkdir -p "$work/bin" "$B" "$work/cache/geectl/build-roots"
+# `geectl config show` names the cache dir; the no-argument run searches its
+# build-roots, <cache>/build-roots/<project>/<package>/<repo>-<arch>/.
+cat > "$work/bin/geectl" <<EOF
+#!/bin/bash
+[ "\$1 \$2" = "config show" ] || { echo "fake geectl: unexpected \$*" >&2; exit 99; }
+printf '%s\n' '{"build_cache_dir": "$work/cache/geectl"}'
+EOF
+chmod +x "$work/bin/geectl"
 # The package name from the file name; no SONAME, no symlink: clean.
 cat > "$work/bin/rpm" <<'EOF'
 #!/bin/bash
@@ -32,7 +40,7 @@ chmod +x "$work/bin/rpm"
 run() { out="$(PATH="$work/bin:$PATH" bash "$SC" "$@" 2>&1)"; rc=$?; }
 
 # A chroot root: .build.packages links to the rpmbuild tree.
-C="$B/foo-leap-16.0-aarch64"
+C="$work/cache/geectl/build-roots/devel:example/foo/standard-aarch64"
 mkdir -p "$C/home/abuild/rpmbuild/RPMS/aarch64"
 : > "$C/home/abuild/rpmbuild/RPMS/aarch64/libfoo1-1.0-0.aarch64.rpm"
 ln -s home/abuild/rpmbuild "$C/.build.packages"
@@ -43,7 +51,7 @@ run
   || { fail "chroot root: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # A VM root: the build is in .mount; the chroot tree beside it is older work.
-K="$B/bar-leap-16.0-aarch64"
+K="$work/cache/geectl/build-roots/devel:example/bar/standard-aarch64"
 mkdir -p "$K/.mount/.build.packages/RPMS/aarch64" "$K/home/abuild/rpmbuild/RPMS/aarch64"
 : > "$K/img"
 : > "$K/.build.log"     # as issue #71 found it

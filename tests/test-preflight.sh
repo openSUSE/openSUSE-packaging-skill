@@ -1,9 +1,9 @@
 #!/bin/bash
-# test-preflight.sh — preflight.sh offline: fake `osc` and `git-obs` on PATH
-# answer from a per-case fixture tree (a missing fixture is a 404), and a fake
-# `curl` fails and records that it was called. The base package foo has
-# devel devel:example at 1.1 against openSUSE:Factory at 1.0, nothing in
-# flight, and one declined devel->Factory SR. Exit 0 = all assertions hold.
+# test-preflight.sh — preflight.sh offline: fake `geectl` and `git-obs` on PATH
+# answer from a per-case fixture tree (a missing fixture is a 404, one holding
+# @500 a 500), and a fake `curl` fails and records that it was called. The base
+# package foo has devel devel:example at 1.1 against openSUSE:Factory at 1.0,
+# nothing in flight, and one declined devel->Factory SR. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -15,20 +15,28 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-echo "osc $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
-case $1 in
-  whois) [ -e "$FIX/no-whois" ] && exit 1; echo 'tester: "Tester"' ;;
-  develproject) [ -e "$FIX/no-develproject" ] && exit 1; echo "devel:example/$3" ;;
-  ls) [ -f "$FIX/ls/$2" ] || { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
-      cat "$FIX/ls/$2" ;;
-  api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=,' '_____')"
-       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-       [ "$(cat "$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
-       cat "$f" ;;
-  *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
+echo "geectl $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
+case "$*" in
+  "remote devel-project "*) [ -e "$FIX/no-develproject" ] && exit 1; f=devel-project ;;
+  "remote package-meta "*) f="meta-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
+  "remote project-meta "*) f="meta-$(printf %s "$3" | tr '/' '_')_project" ;;
+  "remote link-target "*) f="link-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
+  "remote cat --format text "*) f="cat-$(printf %s "$5" | tr '/' '_')_$(printf %s "$6" | tr '/' '_')_$(printf %s "$7" | tr '/' '_')" ;;
+  "remote list-packages "*) f="ls-$(printf %s "$3" | tr '/' '_')" ;;
+  "request search "*) f="search-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  *) echo "fake geectl: unexpected $*" >&2; exit 99 ;;
 esac
+[ -f "$FIX/$f" ] || {
+  case "$*" in
+    "remote cat --format text "*)
+      printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "$5" "$6" "$7" >&2; exit 3 ;;
+  esac
+  printf '{"error":{"code":"not_found","context":"no such thing"}}\n' >&2; exit 3
+}
+[ "$(cat "$FIX/$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
+cat "$FIX/$f"
 EOF
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
@@ -49,56 +57,94 @@ EOF
 chmod +x "$work/bin/"*
 
 B="$work/base"
-obs() { mkdir -p "$B/obs" && printf '%s\n' "$2" > "$B/obs/$(printf %s "$1" | tr '/?&=,' '_____')"; }
-obs /source/devel:example/foo/foo.spec $'Name: foo\nVersion: 1.1'
-obs /source/devel:example/foo/foo.changes $'-------------------------------------------------------------------\nMon Sep 14 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Update to 1.1'
-obs /source/devel:example/foo/_meta '<package name="foo" project="devel:example"/>'
-obs /source/devel:example/_meta '<project name="devel:example"/>'
-obs /source/openSUSE:Factory/foo/foo.spec $'Name: foo\nVersion: 1.0'
-obs '/request?view=collection&types=submit&states=new,review&project=devel:example&package=foo' '<collection/>'
-obs '/request?view=collection&types=submit&states=new,review&project=openSUSE:Factory&package=foo' '<collection/>'
-obs '/request?view=collection&types=submit&states=declined&project=openSUSE:Factory&package=foo' '<collection>
-  <request id="1375013" creator="tester"><action type="submit"><source project="devel:example" package="foo"/>
-  <target project="openSUSE:Factory" package="foo"/></action><state name="declined"/></request></collection>'
-mkdir -p "$B/ls" && printf 'foo\npython-Authlib\npython-Authlib:test\npython-zope.interface\npython-pytest-lazy-fixtures\n' > "$B/ls/openSUSE:Factory"
-SWEEP='/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27foo%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)'
-obs "$SWEEP" '<collection/>'
+put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
+# srch <query> <json> — the request-search fixture for the query as preflight.sh passes it
+srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+# spath <query> — that fixture's path under $B (the case's copy in a mutation)
+spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+Q_IN="--target-project devel:example --target-package foo --type submit --state new --state review"
+Q_OUT="--target-project openSUSE:Factory --target-package foo --type submit --state new --state review --source-project devel:example"
+Q_DEC="--target-project openSUSE:Factory --target-package foo --type submit --state declined --source-project devel:example"
+Q_SWEEP="--target-package foo --type submit --state new --state review"
+put "$B/devel-project" '{"package": "foo", "devel_project": "devel:example", "devel_package": "foo"}'
+put "$B/meta-devel:example_foo" '{"name": "foo", "project": "devel:example", "persons": [], "groups": []}'
+put "$B/meta-devel:example_project" '{"name": "devel:example", "persons": [], "groups": [], "scmsync": null}'
+put "$B/meta-openSUSE:Factory_foo" '{"name": "foo", "project": "openSUSE:Factory", "persons": [], "groups": [], "devel": null}'
+put "$B/cat-devel:example_foo_foo.spec" 'Name: foo
+Version: 1.1'
+put "$B/cat-devel:example_foo_foo.changes" '-------------------------------------------------------------------
+Mon Sep 14 10:00:00 UTC 2026 - Jane Packager <jane@example.com>
+
+- Update to 1.1'
+put "$B/cat-openSUSE:Factory_foo_foo.spec" 'Name: foo
+Version: 1.0'
+put "$B/ls-openSUSE:Factory" '{"project": "openSUSE:Factory", "packages": ["foo", "python-Authlib", "python-Authlib:test", "python-zope.interface", "python-pytest-lazy-fixtures"]}'
+srch "$Q_IN" '{"requests": []}'
+srch "$Q_OUT" '{"requests": []}'
+srch "$Q_DEC" '{"requests": [{"id": 1375013, "creator": "tester", "state": {"name": "declined", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:example", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}]}'
+srch "$Q_SWEEP" '{"requests": []}'
+
+# inq/outg/sweep take the requests array and write that search fixture
+inq() { srch "$Q_IN" "{\"requests\": [$1]}"; }
+outg() { srch "$Q_OUT" "{\"requests\": [$1]}"; }
+sweep() { srch "$Q_SWEEP" "{\"requests\": [$1]}"; }
+Q_OUT_NEW="--target-project openSUSE:Factory --target-package python-brand-new --type submit --state new --state review"
+outg_new() { srch "$Q_OUT_NEW" "{\"requests\": [$1]}"; }
+SR_OTHER_TGT='{"id": 2000001, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+SR_DIRECT='{"id": 2000002, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+SR_DEDUP_IN='{"id": 2000003, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+SR_DEDUP_SWEEP='{"id": 2000004, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+SR_NONSUBMIT_1='{"id": 2000005, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "set_bugowner", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+SR_NONSUBMIT_2='{"id": 2000007, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "add_role", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+SR_MIXED='{"id": 2000006, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+SR_NEWPKG='{"id": 2000020, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "python-brand-new", "target_project": "openSUSE:Factory", "target_package": "python-brand-new"}], "reviews": []}'
 
 # case_ <name> <expected rc> <expected message> <mutation> [preflight args after foo]
-# XPATH, when set, goes first on PATH.
-XPATH=""
+# XPATH, when set, goes first on PATH. XENV holds extra environment for the run.
+XPATH=""; XENV=()
 case_() {
   local name=$1 rc=$2 msg=$3 mut=$4 dir="$work/$1" out got; shift 4
   cp -a "$B" "$dir"
   # shellcheck disable=SC2030  # rebinding B to the copy is the point; the parent's B stays the pristine tree
   (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   mkdir -p "$dir/tmp"
-  out="$(cd "$dir" && FIX=$dir HOME=$dir/home TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" bash "$PF" "${PKG:-foo}" "$@" 2>&1)"; got=$?
+  out="$(cd "$dir" && FIX=$dir HOME=$dir/home GEECTL_OBS_USERNAME=tester TMPDIR=$dir/tmp PATH="${XPATH:+$XPATH:}$work/bin:$PATH" \
+    env ${XENV[@]+"${XENV[@]}"} bash "$PF" "${PKG:-foo}" "$@" 2>&1)"; got=$?
   LAST=$out
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
 }
 
-# A declined SR is not in flight, but `osc sr` lists every open or declined
+# A declined SR is not in flight, but a filing still lists every declined
 # request from the same source and prompts to supersede them all at once.
-# Only your own is yours to supersede, by its id with -s (never --yes, which
-# takes them all); someone else's is theirs to revoke. The FORWARD command
-# never prompts: -s for your declined SR, and always -m.
-FWD='run: osc sr devel:example foo openSUSE:Factory'
-case_ declined-own 4 "-> 1375013 is yours: file with osc sr ... -s 1375013" ":"
-# shellcheck disable=SC2016  # the backticks are the script's output, not the shell's
-grep -qF "$FWD -s 1375013 -m \"<short message>\"" <<<"$LAST" && grep -qF '`osc sr` lists them as open' <<<"$LAST" \
-  && ! grep -qE -- 'osc sr [^(]*--yes|will refuse' <<<"$LAST" && pass "declined-own: FORWARD names it, never prompts" \
+# Only your own is yours to supersede, by its id with --supersede; someone
+# else's is theirs to revoke. The FORWARD command never prompts.
+FWD_CLOSED='VERDICT: FORWARD - stranded devel update (devel already has a newer version than openSUSE:Factory): the forward needs a devel→Factory request, which geectl cannot file yet — report the update as ready to forward and stop'
+FWD_FILE_LEAP='run: geectl request file --source-project devel:example --source-package foo --target-project openSUSE:Leap:16.0 --target-package foo --description "<short message>" --changes-entry "<short message>" --live'
+Q_OUT_LEAP="--target-project openSUSE:Leap:16.0 --target-package foo --type submit --state new --state review --source-project devel:example"
+Q_DEC_LEAP="--target-project openSUSE:Leap:16.0 --target-package foo --type submit --state declined --source-project devel:example"
+case_ declined-own 4 "-> 1375013 is yours: a refile would supersede it, but geectl cannot file a request targeting openSUSE:Factory yet, so it stays listed as open" ":"
+grep -qF "$FWD_CLOSED" <<<"$LAST" && grep -qF 'filing still lists them as open' <<<"$LAST" \
+  && ! grep -qF -- '--yes' <<<"$LAST" && ! grep -qF "geectl request refile" <<<"$LAST" \
+  && pass "declined-own: FORWARD fails closed, never prompts" \
   || fail "declined-own: $LAST"
 case_ declined-foreign 4 "-> 1375013 is by someone-else, not yours to supersede: ask them to revoke it, or leave it" \
-  "sed -i 's/creator=\"tester\"/creator=\"someone-else\"/' \$B/obs/*states_declined*"
-! grep -qF -- "-s 1375013" <<<"$LAST" && grep -qF "$FWD -m \"<short message>\" — declined 1375013 still makes osc sr prompt" <<<"$LAST" \
-  && pass "declined-foreign: no -s for someone else's SR" || fail "declined-foreign: $LAST"
-case_ declined-owner-unknown 4 "could not tell which are yours" ": > \$B/no-whois"
-! grep -qF -- "-s 1375013" <<<"$LAST" && pass "declined-owner-unknown: no -s" || fail "declined-owner-unknown: $LAST"
-case_ declined-user-flag 4 "-> 1375013 is yours" ": > \$B/no-whois" --user tester
-case_ no-declined 4 "$FWD -m \"<short message>\"" "echo '<collection/>' > \$B/obs/*states_declined*"
+  "sed -i 's/\"creator\": \"tester\"/\"creator\": \"someone-else\"/' \$(spath \"\$Q_DEC\")"
+! grep -qF -- "--supersede 1375013" <<<"$LAST" && grep -qF "$FWD_CLOSED" <<<"$LAST" \
+  && pass "declined-foreign: no --supersede for someone else's SR" || fail "declined-foreign: $LAST"
+XENV=(GEECTL_OBS_USERNAME=)
+case_ declined-owner-unknown 4 "could not tell which are yours" ":"
+XENV=()
+! grep -qF -- "--supersede 1375013" <<<"$LAST" && pass "declined-owner-unknown: no --supersede" || fail "declined-owner-unknown: $LAST"
+XENV=(GEECTL_OBS_USERNAME=)
+case_ declined-user-flag 4 "-> 1375013 is yours" ":" --user tester
+XENV=()
+case_ no-declined 4 "$FWD_CLOSED" "srch \"\$Q_DEC\" '{\"requests\": []}'"
 ! grep -qF "DECLINED" <<<"$LAST" && pass "no-declined: nothing to supersede" || fail "no-declined: $LAST"
+
+# A non-Factory target still gets the exact filing command: the refusal is
+# Factory's, not the command's.
+case_ leap-forward 4 "$FWD_FILE_LEAP" "put \$B/cat-openSUSE:Leap:16.0_foo_foo.spec 'Version: 1.0' && srch \"$Q_OUT_LEAP\" '{\"requests\": []}' && srch \"$Q_DEC_LEAP\" '{\"requests\": []}'" 1.1 --target-project openSUSE:Leap:16.0
 
 # The anchored queries are read against the devel and target projects, and
 # the outgoing one is filtered to devel sources. The target-agnostic sweep
@@ -107,14 +153,14 @@ case_ no-declined 4 "$FWD -m \"<short message>\"" "echo '<collection/>' > \$B/ob
 # the report and changes no verdict; a failed sweep is CHECK-FAILED.
 case_ sweep-none 4 "sweep SRs:      none" ":"
 case_ sweep-other-target 4 "SR 2000001 [review] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
-  "echo '<collection><request id=\"2000001\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"review\"/></request></collection>' > \$B/obs/*search_request*"
+  "sweep \"\$SR_OTHER_TGT\""
 grep -qF "VERDICT: FORWARD" <<<"$LAST" && pass "sweep-other-target: verdict unchanged" || fail "sweep-other-target: $LAST"
 case_ sweep-direct-to-target 3 "VERDICT: STOP - already in flight: SR 2000002 [new] devel:other/foo -> openSUSE:Factory by someone-else" \
-  "echo '<collection><request id=\"2000002\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Factory\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+  "sweep \"\$SR_DIRECT\""
 case_ sweep-lookup-failed 2 "CHECK FAILED: could not query other SRs targeting foo" \
-  "echo @500 > \$B/obs/*search_request*"
+  "echo @500 > \$(spath \"\$Q_SWEEP\")"
 case_ sweep-dedup 3 "SR 2000004 [new] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
-  "echo '<collection><request id=\"2000003\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*states_new_review_project_devel* && echo '<collection><request id=\"2000003\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request><request id=\"2000004\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+  "inq \"\$SR_DEDUP_IN\" && sweep \"\$SR_DEDUP_IN, \$SR_DEDUP_SWEEP\""
 # SR 2000003 is named exactly twice — the incoming listing and the STOP
 # verdict line quoting it; a third naming would be the sweep repeating it.
 [ "$(grep -c 'SR 2000003' <<<"$LAST")" = 2 ] && pass "sweep-dedup: an SR the anchored checks listed is not repeated" || fail "sweep-dedup: $LAST"
@@ -123,35 +169,35 @@ case_ sweep-dedup 3 "SR 2000004 [new] devel:other/foo -> openSUSE:Leap:16.0 by s
 # against the package is not an update in flight, however it is aimed
 # (sr#1383747 was a set_bugowner request and read as a STOP for runc).
 case_ sweep-non-submit 4 "sweep SRs:      none" \
-  "echo '<collection><request id=\"2000005\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"openSUSE:Factory\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><state name=\"review\"/></request><request id=\"2000007\" creator=\"someone-else\"><action type=\"add_role\"><target project=\"devel:example\" package=\"foo\"/><person name=\"someone-else\" role=\"maintainer\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+  "sweep \"\$SR_NONSUBMIT_1, \$SR_NONSUBMIT_2\""
 ! grep -qE "VERDICT: STOP|2000005|2000007" <<<"$LAST" && pass "sweep-non-submit: role requests are not in flight" || fail "sweep-non-submit: $LAST"
 # A non-submit request beside a real one changes nothing either: the submit
 # is reported, the role request is dropped.
 case_ sweep-mixed-actions 4 "SR 2000006 [new] devel:other/foo -> openSUSE:Leap:16.0 by someone-else" \
-  "echo '<collection><request id=\"2000005\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"openSUSE:Factory\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><state name=\"review\"/></request><request id=\"2000006\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"openSUSE:Leap:16.0\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/*search_request*"
+  "sweep \"\$SR_NONSUBMIT_1, \$SR_MIXED\""
 grep -qF "VERDICT: FORWARD" <<<"$LAST" && ! grep -q "2000005" <<<"$LAST" \
   && pass "sweep-mixed-actions: only the submit is reported" || fail "sweep-mixed-actions: $LAST"
 
-# A + in a package name decodes as a space in a query string, so every
-# request query must percent-encode it (libsigc++3 read as "libsigc  3"
-# printed "none" while sr#1386760 was open). No fixtures exist for foo++, so
-# every read 404s and the run ends PROCEED; what is asserted is the calls
-# log — the URLs osc was asked for carry %2B, never a raw +.
+# A + in a package name is a URL trap only when the name goes into a query
+# string; geectl takes it as an argv, so it is passed as-is, never encoded
+# and never decoded as a space (libsigc++3 read as "libsigc  3" printed
+# "none" while sr#1386760 was open). No fixtures exist for foo++, so every
+# read 404s and the run ends PROCEED; what is asserted is the calls log —
+# the geectl argv carries a literal foo++, never %2B.
 dir="$work/pkg-plus"
 # shellcheck disable=SC2031  # B is rebound only inside the mutation subshell; here it is still the pristine tree
 cp -a "$B" "$dir"; mkdir -p "$dir/tmp"
-out="$(cd "$dir" && FIX=$dir TMPDIR=$dir/tmp PATH="$work/bin:$PATH" bash "$PF" 'foo++' 2>&1)"; got=$?
+out="$(cd "$dir" && FIX=$dir GEECTL_OBS_USERNAME=tester TMPDIR=$dir/tmp PATH="$work/bin:$PATH" bash "$PF" 'foo++' 2>&1)"; got=$?
 calls="$(cat "$dir/calls")"
-[ "$got" = 0 ] && grep -qF 'package=foo%2B%2B' <<<"$calls" && grep -qF 'target/@package=%27foo%2B%2B%27' <<<"$calls" \
-  && ! grep -qE 'package=foo\+\+|%27foo\+\+' <<<"$calls" \
-  && pass "pkg-plus: + percent-encoded in every request query" \
-  || { fail "pkg-plus: expected rc=0 and %2B-encoded queries, got rc=$got"; printf '%s\n' "$calls" | sed 's/^/    /'; }
+[ "$got" = 0 ] && grep -qF 'foo++' <<<"$calls" && ! grep -qF 'foo%2B%2B' <<<"$calls" \
+  && ! grep -qF 'foo  ' <<<"$calls" \
+  && pass "pkg-plus: a + is passed as-is in geectl argv, never encoded" \
+  || { fail "pkg-plus: expected rc=0 and a literal foo++ in the calls, got rc=$got"; printf '%s\n' "$calls" | sed 's/^/    /'; }
 
 # A git devel project's in-flight update is a PR on src.opensuse.org, read
 # through git-obs pinned to that login. A failed or unreadable read is
 # CHECK-FAILED, never "open PRs: none".
-SCM="echo '<project name=\"devel:example\"><scmsync>https://src.opensuse.org/example/_ObsPrj</scmsync></project>' \
-  > \$B/obs/_source_devel:example__meta && mkdir -p \$B/gitea/repos/example/foo"
+SCM="put \$B/meta-devel:example_project '{\"name\": \"devel:example\", \"persons\": [], \"groups\": [], \"scmsync\": \"https://src.opensuse.org/example/_ObsPrj\"}' && mkdir -p \$B/gitea/repos/example/foo"
 PULLS='gitea/repos/example/foo/pulls_state_open'
 # A PR's head: the one it has now, and an older one a review may have been of.
 HEAD1=1111111111111111111111111111111111111111; HEAD0=0000000000000000000000000000000000000000
@@ -200,23 +246,24 @@ case_ scm-pr-no-head 2 "unparseable PR list for example/foo" \
 STAMPS="home/$(cat "$HERE/fixtures/gate/state-dir")/incoming"
 # shellcheck disable=SC2031,SC2317  # called by case_'s mutations, where B is the case's copy
 stamp() { mkdir -p "$B/$STAMPS/$1" && printf '%s\n' "$3" > "$B/$STAMPS/$1/$2.json"; }
-INQ="\$B/obs/*states_new_review_project_devel*"
-MAINT="echo '<package name=\"foo\" project=\"devel:example\"><person userid=\"tester\" role=\"maintainer\"/></package>' > \$B/obs/_source_devel:example_foo__meta"
-SR_C='<request id="2000010" creator="someone-else"><action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action><state name="review"/></request>'
-SR_OWN='<request id="2000011" creator="tester"><action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action><state name="new"/></request>'
-SR_FWD='<request id="2000012" creator="someone-else"><action type="submit"><source project="devel:example" package="foo"/><target project="openSUSE:Factory" package="foo"/></action><state name="new"/></request>'
-CONTRIB="echo '<collection>$SR_C</collection>' > $INQ"
+MAINT="put \$B/meta-devel:example_foo '{\"name\": \"foo\", \"project\": \"devel:example\", \"persons\": [{\"name\": \"tester\", \"role\": \"maintainer\"}], \"groups\": []}'"
+SR_C='{"id": 2000010, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+SR_OWN='{"id": 2000011, "creator": "tester", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+SR_FWD='{"id": 2000012, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:example", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+SR_NOCREATOR='{"id": 2000010, "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+SR_2ACT='{"id": 2000013, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "set_bugowner", "target_project": "devel:example", "target_package": "foo"}, {"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+CONTRIB='inq "$SR_C"' 
 case_ incoming-only 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB" 1.2
 grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "incoming-only: the item and its creator" || fail "incoming-only: $LAST"
 case_ own-and-incoming 3 "VERDICT: STOP - already in flight: SR 2000011 [new] devel:other/foo -> devel:example by tester" \
-  "$MAINT && echo '<collection>$SR_C$SR_OWN</collection>' > $INQ"
+  "$MAINT && inq \"\$SR_C, \$SR_OWN\""
 grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "own-and-incoming: the contributor's SR is listed" || fail "own-and-incoming: $LAST"
 PR_C="$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
    && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
 case_ incoming-pr 5 "example/foo#5 by someone-else: not reviewed" "$PR_C"
 grep -qF "VERDICT: INCOMING" <<<"$LAST" && pass "incoming-pr: INCOMING" || fail "incoming-pr: $LAST"
 case_ others-forward 3 "VERDICT: STOP - already in flight: SR 2000012 [new] devel:example/foo -> openSUSE:Factory by someone-else" \
-  "$MAINT && echo '<collection>$SR_FWD</collection>' > $INQ && echo '<collection>$SR_FWD</collection>' > \$B/obs/*states_new_review_project_openSUSE*"
+  "$MAINT && inq \"\$SR_FWD\" && outg \"\$SR_FWD\""
 ! grep -qF "sr#2000012" <<<"$LAST" && pass "others-forward: a forward is no contributor's submission" || fail "others-forward: $LAST"
 case_ incoming-and-ahead 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB"
 # After the review: what devel already has is on the verdict line, so nobody
@@ -224,18 +271,18 @@ case_ incoming-and-ahead 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB"
 grep -qF "after it: devel already has a newer version than openSUSE:Factory, forward it, do not repackage" <<<"$LAST" \
   && pass "incoming-and-ahead: says devel already has it" || fail "incoming-and-ahead: $LAST"
 case_ incoming-landed 5 "after it: nothing to package, devel:example and openSUSE:Factory are both at 1.1" \
-  "$MAINT && $CONTRIB && printf 'Name: foo\nVersion: 1.1\n' > \$B/obs/_source_openSUSE:Factory_foo_foo.spec" 1.1
+  "$MAINT && $CONTRIB && printf 'Name: foo\nVersion: 1.1\n' > \$B/cat-openSUSE:Factory_foo_foo.spec" 1.1
 case_ incoming-not-mine 3 "VERDICT: STOP - already in flight: SR 2000010" "$CONTRIB"
 # A contributor's request that submits to devel and to the target is in flight
 # at the target, whichever action comes first: the sweep keeps its target
 # action, though the devel one is listed as incoming.
-A_DEV='<action type="submit"><source project="devel:other" package="foo"/><target project="devel:example" package="foo"/></action>'
-A_TGT='<action type="submit"><source project="devel:other" package="foo"/><target project="openSUSE:Factory" package="foo"/></action>'
-for order in "$A_DEV$A_TGT" "$A_TGT$A_DEV"; do
-  sr="<collection><request id=\"2000014\" creator=\"someone-else\">$order<state name=\"new\"/></request></collection>"
-  case_ "incoming-and-target-$([ "$order" = "$A_DEV$A_TGT" ] && echo devel-first || echo target-first)" 3 \
+A_DEV='{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}'
+A_TGT='{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}'
+for order in "$A_DEV,$A_TGT" "$A_TGT,$A_DEV"; do
+  sr="{\"requests\": [{\"id\": 2000014, \"creator\": \"someone-else\", \"state\": {\"name\": \"new\", \"when\": \"2026-09-22T10:00:00\"}, \"actions\": [$order], \"reviews\": []}]}"
+  case_ "incoming-and-target-$([ "$order" = "$A_DEV,$A_TGT" ] && echo devel-first || echo target-first)" 3 \
     "VERDICT: STOP - already in flight: SR 2000014 [new] devel:other/foo -> openSUSE:Factory by someone-else" \
-    "$MAINT && echo '$sr' > $INQ && echo '$sr' > \$B/obs/*search_request*"
+    "$MAINT && srch \"\$Q_IN\" \"\$sr\" && srch \"\$Q_SWEEP\" \"\$sr\""
 done
 # Your own PR in flight beats a contributor's.
 case_ own-pr-and-incoming 3 "VERDICT: STOP - already in flight: PR #6 -> factory: My update (None) by tester" \
@@ -248,14 +295,16 @@ case_ maintainer-deep-json 2 "CHECK FAILED: could not tell whether you maintain 
   "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && printf '%*s' 100000 '' | tr ' ' '[' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
    && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
 case_ maintainer-empty-answer 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
-  "$CONTRIB && : > \$B/obs/_source_devel:example_foo__meta"
-case_ incoming-no-creator 2 "unparseable SR collection (incoming)" "$MAINT && echo '<collection>${SR_C/ creator=\"someone-else\"/}</collection>' > $INQ"
+  "$CONTRIB && : > \$B/meta-devel:example_foo"
+case_ incoming-no-creator 2 "unparseable SR collection (incoming)" "$MAINT && inq \"\$SR_NOCREATOR\""
 case_ check-failed-wins 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
-  "echo '<collection>$SR_C$SR_OWN</collection>' > $INQ && echo @500 > \$B/obs/_source_devel:example_foo__meta"
-case_ incoming-owner-unknown 2 "CHECK FAILED: could not tell whose requests are open" "$MAINT && $CONTRIB && : > \$B/no-whois"
-case_ incoming-empty-answer 2 "unparseable SR collection (incoming)" ": > $INQ"
+  "inq \"\$SR_C, \$SR_OWN\" && echo @500 > \$B/meta-devel:example_foo"
+XENV=(GEECTL_OBS_USERNAME=)
+case_ incoming-owner-unknown 2 "CHECK FAILED: could not tell whose requests are open" "$MAINT && $CONTRIB"
+XENV=()
+case_ incoming-empty-answer 2 "unparseable SR collection (incoming)" ": > \$(spath \"\$Q_IN\")"
 case_ incoming-second-action 5 "sr#2000013 by someone-else: not reviewed" \
-  "$MAINT && echo '<collection><request id=\"2000013\" creator=\"someone-else\"><action type=\"set_bugowner\"><target project=\"devel:example\" package=\"foo\"/><person name=\"someone-else\" role=\"bugowner\"/></action><action type=\"submit\"><source project=\"devel:other\" package=\"foo\"/><target project=\"devel:example\" package=\"foo\"/></action><state name=\"new\"/></request></collection>' > $INQ"
+  "$MAINT && inq \"\$SR_2ACT\""
 K64="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 st_() { printf '{"v": 1, "kind": "%s", "id": "%s", "verdict": "BLOCK", "key": "%s"}' "$@"; }
 case_ incoming-blocked-stamp 5 "sr#2000010 by someone-else: reviewed: BLOCK (key $K64)" \
@@ -294,10 +343,11 @@ HOME="$work/stamp-gitea/home" python3 -I -B "$INC" stamp sr#2000010 "$HEAD1" > /
 [ "$rc" = 2 ] && pass "stamp-sr-head: exit 2" || fail "stamp-sr-head: exit $rc"
 
 # _incoming.maintains() mirrors _pr_guard.maintains(): both judge each case
-# from the same answers (the guard's offline stand-ins, a fake run for ours).
+# from the same answers (the guard's offline stand-ins, a fake geectl run for ours).
 out="$(python3 -I -B - "$HERE/../skills/opensuse-packaging/scripts" "$work/parity" 2>&1 <<'PY'
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -316,6 +366,14 @@ cases = [  # package _meta (None: absent), project _meta, _maintainership.json (
     ("", scm, {"foo": ["other"], "": ["tester"]}), ("", scm, {"foo": [], "": ["tester"]}),
     (me, scm, {"": ["other"]}), ("", scm, None),
 ]
+def persons_xml(frag):
+    """[{name, role}] from <person userid=.. role=..> and <group groupid=.. role=..> fragments."""
+    out = {"persons": [], "groups": []}
+    for tag, attr, kind in (("person", "userid", "persons"), ("group", "groupid", "groups")):
+        for m in re.finditer(r'<%s %s="([^"]+)" role="([^"]+)"/>' % (tag, attr), frag):
+            out[kind].append({"name": m.group(1), "role": m.group(2)})
+    return out
+
 bad = []
 for n, (pkg, prj, git) in enumerate(cases):
     ans = {"/source/d:p/_meta": f'<project name="d:p">{prj}</project>'}
@@ -331,7 +389,18 @@ for n, (pkg, prj, git) in enumerate(cases):
         with open(f"{d}/{name}", "w") as fh:
             fh.write(text)
 
+    pkg_meta = None if pkg is None else {"name": "foo", "project": "d:p", **persons_xml(pkg)}
+    prj_meta = {"name": "d:p", **persons_xml(prj),
+                "scmsync": "https://src.opensuse.org/o/P#main" if scm in prj else None}
+    geo = {("remote", "package-meta", "d:p", "foo"): pkg_meta,
+           ("remote", "project-meta", "d:p"): prj_meta}
+
     def fake(cmd):
+        if cmd[0] == "geectl":
+            payload = geo.get(tuple(cmd[1:]))
+            if payload is None:
+                return subprocess.CompletedProcess(cmd, 3, "", '{"error":{"code":"not_found"}}')
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
         p = cmd[-1]
         if p in ans:
             return subprocess.CompletedProcess(cmd, 0, ans[p], "")
@@ -351,27 +420,31 @@ PY
 case_ version-is-project 2 "'devel:languages:python' is not a version" ":" devel:languages:python
 case_ version-no-digit 2 "'hardware' is not a version" ":" hardware
 case_ version-ok 4 "VERDICT: FORWARD" ":" 1.1
+grep -qF "the forward needs a devel→Factory request, which geectl cannot file yet — report the update as ready to forward and stop" <<<"$LAST" \
+  && ! grep -qF "geectl request file" <<<"$LAST" && ! grep -qF "geectl request refile" <<<"$LAST" \
+  && pass "version-ok: FORWARD fails closed, no filing command" || fail "version-ok: $LAST"
 # --from: the project about to be branched must be where the package is
 # developed, or what the devel package links to (sr#1392134 branched
 # hardware's stale copy of a devel:languages:python package).
 case_ from-wrong 3 "VERDICT: STOP - wrong branch source: foo is developed in devel:example, not hardware" ":" --from hardware
-grep -qF "osc branch devel:example foo" <<<"$LAST" && pass "from-wrong: names the branch to make" || fail "from-wrong: $LAST"
+grep -qF "geectl branch branch-package --project devel:example --package foo --live" <<<"$LAST" && pass "from-wrong: names the branch to make" || fail "from-wrong: $LAST"
 case_ from-devel 4 "branch source:  devel:example (the devel project)" ":" --from devel:example
 case_ from-link-target 4 "branch source:  hardware (devel:example/foo links to it)" \
-  "echo '<link project=\"hardware\" package=\"foo\"/>' > \$B/obs/_source_devel:example_foo__link" --from hardware
+  "put \$B/link-devel:example_foo '{\"project\": \"devel:example\", \"package\": \"foo\", \"target\": {\"project\": \"hardware\", \"package\": \"foo\"}}'" --from hardware
 case_ from-link-elsewhere 3 "wrong branch source" \
-  "echo '<link project=\"science\" package=\"foo\"/>' > \$B/obs/_source_devel:example_foo__link" --from hardware
-case_ from-link-unreadable 2 "CHECK FAILED: could not read devel:example/foo/_link" \
-  "echo @500 > \$B/obs/_source_devel:example_foo__link" --from hardware
+  "put \$B/link-devel:example_foo '{\"project\": \"devel:example\", \"package\": \"foo\", \"target\": {\"project\": \"science\", \"package\": \"foo\"}}'" --from hardware
+case_ from-link-unreadable 2 "CHECK FAILED: could not read devel:example/foo link target" \
+  "echo @500 > \$B/link-devel:example_foo" --from hardware
 
-# osc develproject failing is no "no devel project": when _meta names one, the
-# lookup failed, and --from must not PROCEED against nothing.
-case_ develproject-failed 2 "osc develproject failed, but openSUSE:Factory/foo/_meta names a devel project" \
-  ": > \$B/no-develproject && echo '<package name=\"foo\"><devel project=\"devel:example\"/></package>' > \$B/obs/_source_openSUSE:Factory_foo__meta" \
+# geectl remote devel-project failing is no "no devel project": when the
+# Factory package meta names one, the lookup failed, and --from must not
+# PROCEED against nothing.
+case_ develproject-failed 2 "geectl remote devel-project failed, but openSUSE:Factory/foo meta names a devel project" \
+  ": > \$B/no-develproject && put \$B/meta-openSUSE:Factory_foo '{\"name\": \"foo\", \"project\": \"openSUSE:Factory\", \"persons\": [], \"groups\": [], \"devel\": {\"project\": \"devel:example\", \"package\": \"foo\"}}'" \
   --from hardware
 ! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "develproject-failed: no PROCEED" || fail "develproject-failed: $LAST"
 case_ no-devel-set 0 "in openSUSE:Factory but no devel project set" \
-  ": > \$B/no-develproject && echo '<package name=\"foo\"/>' > \$B/obs/_source_openSUSE:Factory_foo__meta" --from hardware
+  ": > \$B/no-develproject && put \$B/meta-openSUSE:Factory_foo '{\"name\": \"foo\", \"project\": \"openSUSE:Factory\", \"persons\": [], \"groups\": [], \"devel\": null}'" --from hardware
 
 # A name Factory lacks may be one it has under another spelling: case
 # (python-authlib was filed while Factory ships python-Authlib), -, _ and .,
@@ -383,12 +456,12 @@ PKG=python-authlib case_ near-case 3 "VERDICT: STOP - not in openSUSE:Factory as
 PKG=python-zope_interface case_ near-separators 3 "but it has python-zope.interface" "$NEW"
 PKG=python3-pytest-lazy-fixtures case_ near-flavour 3 "but it has python-pytest-lazy-fixtures" "$NEW"
 PKG=python-brand-new case_ near-none 0 "VERDICT: PROCEED (new package" "$NEW"
-PKG=python-brand-new case_ near-list-failed 2 "CHECK FAILED" "$NEW && rm \$B/ls/openSUSE:Factory"
+PKG=python-brand-new case_ near-list-failed 2 "CHECK FAILED" "$NEW && rm \$B/ls-openSUSE:Factory"
 ! grep -q "^VERDICT: PROCEED" <<<"$LAST" && pass "near-list-failed: no PROCEED" || fail "near-list-failed: $LAST"
 # A new package someone already submitted to the target is in flight, not one
 # to package from scratch.
 PKG=python-brand-new case_ new-package-in-flight 3 "VERDICT: STOP - already in flight: SR 2000020 [new] devel:other/python-brand-new -> openSUSE:Factory by someone-else" \
-  "$NEW && echo '<collection><request id=\"2000020\" creator=\"someone-else\"><action type=\"submit\"><source project=\"devel:other\" package=\"python-brand-new\"/><target project=\"openSUSE:Factory\" package=\"python-brand-new\"/></action><state name=\"new\"/></request></collection>' > \$B/obs/_request_view_collection_types_submit_states_new_review_project_openSUSE:Factory_package_python-brand-new"
+  "$NEW && outg_new \"\$SR_NEWPKG\""
 # devel-of.sh: the same lookup, its own exit 6.
 DEVEL_OF="$HERE/../skills/opensuse-packaging/scripts/devel-of.sh"
 devel_of_() { # <name> <rc> <expected> <pkg> [mutation]
@@ -403,7 +476,7 @@ devel_of_() { # <name> <rc> <expected> <pkg> [mutation]
 }
 devel_of_ near 6 "NOT IN openSUSE:Factory as python-authlib, but it has python-Authlib" python-authlib
 devel_of_ new 3 "NOT IN openSUSE:Factory (new package?)" python-brand-new
-devel_of_ list-failed 5 "cannot list openSUSE:Factory" python-brand-new "rm \$B/ls/openSUSE:Factory"
+devel_of_ list-failed 5 "cannot list openSUSE:Factory" python-brand-new "rm \$B/ls-openSUSE:Factory"
 
 echo "---"; [ "$fails" = 0 ] && echo "all preflight checks passed" || echo "$fails FAILED"
 exit $((fails > 0))

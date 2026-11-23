@@ -1,5 +1,5 @@
 #!/bin/bash
-# test-forward-check.sh — forward-check.py offline: a fake `osc` on PATH answers
+# test-forward-check.sh — forward-check.py offline: a fake `geectl` on PATH answers
 # request searches and source lookups from a per-case fixture tree (a missing
 # source is a 404, a missing search is no match, "@ERR" fails the call). Each
 # package lives in devel:a with current sources bbb against openSUSE:Factory's
@@ -17,19 +17,27 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 h=home  # spelled apart: no literal home project in a public file
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+export GEECTL_OBS_USERNAME=tester
 
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/usr/bin/env python3
-import os, re, sys, time, urllib.parse
+import os, sys, time
 fix = os.environ["FIX"]
 args = sys.argv[1:]
 with open(os.path.join(fix, "calls"), "a") as fh:
-    fh.write("osc " + " ".join(urllib.parse.unquote(a) for a in args) + "\n")
+    fh.write("geectl " + " ".join(args) + "\n")
 def answer(path, missing):
     if not os.path.exists(path):
         if missing is None:
-            sys.exit("Server returned an error: HTTP Error 404: Not Found")
+            if "--format" in args and args[:2] == ["remote", "cat"]:
+                sys.stderr.write(
+                    "error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\n"
+                    "remediation: check the project, package, or request name and retry\n"
+                    % (args[2], args[3], args[4]))
+            else:
+                sys.stderr.write('{"error":{"code":"not_found","context":"fake 404"}}')
+            sys.exit(3)
         print(missing)
         return
     text = open(path).read()
@@ -37,37 +45,49 @@ def answer(path, missing):
         time.sleep(3)
         text = text[6:]
     if text.strip() == "@ERR":
-        sys.exit("Server returned an error: HTTP Error 500: Internal Server Error")
-    if text.strip() == "@ERR502":
-        sys.exit("Server returned an error: HTTP Error 502: Bad Gateway (backend said 404)")
-    sys.stdout.write(text)
-if args == ["whois"]:
-    print('tester: "Tester"')
-elif args[:2] == ["develproject", "openSUSE:Factory"]:
-    f = os.path.join(fix, "devel", args[2])
-    if not os.path.exists(f):
+        sys.stderr.write("Server returned an error: HTTP Error 500: Internal Server Error")
         sys.exit(1)
-    print(open(f).read().strip())
-elif args[:2] == ["ls", "openSUSE:Factory"]:
-    answer(os.path.join(fix, "ls"), "")
-elif args[0] == "api" and args[1].startswith("/search/request?match="):
-    m = urllib.parse.unquote(args[1].split("=", 1)[1])
-    pkg = re.search(r"@package='([^']+)'", m)
-    prj = re.search(r"target/@project='([^']+)'", m)
-    if "target/@project='openSUSE:Factory'" in m:
-        acc = "acc-" if "state/@name='accepted'" in m else ""
-        key = f"factory-{acc}{pkg.group(1)}"
-    elif pkg:
-        key = f"own-{prj.group(1)}-{pkg.group(1)}"
-    else:
+    if text.strip() == "@ERR502":
+        sys.stderr.write("Server returned an error: HTTP Error 502: Bad Gateway")
+        sys.exit(1)
+    sys.stdout.write(text)
+def opt(name):
+    return args[args.index(name) + 1] if name in args else None
+if args[:2] == ["request", "search"]:
+    src, tgt, tpkg, creator = opt("--source-project"), opt("--target-project"), opt("--target-package"), opt("--creator")
+    states = [args[i + 1] for i, a in enumerate(args) if a == "--state"]
+    if src and tgt == "openSUSE:Factory" and tpkg:
+        key = "factory-" + ("acc-" if states == ["accepted"] else "") + tpkg
+    elif creator and tgt and tpkg:
+        key = f"own-{tgt}-{tpkg}"
+    elif creator and states == ["accepted"]:
         key = "mine"
-    answer(os.path.join(fix, "search", key), '<collection matches="0"/>')
-elif args[0] == "api":
-    answer(os.path.join(fix, "obs", re.sub(r"[/?&=]", "_", args[1])), None)
+    else:
+        key = None
+    if key is None:
+        print('{"requests": []}')
+    else:
+        answer(os.path.join(fix, "search", key), '{"requests": []}')
+elif args[:2] == ["remote", "list-files"]:
+    key = f"{args[2]}_{args[3]}" + (f"_rev{opt('--rev')}" if opt("--rev") else "")
+    answer(os.path.join(fix, "src", key), None)
+elif args[:2] == ["remote", "package-log"]:
+    key = f"{args[2]}_{args[3]}" + ("_limit1" if "--limit" in args else "")
+    answer(os.path.join(fix, "log", key), None)
+elif args[:2] == ["remote", "cat"]:
+    answer(os.path.join(fix, "cat", f"{args[2]}_{args[3]}_{args[4]}"), None)
+elif args[:2] == ["remote", "link-target"]:
+    answer(os.path.join(fix, "link", f"{args[2]}_{args[3]}"), None)
+elif args[:2] == ["remote", "package-meta"]:
+    answer(os.path.join(fix, "meta", f"{args[2]}_{args[3]}"), None)
+elif args[:2] == ["remote", "project-meta"]:
+    answer(os.path.join(fix, "meta", f"{args[2]}_project"), None)
+elif args[:2] == ["remote", "list-packages"]:
+    answer(os.path.join(fix, "ls"), '{"project": "openSUSE:Factory", "packages": []}')
 else:
-    sys.exit(f"fake osc: unexpected {args}")
+    sys.exit(f"fake geectl: unexpected {args}")
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 # git-obs answers a project git's files from $FIX/gitea/<path, / as _>.
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
@@ -78,50 +98,54 @@ EOF
 chmod +x "$work/bin/git-obs"
 
 B="$work/base"
-mkdir -p "$B/search" "$B/obs" "$B/devel" "$B/gitea"
-obs() { printf '%s\n' "$2" > "$B/obs/$(printf %s "$1" | tr '/?&=' '____')"; }
+mkdir -p "$B/search" "$B/src" "$B/log" "$B/meta" "$B/link" "$B/gitea"
+putf() { mkdir -p "$B/$(dirname "$1")"; printf '%s\n' "$2" > "$B/$1"; }
+listing() { # <prj> <pkg> <filemd5>
+  putf "src/$1_$2" "{\"project\": \"$1\", \"package\": \"$2\", \"files\": [{\"name\": \"x.spec\", \"size\": 1, \"mtime\": 1, \"md5\": \"$3\"}]}"
+}
+log1() { # <prj> <pkg> <srcmd5>
+  putf "log/$1_$2_limit1" "{\"project\": \"$1\", \"package\": \"$2\", \"entries\": [{\"rev\": 9, \"srcmd5\": \"$3\", \"time\": 1791806400}]}"
+}
 # req <id> <creator> <state> <created> [<src> [<rev> [<comment> [<who> [<tgt> [<pkg>]]]]]]
 # A request to openSUSE:Factory for PKG from devel:a carrying bbb by default.
 req() {
-  printf '<request id="%s" creator="%s"><action type="submit"><source project="%s" package="%s" rev="%s"/>' \
-    "$1" "$2" "${5:-devel:a}" "${10:-PKG}" "${6-bbb}"
-  printf '<target project="%s" package="%s"/></action>' "${9:-openSUSE:Factory}" "${10:-PKG}"
-  printf '<state name="%s" who="%s" when="%s" created="%s"><comment>%s</comment></state></request>\n' \
-    "$3" "${8:-$2}" "$4" "$4" "${7:-}"
+  printf '{"id": %s, "creator": "%s", "state": {"name": "%s", "who": "%s", "when": "%s", "created": "%s", "comment": "%s"}, "actions": [{"type": "submit", "source_project": "%s", "source_package": "%s", "source_rev": "%s", "target_project": "%s", "target_package": "%s"}]}' \
+    "$1" "$2" "$3" "${8:-$2}" "$4" "$4" "${7:-}" "${5:-devel:a}" "${10:-PKG}" "${6-bbb}" "${9:-openSUSE:Factory}" "${10:-PKG}"
 }
-coll() { printf '<collection>%s</collection>\n' "$*"; }
-# srcdir <srcmd5> <md5 of its one file>: an expanded source directory
-srcdir() { printf '<directory srcmd5="%s"><entry name="x.spec" md5="%s"/></directory>\n' "$1" "$2"; }
+coll() { local IFS=,; printf '{"requests": [%s]}\n' "$*"; }
 # put <pkg> <maintainer> [<factory-srcmd5>|-]: the package is in devel:a at bbb
 # (last changed 2026-10-12), maintained by <maintainer>, and in
 # openSUSE:Factory at aaa (- = not there); tester's request into it was accepted.
 put() {
-  obs "/source/devel:a/$1/_meta" "<package name=\"$1\"><person userid=\"$2\" role=\"maintainer\"/></package>"
-  obs "/source/devel:a/$1?expand=1" "$(srcdir bbb bbb)"
-  obs "/source/devel:a/$1/_history?limit=1" \
-    '<revisionlist><revision rev="9"><time>1791806400</time></revision></revisionlist>'
-  [ "${3:-aaa}" = - ] || obs "/source/openSUSE:Factory/$1?expand=1" "$(srcdir "${3:-aaa}" "${3:-aaa}")"
-  printf 'devel:a/%s\n' "$1" > "$B/devel/$1"
+  putf "meta/devel:a_$1" "{\"name\": \"$1\", \"project\": \"devel:a\", \"persons\": [{\"name\": \"$2\", \"role\": \"maintainer\"}], \"groups\": []}"
+  listing devel:a "$1" bbb
+  log1 devel:a "$1" bbb
+  if [ "${3:-aaa}" != - ]; then
+    listing openSUSE:Factory "$1" "${3:-aaa}"
+    log1 openSUSE:Factory "$1" "${3:-aaa}"
+    putf "meta/openSUSE:Factory_$1" "{\"name\": \"$1\", \"project\": \"openSUSE:Factory\", \"devel\": {\"project\": \"devel:a\", \"package\": \"$1\"}, \"persons\": [], \"groups\": []}"
+  fi
   coll "$(req 2000 tester accepted 2026-10-15T09:00:00 $h:tester:spark x '' maint devel:a "$1")" \
     > "$B/search/own-devel:a-$1"
 }
 # fact <pkg> <request...>: openSUSE:Factory's open and declined requests for pkg
 fact() { local p=$1; shift; coll "$@" | sed "s/PKG/$p/g" > "$B/search/factory-$p"; }
-obs /source/devel:a/_meta '<project name="devel:a"/>'
+putf "meta/devel:a_project" '{"name": "devel:a", "persons": [], "groups": []}'
 
 put fwd maint;        fact fwd "$(req 3000 maint review 2026-10-16T08:00:00)"
 put stale maint;      fact stale "$(req 3001 maint review 2026-10-16T08:00:00 devel:a old)"
-obs "/source/devel:a/stale?expand=1&rev=old" "$(srcdir old aaa)"
+putf "src/devel:a_stale_revold" '{"project": "devel:a", "package": "stale", "files": [{"name": "x.spec", "size": 1, "mtime": 1, "md5": "aaa"}]}'
 put revnum maint;     fact revnum "$(req 3009 maint review 2026-10-16T08:00:00 devel:a 7)"
-obs "/source/devel:a/revnum?expand=1&rev=7" "$(srcdir ccc bbb)"
+putf "src/devel:a_revnum_rev7" '{"project": "devel:a", "package": "revnum", "files": [{"name": "x.spec", "size": 1, "mtime": 1, "md5": "bbb"}]}'
 # A linked devel package's srcmd5 changes with its link base: equal files are
 # equal sources.
 put relink maint;     fact relink "$(req 3010 maint review 2026-10-16T08:00:00 devel:a xxx)"
-obs "/source/devel:a/relink?expand=1&rev=xxx" "$(srcdir xxx bbb)"
+putf "src/devel:a_relink_revxxx" '{"project": "devel:a", "package": "relink", "files": [{"name": "x.spec", "size": 1, "mtime": 1, "md5": "bbb"}]}'
 put samefiles maint fff
-obs "/source/openSUSE:Factory/samefiles?expand=1" "$(srcdir fff bbb)"
+listing openSUSE:Factory samefiles bbb
 put mineopen tester;  fact mineopen "$(req 3002 tester new 2026-10-16T08:00:00)"
 put minestale tester; fact minestale "$(req 3002 tester new 2026-10-14T08:00:00 devel:a old)"
+putf "src/devel:a_minestale_revold" '{"project": "devel:a", "package": "minestale", "files": [{"name": "x.spec", "size": 1, "mtime": 1, "md5": "aaa"}]}'
 put infac maint bbb
 put acc maint
 coll "$(req 3003 maint accepted 2026-10-16T08:00:00 | sed s/PKG/acc/g)" > "$B/search/factory-acc-acc"
@@ -132,22 +156,22 @@ put due tester
 put newpkg tester -
 put newmaint maint -
 # newpkg was created by tester's accepted request 2000, updated by 2100 since.
-obs /source/devel:a/newpkg/_history \
-  '<revisionlist><revision rev="1"><requestid>2000</requestid></revision><revision rev="2"><requestid>2100</requestid></revision></revisionlist>'
+putf "log/devel:a_newpkg" '{"project": "devel:a", "package": "newpkg", "entries": [{"rev": 2, "srcmd5": "ccc", "time": 1791900000, "request_id": 2100}, {"rev": 1, "srcmd5": "bbb", "time": 1791806400, "request_id": 2000}]}'
 put maintdue maint
 # devel:g is kept in git: hw's _meta is a stub, gorg/_ObsPrj names tester its
 # maintainer (hwdata in devel:openSUSE:Factory, merged by PR, never an OBS request).
-obs /source/devel:g/_meta '<project name="devel:g"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync></project>'
-obs /source/devel:g/hw/_meta '<package name="hw" project="devel:g"><scmsync>https://src.opensuse.org/gorg/hw#ab12</scmsync></package>'
-obs "/source/devel:g/hw?expand=1" "$(srcdir bbb bbb)"
-obs "/source/devel:g/hw/_history?limit=1" '<revisionlist><revision rev="9"><time>1791806400</time></revision></revisionlist>'
-obs "/source/openSUSE:Factory/hw?expand=1" "$(srcdir aaa aaa)"
-printf 'devel:g/hw\n' > "$B/devel/hw"
+putf "meta/devel:g_project" '{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git", "persons": [], "groups": []}'
+putf "meta/devel:g_hw" '{"name": "hw", "project": "devel:g", "persons": [], "groups": []}'
+listing devel:g hw bbb
+log1 devel:g hw bbb
+listing openSUSE:Factory hw aaa
+log1 openSUSE:Factory hw aaa
 printf '{"": ["boss"], "hw": ["tester"]}\n' > "$B/gitea/repos_gorg__ObsPrj_raw__maintainership.json"
-put wrong tester;     printf 'devel:b/wrong\n' > "$B/devel/wrong"
+put wrong tester
+putf "meta/openSUSE:Factory_wrong" '{"name": "wrong", "project": "openSUSE:Factory", "devel": {"project": "devel:b", "package": "wrong"}, "persons": [], "groups": []}'
 # Not in Factory by this name, but under another spelling (devel-of.sh exit 6).
-put near tester -;    rm "$B/devel/near"
-put near2 tester -;   rm "$B/devel/near2"
+put near tester -
+put near2 tester -
 put broken tester;    echo @ERR > "$B/search/factory-broken"
 put pend tester
 coll "$(req 2000 tester accepted 2026-10-15T09:00:00 $h:tester:spark x '' maint devel:a pend)" \
@@ -177,8 +201,6 @@ absent() { grep -qF -- "$1" <<<"$LAST" && fail "$2: '$1' in output" || pass "$2"
 
 echo "--- a forward is current when it carries the devel package's sources"
 case_ forwarded      0 "devel:a/fwd  FORWARDED 3000 by maint review current" : devel:a fwd
-grep -qF "_meta" "$LASTDIR/calls" && fail "a forwarded package read a _meta" \
-  || pass "a decided package reads no _meta"
 case_ stale          4 "FORWARDED 3001 by maint review stale" : devel:a stale
 case_ rev-number     0 "FORWARDED 3009 by maint review current" : devel:a revnum
 case_ mine-open      0 "MINE-OPEN 3002 new current" : devel:a mineopen
@@ -187,7 +209,7 @@ case_ in-factory     0 "devel:a/infac  IN-FACTORY" : devel:a infac
 case_ same-files     0 "devel:a/samefiles  IN-FACTORY" : devel:a samefiles
 case_ relinked       0 "FORWARDED 3010 by maint review current" : devel:a relink
 case_ accepted       0 "FORWARDED 3003 by maint accepted current" : devel:a acc
-grep -qF "state/@name='accepted' and state/@when>='2026-10-12'" "$LASTDIR/calls" \
+grep -qF -- "--target-package acc --state accepted --since 2026-10-12" "$LASTDIR/calls" \
   && pass "accepted forwards searched from the devel package's last change" \
   || fail "accepted: no last-change floor in the Factory search"
 # A direct commit leaves no request of yours: the sources still decide.
@@ -208,48 +230,45 @@ case_ mine-declined  4 "MINE-DECLINED 3004 by dimstar: bugzilla refs missing" : 
 case_ declined       4 "devel:a/theydecl  DECLINED 3005 by dimstar: build fails" : devel:a theydecl
 case_ foreign        4 "FOREIGN-DECLINED 3006 by dimstar: nothing provides group(x)" : devel:a foreign
 case_ foreign-elsewhere 4 "devel:a/foreign  DUE" \
-  "sed -i 's/project=\"devel:a\"/project=\"$h:other:x\"/' search/factory-foreign" devel:a foreign
+  "sed -i 's/\"source_project\": \"devel:a\"/\"source_project\": \"$h:other:x\"/' search/factory-foreign" devel:a foreign
 case_ foreign-theirs 0 "devel:a/maintdue  MAINTAINERS" \
   'fact maintdue "$(req 3006 other declined 2026-09-01T08:00:00 devel:a old "no" dimstar)"' devel:a maintdue
-case_ mine-declined-older 4 "DUE supersede 3008 with -s" \
+case_ mine-declined-older 4 "DUE supersede 3008 with --supersede" \
   'fact due "$(req 3008 tester declined 2026-09-01T08:00:00 devel:a old "no" dimstar)"' devel:a due
 
 echo "--- then the role decides"
 case_ due            4 "devel:a/due  DUE" : devel:a due
-# A new package your accepted request created is forwarded like any other; else ask.
-case_ new-own-devel-sr 4 "devel:a/newpkg  DUE NEW-IN-FACTORY, created by your request" : devel:a newpkg
-grep -qF "osc api /source/openSUSE:Factory/newpkg?deleted=1" "$LASTDIR/calls" && pass "  ...after asking whether Factory deleted it" \
-  || fail "new-own-devel-sr: no deleted-package lookup"
+# A new package your accepted request created: no typed leaf says whether
+# Factory ever held it, so the answer is UNKNOWN, never DUE.
+case_ new-own-devel-sr 3 "devel:a/newpkg  UNKNOWN cannot tell whether openSUSE:Factory ever held this package" : devel:a newpkg
 case_ new-in-factory 4 "NEW-IN-FACTORY ask before submitting a new package" 'rm search/own-devel:a-newpkg' devel:a newpkg
 absent "DUE" "new-in-factory: no accepted request of yours, so not DUE"
 case_ new-updated-only 4 "devel:a/newpkg  NEW-IN-FACTORY ask before submitting a new package" \
-  "sed -i 's/>2000</>1999</' obs/_source_devel:a_newpkg__history" devel:a newpkg
+  "sed -i 's/\"request_id\": 2000/\"request_id\": 1999/' log/devel:a_newpkg" devel:a newpkg
 absent "DUE" "new-updated-only: your request updated it, someone else's created it, so not DUE"
 case_ new-no-request 4 "devel:a/newpkg  NEW-IN-FACTORY ask before submitting a new package" \
-  "sed -i 's|<requestid>2000</requestid>||' obs/_source_devel:a_newpkg__history" devel:a newpkg
-case_ new-deleted    4 "devel:a/newpkg  NEW-IN-FACTORY deleted from openSUSE:Factory: ask before submitting it again" \
-  'obs "/source/openSUSE:Factory/newpkg?deleted=1" "$(srcdir old aaa)"' devel:a newpkg
-case_ new-history-err 3 "devel:a/newpkg  UNKNOWN" 'echo @ERR > obs/_source_devel:a_newpkg__history' devel:a newpkg
+  "sed -i 's/\"request_id\": 2000/\"request_id\": null/' log/devel:a_newpkg" devel:a newpkg
+case_ new-history-err 3 "devel:a/newpkg  UNKNOWN" 'echo @ERR > log/devel:a_newpkg' devel:a newpkg
 case_ new-not-yours  0 "devel:a/newmaint  MAINTAINERS" : devel:a newmaint
 case_ maintainers    0 "devel:a/maintdue  MAINTAINERS" : devel:a maintdue
 case_ wrong-devel    4 "devel:a/wrong  WRONG-DEVEL openSUSE:Factory develops it in devel:b" : devel:a wrong
-case_ near-spelling  4 "devel:a/near  WRONG-DEVEL NOT IN openSUSE:Factory as near, but it has Near" "echo Near > ls" devel:a near
-case_ near-two       4 "devel:a/near2  WRONG-DEVEL" "printf 'Near\nNear2\n' > ls" devel:a/near devel:a/near2
-[ "$(grep -c '^osc ls ' "$LASTDIR/calls")" = 1 ] && pass "near-two: Factory's package list read once a run" \
-  || fail "near-two: Factory listed $(grep -c '^osc ls ' "$LASTDIR/calls") times"
-grep -qF "target/@project='openSUSE:Factory'" "$LASTDIR/calls" && fail "wrong-devel searched Factory first" \
+case_ near-spelling  4 "devel:a/near  WRONG-DEVEL NOT IN openSUSE:Factory as near, but it has Near" "printf '%s' '{\"project\": \"openSUSE:Factory\", \"packages\": [\"Near\"]}' > ls" devel:a near
+case_ near-two       4 "devel:a/near2  WRONG-DEVEL" "printf '%s' '{\"project\": \"openSUSE:Factory\", \"packages\": [\"Near\", \"Near2\"]}' > ls" devel:a/near devel:a/near2
+[ "$(grep -c '^geectl remote list-packages openSUSE:Factory$' "$LASTDIR/calls")" = 1 ] && pass "near-two: Factory's package list read once a run" \
+  || fail "near-two: Factory listed $(grep -c '^geectl remote list-packages openSUSE:Factory$' "$LASTDIR/calls") times"
+grep -qF -- "--target-project openSUSE:Factory" "$LASTDIR/calls" && fail "wrong-devel searched Factory first" \
   || pass "wrong-devel is decided before any Factory search"
 # A current forward does not make the wrong project right.
-case_ wrong-forwarded 4 "devel:a/fwd  WRONG-DEVEL" "echo devel:b/fwd > devel/fwd" devel:a fwd
+case_ wrong-forwarded 4 "devel:a/fwd  WRONG-DEVEL" "putf 'meta/openSUSE:Factory_fwd' '{\"name\": \"fwd\", \"project\": \"openSUSE:Factory\", \"devel\": {\"project\": \"devel:b\", \"package\": \"fwd\"}, \"persons\": [], \"groups\": []}'" devel:a fwd
 case_ link-into-here 4 "devel:a/due  DUE" \
-  "echo devel:b/due > devel/due; obs /source/devel:b/due/_link '<link project=\"devel:a\"/>'" devel:a due
+  "putf 'meta/openSUSE:Factory_due' '{\"name\": \"due\", \"project\": \"openSUSE:Factory\", \"devel\": {\"project\": \"devel:b\", \"package\": \"due\"}, \"persons\": [], \"groups\": []}'; putf 'link/devel:b_due' '{\"project\": \"devel:b\", \"package\": \"due\", \"target\": {\"project\": \"devel:a\"}}'" devel:a due
 case_ git-due        4 "devel:g/hw  DUE" : devel:g hw
 case_ git-maintainers 0 "devel:g/hw  MAINTAINERS" \
   "printf '{\"hw\": [\"other\"]}\n' > gitea/repos_gorg__ObsPrj_raw__maintainership.json" devel:g hw
 case_ git-unreadable 3 "devel:g/hw  UNKNOWN autoforward-gate.sh: UNREADABLE" \
   "rm gitea/repos_gorg__ObsPrj_raw__maintainership.json" devel:g hw
 case_ gate-fails     3 "devel:a/due  UNKNOWN autoforward-gate.sh: UNREADABLE" \
-  "echo @ERR > obs/_source_devel:a_due__meta" devel:a due
+  "echo @ERR > meta/devel:a_due" devel:a due
 
 echo "--- your own devel request"
 case_ not-landed     0 "NOT-LANDED 2001 review" : devel:a pend
@@ -260,15 +279,15 @@ case_ devel-declined 4 "DEVEL-DECLINED 2001 by maint: no" \
 
 echo "--- a lookup that cannot answer is UNKNOWN, a 404 is an answer"
 case_ unknown        3 "devel:a/broken  UNKNOWN" : devel:a broken
-case_ status-body    3 "UNKNOWN request search answered <status>" \
+case_ status-body    3 "UNKNOWN geectl request search" \
   'echo "<status code=\"error\"><summary>x</summary></status>" > search/factory-due' devel:a due
-case_ source-fails   3 "devel:a/due  UNKNOWN" "echo @ERR > obs/_source_devel:a_due_expand_1" devel:a due
-case_ gone           0 "devel:a/due  GONE no longer in devel:a" "rm obs/_source_devel:a_due_expand_1" devel:a due
-case_ not-a-404      3 "devel:a/due  UNKNOWN" "echo @ERR502 > obs/_source_devel:a_due_expand_1" devel:a due
+case_ source-fails   3 "devel:a/due  UNKNOWN" "echo @ERR > src/devel:a_due" devel:a due
+case_ gone           0 "devel:a/due  GONE no longer in devel:a" "rm src/devel:a_due" devel:a due
+case_ not-a-404      3 "devel:a/due  UNKNOWN" "echo @ERR502 > src/devel:a_due" devel:a due
 
 echo "--- --mine lists your accepted requests into devel projects"
 case_ mine           4 "# 2 package(s): 1 DUE, 1 FORWARDED" : --mine --since 2026-10-14
-grep -qF "state/@when>='2026-10-14'" "$LASTDIR/calls" && pass "--mine searches from --since" \
+grep -qF -- "--since 2026-10-14" "$LASTDIR/calls" && pass "--mine searches from --since" \
   || fail "--mine: no --since floor in the search"
 absent "$h:tester/" "--mine skips home: targets"
 absent "openSUSE:Factory/fwd" "--mine skips openSUSE: targets"
@@ -309,11 +328,11 @@ case_ deadline-zero  3 "# INCOMPLETE: 2 not looked up (--deadline reached; raise
 grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
   && [ "$(tail -2 <<<"$LAST" | head -1 | cut -c1-12)" = "# 2 package(" ] \
   && pass "deadline-zero: rows UNKNOWN, the count before the INCOMPLETE line" || fail "deadline-zero: $LAST"
-! grep -q "^osc api" "$LASTDIR/calls" && pass "deadline-zero: no lookup started" || fail "deadline-zero: $(cat "$LASTDIR/calls")"
+! grep -q "^geectl " "$LASTDIR/calls" 2>/dev/null && pass "deadline-zero: no lookup started" || fail "deadline-zero: $(cat "$LASTDIR/calls" 2>/dev/null)"
 # A lookup still running at the deadline is cut too: due's Factory search
 # answers after 3 s, the deadline is 1 s, so its next lookups never start.
 case_ deadline-cut   3 "# INCOMPLETE: 1 not looked up" \
-  "printf '@SLOW\\n<collection matches=\"0\"/>\\n' > search/factory-due" devel:a due --deadline 1
+  "printf '@SLOW\\n{\"requests\": []}\\n' > search/factory-due" devel:a due --deadline 1
 grep -qF "devel:a/due  UNKNOWN not looked up (--deadline reached)" <<<"$LAST" \
   && pass "deadline-cut: the package is UNKNOWN, not DUE" || fail "deadline-cut: $LAST"
 case_ deadline-negative 2 "--deadline takes 0 or more seconds" : devel:a due --deadline -1
@@ -321,7 +340,7 @@ case_ deadline-negative 2 "--deadline takes 0 or more seconds" : devel:a due --d
 # UNKNOWN at 80 s); an explicit --deadline still applies.
 case_ mine-explicit-deadline 3 "UNKNOWN: cannot list the requests (--deadline reached)" : --mine --deadline 0
 # Killed by a harness timeout (SIGTERM), it still says the output is cut off.
-d="$work/sigterm"; cp -a "$work/base" "$d"; printf '@SLOW\n<collection matches="0"/>\n' > "$d/search/factory-due"
+d="$work/sigterm"; cp -a "$work/base" "$d"; printf '@SLOW\n{"requests": []}\n' > "$d/search/factory-due"
 ( cd "$d" && FIX=$d PATH="$work/bin:$PATH" exec python3 "$FC" devel:a due > "$d/out" 2>&1 ) &
 pid=$!; sleep 1; kill -TERM "$pid"; wait "$pid"; got=$?
 [ "$got" = 3 ] && grep -qF "# INCOMPLETE: interrupted before every package was decided" "$d/out" \

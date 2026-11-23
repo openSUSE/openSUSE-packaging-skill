@@ -1,9 +1,10 @@
 #!/bin/bash
 # test-bug-guard.sh — proves bug-guard.py lets through only the proven security
-# hand-back and asks for everything else. Offline: a fake `osc` on PATH serves
-# `whois` and `api PATH` from fixtures, a path with no fixture answering 404 as
-# osc does. Every refusal check is then broken in a copy of the guard, and the
-# case it exists for must flip to allow: a check never seen to fail is not one.
+# hand-back and asks for everything else. Offline: a fake `geectl` on PATH serves
+# `request show`, `remote list-files` and `remote cat` from fixtures keyed by the
+# command line, a command with no fixture answering 404 as geectl does. Every
+# refusal check is then broken in a copy of the guard, and the case it exists
+# for must flip to allow: a check never seen to fail is not one.
 # Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -18,34 +19,47 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 FIX="$work/fix"; export FIX
 mkdir -p "$work/bin" "$FIX"
 
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
 [ -f "$FIX/slow" ] && exec sleep 30
-case "$1" in
-  whois) cat "$FIX/whois" ;;
-  api) f="$FIX/$(printf '%s' "$2" | tr -c 'A-Za-z0-9' '_')"
-       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-       cat "$f" ;;
-  *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
-esac
+# A 404 renders by --format: JSON by default, plain text with --format text.
+notfound() {
+  case "$*" in
+    *--format\ text*)
+      skip=""; pos=()
+      for a in "$@"; do
+        if [ -n "$skip" ]; then skip=""; continue; fi
+        case "$a" in
+          --format|--rev|--limit|--range) skip=1 ;;
+          *) pos+=("$a") ;;
+        esac
+      done
+      printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "${pos[2]:-?}" "${pos[3]:-?}" "${pos[4]:-?}" >&2
+      exit 3 ;;
+  esac
+  printf '%s' '{"error":{"code":"not_found","context":"fake 404"}}' >&2
+  exit 3
+}
+f="$FIX/$(printf '%s' "$*" | tr -c 'A-Za-z0-9' '_')"
+[ -f "$f" ] || notfound "$@"
+cat "$f"
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 export PATH="$work/bin:$PATH"
+export GEECTL_OBS_USERNAME=maintainer1
 put() { printf '%s' "$2" > "$FIX/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"; }
 
-echo 'maintainer1: "A Maintainer" <maintainer@example.org>' > "$FIX/whois"
 OLD=$'-------------------------------------------------------------------\nMon Jan  5 10:00:00 UTC 2026 - A Maintainer <maintainer@example.org>\n\n- Update to 1:\n  * Fix an old bug (boo#1200002)\n  * Drop a stale workaround (boo#1200003)\n'
 NEW=$'-------------------------------------------------------------------\nMon Feb  2 10:00:00 UTC 2026 - A Maintainer <maintainer@example.org>\n\n- Update to 2:\n  * Fix CVE-2026-0001 (boo#1200001, bsc#1200005)\n\n-------------------------------------------------------------------\nMon Jan  5 10:00:00 UTC 2026 - A Maintainer <maintainer@example.org>\n\n- Update to 1:\n  * Fix an old bug (boo#1200002)\n'
 SPEC=$'Name: pkga\n# boo#1200004 is only in the spec\n'
-LIST='<directory name="pkga"><entry name="pkga.spec"/><entry name="pkga.changes"/></directory>'
 
 # request N: creator, action type, target project, state, factory-auto review, acceptinfo
 req() {
-  local n=$1 creator=$2 type=$3 tprj=$4 state=$5 fa=$6 accept=${7:-} id=${8:-$1}
-  put "/request/$n" "<request id=\"$id\" creator=\"$creator\"><action type=\"$type\"><source project=\"devel:tools\" package=\"pkga\" rev=\"rev$n\"/><target project=\"$tprj\" package=\"pkga\"/>$accept</action><state name=\"$state\"/><review state=\"$fa\" by_user=\"factory-auto\"/><review state=\"new\" by_group=\"factory-staging\"/></request>"
-  put "/source/devel:tools/pkga?rev=rev$n&expand=1" "$LIST"
-  put "/source/devel:tools/pkga/pkga.changes?rev=rev$n&expand=1" "$NEW"
-  put "/source/devel:tools/pkga/pkga.spec?rev=rev$n&expand=1" "$SPEC"
+  local n=$1 creator=$2 type=$3 tprj=$4 state=$5 fa=$6 accept=${7:-"{}"} id=${8:-$1}
+  put "request show $n" "{\"id\": $id, \"creator\": \"$creator\", \"actions\": [{\"type\": \"$type\", \"source_project\": \"devel:tools\", \"source_package\": \"pkga\", \"source_rev\": \"rev$n\", \"target_project\": \"$tprj\", \"target_package\": \"pkga\", \"acceptinfo\": $accept}], \"state\": {\"name\": \"$state\"}, \"reviews\": [{\"by_user\": \"factory-auto\", \"state\": \"$fa\"}, {\"by_group\": \"factory-staging\", \"state\": \"new\"}]}"
+  put "remote list-files devel:tools pkga --rev rev$n" '{"files": [{"name": "pkga.spec", "size": 1, "mtime": 1, "md5": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, {"name": "pkga.changes", "size": 1, "mtime": 1, "md5": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}'
+  put "remote cat --rev rev$n --format text devel:tools pkga pkga.changes" "$NEW"
+  put "remote cat --rev rev$n --format text devel:tools pkga pkga.spec" "$SPEC"
 }
 req 1000001 maintainer1 submit openSUSE:Factory review accepted
 req 1000003 someoneelse submit openSUSE:Factory review accepted
@@ -53,11 +67,11 @@ req 1000004 maintainer1 submit devel:languages:python review accepted
 req 1000005 maintainer1 delete openSUSE:Factory review accepted
 req 1000006 maintainer1 submit openSUSE:Factory declined accepted
 req 1000007 maintainer1 submit openSUSE:Factory review new
-req 1000009 maintainer1 submit openSUSE:Factory accepted accepted '<acceptinfo rev="3" srcmd5="x" osrcmd5="old9"/>'
-req 1000010 maintainer1 submit openSUSE:Factory accepted accepted '<acceptinfo rev="1" srcmd5="y"/>'
-req 1000011 maintainer1 submit openSUSE:Factory review accepted '' 1000001
-put "/source/openSUSE:Factory/pkga/pkga.changes" "$OLD"
-put "/source/openSUSE:Factory/pkga/pkga.changes?rev=old9" "$OLD"
+req 1000009 maintainer1 submit openSUSE:Factory accepted accepted '{"rev": "3", "srcmd5": "x", "osrcmd5": "old9"}'
+req 1000010 maintainer1 submit openSUSE:Factory accepted accepted '{"rev": "1", "srcmd5": "y"}'
+req 1000011 maintainer1 submit openSUSE:Factory review accepted '{}' 1000001
+put "remote cat --format text openSUSE:Factory pkga pkga.changes" "$OLD"
+put "remote cat --rev old9 --format text openSUSE:Factory pkga pkga.changes" "$OLD"
 
 COMMENT='Fixed in pkga 2: carried the upstream fix. Submitted as SR 1000001 (devel:tools → openSUSE:Factory). Reassigning to the security team for verification/tracking; status left open.'
 ev() { # tool bug assignee comment
@@ -100,16 +114,16 @@ expect "not a Factory submit" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 10000
 expect "not a submit" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000005."
 expect "declined request" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000006."
 expect "factory-auto not passed yet" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000007."
-expect "osc answers for another request" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000011."
+expect "geectl answers for another request" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000011."
 expect "request lookup fails (404)" ask "$SCRIPT" $A 1200001 $S "Submitted as SR 1000099."
 expect "bug nowhere in the request" ask "$SCRIPT" $A 1200009 $S "$COMMENT"
 expect "bug cited only in an entry the target already had" ask "$SCRIPT" $A 1200002 $S "$COMMENT"
 expect "bug only in a line the request removes" ask "$SCRIPT" $A 1200003 $S "$COMMENT"
 expect "bug only in the spec, not a .changes" ask "$SCRIPT" $A 1200004 $S "$COMMENT"
 expect "boolean bug id" ask "$SCRIPT" $A true $S "$COMMENT"
-mv "$FIX/whois" "$FIX/whois.off"
-expect "osc whois fails" ask "$SCRIPT" $A 1200001 $S "$COMMENT"
-mv "$FIX/whois.off" "$FIX/whois"
+unset GEECTL_OBS_USERNAME
+expect "no user set" ask "$SCRIPT" $A 1200001 $S "$COMMENT"
+export GEECTL_OBS_USERNAME=maintainer1
 
 # Other tools and malformed input.
 for t in add_comment update_bug_status update_bug_fields create_bug mark_as_duplicate add_cc_to_bug some_future_tool; do
@@ -124,11 +138,11 @@ got="$(printf 'not json' | decision "$SCRIPT")"
 got="$(printf '{"tool_name":"mcp__bugzilla__assign_bug","tool_input":"x"}' | decision "$SCRIPT")"
 [ "$got" = ask ] && pass "input not an object: ask" || fail "input not an object: want ask, got $got"
 
-# The deadline: a copy that waits 2 s, against an osc that hangs.
+# The deadline: a copy that waits 2 s, against a geectl that hangs.
 sed 's/^DEADLINE = 40$/DEADLINE = 2/' "$SCRIPT" > "$work/fast.py"
 grep -q '^DEADLINE = 2$' "$work/fast.py" || fail "deadline: DEADLINE line not found"
 touch "$FIX/slow"; start=$SECONDS
-expect "osc hangs past the deadline" ask "$work/fast.py" $A 1200001 $S "$COMMENT"
+expect "geectl hangs past the deadline" ask "$work/fast.py" $A 1200001 $S "$COMMENT"
 [ $((SECONDS - start)) -lt 15 ] && pass "deadline holds" || fail "deadline: took $((SECONDS - start)) s"
 rm -f "$FIX/slow"
 
@@ -159,11 +173,11 @@ broken assignee 'if assignee != SECURITY:' 'if False:' $A 1200001 someone@exampl
 broken length 'if len(comment) > MAX_COMMENT:' 'if False:' $A 1200001 $S "$LONG"
 broken "one-request" 'if len(cited) != 1:' 'if not cited:' $A 1200001 $S "Submitted as SR 1000001 and SR 1000009."
 broken creator 'if req.get("creator") != user:' 'if False:' $A 1200001 $S "Submitted as SR 1000003."
-broken target 'or a.find("target").get("project") != TARGET' 'or False' $A 1200001 $S "Submitted as SR 1000004."
+broken target 'or a.get("target_project") != TARGET' 'or False' $A 1200001 $S "Submitted as SR 1000004."
 broken "submit-type" 'a.get("type") != "submit"' 'False' $A 1200001 $S "Submitted as SR 1000005."
 broken state 'if state not in ("new", "review", "accepted"):' 'if False:' $A 1200001 $S "Submitted as SR 1000006."
 broken factory-auto 'if state != "accepted" and not passed:' 'if False:' $A 1200001 $S "Submitted as SR 1000007."
-broken "request-id" 'if req.get("id") != n:' 'if False:' $A 1200001 $S "Submitted as SR 1000011."
+broken "request-id" 'if str(req.get("id")) != n:' 'if False:' $A 1200001 $S "Submitted as SR 1000011."
 broken "added-line" 'if have[line]:' 'if False:' $A 1200002 $S "$COMMENT"
 broken ".changes-only" 'if not name.endswith(".changes"):' 'if False:' $A 1200004 $S "$COMMENT"
 

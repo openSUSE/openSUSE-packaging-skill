@@ -553,16 +553,25 @@ class _R(io.BytesIO):
 
 _real_run = subprocess.run
 def _run(cmd, *a, **k):
-    if cmd and cmd[0] == "osc":
-        if MODE == "osc_mostly_absent" and cmd[3] != "pkg-0":
+    # geectl remote cat: outdated.py passes --format text before the project,
+    # upstream-probe.py after the file; the package is the second-to-last arg.
+    if cmd and cmd[:3] == ["geectl", "remote", "cat"]:
+        pkg = cmd[-2]
+        if MODE == "geectl_mostly_absent" and pkg != "pkg-0":
             return subprocess.CompletedProcess(
-                cmd, 1, "", "Server returned an error: HTTP Error 404: Not Found\\n")
-        if MODE in ("osc_absent", "anitya_mapped_absent"):
+                cmd, 3, "",
+                "error: https://api.opensuse.org/public/source/%s returned 404\\n"
+                "remediation: check the project, package, or request name and retry\\n"
+                % "/".join(p for p in cmd[3:] if p not in ("--format", "text")))
+        if MODE in ("geectl_absent", "anitya_mapped_absent"):
             return subprocess.CompletedProcess(
-                cmd, 1, "", "Server returned an error: HTTP Error 404: Not Found\\n")
-        if MODE in ("osc_down", "anitya_mapped_down"):
+                cmd, 3, "",
+                "error: https://api.opensuse.org/public/source/%s returned 404\\n"
+                "remediation: check the project, package, or request name and retry\\n"
+                % "/".join(p for p in cmd[3:] if p not in ("--format", "text")))
+        if MODE in ("geectl_down", "anitya_mapped_down"):
             return subprocess.CompletedProcess(
-                cmd, 1, "", "Server returned an error: HTTP Error 503\\n")
+                cmd, 1, "", "geectl: api.opensuse.org returned 503\\n")
         return subprocess.CompletedProcess(cmd, 0, SPEC, "")
     if cmd and cmd[0] == "gh":
         # force the anonymous HTTP path so urlopen below is the only source
@@ -915,7 +924,7 @@ urllib.request.urlopen = _urlopen
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_no_name_found_in_the_project_is_wrong_input(self):
-        r = self._sweep("osc_absent", names=self.TEN, flags=("--no-repology",))
+        r = self._sweep("geectl_absent", names=self.TEN, flags=("--no-repology",))
         self.assertNotIn("Traceback", r.stderr)
         self.assertIn("none of 10 names found in openSUSE:Factory", r.stdout)
         self.assertIn("a re-run of the same input can never come back clean", r.stdout)
@@ -932,14 +941,16 @@ urllib.request.urlopen = _urlopen
         self.assertEqual(r.returncode, 3, r.stdout)
 
     def test_one_name_found_in_the_project_is_not_wrong_input(self):
-        r = self._sweep("osc_mostly_absent", names=self.TEN, flags=("--no-repology",))
+        r = self._sweep(
+            "geectl_mostly_absent", names=self.TEN, flags=("--no-repology",)
+        )
         self.assertIn("9 name(s) not in openSUSE:Factory", r.stdout)
         self.assertNotIn("names found in", r.stdout)
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_a_few_names_missing_from_factory_are_listed_not_degraded(self):
         r = self._sweep(
-            "osc_absent", names=("pkg-a", "pkg-x", "pkg-y"), flags=("--no-repology",)
+            "geectl_absent", names=("pkg-a", "pkg-x", "pkg-y"), flags=("--no-repology",)
         )
         self.assertIn("3 name(s) not in openSUSE:Factory", r.stdout)
         self.assertIn("# COVERAGE: complete", r.stdout)
@@ -951,10 +962,10 @@ urllib.request.urlopen = _urlopen
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_unreadable_reference_spec_is_unchecked_and_degrades(self):
-        # osc failing used to drop the name from both passes without a word.
-        r = self._sweep("osc_down", names=("pkg-a",), flags=("--no-repology",))
+        # geectl failing used to drop the name from both passes without a word.
+        r = self._sweep("geectl_down", names=("pkg-a",), flags=("--no-repology",))
         self.assertIn("spec could not be read", r.stdout)
-        self.assertIn("osc(1 names)", r.stdout.strip().splitlines()[-1])
+        self.assertIn("geectl(1 names)", r.stdout.strip().splitlines()[-1])
         self.assertEqual(r.returncode, 3, r.stdout)
 
     def test_a_name_anitya_maps_whose_spec_is_unreadable_degrades(self):
@@ -962,9 +973,9 @@ urllib.request.urlopen = _urlopen
         self.assertIn("spec could not be read", r.stdout)
         self.assertEqual(r.returncode, 3, r.stdout)
 
-    def test_osc_down_for_every_name_is_an_outage_not_wrong_input(self):
-        r = self._sweep("osc_down", names=self.TEN, flags=("--no-repology",))
-        self.assertIn("osc(10 names)", r.stdout.strip().splitlines()[-1])
+    def test_geectl_down_for_every_name_is_an_outage_not_wrong_input(self):
+        r = self._sweep("geectl_down", names=self.TEN, flags=("--no-repology",))
+        self.assertIn("geectl(10 names)", r.stdout.strip().splitlines()[-1])
         self.assertNotIn("names found in", r.stdout)
         self.assertIn("re-run when they are back", r.stdout)
         self.assertEqual(r.returncode, 3, r.stdout)

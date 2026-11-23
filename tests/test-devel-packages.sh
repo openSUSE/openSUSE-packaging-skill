@@ -1,8 +1,8 @@
 #!/bin/bash
 # test-devel-packages.sh — proves devel-packages.sh lists what Factory's _meta
 # says a devel project develops, keeps the project beside each name, and never
-# reads a failed or unparsable search as "no packages". Offline: a fake `osc` on
-# PATH answers the package search from fixtures keyed by the devel project.
+# reads a failed or unparsable search as "no packages". Offline: a fake `geectl`
+# on PATH answers the package search from fixtures keyed by the devel project.
 # Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -15,21 +15,24 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 FIX="$work/fix"; export FIX
 mkdir -p "$work/bin" "$FIX"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-[ "$1" = api ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
-prj=${2#*devel/@project=\'}; prj=${prj%\'}
+[ "$1" = remote ] && [ "$2" = search-packages ] && [ "$3" = --devel-project ] && [ -n "$4" ] \
+  || { echo "fake geectl: unexpected $*" >&2; exit 99; }
+prj="$4"
 f="$FIX/$prj"
-[ -f "$f" ] || { echo "Server returned an error: HTTP Error 500: Internal Server Error" >&2; exit 1; }
+[ -f "$f" ] || { echo '{"error":{"code":"not_found","context":"404 Not Found"}}' >&2; exit 3; }
+# A fixture starting with "@ERR " is a failed search: the rest goes to stderr.
+if [ "$(head -c 5 "$f")" = "@ERR " ]; then tail -c +6 "$f" >&2; exit 1; fi
 cat "$f"
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 export PATH="$work/bin:$PATH"
-printf '%s' '<collection matches="2"><package name="libpqxx" project="openSUSE:Factory"/><package name="pgadmin4" project="openSUSE:Factory"/></collection>' > "$FIX/server:database:postgresql"
-printf '%s' '<collection matches="1"><package name="ctemplate" project="openSUSE:Factory"/></collection>' > "$FIX/server:database"
-printf '%s' '<collection matches="0"/>' > "$FIX/devel:empty"
-printf '%s' '<status code="400"><summary>bad xpath</summary></status>' > "$FIX/odd"
-printf '%s' 'not xml' > "$FIX/broken"
+printf '%s' '{"term":null,"exact":false,"packages":[{"name":"libpqxx","project":"openSUSE:Factory","title":"","description":""},{"name":"pgadmin4","project":"openSUSE:Factory","title":"","description":""}]}' > "$FIX/server:database:postgresql"
+printf '%s' '{"term":null,"exact":false,"packages":[{"name":"ctemplate","project":"openSUSE:Factory","title":"","description":""}]}' > "$FIX/server:database"
+printf '%s' '{"term":null,"exact":false,"packages":[]}' > "$FIX/devel:empty"
+printf '%s' '@ERR {"error":{"code":"bad_request","context":"400 bad request"}}' > "$FIX/odd"
+printf '%s' 'not json' > "$FIX/broken"
 
 out="$(bash "$SCRIPT" server:database:postgresql)"; rc=$?
 [ "$rc" = 0 ] && [ "$out" = $'libpqxx server:database:postgresql\npgadmin4 server:database:postgresql' ] \

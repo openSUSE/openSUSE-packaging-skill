@@ -335,14 +335,14 @@ case_ wrap-word-more 1 "wrap-word-more.changes:4: line is 90 characters: wrap it
   cat "$work/wrap-68.changes"; } > "$work/wrap-old.changes"
 case_ wrap-old-entry-not-judged 0 "OK: clean" --entries 1 "$work/wrap-old.changes"
 
-# --author: the identity osc vc writes. An entry that shares its name or its
+# --author: the identity geectl changelog generate writes. An entry that shares its name or its
 # address must carry both (sr#1385844 shipped the git address under the name).
 ME='Jane Packager <jane@suse.example>'
 by() { printf '%s\nSun Oct 18 10:00:00 UTC 2026 - %s\n\n- Update to 2.0:\n  * Fix the crash\n\n' "$SEP" "$1"; cat "$F"; }
 by "Jane Packager <jane@personal.example>" > "$work/au-git.changes"
-case_ author-git-email 1 "is not what osc vc writes ('$ME')" --author "$ME" --entries 1 "$work/au-git.changes"
+case_ author-git-email 1 "is not what geectl changelog generate writes ('$ME')" --author "$ME" --entries 1 "$work/au-git.changes"
 by "J. Packager <jane@suse.example>" > "$work/au-name.changes"
-case_ author-other-name 1 "is not what osc vc writes" --author "$ME" --entries 1 "$work/au-name.changes"
+case_ author-other-name 1 "is not what geectl changelog generate writes" --author "$ME" --entries 1 "$work/au-name.changes"
 by "Jane Packager <JANE@suse.example>" > "$work/au-case.changes"
 case_ author-email-case 0 "OK: clean" --author "$ME" --entries 1 "$work/au-case.changes"
 by "$ME" > "$work/au-ok.changes"
@@ -353,7 +353,7 @@ case_ author-other-packager 0 "OK: clean" --author "$ME" --entries 1 "$work/au-o
 case_ author-old-entry-not-linted 0 "OK: clean" --author "$ME" --entries 1 "$work/au-old.changes"
 case_ author-old-entry-in-scope 1 "au-old.changes:7: author" --author "$ME" --entries 2 "$work/au-old.changes"
 case_ author-bad-value 2 "--author takes 'Name <email>'" --author "jane@suse.example" --entries 1 "$work/au-ok.changes"
-case_ author-option-order 1 "is not what osc vc writes" --entries 1 --author "$ME" "$work/au-git.changes"
+case_ author-option-order 1 "is not what geectl changelog generate writes" --entries 1 --author "$ME" "$work/au-git.changes"
 
 # A security claim without its CVE ids took nine fix rounds in one week: the
 # tracker keys off the literal ids. An incomplete id is always a finding; a

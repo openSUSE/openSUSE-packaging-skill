@@ -67,7 +67,7 @@ mkdir -p "$work/project/.osc" && printf 'devel:example\n' > "$work/project/.osc/
 case_ project-checkout 2 "osc project checkout — cd into the package directory" "$work/project"
 ! grep -q '^## ' <<<"$LAST" && pass "project-checkout: no gate ran" || fail "project-checkout: gates ran: $LAST"
 mkdir -p "$work/empty"
-case_ empty-dir 2 "no *.spec and no .osc/_package" "$work/empty"
+case_ empty-dir 2 "no *.spec, no .osc/_package and no geectl working copy" "$work/empty"
 ! grep -q '^## ' <<<"$LAST" && pass "empty-dir: no gate ran" || fail "empty-dir: gates ran: $LAST"
 # Control: a spec is enough to get past the refusal; the gates then run (and
 # are red here: no .changes, and not a checkout changes-patches can read).
@@ -97,22 +97,29 @@ grep -qF "## changes-patches: rc=0" <<<"$out" && pass "two-entries --entries 2: 
 # A non-link osc checkout of a devel project is a direct commit there: its new
 # entries count against the committed copy, not against Factory, which the
 # devel project may legitimately be several entries ahead of. An explicit
-# --target still counts against that target. A fake osc serves Factory.
+# --target still counts against that target. A fake geectl serves Factory.
+export GEECTL_OBS_USERNAME=jpackager
 mkdir -p "$work/bin" "$work/factory"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-case "$1" in
-  api) [ "$2" = "/source/openSUSE:Factory/foo?expand=1" ] \
-         && { echo '<directory name="foo"><entry name="foo.changes"/><entry name="foo.spec"/></directory>'; exit 0; } ;;
-  cat) [ "$2 $3" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$4" ] && { cat "$FACTORY/$4"; exit 0; } ;;
-  status) exit 0 ;;
-  ls) exit 0 ;;
-  whois) echo 'jpackager: "Jane Packager" <jane@example.com>'; exit 0 ;;
-  vc) [ -z "${VC_FAIL:-}" ] && printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4" && exit 0 ;;
+case "$1 $2" in
+  "remote link-target") echo '{"project": "devel:example", "package": "foo", "target": null}'; exit 0 ;;
+  "remote package-meta") echo '{"name": "foo", "project": "openSUSE:Factory", "title": "", "description": "", "devel": {"project": "devel:example", "package": "foo"}, "persons": [], "groups": []}'; exit 0 ;;
+  "remote list-packages") echo '{"project": "openSUSE:Factory", "packages": ["foo"]}'; exit 0 ;;
+  "remote list-files") m=$(md5sum < "$FACTORY/foo.changes" | cut -d' ' -f1)
+    echo "{\"project\": \"openSUSE:Factory\", \"package\": \"foo\", \"files\": [{\"name\": \"foo.changes\", \"size\": 1, \"mtime\": 1, \"md5\": \"$m\"}, {\"name\": \"foo.spec\", \"size\": 1, \"mtime\": 1, \"md5\": \"00000000000000000000000000000000\"}]}"; exit 0 ;;
+  "remote cat") [ "$3 $4" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$5" ] && { cat "$FACTORY/$5"; exit 0; } ;;
+  "remote whois") [ -n "${VC_FAIL:-}" ] && { echo '{"error":{"code":"auth_failed","context":"no such user"}}' >&2; exit 1; }
+    echo '{"login": "jpackager", "email": "jane@example.com", "realname": "Jane Packager", "state": "confirmed"}'; exit 0 ;;
 esac
-echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
+# A 404 renders by --format: JSON by default, plain text with --format text.
+case "$*" in
+  *--format\ text*)
+    printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "$3" "$4" "$5" >&2; exit 3 ;;
+esac
+echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 entry() { printf '%s\n%s - Jane Packager <jane@example.com>\n\n- %s\n\n' "$SEP" "$1" "$2"; }
 entry "Mon Jan  5 10:00:00 UTC 2026" "Initial package" > "$work/factory/foo.changes"
 devel() { # <dir> <number of uncommitted entries>: devel two committed entries ahead of Factory
@@ -187,21 +194,22 @@ grep -qF "## changes-guard: rc=0" <<<"$out" && grep -qF "2 of your unreleased en
   && pass "--squash-mine: devel's own unaccepted entries fold into one" \
   || { fail "--squash-mine through the gate"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
-# changes-lint checks the new entry's author against what osc vc writes: the
-# git address under the same name is red (sr#1385844), and an identity osc vc
-# cannot give leaves the author unchecked, which is red too.
+# changes-lint checks the new entry's author against what geectl changelog
+# generate writes: the git address under the same name is red (sr#1385844),
+# and an identity geectl changelog generate cannot give leaves the author
+# unchecked, which is red too.
 out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
-grep -qF "## changes-lint: rc=0" <<<"$out" && pass "author as osc vc writes it: changes-lint green" \
-  || { fail "author as osc vc writes it"; printf '%s\n' "$out" | sed 's/^/    /'; }
+grep -qF "## changes-lint: rc=0" <<<"$out" && pass "author as geectl changelog generate writes it: changes-lint green" \
+  || { fail "author as geectl changelog generate writes it"; printf '%s\n' "$out" | sed 's/^/    /'; }
 devel "$work/git-email" 1; sed -i '2s/<jane@example.com>$/<jane@personal.example>/' "$work/git-email/foo.changes"
 out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/git-email" 2>&1)"
-grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "is not what osc vc writes" <<<"$out" \
+grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "is not what geectl changelog generate writes" <<<"$out" \
   && pass "git address under the same name: changes-lint red" \
   || { fail "git address under the same name"; printf '%s\n' "$out" | sed 's/^/    /'; }
 out="$(VC_FAIL=1 FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
 grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "author not checked" <<<"$out" \
-  && pass "osc vc gives no identity: changes-lint red" \
-  || { fail "osc vc gives no identity"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  && pass "geectl changelog generate gives no identity: changes-lint red" \
+  || { fail "geectl changelog generate gives no identity"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # A fork-PR clone tracks the pushed fork branch, which already holds the
 # change, so changes-patches compares clean against it; --git-base names the
@@ -402,7 +410,7 @@ sc fail --cleaner-deviation "anything"
 grep -qF "## spec-cleaner: rc=1" <<<"$out" \
   && pass "spec-cleaner: a deviation never excuses a failed run" || { fail "spec-cleaner failed run with deviation"; printf '%s\n' "$out" | sed 's/^/    /'; }
 mkdir -p "$work/nosc"
-for t in bash cat tail head grep basename dirname tr rm mkdir awk sed env diff python3 osc git; do
+for t in bash cat tail head grep basename dirname tr rm mkdir awk sed env diff python3 geectl git; do
   p=$(command -v "$t") && ln -sf "$p" "$work/nosc/$t"
 done
 out="$(PATH="$work/nosc" bash "$GATE" "$work/sc" 2>&1)"
@@ -474,35 +482,69 @@ fi
 
 # The target: Factory's devel project unless named, and the checkout's history
 # must be the target's (sr#1392134: a branch of hardware's stale copy filed to
-# devel:languages:python deleted that project's newer entries). A fake OBS
-# serves $OBS/<prj>/<pkg>/<file>, Factory's devel project from $OBS/devel/<pkg>,
-# and a 500 for every _meta when $OBS/fail-meta exists.
+# devel:languages:python deleted that project's newer entries). A fake geectl
+# serves $OBS/<prj>/<pkg>/<file> as JSON, the devel project from $OBS/devel/<pkg>,
+# and a 500 for every meta read when $OBS/fail-meta exists. It logs each call
+# to $GEO_LOG when set, so the parse-surface section can prove what it asked.
 mkdir -p "$work/obin"
-cat > "$work/obin/osc" <<'EOF'
+cat > "$work/obin/geectl" <<'EOF'
 #!/bin/bash
-[ "$1" = -A ] && { [ -z "${OSC_A_LOG:-}" ] || echo "$2 $3 $4" >> "$OSC_A_LOG"; shift 2; }
+[ -n "${GEO_LOG:-}" ] && printf '%s\n' "$*" >> "$GEO_LOG"
 case "$1" in
-  develproject) [ -f "$OBS/devel/$3" ] && { cat "$OBS/devel/$3"; exit 0; } ;;
-  api) case "$2" in
-         */_scmsync.obsinfo) [ -e "$OBS/fail-obsinfo" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
-                  [ -f "$OBS/obsinfo-race" ] && { cat "$OBS/obsinfo-race"; exit 0; }
-                  p=${2#/source/}; [ -f "$OBS/$p" ] && { cat "$OBS/$p"; exit 0; } ;;
-         */_meta) [ -e "$OBS/fail-meta" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
-                  p=${2#/source/}; p=${p%/_meta}; [ -d "$OBS/$p" ] && { echo "<package name=\"${p#*/}\"/>"; exit 0; } ;;
-         *'?expand=1') [ -e "$OBS/fail-list" ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
-                  p=${2#/source/}; p=${p%\?expand=1}
-                  [ -d "$OBS/$p" ] && { echo "<directory name=\"${p#*/}\">"
-                    for f in "$OBS/$p"/*; do echo "<entry name=\"$(basename "$f")\" md5=\"$(md5sum < "$f" | cut -d' ' -f1)\"/>"; done; echo "</directory>"; exit 0; } ;;
-       esac ;;
-  cat) [ -e "$OBS/fail-cat" ] && { echo "Server returned an error: HTTP Error 400: package 'foo-ui' does not exist" >&2; exit 1; }
-       [ -f "$OBS/$2/$3/$4" ] && { cat "$OBS/$2/$3/$4"; exit 0; } ;;
-  status) exit 0 ;;
-  ls) [ "$2" = openSUSE:Factory ] && { ls "$OBS/openSUSE:Factory"; exit 0; } ;;
-  vc) printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- probe\n\n' > "$4"; exit 0 ;;
+  remote)
+    case "$2" in
+      link-target)
+        f="$OBS/link-target/$(printf '%s_%s' "$3" "$4" | tr -c 'A-Za-z0-9' '_').json"
+        [ -f "$f" ] && { cat "$f"; exit 0; }
+        printf '{"project": "%s", "package": "%s", "target": null}\n' "$3" "$4"; exit 0 ;;
+      package-meta|project-meta)
+        [ -e "$OBS/fail-meta" ] && { echo "geectl: api.opensuse.org returned 500" >&2; exit 1; }
+        if [ "$2" = package-meta ]; then d="$OBS/$3/$4"; else d="$OBS/$3"; fi
+        [ -d "$d" ] || { echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3; }
+        if [ "$2" = package-meta ]; then
+          if [ -f "$OBS/devel/$4" ]; then
+            dv=$(cat "$OBS/devel/$4"); dp=${dv%%/*}; dk=${dv#*/}; dl="{\"project\": \"$dp\", \"package\": \"$dk\"}"
+          else dl=null; fi
+          printf '{"name": "%s", "project": "%s", "title": "", "description": "", "devel": %s, "persons": [], "groups": []}\n' "$4" "$3" "$dl"
+        else
+          printf '{"name": "%s", "title": "", "description": "", "persons": [], "groups": [], "repositories": []}\n' "$3"
+        fi
+        exit 0 ;;
+      list-packages)
+        [ -d "$OBS/$3" ] || { echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3; }
+        python3 -I -c 'import json, os, sys; print(json.dumps({"project": sys.argv[1], "packages": sorted(d for d in os.listdir(sys.argv[2]) if os.path.isdir(os.path.join(sys.argv[2], d)))}))' "$3" "$OBS/$3"
+        exit 0 ;;
+      list-files)
+        [ -e "$OBS/fail-list" ] && { echo "geectl: api.opensuse.org returned 500" >&2; exit 1; }
+        [ -d "$OBS/$3/$4" ] || { echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3; }
+        python3 -I - "$OBS/$3/$4" "$3" "$4" <<'PYEOF'
+import hashlib, json, os, sys
+d, prj, pkg = sys.argv[1:4]
+files = [{"name": n, "size": os.path.getsize(os.path.join(d, n)), "mtime": 1,
+          "md5": hashlib.md5(open(os.path.join(d, n), "rb").read()).hexdigest()}
+         for n in sorted(os.listdir(d)) if os.path.isfile(os.path.join(d, n))]
+print(json.dumps({"project": prj, "package": pkg, "files": files}))
+PYEOF
+        exit 0 ;;
+      cat)
+        if [ "$5" = _scmsync.obsinfo ]; then
+          [ -e "$OBS/fail-obsinfo" ] && { echo "geectl: api.opensuse.org returned 500" >&2; exit 1; }
+          [ -f "$OBS/obsinfo-race" ] && { cat "$OBS/obsinfo-race"; exit 0; }
+        fi
+        [ -e "$OBS/fail-cat" ] && { echo "geectl: api.opensuse.org returned 400" >&2; exit 1; }
+        [ -f "$OBS/$3/$4/$5" ] && { cat "$OBS/$3/$4/$5"; exit 0; } ;;
+      whois)
+        echo '{"login": "jpackager", "email": "jane@example.com", "realname": "Jane Packager", "state": "confirmed"}'; exit 0 ;;
+    esac ;;
 esac
-echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
+# A 404 renders by --format: JSON by default, plain text with --format text.
+case "$*" in
+  *--format\ text*)
+    printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "$3" "$4" "$5" >&2; exit 3 ;;
+esac
+echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3
 EOF
-chmod +x "$work/obin/osc"
+chmod +x "$work/obin/geectl"
 O="$work/obs"
 put() { mkdir -p "$O/$1" && cat > "$O/$1/$2"; }   # put <prj>/<pkg> <file> < content
 e() { entry "$1 10:00:00 UTC 2026" "$2"; }
@@ -520,11 +562,14 @@ co() {
   printf '2.0\n' > "$1/.osc/_osclib_version"
   local li=""; [ "$3" = - ] || li="<linkinfo project=\"$3\" package=\"foo\" srcmd5=\"x\"/>"
   printf '<directory name="foo" rev="1">%s<entry name="foo.changes"/><entry name="foo.spec"/></directory>\n' "$li" > "$1/.osc/_files"
+  mkdir -p "$O/link-target"
+  if [ "$3" = - ]; then printf '{"project": "%s", "package": "foo", "target": null}\n' "$2" > "$O/link-target/$(printf '%s_foo' "$2" | tr -c 'A-Za-z0-9' '_').json"
+  else printf '{"project": "%s", "package": "foo", "target": {"project": "%s", "package": "foo"}}\n' "$2" "$3" > "$O/link-target/$(printf '%s_foo' "$2" | tr -c 'A-Za-z0-9' '_').json"; fi
   cp "$4/foo.changes" "$4/foo.spec" "$1/.osc/sources/"
   { e "Thu Oct 22" "Update to 1.0"; cat "$4/foo.changes"; } > "$1/foo.changes"
   sed 's/^Version: .*/Version: 1.0/' "$4/foo.spec" > "$1/foo.spec"
 }
-og() { out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$@" 2>&1)"; }
+og() { out="$(GEECTL_OBS_USERNAME=jpackager OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$@" 2>&1)"; }
 co "$work/t-wrong" 'home:<you>:spark' hardware "$O/hardware/foo"
 og "$work/t-wrong"
 grep -qF "## target: rc=1" <<<"$out" && grep -qF "based on hardware/foo, the SR goes to devel:example/foo" <<<"$out" \
@@ -569,6 +614,9 @@ cob() { # <dir> <project> <patch text>: a checkout of bar with the target's spec
   # listing, never this fallback, may call a patch unchanged
   printf '<directory name="bar" rev="1"><entry name="bar.changes"/><entry name="bar.spec"/><entry name="bar-old.patch" md5="%s"/></directory>\n' \
     "$(md5sum < "$O/devel:example/bar/bar-old.patch" | cut -d' ' -f1)" > "$1/.osc/_files"
+  mkdir -p "$O/link-target"
+  if [ "$2" = 'home:<you>:branches:devel:example' ]; then printf '{"project": "%s", "package": "bar", "target": {"project": "devel:example", "package": "bar"}}\n' "$2" > "$O/link-target/$(printf '%s_bar' "$2" | tr -c 'A-Za-z0-9' '_').json"
+  else printf '{"project": "%s", "package": "bar", "target": null}\n' "$2" > "$O/link-target/$(printf '%s_bar' "$2" | tr -c 'A-Za-z0-9' '_').json"; fi
   cp "$O/devel:example/bar/"* "$1/.osc/sources/"; cp "$O/devel:example/bar/"* "$1/"
   { e "Thu Oct 22" "Rebuild"; cat "$O/devel:example/bar/bar.changes"; } > "$1/bar.changes"
   printf '%s\n' "$3" > "$1/bar-old.patch"
@@ -587,7 +635,7 @@ grep -q '^note:.*bar-old' "$work/gate-bar/patch-tags.txt" && fail "patch-tags mo
 cob "$work/t-pt-new" 'home:<you>:spark' old
 pt new-package-strict 1 "bar.spec:3: bar-old.patch has no PATCH-* tag" "$work/t-pt-new" --target devel:example/baz
 : > "$O/fail-list"
-pt listing-failure-strict 1 "note: cannot list devel:example/bar (Server returned an error: HTTP Error 500: Internal): every patch counts as changed" "$work/t-pt-same"
+pt listing-failure-strict 1 "note: cannot list devel:example/bar (geectl: api.opensuse.org returned 500): every patch counts as changed" "$work/t-pt-same"
 grep -qF "bar.spec:3: bar-old.patch has no PATCH-* tag in the comment above it" "$work/gate-bar/patch-tags.txt" \
   && ! grep -q '^note: bar.spec' "$work/gate-bar/patch-tags.txt" && pass "patch-tags listing-failure-strict: the patch is red" \
   || fail "patch-tags listing-failure-strict: the patch is not red"
@@ -638,8 +686,8 @@ grep -qF "## target: rc=1" <<<"$out" && grep -qF "could not be read (devel-of.sh
 rm "$O/fail-meta"; echo devel:example/foo > "$O/devel/foo"
 : > "$O/fail-cat"
 og "$work/t-good"
-grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "UNKNOWN: osc cat devel:example foo foo.changes failed" "$work/gate-foo/changes-guard.txt" \
-  && grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "UNKNOWN: osc cat devel:example foo foo.spec failed" <<<"$out" \
+grep -qF "## changes-guard: rc=1" <<<"$out" && grep -qF "UNKNOWN: geectl remote cat devel:example foo foo.changes failed" "$work/gate-foo/changes-guard.txt" \
+  && grep -qF "## spec-header: rc=1" <<<"$out" && grep -qF "UNKNOWN: geectl remote cat devel:example foo foo.spec failed" <<<"$out" \
   && pass "the target's files unreadable: changes-guard and spec-header red, never the committed copy" \
   || { fail "target files unreadable"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm "$O/fail-cat"
@@ -665,7 +713,7 @@ co "$work/t-new" 'home:<you>:spark' - "$O/hardware/foo"
 mkdir -p "$O/devel:other"
 og "$work/t-new" --target devel:other
 grep -qF "## target: rc=0" <<<"$out" && grep -qF "devel:other/foo does not exist: a new package there" <<<"$out" \
-  && ! grep -qF "osc branch devel:other" <<<"$out" \
+  && ! grep -qF "geectl branch branch-package --project devel:other" <<<"$out" \
   && pass "new package named with its target: a note, not red" \
   || { fail "new package with --target"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A package Factory has under another spelling is no new package
@@ -784,36 +832,72 @@ out="$(HOME="$work/home" bash "$GATE" "$work/t-st" "$REV" "$work/rv.txt" --entri
 
 # --obs-build records OBS's build of the stamped tree, gate 1 in OBS-ONLY mode:
 # every repo/arch succeeded from the sources OBS holds, those are the stamped
-# files, and each log reads GREEN in build-summary.sh. A fake osc serves the
-# listing, the results and the logs from $OB.
+# files, and each log reads GREEN in build-summary.sh. A fake geectl serves the
+# package log, the link target, the results and the logs from $OB; the listing
+# an osc checkout compares against is its own .osc/_files, so the listing()
+# helper below writes that (with the working files' md5s) instead of a remote
+# listing file. The job history carries one fixed job, current (its starttime
+# is past the link bound, its srcmd5 the package log's), so a log of other
+# sources reads as older.
 P='home:<you>:branches:devel:example'
 mkdir -p "$work/obbin" "$work/ob"
-cat > "$work/obbin/osc" <<'EOF'
+cat > "$work/obbin/geectl" <<'EOF'
 #!/bin/bash
 P='home:<you>:branches:devel:example'
+SRC=0123456789abcdef0123456789abcdef
 case "$1" in
-  api) [ "$2" = "/source/$P/foo?expand=1" ] && [ -f "$OB/listing.xml" ] && { cat "$OB/listing.xml"; exit 0; } ;;
-  results) [ "$*" = "results --xml $P foo" ] && [ -f "$OB/results.xml" ] && { cat "$OB/results.xml"; exit 0; }
-           [ "$*" = "results --xml devel:example foo" ] && [ -f "$OB/origin.xml" ] && { cat "$OB/origin.xml"; exit 0; } ;;
-  rbl) [ -z "${MUTATE:-}" ] || python3 -I -c 'import json, sys
+  remote)
+    case "$2" in
+      package-log) [ -f "$OB/pkglog.json" ] && { cat "$OB/pkglog.json"; exit 0; } ;;
+      link-target) [ -f "$OB/link-target.json" ] && { cat "$OB/link-target.json"; exit 0; }
+        printf '{"project": "%s", "package": "foo", "target": null}\n' "$P"; exit 0 ;;
+      list-files) [ -e "$OB/fail-list" ] && { echo "geectl: api.opensuse.org returned 500" >&2; exit 1; }
+        [ -f "$OB/list-files.json" ] && { cat "$OB/list-files.json"; exit 0; } ;;
+      cat) [ "$5" = _link ] && [ -f "$OB/_link" ] && { cat "$OB/_link"; exit 0; } ;;
+    esac ;;
+  build)
+    case "$2" in
+      results)
+        [ "$3" = "$P" ] && [ -f "$OB/results.json" ] && { cat "$OB/results.json"; exit 0; }
+        [ "$3" = devel:example ] && [ -f "$OB/origin.json" ] && { cat "$OB/origin.json"; exit 0; } ;;
+      build-log)
+        [ -z "${MUTATE:-}" ] || python3 -I -c 'import json, sys
 st = json.load(open(sys.argv[1])); st["review"] = {"verdict": "PASS"}; json.dump(st, open(sys.argv[1], "w"))' "$MUTATE"
-       [ "$2" = "$P" ] && [ -f "$OB/log-$4-$5-$3" ] && { cat "$OB/log-$4-$5-$3"; exit 0; } ;;
+        [ -f "$OB/log-$5-$6-$4" ] && { cat "$OB/log-$5-$6-$4"; exit 0; } ;;
+      job-history)
+        printf '{"project": "%s", "repository": "%s", "arch": "%s", "entries": [{"srcmd5": "%s", "starttime": 1790000000}]}' "$3" "$4" "$5" "$SRC"; exit 0 ;;
+    esac ;;
 esac
-echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1
+# A 404 renders by --format: JSON by default, plain text with --format text.
+case "$*" in
+  *--format\ text*)
+    case "$1 $2" in
+      "remote cat") u="https://api.opensuse.org/public/source/$3/$4/$5" ;;
+      "build build-log") u="https://api.opensuse.org/build/$3/$5/$6/$4/_log" ;;
+      *) u="https://api.opensuse.org/" ;;
+    esac
+    printf 'error: %s returned 404\nremediation: check the project, package, or request name and retry\n' "$u" >&2; exit 3 ;;
+esac
+echo '{"error":{"code":"not_found","context":"no such thing"}}' >&2; exit 3
 EOF
-chmod +x "$work/obbin/osc"
+chmod +x "$work/obbin/geectl"
 co "$work/t-ob" "$P" devel:example "$O/devel:example/foo"
 md5_() { md5sum < "$1" | cut -d' ' -f1; }
 SRC=0123456789abcdef0123456789abcdef
-listing() {   # <md5 of foo.spec> [linkinfo element]
+listing() {   # <md5 of foo.spec> [linkinfo element]: the committed copy OBS holds
   printf '<directory name="foo" srcmd5="%s">%s<entry name="_link" md5="1"/><entry name="foo.changes" md5="%s"/><entry name="foo.spec" md5="%s"/></directory>\n' \
-    "$SRC" "${2:-}" "$(md5_ "$work/t-ob/foo.changes")" "$1" > "$work/ob/listing.xml"
+    "$SRC" "${2:-}" "$(md5_ "$work/t-ob/foo.changes")" "$1" > "$work/t-ob/.osc/_files"
+  if [ -n "${2:-}" ]; then
+    printf '{"project": "%s", "package": "foo", "target": {"project": "devel:example", "package": "foo"}}' "$P" > "$work/ob/link-target.json"
+    printf '<link project="devel:example" package="foo"/>\n' > "$work/ob/_link"
+  else
+    rm -f "$work/ob/link-target.json" "$work/ob/_link"
+  fi
 }
+printf '{"project": "%s", "package": "foo", "entries": [{"rev": 1, "srcmd5": "%s", "time": 1700000000}]}' "$P" "$SRC" > "$work/ob/pkglog.json"
 results() {   # <code for openSUSE_Tumbleweed/aarch64>
-  { printf '<resultlist><result repository="openSUSE_Tumbleweed" arch="x86_64"><status package="foo" code="succeeded"/></result>'
-    printf '<result repository="openSUSE_Tumbleweed" arch="aarch64"><status package="foo" code="%s"/></result>' "$1"
-    printf '<result repository="16.0" arch="x86_64"><status package="foo" code="disabled"/></result></resultlist>\n'
-  } > "$work/ob/results.xml"
+  printf '{"results": [{"project": "%s", "repository": "openSUSE_Tumbleweed", "arch": "x86_64", "code": "succeeded", "statuses": [{"package": "foo", "code": "succeeded"}]}, {"project": "%s", "repository": "openSUSE_Tumbleweed", "arch": "aarch64", "code": "%s", "statuses": [{"package": "foo", "code": "%s"}]}, {"project": "%s", "repository": "16.0", "arch": "x86_64", "code": "disabled", "statuses": [{"package": "foo", "code": "disabled"}]}]}\n' \
+    "$P" "$P" "$1" "$1" "$P" > "$work/ob/results.json"
 }
 blog() {   # <arch> <srcmd5> <finished|failed> [extra line]
   { printf "[    0s] Building foo for project '%s' repository 'openSUSE_Tumbleweed' arch '%s' srcmd5 '%s'\n" "$P" "$1" "$2"
@@ -861,10 +945,17 @@ listing 00000000000000000000000000000000; blog aarch64 "$SRC" finished; ob
 [ "$rc" = 1 ] && grep -qF "OBS holds other files than tree ${TO:0:12}" <<<"$out" && grep -qF "foo.spec" <<<"$out" \
   && pass "--obs-build: OBS holding other files than the stamped tree is red" \
   || { fail "--obs-build other files: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-rm -f "$work/ob/listing.xml"; ob
+gwc="$work/t-ob-gw"; rm -rf "$gwc"; mkdir -p "$gwc"
+cp "$work/t-ob/foo.changes" "$work/t-ob/foo.spec" "$gwc/"
+( cd "$gwc" && git init -q . && git config user.email t@example.com && git config user.name t \
+  && git config geectl.project "$P" && git config geectl.package foo \
+  && git add foo.changes foo.spec && git commit -qm base ) || fail "geectl working copy fixture"
+: > "$work/ob/fail-list"
+out="$(OB="$work/ob" HOME="$work/home" PATH="$work/obbin:$PATH" bash "$GATE" "$gwc" --obs-build 2>&1)"; rc=$?
 [ "$rc" = 1 ] && grep -qF "UNKNOWN" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
   && pass "--obs-build: a failed listing lookup is UNKNOWN, rc=1, the recorded build kept" \
   || { fail "--obs-build listing lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+rm -f "$work/ob/fail-list"
 listing "$(md5_ "$work/t-ob/foo.spec")"
 blog aarch64 "$SRC" finished '[   90s] foo-1.0-1.1.aarch64.rpm: directories not owned by a package:
 [   90s]  - /usr/share/zsh'; ob
@@ -876,8 +967,9 @@ blog aarch64 "$SRC" finished; results failed; blog aarch64 "$SRC" failed; ob
 [ "$rc" = 1 ] && grep -qF "FAILED" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
   && pass "--obs-build: a failed build of the current sources is red" || { fail "--obs-build failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 results succeeded; blog aarch64 "$SRC" finished
-rx() { printf '<resultlist>%s</resultlist>\n' "$1" > "$work/ob/results.xml"; }
-st_() { printf '<result repository="openSUSE_Tumbleweed" arch="%s"%s><status package="%s" code="%s"/></result>' "$@"; }
+rx() { printf '{"results": [%s]}\n' "${1%,}" > "$work/ob/results.json"; }
+st_() { local d=false; [ -n "$2" ] && d=true
+  printf '{"repository": "openSUSE_Tumbleweed", "arch": "%s", "code": "%s", "dirty": %s, "statuses": [{"package": "%s", "code": "%s"}]},' "$1" "$4" "$d" "$3" "$4"; }
 ob
 [ "$rc" = 0 ] && [ "$(sv "$SO" build.kind)" = obs ] || { fail "--obs-build: no build recorded to keep"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # What the gate cannot judge keeps the recorded build: UNKNOWN, rc=1.
@@ -889,7 +981,7 @@ for c in "empty:" "disabled:$(st_ x86_64 '' foo disabled)$(st_ aarch64 '' foo ex
     && pass "--obs-build: ${c%%:*} results are UNKNOWN and keep the recorded build" \
     || { fail "--obs-build ${c%%:*} results: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 done
-rm -f "$work/ob/results.xml"; ob
+rm -f "$work/ob/results.json"; ob
 [ "$rc" = 1 ] && grep -qF "UNKNOWN" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
   && pass "--obs-build: a failed results lookup is UNKNOWN, the recorded build kept" \
   || { fail "--obs-build results lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -919,7 +1011,7 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo unresolvable)"; ob
   && pass "--obs-build: unresolvable is red and drops the recorded build, not the review" \
   || { fail "--obs-build unresolvable: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # Judged: Tumbleweed and Leap 16 on x86_64 and aarch64; any other repo or arch is a note, never red or pending.
-lp() { printf '<result repository="%s" arch="x86_64"><status package="foo" code="%s"/></result>' "$@"; }
+lp() { printf '{"repository": "%s", "arch": "x86_64", "code": "%s", "dirty": false, "statuses": [{"package": "foo", "code": "%s"}]},' "$1" "$2" "$2"; }
 blogr() {   # <repo> <arch> <finished|failed>
   printf "[    0s] Building foo for project '%s' repository '%s' arch '%s' srcmd5 '%s'\n[  100s] ... %s \"build foo.spec\" at Mon Nov  2 2026.\n" \
     "$P" "$1" "$2" "$SRC" "$3" > "$work/ob/log-$1-$2-foo"; }
@@ -967,10 +1059,10 @@ rx "$(lp 15.7 succeeded)$(lp SLE_15_SP7 failed)$(st_ i586 '' foo succeeded)"; ob
 # A branch's red that its link origin has at the same repo/arch is PRE-EXISTING, not red.
 LI='<linkinfo project="devel:example" package="foo" srcmd5="1"/>'
 listing "$(md5_ "$work/t-ob/foo.spec")" "$LI"
-orx() { printf '<resultlist>%s</resultlist>\n' "$1" > "$work/ob/origin.xml"; }
+orx() { printf '{"results": [%s]}\n' "${1%,}" > "$work/ob/origin.json"; }
 blogr 16.1 x86_64 failed
-orx "$(st_ x86_64 '' foo succeeded)$(lp 16.1 failed)$(printf '<result repository="16.1" arch="aarch64"><status package="foo" code="unresolvable"/></result>')"
-rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)$(printf '<result repository="16.1" arch="aarch64"><status package="foo" code="unresolvable"/></result>')"; ob
+orx "$(st_ x86_64 '' foo succeeded)$(lp 16.1 failed)$(printf '{"repository": "16.1", "arch": "aarch64", "code": "unresolvable", "dirty": false, "statuses": [{"package": "foo", "code": "unresolvable"}]},')"
+rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)$(printf '{"repository": "16.1", "arch": "aarch64", "code": "unresolvable", "dirty": false, "statuses": [{"package": "foo", "code": "unresolvable"}]},')"; ob
 [ "$rc" = 0 ] && grep -qF "PRE-EXISTING" <<<"$out" && grep -qF "VERDICT: GREEN" <<<"$out" \
   && [ "$(sv "$SO" build.preexisting)" = "['16.1/aarch64 unresolvable', '16.1/x86_64 failed']" ] && [ "$(sv "$SO" build.factory)" = True ] \
   && pass "--obs-build: a 16.1 red the link origin has too is PRE-EXISTING, the verdict GREEN, the stamp listing it" \
@@ -981,7 +1073,7 @@ orx "$(st_ x86_64 '' foo succeeded)$(lp 16.1 succeeded)"; ob
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "16.1/x86_64" <<<"$out" && [ -z "$(sv "$SO" build)" ] \
   && pass "--obs-build: a failed 16.1 build the link origin builds green is red" || { fail "--obs-build new 16.1 failure: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-zs() { printf '<result repository="openSUSE_Factory_zSystems" arch="s390x"><status package="foo" code="%s"/></result>' "$1"; }
+zs() { printf '{"repository": "openSUSE_Factory_zSystems", "arch": "s390x", "code": "%s", "dirty": false, "statuses": [{"package": "foo", "code": "%s"}]},' "$1" "$1"; }
 orx "$(st_ x86_64 '' foo succeeded)$(zs disabled)"
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(zs building)"; ob --arches s390x
 [ "$rc" = 0 ] && grep -qF "openSUSE_Factory_zSystems/s390x building (disabled in devel:example)" <<<"$out" \
@@ -1000,7 +1092,7 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo failed)"; blog aarch64 "$
   && pass "--obs-build: a red where the link origin excludes the arch is red, not skipped" \
   || { fail "--obs-build red where the origin excludes: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 blog aarch64 "$SRC" finished
-rm -f "$work/ob/origin.xml"; rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob
+rm -f "$work/ob/origin.json"; rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: UNKNOWN" <<<"$out" && grep -qF "the link origin" <<<"$out" \
   && pass "--obs-build: a failed lookup of the link origin's results is UNKNOWN" || { fail "--obs-build origin lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 orx "$(st_ x86_64 '' foo failed)$(st_ aarch64 '' foo unresolvable)"; blog x86_64 "$SRC" failed
@@ -1012,7 +1104,7 @@ rx "$(st_ x86_64 '' foo failed)$(st_ aarch64 '' foo unresolvable)$(lp 16.0 succe
 [ "$rc" = 0 ] && [ "$(sv "$SO" build.factory)" = False ] && [ "$(sv "$SO" build.others)" = "['16.0']" ] && [ "$(sv "$SO" build.added)" = "[]" ] \
   && pass "--obs-build: Tumbleweed only PRE-EXISTING, 16.0 green: GREEN, but no Tumbleweed build recorded for Factory" \
   || { fail "--obs-build Tumbleweed pre-existing, 16.0 green: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-blog x86_64 "$SRC" finished; rm -f "$work/ob/origin.xml"; listing "$(md5_ "$work/t-ob/foo.spec")"
+blog x86_64 "$SRC" finished; rm -f "$work/ob/origin.json"; listing "$(md5_ "$work/t-ob/foo.spec")"
 ob --arches '('
 [ "$rc" = 2 ] && pass "--obs-build --arches: a bad regex is usage" || { fail "--obs-build bad --arches: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 ob --repos '('
@@ -1216,6 +1308,9 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   printf 'home:<you>:branches:devel:example\n' > "$work/t-ne/.osc/_project"; printf '2.0\n' > "$work/t-ne/.osc/_osclib_version"
   printf '<directory name="qux" rev="1"><linkinfo project="devel:example" package="qux" srcmd5="x"/><entry name="qux.changes"/><entry name="qux.spec"/></directory>\n' \
     > "$work/t-ne/.osc/_files"
+  mkdir -p "$O/link-target"
+  printf '{"project": "home:<you>:branches:devel:example", "package": "qux", "target": {"project": "devel:example", "package": "qux"}}\n' \
+    > "$O/link-target/$(printf '%s_qux' 'home:<you>:branches:devel:example' | tr -c 'A-Za-z0-9' '_').json"
   cp "$O/devel:example/qux/"* "$work/t-ne/.osc/sources/"; cp "$O/devel:example/qux/qux.changes" "$work/t-ne/"
   printf 'Name:           qux\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
     > "$work/t-ne/qux.spec"
@@ -1231,9 +1326,10 @@ fi
 
 # A scmsync checkout (osc co of a package OBS syncs from git: .osc/_scm, no
 # .osc/_files) has no osc ci. Its tree is the files OBS lists, the ones a
-# forward's osc sr carries and pr-guard compares, OBS's own _scmsync.obsinfo
-# and build.specials.obscpio included; it stamps only while the checkout holds
-# each of the rest with OBS's md5 and no other. The fake osc lists $O/<prj>/<pkg>.
+# forward's geectl request file carries and pr-guard compares, OBS's own
+# _scmsync.obsinfo and build.specials.obscpio included; it stamps only while
+# the checkout holds each of the rest with OBS's md5 and no other. The fake
+# geectl lists $O/<prj>/<pkg>.
 printf 'Name:           scmpkg\nVersion:        1.0\nRelease:        0\nSummary:        t\nLicense:        MIT\n%%description\nt\n%%files\n%%changelog\n' \
   | put devel:example/scmpkg scmpkg.spec
 e "Thu Oct 22" "Build with the system zlib" | put devel:example/scmpkg scmpkg.changes
@@ -1357,7 +1453,7 @@ pys tracked "$work/t-scm"
 [ "$rc" = 1 ] && grep -qF "UNKNOWN: the _scmsync.obsinfo read is not the one OBS lists for devel:example/scmpkg: the listing changed, rerun" <<<"$out" \
   && pass "scmsync git checkout, the obsinfo changed since the listing: UNKNOWN, red" || { fail "scmsync obsinfo race: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm "$O/obsinfo-race"
-# Its md5 is over the bytes osc api writes: CRLF line ends are no change.
+# Its md5 is over the bytes geectl remote cat writes: CRLF line ends are no change.
 printf 'mtime: 1\r\ncommit: %s\r\n' "$(git -C "$work/t-scm" rev-parse HEAD)" > "$O/devel:example/scmpkg/_scmsync.obsinfo"
 pys tracked "$work/t-scm"
 [ "$rc" = 0 ] && grep -qF "OK: 4 file(s), the ones OBS lists" <<<"$out" \
@@ -1890,6 +1986,9 @@ same_co() { # <dir> <project> <link project or ->: a checkout of same, a comment
   rm -rf "$1"; mkdir -p "$1/.osc/sources"; printf 'same\n' > "$1/.osc/_package"; printf '%s\n' "$2" > "$1/.osc/_project"
   printf '2.0\n' > "$1/.osc/_osclib_version"; cp "$O/devel:example/same/"* "$1/.osc/sources/"; cp "$O/devel:example/same/"* "$1/"
   md5_files "$1"; [ "$3" = - ] || sed -i "s|rev=\"1\">|&<linkinfo project=\"$3\" package=\"same\" srcmd5=\"x\"/>|" "$1/.osc/_files"
+  mkdir -p "$O/link-target"
+  if [ "$3" = - ]; then printf '{"project": "%s", "package": "same", "target": null}\n' "$2" > "$O/link-target/$(printf '%s_same' "$2" | tr -c 'A-Za-z0-9' '_').json"
+  else printf '{"project": "%s", "package": "same", "target": {"project": "%s", "package": "same"}}\n' "$2" "$3" > "$O/link-target/$(printf '%s_same' "$2" | tr -c 'A-Za-z0-9' '_').json"; fi
   echo '# built from source' >> "$1/same.spec"
 }
 same_co "$work/t-ce-sa" devel:example -
@@ -2053,22 +2152,22 @@ python3 "$work/skill-copy/obs-wait.py" --help >/dev/null 2>&1; python3 "$work/sk
 
 # parse-surface lists the parse-time code (%(, %{lua:, %{expand:, %include,
 # %{load:, %%) a spec adds over openSUSE:Factory/<pkg>'s, as information: it is
-# never red, and the spec is parsed whatever it finds. The fake OBS serves
-# Factory and logs osc's -A; in psbin a fake rpmspec records each call. gate.sh
-# runs bwrap from /usr/bin alone, so copies of the scripts whose gate.sh names
-# another path stand in for a host without bwrap and for a bwrap that fails;
-# without a sandbox the parse runs here, where the fake rpmspec is seen.
+# never red, and the spec is parsed whatever it finds. The fake geectl serves
+# Factory and logs each call to $GEO_LOG; in psbin a fake rpmspec records each
+# call. gate.sh runs bwrap from /usr/bin alone, so copies of the scripts whose
+# gate.sh names another path stand in for a host without bwrap and for a bwrap
+# that fails; without a sandbox the parse runs here, where the fake rpmspec is seen.
 mkdir -p "$work/psbin" "$work/pxbin"
 # shellcheck disable=SC2016  # the stubs' own $ expressions, expanded when they run
 { printf '#!/bin/bash\necho "$*" >> "$PS_CALLS"\nfor a; do f=$a; done; cat "$f"\n' > "$work/psbin/rpmspec"
   printf '#!/bin/sh\necho "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces." >&2\nexit 1\n' > "$work/psbin/bwrap"
   printf '#!/bin/sh\necho "bwrap: Can'"'"'t create file at /x: Resource temporarily unavailable" >&2\nexit 1\n' > "$work/psbin/bwrap-bad"
-  printf '#!/bin/bash\necho "$*" >> "$PS_OSC"\nexit 1\n' > "$work/pxbin/osc"; }
-chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/psbin/bwrap-bad" "$work/pxbin/osc"
+  printf '#!/bin/bash\necho "$*" >> "$PS_GEECTL"\nexit 1\n' > "$work/pxbin/geectl"; }
+chmod +x "$work/psbin/rpmspec" "$work/psbin/bwrap" "$work/psbin/bwrap-bad" "$work/pxbin/geectl"
 gcopy nobw "$work/no-such/bwrap"; gcopy nsbw "$work/psbin/bwrap"; gcopy badbw "$work/psbin/bwrap-bad"
 ps_() {   # ps_ <dir>: unsandboxed, through the copy that finds no bwrap; the one argument keeps pr-guard from asking
   rm -f "$work/ps-calls" "$work/ps-a"
-  out="$(OBS=$O HOME="$work/home" PS_CALLS="$work/ps-calls" OSC_A_LOG="$work/ps-a" \
+  out="$(OBS=$O HOME="$work/home" PS_CALLS="$work/ps-calls" GEO_LOG="$work/ps-a" \
     PATH="$work/psbin:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "${PSGATE:-$work/sk-nobw/gate.sh}" "$1" 2>&1)"; rc=$?
 }
 psdir() {   # psdir <case> <pkg> < spec: a checkout of <pkg> (no .osc) holding that spec
@@ -2099,9 +2198,9 @@ ps_ "$work/ps-same/bar"
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "$PSOK the parse runs unsandboxed here (bwrap is not installed))" <<<"$out" \
   && [ -s "$work/ps-calls" ] && pass "parse-identical-to-factory: green, and the spec is parsed" \
   || { fail "parse-identical-to-factory"; printf '%s\n' "$out" | sed 's/^/    /'; }
-[ -s "$work/ps-a" ] && ! grep -qv '^https://api.opensuse.org ' "$work/ps-a" \
-  && pass "parse-surface asks openSUSE's OBS by name (osc -A), whatever the checkout names" \
-  || { fail "parse-surface osc -A"; sed 's/^/    /' "$work/ps-a" 2>/dev/null; }
+grep -qF 'remote list-files openSUSE:Factory bar' "$work/ps-a" 2>/dev/null \
+  && pass "parse-surface asks openSUSE's OBS for Factory's copy, whatever the checkout names" \
+  || { fail "parse-surface Factory lookup"; sed 's/^/    /' "$work/ps-a" 2>/dev/null; }
 sed -i 's/^%global commit 0123abcd$/%global commit 4567cdef/' "$work/ps-same/bar/bar.spec"
 ps_ "$work/ps-same/bar"
 grep -qF "$PSOK the parse runs unsandboxed here (bwrap is not installed))" <<<"$out" \
@@ -2156,10 +2255,10 @@ grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qF "note: no comparison wit
   || { fail "parse-base-fetch-fails"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm -f "$O/fail-list"
 # A tree without a construct needs no base: no lookup of Factory at all.
-rm -f "$work/ps-osc"; printf 'Name: qux\nVersion: 1\n' | psdir plain qux
-out="$(PS_OSC="$work/ps-osc" PATH="$work/pxbin:$PATH" bash "$GATE" "$work/ps-plain/qux" 2>&1)"
+rm -f "$work/ps-geectl"; printf 'Name: qux\nVersion: 1\n' | psdir plain qux
+out="$(PS_GEECTL="$work/ps-geectl" PATH="$work/pxbin:$PATH" bash "$GATE" "$work/ps-plain/qux" 2>&1)"
 grep -qF "## parse-surface: rc=0" <<<"$out" && grep -qxF "OK: no spec holds a parse-time construct the text scan can see" <<<"$out" \
-  && ! grep -qF "openSUSE:Factory/qux" "$work/ps-osc" 2>/dev/null \
+  && ! grep -qF "openSUSE:Factory qux" "$work/ps-geectl" 2>/dev/null \
   && pass "parse-no-construct: green without a lookup" || { fail "parse-no-construct"; printf '%s\n' "$out" | sed 's/^/    /'; }
 # A spec past the scan's 8 MiB is not read, so nothing says it holds no construct:
 # the incomplete: line, never the OK line.
@@ -2307,13 +2406,13 @@ fi
 # On the host PATH keeps only its absolute entries: once gate.sh is in the checkout,
 # a . or an empty entry would run what is planted there, as the caller, logins and all.
 psbar hostpath < /dev/null; rm -f "$work"/hostran-* "$work/ps-a"
-for t in python3 grep osc; do
+for t in python3 grep geectl; do
   printf '#!/bin/sh\ntouch %s/hostran-%s\nexit 1\n' "$work" "$t" > "$work/ps-hostpath/bar/$t"; chmod +x "$work/ps-hostpath/bar/$t"
 done
-out="$(OBS=$O HOME="$work/home" OSC_A_LOG="$work/ps-a" PATH=".:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/ps-hostpath/bar" 2>&1)"
+out="$(OBS=$O HOME="$work/home" GEO_LOG="$work/ps-a" PATH=".:$work/scbin:$work/obin:$PATH" SC_MODE=same bash "$GATE" "$work/ps-hostpath/bar" 2>&1)"
 ran=$(find "$work" -maxdepth 1 -name 'hostran-*' -printf '%f ')
 [ -z "$ran" ] && grep -qF "## parse-surface: rc=0" <<<"$out" && [ -s "$work/ps-a" ] \
-  && pass "host PATH, a . first: no python3, grep or osc planted in the checkout runs" \
+  && pass "host PATH, a . first: no python3, grep or geectl planted in the checkout runs" \
   || { fail "host PATH, a . first: ${ran:-the gate did not run through}"; printf '%s\n' "$out" | head -20 | sed 's/^/    /'; }
 if [ -e /usr/bin/spec-cleaner ] || [ -e /bin/spec-cleaner ]; then
   echo "SKIP: host PATH, an empty entry (this host has spec-cleaner in /usr/bin)"

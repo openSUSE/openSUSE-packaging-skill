@@ -21,7 +21,8 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
 # Every URL the script opens is answered from CR_MAP: [substring, fixture file
 # | "[]" | HTTP status | 0 for a refused connection]; anything else is a 404.
-# gh is "not logged in", so GitHub goes through urlopen too; osc must not run.
+# gh is "not logged in", so GitHub goes through urlopen too; geectl is served
+# from CR_GEectl (remote cat / link-target only — anything else must not run).
 mkdir -p "$work/stub"
 cat > "$work/stub/sitecustomize.py" <<'PY'
 import io, json, os, subprocess, urllib.error, urllib.request
@@ -33,16 +34,27 @@ _real_run = subprocess.run
 def _run(cmd, *a, **k):
     if cmd and cmd[0] == "gh":
         return subprocess.CompletedProcess(cmd, 1, "", "not logged in")
-    if cmd and cmd[0] == "osc":
-        # CR_OSC: `osc cat PRJ PKG FILE` served from CR_OSC/PRJ/PKG/FILE
-        root = os.environ.get("CR_OSC")
-        if root and cmd[1:2] == ["cat"] and len(cmd) == 5:
-            path = os.path.join(root, *cmd[2:])
+    if cmd and cmd[0] == "geectl":
+        # CR_GEectl: `remote cat --format text PRJ PKG FILE` served from
+        # CR_GEectl/PRJ/PKG/FILE, `remote link-target PRJ PKG` from
+        # CR_GEectl/link-target/PRJ/PKG
+        root = os.environ.get("CR_GEectl")
+        if root and cmd[1:3] == ["remote", "cat"] and cmd[3:5] == ["--format", "text"] and len(cmd) == 8:
+            path = os.path.join(root, *cmd[5:])
             if os.path.isfile(path):
                 return subprocess.CompletedProcess(cmd, 0, open(path).read(), "")
             return subprocess.CompletedProcess(
-                cmd, 1, "", "Server returned an error: HTTP Error 404: Not Found")
-        return subprocess.CompletedProcess(cmd, 1, "", "osc must not run in this suite")
+                cmd, 3, "",
+                "error: https://api.opensuse.org/public/source/%s returned 404\n"
+                "remediation: check the project, package, or request name and retry\n"
+                % "/".join(cmd[5:]))
+        if root and cmd[1:3] == ["remote", "link-target"] and len(cmd) == 5:
+            path = os.path.join(root, "link-target", *cmd[3:])
+            if os.path.isfile(path):
+                return subprocess.CompletedProcess(cmd, 0, open(path).read(), "")
+            return subprocess.CompletedProcess(
+                cmd, 3, "", '{"error":{"code":"not_found","context":"fake 404"}}')
+        return subprocess.CompletedProcess(cmd, 1, "", "geectl must not run in this suite")
     return _real_run(cmd, *a, **k)
 subprocess.run = _run
 def _urlopen(req, *a, **k):
@@ -94,12 +106,12 @@ run() {
   [ "$rc" = "$want" ] && grep -qF -- "$text" <<<"$LAST" && pass "$name (rc=$want)" || {
     fail "$name: expected rc=$want and '$text', got rc=$rc"; printf '%s\n' "$LAST" | sed 's/^/    /'; }
 }
-# runc: the same for a checkout that names its own target (osc, git): no --base
+# runc: the same for a checkout that names its own target (geectl, git): no --base
 runc() {
   local name=$1 want=$2 text=$3 map=$4 d=$5; shift 5
   local rc
   printf '%s' "$map" > "$work/map.json"; : > "$work/urls.log"
-  LAST="$(PYTHONPATH="$work/stub" CR_MAP="$work/map.json" CR_FIX="$FIX" CR_LOG="$work/urls.log" CR_OSC="$work/osc" \
+  LAST="$(PYTHONPATH="$work/stub" CR_MAP="$work/map.json" CR_FIX="$FIX" CR_LOG="$work/urls.log" CR_GEectl="$work/geectl" \
     python3 "$CR" "$d" "$@" 2>&1)"; rc=$?
   [ "$rc" = "$want" ] && grep -qF -- "$text" <<<"$LAST" && pass "$name (rc=$want)" || {
     fail "$name: expected rc=$want and '$text', got rc=$rc"; printf '%s\n' "$LAST" | sed 's/^/    /'; }
@@ -353,24 +365,28 @@ run "more releases than the page cap: no verdict" 2 "more than 1000" "[[\"/repos
 [ "$(grep -c '/releases' "$work/urls.log")" = 10 ] && pass "the cap: ten pages asked" \
   || fail "the cap: $(grep -c '/releases' "$work/urls.log") pages asked"
 
-# osc checkouts: a branch against its link origin (or --target) through osc cat,
-# a direct commit against its committed copy.
-mkdir -p "$work/osc/devel:example/thing"
-d=$(pkg oscl 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
-cp "$d/base/thing.spec" "$d/base/thing.changes" "$work/osc/devel:example/thing/"
-mkdir -p "$d/co/.osc"; printf 'thing\n' > "$d/co/.osc/_package"; printf 'home:<you>:branches:devel:example\n' > "$d/co/.osc/_project"
-printf '<directory name="thing"><linkinfo project="devel:example" package="thing" srcmd5="x"/><entry name="thing.spec"/></directory>\n' \
-  > "$d/co/.osc/_files"
-runc "osc: a branch against its link origin" 1 "MISSING: 0.9.98" "$A" "$d/co"
-has "osc: the origin named" "against devel:example/thing"
-runc "osc: --target" 1 "against devel:example/thing" "$A" "$d/co" --target devel:example/thing
-runc "osc: a --target without the package is a new package" 0 "new package" "$A" "$d/co" --target devel:other/thing
-printf '<directory name="thing"><entry name="thing.spec"/></directory>\n' > "$d/co/.osc/_files"
-mkdir -p "$d/co/.osc/sources"; cp "$d/base/thing.spec" "$d/base/thing.changes" "$d/co/.osc/sources/"
-runc "osc: a direct commit against its committed copy" 1 "against the committed copy" "$A" "$d/co"
+# geectl working copies: a branch against its link origin (or --target)
+# through geectl remote cat, a direct commit against its committed copy.
+gt() { git -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main "$@"; }
+mkdir -p "$work/geectl/devel:example/thing" "$work/geectl/link-target/home:<you>:branches:devel:example"
+d=$(pkg gw 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
+cp "$d/base/thing.spec" "$d/base/thing.changes" "$work/geectl/devel:example/thing/"
+printf '%s' '{"project": "home:<you>:branches:devel:example", "package": "thing", "target": {"project": "devel:example", "package": "thing"}}' \
+  > "$work/geectl/link-target/home:<you>:branches:devel:example/thing"
+mkdir -p "$d/wc" && cp "$d/base/thing.spec" "$d/base/thing.changes" "$d/wc/"
+{ gt -C "$d/wc" init -q && gt -C "$d/wc" add . && gt -C "$d/wc" commit -qm base \
+  && gt -C "$d/wc" config geectl.package thing \
+  && gt -C "$d/wc" config geectl.project 'home:<you>:branches:devel:example' \
+  && cp "$d/co/thing.spec" "$d/co/thing.changes" "$d/wc/"; } || fail "geectl fixture"
+runc "geectl: a branch against its link origin" 1 "MISSING: 0.9.98" "$A" "$d/wc"
+has "geectl: the origin named" "against devel:example/thing"
+runc "geectl: --target" 1 "against devel:example/thing" "$A" "$d/wc" --target devel:example/thing
+runc "geectl: a --target without the package is a new package" 0 "new package" "$A" "$d/wc" --target devel:other/thing
+printf '%s' '{"project": "home:<you>:branches:devel:example", "package": "thing", "target": null}' \
+  > "$work/geectl/link-target/home:<you>:branches:devel:example/thing"
+runc "geectl: a direct commit against its committed copy" 1 "against the committed copy" "$A" "$d/wc"
 
 # git checkouts: the upstream tracking branch, or --git-base.
-gt() { git -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main "$@"; }
 d=$(pkg git 0.9.97 0.9.99 "$OLD97" "$(entry '- Update to version 0.9.99:')")
 { gt -C "$d/base" init -q && gt -C "$d/base" add . && gt -C "$d/base" commit -qm base && gt clone -q "$d/base" "$d/clone" \
   && cp "$d/co/thing.spec" "$d/co/thing.changes" "$d/clone/"; } || fail "git fixture"
