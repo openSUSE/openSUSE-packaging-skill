@@ -668,9 +668,13 @@ MESSAGES = {
     "harness": "{0}: the installed guard, Claude Code's settings and the opencode "
     "plugins are the user's to change, by hand; no agent command writes, moves or "
     "deletes them.",
-    "incoming-hold": "{0}: an accepted FIXABLE review holds the Factory forward "
-    "until the user's follow-up is in devel, and devel still holds exactly what "
-    "was accepted. Commit the fix to devel, gate it, then forward.",
+    "incoming-hold": "{0}: the guard cannot tell whether an accepted FIXABLE review "
+    "still waits for its follow-up in devel, so the Factory forward is refused. A "
+    "failed lookup may pass on a retry; a review record that does not read is the "
+    "user's to repair or remove.",
+    "incoming-path": "{0}: the guard looks command names up on its own PATH, so a "
+    "PATH the call sets could run a program it never judged. Run the tools by their "
+    "names on the session's PATH.",
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
@@ -704,6 +708,10 @@ ASKS = {
     "go, given with this review and these facts in front of them.",
     "incoming-approve": "{0}. A contributor's PR: approve it only on the user's go, "
     "given with this review and these facts in front of them; the bot then merges it.",
+    "incoming-hold": "{0}: its review was FIXABLE, its follow-up fix is not in devel "
+    "yet, and openSUSE:Factory does not show what was accepted. Forward only on the "
+    "user's go (they may decide no follow-up is needed); else commit the fix to "
+    "devel, gate it, then forward.",
 }
 # The read a tea comment with no subcommand and no body may have meant.
 COMMENT_READ = (
@@ -816,6 +824,7 @@ class Ctx:
         self.unread = []  # the skill scripts being read that run unread as merged
         self.made = set()  # what the call's writers made, which may lead anywhere
         self.reading = []  # the scripts being read, innermost last
+        self.git_env = {}  # GIT_PLACE values set before a command (None: unknown)
 
 
 def git(cwd, gargs, *args):
@@ -2270,7 +2279,8 @@ def reviewer_acts(ctx, what):
 def reviewer_runs(name, run, ctx, cwd):
     """Refuse, in the incoming-review agent, what parses or runs a submission:
     the rpm family, quilt setup, osc build (chroot, shell, wipe), osc checkout
-    or update with -s, osc service but wait, and the skill's scripts that parse
+    or update with -s, osc service but wait, osc commit (ci, checkin: it runs
+    the local source services), and the skill's scripts that parse
     a spec, run a service or build (gate.sh, target-gate.sh, scm-snapshot.sh,
     pool-pr.sh, leap-sync.sh, quilt-*.sh); a command, osc subcommand or osc
     checkout argument only the shell knows too. Its review reads the
@@ -2296,6 +2306,8 @@ def reviewer_runs(name, run, ctx, cwd):
                 what = f"osc {sub}" + (f" {pos[0]}" if sub == "service" and pos else "")
             elif sub in OSC_CHECKOUTS and services_run(args, ctx, cwd):
                 what = f"osc {sub} with the source services"
+            elif OSC_ALIAS.get(sub, sub) == "commit":
+                what = f"osc {sub}"
     if names & SHELLS:
         word = shell_script(run)
     elif names & {"source", "."}:
@@ -2311,6 +2323,30 @@ def reviewer_runs(name, run, ctx, cwd):
         what = QUILT_SCRIPT.search(" ".join(texts)).group()
     if what:
         block("incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-parse")
+
+
+def reviewer_path(run, changes, ctx):
+    """Refuse, in the incoming-review agent, a command that sets or exports
+    PATH: an assignment (env's too; changes, as unwrap() found them), export,
+    declare and kin, read and kin, a for loop's name, a nameref to it, or a
+    name only the shell knows. resolved() looks names up on the hook's PATH."""
+    if ctx.agent != INCOMING_AGENT:
+        return
+    name, args = (os.path.basename(run[0]), run[1:]) if run else ("", [])
+    names = {*changes, *shell_assigned(name, args)}
+    if name in DECLARE:
+        opts, pos = parse_opts(args, "")
+        names |= {a.partition("=")[0].rstrip("+") for a in pos}
+        if any(k == "-n" for k, _ in opts):
+            names |= {a.partition("=")[2] for a in pos}
+    if name == "for":
+        names |= set(args[:1])
+    if "PATH" in names or any(VARIABLE.search(n) for n in names):
+        block(
+            "incoming-self",
+            f"setting PATH from agent {INCOMING_AGENT}",
+            "incoming-path",
+        )
 
 
 def resolved(word, ctx, cwd):
@@ -2456,7 +2492,7 @@ def review_facts(st, nobuild):
     build = f"green{on} in {where}" if built and named else nobuild
     build = f"build at review: {build}"
     hold = (
-        "; FIXABLE: the Factory forward then waits until your follow-up is in devel"
+        "; FIXABLE: the Factory forward then asks until your follow-up is in devel"
         if st["verdict"] == "FIXABLE"
         else ""
     )
@@ -2665,13 +2701,14 @@ def stamped_comment(kind, item, creator, text):
 
 
 def fixable_pending(prj, pkg, ctx):
-    """Refuse a forward of prj/pkg to Factory while an accepted FIXABLE review
-    holds it: devel's expanded files (but _link) still equal the stamp's
-    source files, or, for a devel PR, the tree of the commit OBS synced
-    (_scmsync.obsinfo) still equals the stamp's head files. A stamps
-    directory that cannot be listed, a stamp file that is not a valid record,
-    or a lookup that fails, refuses too; a directory that does not exist holds
-    none."""
+    """Ask before a forward of prj/pkg to Factory while an accepted FIXABLE
+    review may still wait for its follow-up: devel's expanded files (but
+    _link) still equal the stamp's source files, or, for a devel PR, the tree
+    of the commit OBS synced (_scmsync.obsinfo) still equals the stamp's head
+    files -- unless openSUSE:Factory already holds them (factory_holds()). A
+    stamps directory that cannot be listed, a stamp file that is not a valid
+    record, or a lookup that fails, refuses; a directory that does not exist
+    holds none."""
     key = ("hold", prj, pkg)
     if key in ctx.devel:
         return
@@ -2690,40 +2727,75 @@ def fixable_pending(prj, pkg, ctx):
             path = os.path.join(top, name)
             st, why = load_stamp(path, kind)
             if st is None:
-                block("incoming-hold", f"{what}: {os.path.basename(path)}: {why}")
+                block("incoming-hold", f"{what}: {tilde(path)}: {why}")
             if st["verdict"] == "FIXABLE":
-                held[kind].append(st)
+                held[kind].append((tilde(path), st))
     obs = [
-        st
-        for st in held["obs"]
+        (path, st)
+        for path, st in held["obs"]
         if [field(st, "obs", "action", "target", k) for k in ("project", "package")]
         == [prj, pkg]
     ]
     if obs:
-        ok, text = obs_get(f"/source/{prj}/{pkg}?expand=1", ctx)
-        root = xml_root(text) if ok and text else None
-        if root is None:
-            block("incoming-hold", f"{what}: cannot read its files")
-        now = {e.get("name"): e.get("md5") for e in root.findall("entry")}
+        now = expanded(prj, pkg, what, ctx)
+        if now is None:
+            block("incoming-hold", f"{what}: {prj}/{pkg} does not exist")
         now.pop("_link", None)
-        for st in obs:
+        for path, st in obs:
             want = field(st, "obs", "action", "source", "files")
-            if not isinstance(want, dict) or now == {
-                k: v for k, v in want.items() if k != "_link"
-            }:
-                block("incoming-hold", f"{what}: request {st['id']} by {st['creator']}")
+            if not isinstance(want, dict):
+                block("incoming-hold", f"{what}: {path}: it names no source files")
+            same = now == {k: v for k, v in want.items() if k != "_link"}
+            if same and not factory_holds(pkg, want, what, ctx):
+                ask(
+                    ctx,
+                    "incoming-hold",
+                    f"{what}: request {st['id']} by {st['creator']}",
+                )
     if held["gitea"]:
         gitea_hold(prj, pkg, held["gitea"], what, ctx)
 
 
+# What a comparison with openSUSE:Factory's files leaves aside: a _link, and
+# what OBS adds to a package it syncs from git, which a forward does not carry.
+FACTORY_ASIDE = {"_link", "_scmsync.obsinfo", "build.specials.obscpio"}
+
+
+def expanded(prj, pkg, what, ctx):
+    """{name: md5} of prj/pkg's expanded source listing, None for a package
+    OBS does not have; a read that fails refuses the forward (what)."""
+    ok, text = obs_get(f"/source/{prj}/{pkg}?expand=1", ctx)
+    root = xml_root(text) if ok and text else None
+    if not ok or text and root is None:
+        block("incoming-hold", f"{what}: cannot read the files of {prj}/{pkg}")
+    return (
+        {e.get("name"): e.get("md5") for e in root.findall("entry")} if text else None
+    )
+
+
+def factory_holds(pkg, files, what, ctx):
+    """Whether openSUSE:Factory's pkg already holds files ({name: md5}), what
+    FACTORY_ASIDE names aside: the accepted submission went on as it was."""
+    have = expanded("openSUSE:Factory", pkg, what, ctx)
+    if have is None or files is None:
+        return False
+    return {k: v for k, v in have.items() if k not in FACTORY_ASIDE} == {
+        k: v for k, v in files.items() if k not in FACTORY_ASIDE
+    }
+
+
 def gitea_hold(prj, pkg, stamps, what, ctx):
-    """fixable_pending()'s check of FIXABLE devel PR reviews: those of the
-    repository the package's <scmsync> names hold while the tree of the commit
-    OBS synced equals their head's files. git_obs_approve() approves only a
-    repository named as the package; one such review whose repository the
-    package does not sync from, or names none, refuses, as does a failed read."""
+    """fixable_pending()'s check of FIXABLE devel PR reviews, (path, stamp)
+    each: those of the repository the package's <scmsync> names hold while
+    the tree of the commit OBS synced equals their head's files, and Factory
+    does not hold devel's files, which are then the head's. git_obs_approve()
+    approves only a repository named as the package; one such review whose
+    repository the package does not sync from, or names none, asks too. A
+    failed read refuses."""
     stamps = [
-        st for st in stamps if str(field(st, "gitea", "repo")).lower() == pkg.lower()
+        (path, st)
+        for path, st in stamps
+        if str(field(st, "gitea", "repo")).lower() == pkg.lower()
     ]
     if not stamps:
         return
@@ -2733,18 +2805,26 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
         block("incoming-hold", f"{what}: cannot read its _meta")
     m = PROJECT_GIT.fullmatch((meta.findtext("scmsync") or "").strip())
     here = f"{m.group(1)}/{m.group(2)}".lower() if m else None
-    names = [(field(st, "gitea", "owner"), field(st, "gitea", "repo")) for st in stamps]
-    mine = [st for st, n in zip(stamps, names) if f"{n[0]}/{n[1]}".lower() == here]
-    if len(mine) != len(stamps):
-        other = next(st for st in stamps if st not in mine)
-        block(
+    mine = []
+    for path, st in stamps:
+        if (
+            f"{field(st, 'gitea', 'owner')}/{field(st, 'gitea', 'repo')}".lower()
+            == here
+        ):
+            mine.append((path, st))
+            continue
+        ask(
+            ctx,
             "incoming-hold",
-            f"{what}: PR {other['id']} may hold it, and {prj}/{pkg} syncs from "
+            f"{what}: PR {st['id']} may hold it, and {prj}/{pkg} syncs from "
             f"{here or 'no repository'}",
         )
+    if not mine:
+        return
     ok, info = obs_get(f"/source/{prj}/{pkg}/_scmsync.obsinfo", ctx)
-    commit = re.search(r"^commit: ([0-9a-f]{40})$", info or "", re.M) if ok else None
-    if not commit:
+    # src.opensuse.org's repositories name commits by SHA-256, older ones by SHA-1.
+    commit = re.search(r"^commit: ((?:[0-9a-f]{24})?[0-9a-f]{40})$", info or "", re.M)
+    if not ok or not commit:
         block("incoming-hold", f"{what}: cannot read the commit OBS synced")
     path = f"repos/{m.group(1)}/{m.group(2)}/git/trees/{commit.group(1)}"
     ok, tree = gitea_get(path + "?recursive=true&per_page=1000", ctx)
@@ -2756,10 +2836,14 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
         for e in entries
         if isinstance(e, dict) and e.get("type") in ("blob", "commit")
     }
-    for st in mine:
+    for path, st in mine:
         want = field(st, "gitea", "files")
-        if not isinstance(want, dict) or files == want:
-            block("incoming-hold", f"{what}: PR {st['id']} by {st['creator']}")
+        if not isinstance(want, dict):
+            block("incoming-hold", f"{what}: {path}: it names no head files")
+        if files == want and not factory_holds(
+            pkg, expanded(prj, pkg, what, ctx), what, ctx
+        ):
+            ask(ctx, "incoming-hold", f"{what}: PR {st['id']} by {st['creator']}")
 
 
 # Where comments and reviews are posted: OBS's /comments/..., Gitea's
@@ -3041,20 +3125,40 @@ def project_git(pmeta, text):
     return owner, repo, ref
 
 
-def lone_tea(text):
+# The one substitution a tea comment's text may be: a file cat reads by a
+# plain path, which comment_text() reads now, as for osc comment create -c.
+TEA_TEXT_FILE = Rx(r'"\$\(cat ([A-Za-z0-9_./:=@%+,][A-Za-z0-9_./:=@%+,-]*)\)"')
+
+
+def lone_tea(text, body=False):
     """Whether a shell call is one bare tea command and nothing else: no
     other command, wrapper, redirect or substitution that could make the
-    path a --repo names, or move the directory tea resolves it in."""
+    path a --repo names, or move the directory tea resolves it in. body: one
+    "$(cat FILE)" (TEA_TEXT_FILE) may stand as a word of its own outside
+    other quotes, where bash neither splits nor globs what it reads;
+    tea_comment() takes it only as the comment's text."""
     import shlex
 
+    text = text.strip() if isinstance(text, str) else ""
+    hits = list(TEA_TEXT_FILE.finditer(text)) if body else []
+    if len(hits) == 1:
+        head, tail = text[: hits[0].start()], text[hits[0].end() :]
+        quote = None
+        for c in head:
+            if quote:
+                quote = None if c == quote else quote
+            elif c in "'\"":
+                quote = c
+        if not quote and head[-1:] == " " and tail[:1] in ("", " "):
+            text = head + '"TEXT"' + tail
     # Without $, \ and `, bash and shlex split the same quotes and words
     # ($'\'' and "\"" are where they part).
-    if not isinstance(text, str) or "\n" in text.strip() or set("$\\`") & set(text):
+    if not text or "\n" in text or set("$\\`") & set(text):
         return False
     # Outside quotes only plain characters: no brace, glob, tilde or history
     # expansion can add a word the guard did not judge.
     quote = None
-    for c in text.strip():
+    for c in text:
         if quote:
             quote = None if c == quote else quote
         elif c in "'\"":
@@ -3110,8 +3214,11 @@ def tea_comment(args, ctx, cwd, api=False, text=None):
         opts[key] = one(v)
     if opts.get("login") != "src.opensuse.org":
         return "it names no --login src.opensuse.org"
-    if not lone_tea(ctx.command):
+    if not lone_tea(ctx.command, body=not api):
         return "it is not one literal tea command alone"
+    held = [a for a in args if VARIABLE.search(a)]
+    if held and (len(pos) != 3 or held != pos[2:] or not SUB_WORD.fullmatch(held[0])):
+        return 'only its text, after the index, may be "$(cat FILE)"'
     if api:
         if opts.get("method", "POST").upper() != "POST":
             return f"tea api {opts.get('method')}"
@@ -5961,8 +6068,60 @@ def open_pool_prs(ctx, repo):
     return data
 
 
-def git_command(argv, ctx, cwd, lit=None):
-    """lit: argv as literal-aware text, or None."""
+# The variables that place git's repository and work tree, and the options
+# that stand for them: a push is judged in the repository they name.
+GIT_PLACE = {"GIT_DIR": "--git-dir", "GIT_WORK_TREE": "--work-tree"}
+
+
+def note_git_env(words, ctx):
+    """Remember what the words before a command (env's too) set GIT_PLACE's
+    variables to; an append (+=) sets a value the guard does not know."""
+    for w in words:
+        k, _, v = w.partition("=")
+        if ASSIGN.match(w) and k.rstrip("+") in GIT_PLACE:
+            ctx.git_env.setdefault(k.rstrip("+"), []).append(
+                None if k[-1] == "+" else v
+            )
+
+
+def git_placements(before, ctx, cwd):
+    """The GIT_PLACE options a push is judged under, one list per way the
+    call may place it. An assignment before the git command itself (env's
+    too) is what git sees; one made elsewhere in the call -- exported, or
+    before another command, which may run git -- may or may not reach it, so
+    the push is judged with and without each. A value only the shell knows,
+    or more than 16 ways, refuses the push. before: git_command()'s."""
+    import itertools
+
+    words, changes = before or ((), ())
+    # sudo, and env's options (-i, -u NAME), may drop what the call set.
+    sure = not any(
+        c in ("sudo", "doas") or not re.fullmatch(r"\w+", c) for c in changes
+    )
+    ways = []
+    for k, opt in GIT_PLACE.items():
+        own = [w.partition("=") for w in words if ASSIGN.match(w)]
+        own = [None if a[-1] == "+" else v for a, _, v in own if a.rstrip("+") == k]
+        if own and sure:
+            raws, vals = own[-1:], []
+        else:
+            raws = [*own, *ctx.git_env.get(k, ()), *ctx.values.get(k, ())]
+            vals = [None]
+        for raw in raws:
+            got = substitute(raw, ctx, cwd) if raw is not None else None
+            if not got:
+                unsure(f"{k} is set to a value only the shell knows")
+            vals += [f"{opt}={v}" for v in got]
+        ways.append(dict.fromkeys(vals))
+    combos = list(itertools.product(*ways))
+    if len(combos) > 16:
+        unsure("GIT_DIR and GIT_WORK_TREE take too many values")
+    return [[o for o in c if o] for c in combos]
+
+
+def git_command(argv, ctx, cwd, lit=None, before=None):
+    """lit: argv as literal-aware text, or None. before: (the words before
+    git, the environment changes unwrap() found in them), or None."""
     i, gargs = 1, []
     while i < len(argv) and argv[i].startswith("-"):
         a = argv[i]
@@ -5980,7 +6139,8 @@ def git_command(argv, ctx, cwd, lit=None):
             i += 1
     sub = argv[i:]
     if sub[:1] in (["push"], ["send-pack"]):
-        check_push(sub[1:], ctx, cwd, gargs, send=sub[0] == "send-pack")
+        for placed in git_placements(before, ctx, cwd):
+            check_push(sub[1:], ctx, cwd, placed + gargs, send=sub[0] == "send-pack")
     elif sub[:1] == ["obs"]:
         ln = " ".join(["git-obs", *sub[1:]])
         tool_rules(ln, ctx, cwd)
@@ -6487,11 +6647,12 @@ def extract_into(name, args):
     return None
 
 
-def git_paths(run):
+def git_paths(run, ctx=None):
     """The directories and files a git command writes into: its -C, --git-dir
-    and --work-tree, the working directory without -C, what clone, init,
-    worktree and submodule name, and its subcommand's --output, -o and
-    --prefix."""
+    and --work-tree, a core.worktree it sets (-c, --config-env), what the call
+    sets GIT_PLACE's variables to (ctx), the working directory without -C,
+    what clone, init, worktree and submodule name, the file bundle create
+    writes, and its subcommand's --output, -o and --prefix."""
     out, i, here = [], 1, True
     while i < len(run) and run[i][:1] == "-":
         a = run[i]
@@ -6503,10 +6664,26 @@ def git_paths(run):
             continue
         if eq and k in ("--git-dir", "--work-tree"):
             out.append(v)
+        if a in ("-c", "--config-env"):
+            conf = run[i + 1 : i + 2]
+        else:
+            conf = [v] if eq and k == "--config-env" else []
+        for c in conf:
+            name, _, val = c.partition("=")
+            if name.lower() == "core.worktree" and val:
+                # --config-env names the variable that holds the value
+                out.append(val if a == "-c" else "${%s}" % val)
         i += 2 if a in ("-c", "--namespace", "--config-env") else 1
+    for k in GIT_PLACE if ctx else ():
+        out += [v for v in ctx.git_env.get(k, ()) if v is not None]
+        if k in ctx.values or None in ctx.git_env.get(k, ()):
+            out.append("${%s}" % k)
     if run[i : i + 1] in (["clone"], ["init"], ["worktree"], ["submodule"]):
         out += [a for a in run[i + 1 :] if a[:1] != "-"]
     sub, rest = (run[i : i + 1] or [""])[0], run[i + 1 :]
+    if sub == "bundle" and rest[:1] == ["create"]:
+        files = [a for a in rest[1:] if a[:1] != "-" or a == "-"][:1]
+        out += [a for a in files if a != "-"]  # - is stdout
     for j, a in enumerate(rest):
         k, eq, v = a.partition("=")
         if k in GIT_OUTPUTS and ("*" in GIT_OUTPUTS[k] or sub in GIT_OUTPUTS[k]):
@@ -6634,7 +6811,7 @@ def harness_touch(name, run, ctx, cwd):
             starts.append(a)
         starts = starts or ["."]
         return next((w for w in starts if harness_word(w, ctx, cwd, under=True)), None)
-    words = git_paths(run) if name == "git" else write_words(name, run[1:])
+    words = git_paths(run, ctx) if name == "git" else write_words(name, run[1:])
     if words is not None:
         parents, into = name in ("rm", "mv"), name != "git"
         return next(
@@ -6663,7 +6840,7 @@ def state_touch(name, run, ctx, cwd, xargs=False):
     if reads_only(name, run, ctx, cwd) or name in LOOKERS:
         return None
     unread = pinned_script(name, run, ctx, cwd)
-    words = git_paths(run) if name == "git" else write_words(name, run[1:])
+    words = git_paths(run, ctx) if name == "git" else write_words(name, run[1:])
     if words is not None and not xargs:
         sources = [a for a in run[1:] if a[:1] != "-" and a not in words]
         tool = "unzip" if PYTHON.fullmatch(name) else name  # python -m zipfile -e
@@ -6845,6 +7022,9 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
             for w in braced([t], "a redirection"):
                 cred_word(w, "a redirection", False, ctx, cwd)
     run, shell, env, chdir = unwrap(argv, cwd, ctx)
+    reviewer_path(run, env, ctx)
+    before = argv[: len(argv) - len(run)]
+    note_git_env(before if run or shell is not None else (), ctx)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.
@@ -6899,6 +7079,8 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     reviewer_runs(name, run, ctx, here)
     for k in shell_assigned(name, run[1:]):
         ctx.values[k] = ctx.lit_values[k] = []  # a value only the shell knows
+        if k in GIT_PLACE and name != "unset":
+            ctx.git_env.setdefault(k, []).append(None)
     out = ("unknown", name)
     joined = " ".join(run)
     if name in ("cd", "pushd"):
@@ -6976,7 +7158,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
         api_rules(wide, ctx, here, reads=git_obs_reads(run[1:]))
         comment_rules("git-obs", run, ctx, here, lrun)
     elif name == "git":
-        gparts = git_command(run, ctx, here, lrun)
+        gparts = git_command(run, ctx, here, lrun, (before, env))
     elif name == "osc":
         ctx.apiurl = osc_apiurl(run, ctx, here)
         obs_prefetch(run, ctx, here)

@@ -87,7 +87,7 @@ Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea 
 - Open a PR: `tea pulls create --login <login> --repo <owner>/<pkg> --head <you>:<branch> --base main --title "<title>" --description "<text>"`.
 - Read a PR with its comments: `tea pulls --comments --login <login> --repo <owner>/<pkg> <n>`.
 - Edit its title or description: `tea pulls edit --login <login> --repo <owner>/<pkg> --title "<title>" --description "<text>" <n>`.
-- Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`; `tea comments list` with the same options reads them (without `list` it adds one: `references/request-text.md` "Comments: reading them, posting an approved one").
+- Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`, or a text of several lines written to FILE in an earlier call: `... <n> "$(cat FILE)"`, the command alone; `tea comments list` with the same options reads them (without `list` it adds one: `references/request-text.md` "Comments: reading them, posting an approved one").
 - Reply inside a reviewer's thread: `tea pulls reply --login <login> --repo <owner>/<pkg> <n> <comment-id> "<text>"`, the id from `tea pulls review-comments`; resolving is in "Responding to a PR review" below.
 - Anything else: `git-obs -G src.opensuse.org api [-X METHOD] [--data JSON] /repos/<owner>/<pkg>/…` — the path is relative to `/api/v1`, and an HTTP error exits non-zero. `-G` picks the login by its name or by the forge's host name; without it git-obs takes the default login. Not `tea api`: it exits 0 on a 404, so a failed lookup reads as success.
 

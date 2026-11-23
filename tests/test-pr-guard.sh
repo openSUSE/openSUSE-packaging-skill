@@ -304,6 +304,9 @@ for c in s["obs"]:
     stub(f"/source/{S}/{pkg}?expand=1&rev={rev}", f'<directory name="{pkg}" srcmd5="{ssrc}">{link}{entries(sfiles)}</directory>')
     now = {"source": sfiles, "followup": {f"{pkg}.spec": md5("fix " + pkg)}}.get(c.get("devel"), tfiles)
     stub(f"/source/{T}/{pkg}?expand=1", f'<directory name="{pkg}" srcmd5="{tsrc}">{entries(now)}</directory>')
+    if c.get("factory"):  # openSUSE:Factory's own listing of the package
+        stub(f"/source/openSUSE:Factory/{pkg}?expand=1", "@ERR" if c["factory"] == "@ERR"
+             else f'<directory name="{pkg}"><entry name="_link" md5="0"/>{entries(sfiles)}</directory>')
     stub(f"/source/{T}/{pkg}/_meta", f'<package name="{pkg}" project="{T}"><person userid="tester" role="maintainer"/></package>')
     factory(pkg, D)
     if T == "openSUSE:Factory":  # the account as a reviewer of Factory's own package
@@ -320,7 +323,7 @@ for c in s["obs"]:
         # the 48-bit key of old, under a HOME of its own: as no valid record, it holds every forward
         key = {"key": "0123456789ab", "root": os.path.join(work, "oldkey", sd)} if c.get("key12") else {}
         stamp("obs", rid, rid, "contrib", c["verdict"], part, c.get("comment", ""), S, green=c.get("green", True), **key)
-    if c.get("devel") == "followup":  # the follow-up, gated and reviewed, as a forward needs it
+    if c.get("devel") == "followup" or c.get("factory"):  # devel's files, gated and reviewed, as a forward needs them
         put(os.path.join(state, "gate", "obs", pkg, D + ".json"), json.dumps({
             "project": D, "package": pkg, "verdict": "GREEN", "files": now, "tree": "0" * 64,
             "review": {"verdict": "PASS"}, "build": {"verdict": "GREEN", "kind": "log"}}))
@@ -346,6 +349,14 @@ for p in g["prs"]:
         gstub(f"repos/{o}/{r}/git/trees/{g['synced']}?recursive=true&per_page=1000",
               {"sha": g["synced"], "truncated": False,
                "tree": [{"path": f, "type": "blob", "mode": "100644", "sha": h} for f, h in files.items()]})
+    if p.get("factory"):  # Factory holds devel's files; OBS lists what it adds to a synced package beside them
+        held = {f"{r}.spec": md5("pr " + r)}
+        synced = dict(held, **{"_scmsync.obsinfo": md5("info " + r), "build.specials.obscpio": md5("cpio " + r)})
+        stub(f"/source/{GD}/{r}?expand=1", f'<directory name="{r}">{entries(synced)}</directory>')
+        stub(f"/source/openSUSE:Factory/{r}?expand=1", f'<directory name="{r}">{entries(held)}</directory>')
+        put(os.path.join(state, "gate", "obs", r, GD + ".json"), json.dumps({
+            "project": GD, "package": r, "verdict": "GREEN", "files": synced, "tree": "0" * 64,
+            "review": {"verdict": "PASS"}, "build": {"verdict": "GREEN", "kind": "log"}}))
     if p["verdict"]:
         part = {"gitea": {"owner": o, "repo": r, "number": n, "head": p["head"], "base": "b" * 40,
                           "merge_base": "b" * 40, "files": files}}
@@ -421,6 +432,15 @@ case_ push-head-refspec         2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-upstream-mapping     2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-inline-remote        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-git-C                2 push-pr-head "pool/tesseract-ocr#3"
+# GIT_DIR places the push as -C does: before git (env's too) it is what git sees; set
+# elsewhere in the call it may reach git or not, so the push is judged both ways.
+case_ push-git-dir-prefix       2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-env          2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-export       2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-bash-c       2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-env-unset    2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-unknown      2 push-unknown "GIT_DIR is set to a value only the shell knows"
+case_ push-git-dir-elsewhere    0 - ""
 case_ push-bash-c               2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-shell-heredoc        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-substitution         2 push-pr-head "pool/tesseract-ocr#3"
@@ -1108,6 +1128,12 @@ for name in state-cp-target-eq state-ln-target-eq state-dd-of state-sort-o-home 
     state-sort-output-eq state-osc-output state-git-log-output state-git-checkout-index \
     state-git-show-output; do
   case_ "$name" 2 stamp "state directory"
+done
+# git writes where GIT_DIR, GIT_WORK_TREE and core.worktree point, and the file a
+# bundle create names.
+for name in state-git-dir-init state-git-work-tree-export state-git-core-worktree \
+    state-git-config-env-worktree state-git-bundle; do
+  case_ "$name" 2 stamp "a command touching the state directory"
 done
 # A script the call runs that names it fails closed the same way.
 case_ state-script-xargs       2 stamp "state directory"
@@ -1944,7 +1970,7 @@ echo "--- a contributor's submission: accepted or approved through its incoming 
 case_ accept-others-unreviewed  2 incoming-accept "accepting request 1391011 by contrib: no incoming review is recorded: review it first"
 ask_ accept-pass                incoming-accept "accepting request 1391001 by contrib into devel:inc/incpass: review PASS (key 0123456789ab"
 ask_ accept-pass                incoming-accept "source and target srcmd5 as reviewed, devel:inc is Factory's devel project"
-ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then waits until your follow-up is in devel"
+ask_ accept-fixable             incoming-accept "FIXABLE: the Factory forward then asks until your follow-up is in devel"
 # The build the review recorded is shown in the ask as of the review, green or not,
 # and never required.
 ask_ accept-pass                incoming-accept "0 findings); build at review: green on 16.0/aarch64, openSUSE_Tumbleweed/x86_64 in $h:contrib:branches:devel:inc"
@@ -2000,12 +2026,26 @@ case_ comment-tea-foreign-stamped 0 - ""
 ask_ comment-foreign-unstamped  comment "osc comment create: request 1391011 by contrib: no incoming review is recorded"
 ask_ comment-foreign-other-text comment "osc comment create: request 1391001 by contrib: not the comment its review recorded"
 ask_ comment-tea-foreign-other-text comment "tea comment: incorg/incgit#5 by contrib: not the comment its review recorded"
+# A tea comment takes a recorded text of several lines from a file as one "$(cat FILE)"
+# word: read now, compared by its sha256, the tea command still alone in the call.
+case_ comment-tea-file-stamped  0 - ""
+ask_ comment-tea-file-other-text comment "tea comment: incorg/incgit#12 by contrib: not the comment its review recorded"
+case_ comment-tea-file-written  2 bot-directive-unknown "cannot read the tea comment body"
+ask_ comment-tea-file-two-subs  comment "tea comment: it is not one literal tea command alone"
+# Unquoted, bash would split and glob what cat prints: tea would post other text.
+ask_ comment-tea-file-unquoted  comment "tea comment: it is not one literal tea command alone"
 case_ comment-from-reviewer-agent 2 incoming-self "osc comment create from agent incoming-review"
-# An accepted FIXABLE review holds the Factory forward until devel holds the follow-up.
-case_ forward-fixable-pending   2 incoming-hold "forwarding devel:inc/incheld to Factory: request 1391012 by contrib"
-case_ forward-fixable-pending-git 2 incoming-hold "forwarding devel:incgit/incgit to Factory: PR incorg/incgit#8 by contrib"
+# An accepted FIXABLE review asks before the Factory forward until devel holds the
+# follow-up, or Factory already holds what was accepted (a _link, and what OBS adds to
+# a package it syncs from git, aside); a record or a lookup it cannot read refuses.
+ask_ forward-fixable-pending    incoming-hold "forwarding devel:inc/incheld to Factory: request 1391012 by contrib: its review was FIXABLE, its follow-up fix is not in devel yet"
+ask_ forward-fixable-pending-git incoming-hold "forwarding devel:incgit/incgit to Factory: PR incorg/incgit#8 by contrib: its review was FIXABLE"
 case_ forward-after-followup    0 - ""
-case_ forward-after-followup    2 incoming-hold "1391099.json: its review record does not parse" HOME="$work/badhome"
+case_ forward-fixable-in-factory 0 - ""
+case_ forward-fixable-in-factory-git 0 - ""
+case_ forward-fixable-factory-err 2 incoming-hold "forwarding devel:inc/incfacerr to Factory: cannot read the files of openSUSE:Factory/incfacerr"
+# The refusal names the record by its path (spelled in part: the guard reads this suite).
+case_ forward-after-followup    2 incoming-hold "obs/1391099.json: its review record does not parse" HOME="$work/badhome"
 # Only the incoming-review agent records a review; a suite hands the recorder its option
 # from a fixture file, which only the agent's own command line may not do.
 case_ incoming-record-main      2 incoming-self "incoming-review.sh --record from the main session"
@@ -2051,10 +2091,19 @@ case_ reviewer-tea-close        2 incoming-self "tea pulls close from agent chan
 case_ reviewer-git-obs-close    2 incoming-self "git-obs pr close from agent incoming-review"
 case_ reviewer-api-revoke       2 incoming-self "osc api newstate=revoked from agent incoming-review"
 # A review of a repository named like the package holds its forward unless it is shown
-# not to: a package that syncs from no repository, or from another one, refuses it.
-case_ forward-hold-no-scmsync   2 incoming-hold "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository"
-case_ forward-hold-other-org    2 incoming-hold "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
+# not to: a package that syncs from no repository, or from another one, asks.
+ask_ forward-hold-no-scmsync    incoming-hold "PR incorg/incobs#9 may hold it, and devel:inc/incobs syncs from no repository"
+ask_ forward-hold-other-org     incoming-hold "PR incorg/incmis#10 may hold it, and devel:incgit/incmis syncs from elsewhere/incmis"
 case_ forward-after-followup    2 incoming-hold "cannot list" HOME="$work/listless"
+# The incoming-review agent commits nothing (osc commit runs the local source services),
+# and sets no PATH: the guard looks command names up on its own. The main session may.
+case_ reviewer-osc-ci           2 incoming-self "osc ci from agent incoming-review"
+case_ reviewer-osc-commit       2 incoming-self "osc commit from agent incoming-review"
+case_ osc-ci-devel              0 - ""
+case_ reviewer-path-prefix      2 incoming-self "setting PATH from agent incoming-review"
+case_ reviewer-path-export      2 incoming-self "setting PATH from agent incoming-review"
+case_ reviewer-path-for         2 incoming-self "setting PATH from agent incoming-review"
+case_ reviewer-path-main        0 - ""
 
 echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
 # script's -c in a cluster, attached, by a prefix of --command or after its file; chrt's
