@@ -282,8 +282,9 @@ boundary between the agent and what is inside the container.
   remove the session rules they find and the saved approvals of every project the server
   lists, and stop when a list cannot be read or a rule stays, after trying again for up
   to five minutes in all, or 60 times each, and at once when a list holds a value that
-  is no id (letters, digits and `_`, at most 128), the session list does not end or the
-  server answers a request with an error. An approval of a project
+  is no id (letters, digits and `_`, at most 128), the session list does not end or
+  names its next page with a cursor of more than 128 characters, or the server refuses
+  a request (4xx); a server error (5xx) is tried again. An approval of a project
   the server does not list is found only by a query opencode does not document. That
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.
@@ -375,7 +376,8 @@ boundary between the agent and what is inside the container.
   tools' own config files. The state volume holds the imported model credential: treat it
   like a secret. `up` removes the model logins the server lists for the volume before it
   imports the secret's, and stops when one stays or the list, read again after the
-  import, does not hold the secret's alone, so a new key takes effect with the next
+  import, does not hold the secret's alone, and at once, before it removes any, when the
+  secret holds no list of logins with an id each, so a new key takes effect with the next
   `secrets` and `up`. The database in the volume is the agent's to write: one set on it
   can keep a model login of its own there as the one in use, for one with a trigger that
   rewrites the secret's once it is imported, or puts its own back later.
