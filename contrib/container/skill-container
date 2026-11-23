@@ -391,7 +391,7 @@ api() {
 	while IFS= read -r line; do
 		[[ ! $line =~ ^HTTP\ ([0-9]{3})(\ |$) ]] || code=${BASH_REMATCH[1]}
 	done <<<"$err"
-	[ "$rc" = 1 ] && [[ $code == 4?? ]] && jq -es 'length > 0' <<<"$out" >/dev/null 2>&1 && return 2
+	[ "$rc" = 1 ] && [[ $code == 4?? ]] && printf '%s' "$out" | jq -es 'length > 0' >/dev/null 2>&1 && return 2
 	return 1
 }
 # A jq definition: isid passes an id and turns any other value into !, which no
@@ -519,8 +519,10 @@ forget() {
 logins() {
 	local answer
 	answer=$(api GET /api/credential 2>/dev/null) || return
-	jq -rs "$isid"'if length == 1 and (.[0].data | type) == "array" then .[0].data[].id | isid else error("no list") end' \
-		<<<"$answer" 2>/dev/null || return 1
+	# A pipe, not a here-string: bash writes one past 64 KiB to a temporary file.
+	printf '%s' "$answer" |
+		jq -rs "$isid"'if length == 1 and (.[0].data | type) == "array" then .[0].data[].id | isid else error("no list") end' \
+			2>/dev/null || return 1
 }
 # Into relogin's creds, as readperms.
 readlogins() {
@@ -549,9 +551,9 @@ clearlogins() {
 readsecret() {
 	local all
 	all=$(secret model) || return 1
-	want=$(jq -rs "$isid"'if length == 1 and (.[0] | type) == "array" and (.[0] | length) > 0
+	want=$(printf '%s' "$all" | jq -rs "$isid"'if length == 1 and (.[0] | type) == "array" and (.[0] | length) > 0
 		and (.[0] | map(.id) | unique | length) == (.[0] | length) then .[0][].id | isid
-		else error("no list") end' <<<"$all" 2>/dev/null) || return 2
+		else error("no list") end' 2>/dev/null) || return 2
 	onlyids "$want" || return 2
 	want=$(sort <<<"$want")
 }
@@ -866,7 +868,7 @@ start_wait() {
 	if ! guarded "$out"; then
 		# The server's text first: a line of it after the launcher's would read as its last word.
 		podman logs --tail 20 "$ctr" 2>&1 | plain >&2 || true
-		plain <<<"$out" >&2
+		plain <<<"$out" >&2 || true
 		die "the server did not load both guard plugins; the unit is stopped"
 	fi
 	trap - INT TERM HUP
@@ -1103,7 +1105,7 @@ cmd_import() {
 		(cd "$from" && OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" session export "$id" >"$tmp/$id.json") ||
 			die "cannot export the session $id"
 		if jq -e '.info.time.busy > .info.time.idle' "$tmp/$id.json" >/dev/null; then
-			jq -r '.info.title // ""' "$tmp/$id.json" | plain >&2
+			jq -r '.info.title // ""' "$tmp/$id.json" | plain >&2 || true
 			die "the session $id, titled above, is busy: close the host client and run import again"
 		fi
 	done
