@@ -2,7 +2,7 @@
 
 openSUSE is migrating package sources from classic OBS `osc` checkouts to **Git on `src.opensuse.org`** (a Gitea instance). Reference: https://en.opensuse.org/openSUSE:Git_Packaging_Workflow (and its companion https://en.opensuse.org/openSUSE:OBS_to_Git). A package is in the Git workflow when you clone it from `src.opensuse.org` instead of `osc co`-ing it; the checkout is a plain git repo (no `.osc/` dir) with the `.spec`, `.changes`, source tarball(s), `.gitattributes`, and `.gitignore`.
 
-**The spec/`.changes`/spec-cleaner/rpmlint rules in this skill are unchanged** — only the *plumbing* around them (fork / checkout / commit / submit) differs. Everything in SKILL.md "Core directive" still applies: spec-cleaner clean, one `.changes` entry per change, a clean `osc build`, etc.
+**The spec/`.changes`/spec-cleaner/rpmcrab rules in this skill are unchanged** — only the *plumbing* around them (fork / checkout / commit / submit) differs. Everything in SKILL.md "Core directive" still applies: spec-cleaner clean, one `.changes` entry per change, a clean `osc build`, etc.
 
 ## Repo topology on src.opensuse.org
 

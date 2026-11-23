@@ -136,7 +136,7 @@ contents, would anything differ?* If no — no bullet. Concretely, omit:
 - whitespace/spec-cleaner-style rewrites;
 - `%files` hygiene that ships the identical file set (expanding `%{_bindir}/*` to explicit names,
   adding `%dir`, hardening a glob);
-- rpmlint-warning silencing with an unchanged RPM.
+- rpmcrab-warning silencing with an unchanged RPM.
 
 But don't suppress the changelog for a visible cleanup — that still gets its brief umbrella bullet,
 and almost every SR must carry an entry (see `references/specfile-guidelines.md`

@@ -2,7 +2,7 @@
 
 ## Checking a spec file
 
-When the user asks "does this spec follow the guidelines?", "is this spec OK?", "lint this spec", etc., **run `spec-cleaner` first** — it's the canonical openSUSE style checker and applies the same rules the OBS spec-cleaner bot will. Do **not** reach for `rpmlint` for a spec-file lint; rpmlint is the post-build package checker and surfaces a different (and much smaller) set of issues at this stage.
+When the user asks "does this spec follow the guidelines?", "is this spec OK?", "lint this spec", etc., **run `spec-cleaner` first** — it's the canonical openSUSE style checker and applies the same rules the OBS spec-cleaner bot will. Do **not** reach for `rpmcrab` for a spec-file lint; rpmcrab is the post-build package checker and surfaces a different (and much smaller) set of issues at this stage.
 
 Every behaviour below was checked against **spec-cleaner 1.3.0** (2026-10-17, rpm 4.20). `scripts/gate.sh` runs this invocation itself and goes red on a non-empty diff, so it runs in OBS-ONLY mode too.
 

@@ -12,11 +12,11 @@ LABEL org.opencontainers.image.description="opencode with the openSUSE-packaging
 LABEL org.opencontainers.image.source="https://github.com/openSUSE/openSUSE-packaging-skill"
 
 RUN zypper -n in --no-recommends \
-        opencode osc python3-ruamel.yaml gitea-tea gh bugwarden spec-cleaner rpmlint \
+        opencode osc python3-ruamel.yaml gitea-tea gh bugwarden spec-cleaner \
         obs-service-source_validator obs-service-download_files obs-service-obs_scm \
         obs-scm-bridge \
         obs-service-tar obs-service-recompress obs-service-set_version \
-        obs-service-format_spec_file obs-service-node_modules obs-service-cargo \
+        spec-cleaner-format_spec_file obs-service-node_modules obs-service-cargo \
         obs-service-go_modules rpmcrab rpmdevtools wget \
         git-core openssh-clients python3-base jq curl hostname procps socat \
         mcp-server-memory mcp-server-sequential-thinking \

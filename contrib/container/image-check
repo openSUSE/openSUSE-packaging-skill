@@ -42,7 +42,6 @@ tea --version
 gh --version
 bugwarden --version
 spec-cleaner --version
-rpmlint --version
 git --version
 ssh -V
 jq --version

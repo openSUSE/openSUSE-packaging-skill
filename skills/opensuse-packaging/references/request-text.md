@@ -41,7 +41,7 @@ hold it yourself.
 Factory" (refused) — the Factory reviewer sees only this one; "Forward X BR cleanup to
 Factory." passes, but the devel headline says it better.
 
-**Never in a message:** build or rpmlint status, test counts, whether a VUL sweep or bug
+**Never in a message:** build or rpmcrab status, test counts, whether a VUL sweep or bug
 check ran, what the gate or the change review said, what tools the session had, how you
 verified something, links to your home project, a paste of the `.changes`, or an apology
 for any of these. That is your report to the user. The hook refuses the usual phrases
