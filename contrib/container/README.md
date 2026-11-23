@@ -195,7 +195,7 @@ directory that lies under `/var` on the host therefore needs `--as`.
   `--flag=value`.
   An answer of "always" is forgotten at the next `up`, `attach` or `run`: opencode keeps
   it in the state volume, which the agent writes. `run` prints the reply with control
-  characters removed, colours kept, for a terminal that reads UTF-8, and gives the client
+  characters and colours removed, for a terminal that reads UTF-8, and gives the client
   no input; `attach` is opencode's own terminal interface: it is not filtered. The
   client starts with the `TERM` and `COLORTERM` of your environment, with
   `FORCE_HYPERLINK=0` and without your proxy settings. Its interface settings (theme,
@@ -282,7 +282,8 @@ boundary between the agent and what is inside the container.
   remove the session rules they find and the saved approvals of every project the server
   lists, and stop when a list cannot be read or a rule stays, after trying again for up
   to five minutes in all, or 60 times each, and at once when a list holds a value that
-  is no id or the session list does not end. An approval of a project
+  is no id (letters, digits and `_`, at most 128), the session list does not end or the
+  server answers a request with an error. An approval of a project
   the server does not list is found only by a query opencode does not document. That
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.
@@ -373,10 +374,11 @@ boundary between the agent and what is inside the container.
 - Podman keeps the secrets unencrypted under your home directory, mode 0600, like the
   tools' own config files. The state volume holds the imported model credential: treat it
   like a secret. `up` removes the model logins the server lists for the volume before it
-  imports the secret's, and stops when one stays, so a new key takes effect with the next
+  imports the secret's, and stops when one stays or the list, read again after the
+  import, does not hold the secret's alone, so a new key takes effect with the next
   `secrets` and `up`. The database in the volume is the agent's to write: one set on it
   can keep a model login of its own there as the one in use, for one with a trigger that
-  puts it back when the secret's is imported.
+  rewrites the secret's once it is imported, or puts its own back later.
 - A Leap pool PR was not made from the container end to end. The build checks that the
   guard takes the image's `target-gate.sh --review` for the skill's own; `pool-pr.sh` was
   not run there.
