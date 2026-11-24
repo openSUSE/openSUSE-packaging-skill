@@ -14,6 +14,8 @@ inner=http://127.0.0.1:4096
 memname=memory.jsonl
 # When the retries of the command end: its first try sets it (see retried).
 cutoff=
+# The status code of the last HTTP line api read.
+apicode=
 die() {
 	# Text before it may have left the terminal's attributes set: the line resets them.
 	[ ! -t "$diefd" ] || printf '\033[0m' >&"$diefd"
@@ -166,9 +168,34 @@ ensure_password() {
 # What the model or the server wrote reaches the terminal as text, for a
 # terminal that reads UTF-8: no control character, and no colour, which could
 # hide the launcher's lines after it (concealed, or the background's colour).
-# Taking one C1 control out can join the bytes of the next, hence the loop.
+# A C1 control is \xc2 and a byte from \x80 to \x9f. Taking one out can join
+# the bytes of the next, so each \xc2 waits for the byte after it, and one pass
+# takes them all out: a pass for each pair would take a time that grows with
+# the square of the text's length.
+c1prog='
+import os, signal
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+def put(data):
+    while data:
+        data = data[os.write(1, data):]
+held = 0
+while chunk := os.read(0, 65536):
+    out = bytearray()
+    for b in chunk:
+        if b == 0xC2:
+            held += 1
+        elif held and 0x80 <= b <= 0x9F:
+            held -= 1
+        else:
+            if held:
+                out += b"\xc2" * held
+                held = 0
+            out.append(b)
+    put(out)
+put(b"\xc2" * held)
+'
 plain() {
-	LC_ALL=C sed -u -e 's/\x1b\[[0-9;]*m//g' -e 's/[\x00-\x08\x0b-\x1f\x7f]//g' -e ':a' -e 's/\xc2[\x80-\x9f]//g' -e 'ta'
+	LC_ALL=C sed -u -e 's/\x1b\[[0-9;]*m//g' -e 's/[\x00-\x08\x0b-\x1f\x7f]//g' | python3 -I -S -c "$c1prog"
 }
 # An osc config with the api.opensuse.org login alone. osc reads its own config,
 # so a password it keeps obfuscated or in a keyring comes out as well. -I: no
@@ -396,9 +423,11 @@ api() {
 	[ -z "$err" ] || printf '%s\n' "$err" >&2
 	[ -z "$out" ] || printf '%s' "$out"
 	[ "$rc" != 0 ] || return 0
+	# A pipe, not a here-string: bash writes one past 64 KiB to a temporary file,
+	# and a failed call's error stream may repeat what it read.
 	while IFS= read -r line; do
 		[[ ! $line =~ ^HTTP\ ([0-9]{3})(\ |$) ]] || code=${BASH_REMATCH[1]}
-	done <<<"$err"
+	done < <(printf '%s\n' "$err")
 	apicode=$code
 	[ "$rc" = 1 ] && [[ $code == 4?? ]] && printf '%s' "$out" | jq -es 'length > 0' >/dev/null 2>&1 && return 2
 	return 1

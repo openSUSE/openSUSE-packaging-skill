@@ -151,7 +151,9 @@ case "$1 $2" in
   # status NNN, as opencode api prints it (eNNN,MMM writes both lines, in that
   # order), forge the same for 404 with marks in its error stream meant to pass
   # for the launcher's own, bare a 502 without a body, late answers two seconds
-  # later, noise answers after 400 KB on its error stream; else it answers.
+  # later, noise answers after 400 KB on its error stream, nested after 200 KB
+  # of C1 controls nested in each other, long404 is a 404 after 70 KB on its
+  # error stream; else it answers.
   busy() {
     local how
     echo >> "$FIX/$1-asked"
@@ -169,6 +171,12 @@ case "$1 $2" in
     bare) echo "HTTP 502 Bad Gateway" >&2; exit 1 ;;
     late) sleep 2 ;;
     noise) printf 'NOISE-MARK\0010\0010\n' >&2; yes 'agent text that runs on and on' | head -c 409600 >&2; echo >&2 ;;
+    nested)
+      printf 'NEST<' >&2; head -c 102400 /dev/zero | tr '\0' '\302' >&2
+      head -c 102400 /dev/zero | tr '\0' '\233' >&2; printf '>NEST\n' >&2 ;;
+    long404)
+      echo '{"name":"UnknownError","data":{"message":"no such row"}}'
+      yes 'what the client read, repeated' | head -c 71680 >&2; printf '\nHTTP 404 Not Found\n' >&2; exit 1 ;;
     slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
@@ -1672,6 +1680,15 @@ for codes in e400,404 e404,400; do
   fi
 done
 rm "$FIX/vanishes"; echo '{"data":[]}' > "$FIX/saved"; sessions '[]'; echo '{"data":[]}' > "$FIX/logins"
+# A 404 for an item that stays listed removed nothing: the rounds go on to
+# their bound, and the unit is stopped.
+restart; approval per_s1; never deletes e404
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "the permissions $N-obs-agent keeps cannot be removed" <<<"$out" \
+  && ! grep -q ' is up' <<<"$out" && [ "$(reads deletes)" = 60 ] && [ "$(pauses)" = 59 ] \
+  && pass "a removal answered 404 for an item that stays listed: the unit is stopped after 60 rounds" \
+  || fail "up with a 404 for an item that stays: rc=$rc $(reads deletes) calls, $(pauses) pauses $out"
+echo '{"data":[]}' > "$FIX/saved"
 # Marks in the error stream that would pass for the launcher's own fields after
 # it change nothing: a 404 to a read stays final.
 restart; scripted projects forge
@@ -1688,6 +1705,24 @@ timeout -k 5 15 "${scenv[@]}" HOME="$work/home" bash "$SC" up obs > /dev/null 2>
   && [ "$(grep -c '^agent text that runs on and on$' "$work/rerr")" -gt 10000 ] \
   && pass "an error stream of 400 KB is read within seconds" \
   || fail "up with an error stream of 400 KB: rc=$rc $(reads projects) reads $(tail -n 2 "$work/rerr")"
+# Nor do C1 controls nested in each other, which the filter takes out in one pass.
+restart; scripted projects nested
+timeout -k 5 15 "${scenv[@]}" HOME="$work/home" bash "$SC" up obs > /dev/null 2> "$work/rerr"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -qx 'NEST<>NEST' "$work/rerr" \
+  && pass "200 KB of nested C1 controls are taken out within seconds" \
+  || fail "up with 200 KB of nested C1 controls: rc=$rc $(reads projects) reads $(grep -c NEST "$work/rerr") marks"
+# A failed call's error stream may repeat what it read: one past 64 KiB, which
+# bash would put in a temporary file for a here-string, is read through a pipe.
+if command -v strace > /dev/null; then
+  restart; scripted projects long404
+  strace -f -qq -e trace=openat -o "$FIX/strace" "${scenv[@]}" HOME="$work/home" bash "$SC" up obs > /dev/null 2>&1; rc=$?
+  [ "$rc" != 0 ] && stopped && [ "$(reads projects)" = 1 ] && [ "$(pauses)" = 0 ] && grep -q openat "$FIX/strace" \
+    && ! grep -q 'sh-thd' "$FIX/strace" \
+    && pass "a failed call's long error stream goes through a pipe, into no temporary file" \
+    || fail "a failed call's long error stream: rc=$rc $(reads projects) reads $(grep -c 'sh-thd' "$FIX/strace") temporary files"
+else
+  echo "SKIP: a failed call's long error stream and temporary files (no strace here)"
+fi
 # A cursor far longer than opencode's (120 characters) stops the read: the call
 # for the page it names would not start.
 sessions '[{"id":"ses_c1","permissions":null}]'
