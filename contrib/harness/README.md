@@ -599,9 +599,11 @@ ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor accept, ap
 comment or decline. Any shell text of that agent (its command, a script it runs, an `eval`
 or `trap` string), as written, with its quotes dropped or brace-expanded, that names `PATH`
 as a word or a variable, `BASH_ENV`, `ENV=`, `PS4` (`bash -x` runs its substitutions), the
-`hash` builtin, or a nameref (`declare -n`, `local -n`, `typeset -n`) is refused whatever
-it does with them: the guard looks command names up on its own `PATH`, and the forms that
-change the lookup are too many to match one by one. So is a command of that agent that
+`hash` builtin, a nameref (`declare -n`, `local -n`, `typeset -n`), allexport, an
+arithmetic context (as for pushes, below), or a shell's rc file (`--rcfile`, `--init-file`,
+`bash -i`, which runs it unread) is refused whatever it does with them: the guard looks
+command names up on its own `PATH`, and the forms that change the lookup are too many to
+match one by one. So is a command of that agent that
 sets a variable by a name it does not write out (`export "$x=…"`, `printf -v "$x"`, `read
 "$x"`, `declare "${x}=…"`, `env "$x=…"`, `mapfile`, `let`), whose command word only the
 shell knows (`$x -p …`), or that sources a file (`source`, `.`). A search for such a word
@@ -745,8 +747,10 @@ pattern or an echo that quotes a pool merge is text, not a merge. Quotes, commen
 heredoc markers and line continuations are read as bash reads them, nested in `$(…)`,
 `(…)`, `"…"`, `${…}` and backquotes. Program text is read
 whole: every script a command runs, inline code (`-c`, `-e`), and text fed to a shell or
-interpreter (heredoc, here-string, `< FILE`, a pipe from `echo`, `printf` or `cat`). A
-program piped in from anything else is refused. `tea` and `git-obs` without a repository
+interpreter (heredoc, here-string, `< FILE`, a pipe from `echo`, `printf` or `cat`), its
+path joined to the working directory and followed link by link as the kernel does, so a
+`..` after a link climbs from where the link leads; one through `/proc` or `/dev` is
+refused. A program piped in from anything else is refused. `tea` and `git-obs` without a repository
 act on the clone that a `cd`, subshell or `env -C` leaves; a branch, remote URL or
 repository held in a variable is unknown, so the call is refused.
 
@@ -882,8 +886,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
   (`r.data = ...`).
 - Perl's LWP and HTTP::Tiny requests are not seen, and `ruby`, `bun`, `deno` and `php`
   programs are not read.
-- Words `xargs` reads from stdin are not seen (`echo B | xargs git push fork` is
-  judged as a push of the current branch).
+- Words `xargs` reads from stdin are not seen, so a push in a call that runs `xargs` at
+  any depth is refused (`echo B | xargs git push fork`).
 - A script whose shebang is `env -S` and whose name has no `.sh` is read as program
   code, so its shell pushes are not parsed.
 - A `PATH` shim for `osc` or the build tools, set up in an earlier call, is used by the
@@ -923,7 +927,13 @@ create must be refused too, the `AI/zzz` create must run, and so must
   (a commit message) -- refuses every push in the call (`[push-unknown]`); a `$NAME` or
   `${NAME}` read does not count. So does any variable the call sets by a name it does not
   write out (`export "GIT_$v=…"`, `env "$(printf …)=…"`, `printf -v "$x"`, `read "$x"`,
-  `xargs -I{} env {}=…`), wherever it stands in the call.
+  `xargs -I{} env {}=…`), wherever it stands in the call, and so does any text in it,
+  comments included, that can set one by a name the guard never sees: a nameref
+  (`declare`, `typeset` or `local` with `-n`), allexport (`set -a`, `set -o allexport`),
+  an arithmetic context (`let`, `((`, `$((`, `$[`, `[[ … -eq … ]]` and kin, the `-i`
+  attribute, a subscript that is no plain integer), `xargs`, or an `env` given a word only
+  the shell knows. A command with the word `push` counts with `xargs` or such an `env` even
+  where the parse sees no push (`xargs -I{} env {} git push`).
 - A path to the state directory the call holds only in a file it reads at run time
   (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
   'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen, nor one the call
@@ -981,7 +991,7 @@ These bypasses stay open on purpose, each an agent's deliberate act:
   (`cp /usr/bin/timeout /var/tmp/t`, then `/var/tmp/t 5 osc rq accept …`) runs the command
   after it unjudged, and a copy of another program's ELF named like a wrapper
   (`/var/tmp/x/timeout`) is taken for the wrapper, its arguments judged as a command it
-  never runs;
+  never runs; a builtin loaded with `enable -f` is no more read than a compiled binary;
 - a bare wrapper name is taken for the wrapper, so a script of that name earlier on `PATH`
   (one the main session put there; the incoming-review agent may not name `PATH`) runs in
   its place unread;
