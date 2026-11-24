@@ -314,6 +314,76 @@
     },
     "cwd": "@OTHER@"
   },
+  "push-dyn-var-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "v=DIR; export \"GIT_$v=@CLONE@/.git\"; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-brace-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export GIT_{DIR,X}=@CLONE@/.git; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-printf-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "env \"$(printf 'GIT_%s' DIR)=@CLONE@/.git\" git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-var-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "v=DIR; env \"GIT_$v=@CLONE@/.git\" git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-xargs-env": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'GIT_%s\\n' DIR | xargs -I{} env {}=@CLONE@/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-append": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; export \"$x=@CLONE@/.git\"; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-dyn-loop-after": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; for i in 1 2; do git push fork tess-88053-16.0; export \"$x=@CLONE@/.git\"; done"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo \"$GIT_DIR\"; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-tilde-plus": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=~+/clonelink/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-git-dir-tilde-minus": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "GIT_DIR=~-/clonelink/.git git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
   "cd-call-1": {
     "tool_name": "Bash",
     "tool_input": {
@@ -11918,5 +11988,123 @@
       "command": "hash -p /var/tmp/x-review/bin/cat ls; ls -P incpass.spec"
     },
     "cwd": "@PLAIN@"
+  },
+  "reviewer-path-built-printf": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; printf -v \"$x\" %s bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-built-read": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; read \"$x\" <<< bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-built-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; export \"$x=bin\"; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-built-declare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; declare \"${x}=bin\"; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-brace-export": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export P{ATH,X}=bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-brace-declare": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "declare P{ATH,X}=bin; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "source /var/tmp/x-review/env.sh; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-dot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": ". /var/tmp/x-review/env.sh; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-built-hash": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=ha; x+=sh; $x -p /var/tmp/x-review/bin/cat ls; ls -P incpass.spec"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-ps4": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "PS4='$(rpmspec -P incpass.spec)' bash -xc :"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-path-built-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; printf -v \"$x\" %s bin; ls /var/tmp"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "reviewer-path-brace-main": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "export P{ATH,X}=bin; ls /var/tmp"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "comment-tea-file-dotdot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "tea comment 12 --login src.opensuse.org --repo incorg/incgit \"$(cat ../comment-12.txt)\""
+    },
+    "cwd": "@WORK@/lnk"
+  },
+  "comment-osc-file-dotdot": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc comment create -c \"$(cat ../c1.txt)\" request 1391001"
+    },
+    "cwd": "@WORK@/lnk"
   }
 }

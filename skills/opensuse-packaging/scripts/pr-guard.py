@@ -7,8 +7,8 @@ update or merge a pool/ PR outside pool-pr.sh, merge any src.opensuse.org PR
 provably only read; gh is not judged), push to a branch that heads an open pool
 PR (where git runs and where a GIT_DIR or GIT_WORK_TREE assigned on git itself
 places it; any other setting of those, GIT_COMMON_DIR or GIT_CONFIG* in the
-call refuses the push) or over HTTPS to src.opensuse.org (SSH carries the
-login), write a
+call, or any variable set by a name not written out, refuses the push) or over
+HTTPS to src.opensuse.org (SSH carries the login), write a
 target-gate.sh stamp or into the skill's state directory (gate.sh's stamps;
 only the pinned gate.sh writes there; in a call that names that directory,
 any write the guard cannot place), post a comment, review or request message
@@ -53,9 +53,10 @@ submission: the rpm family by name or through a link (rpmlint too), quilt
 setup, osc build (chroot, shell, wipe), an osc checkout or update that runs the
 source services, osc service but wait, osc commit (it runs the local ones),
 gate.sh, target-gate.sh and the skill's other scripts that parse a spec, run a
-service or build, and any shell text naming PATH, BASH_ENV, ENV=, the hash
-builtin or a nameref, since the guard looks names up on its own PATH; and a
-write, move or
+service or build, and any shell text naming PATH, BASH_ENV, ENV=, PS4, the
+hash builtin or a nameref (brace-expanded too), setting a variable by a name
+not written out, running a command word only the shell knows or sourcing a
+file, since the guard looks names up on its own PATH; and a write, move or
 delete of the installed guard (~/.claude/hooks), Claude Code's settings (a
 .claude/settings.json or settings.local.json anywhere) or the opencode plugins
 (~/.config/opencode/plugins), which the user changes by hand, a tree into

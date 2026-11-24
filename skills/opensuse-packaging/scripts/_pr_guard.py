@@ -673,9 +673,11 @@ MESSAGES = {
     "failed lookup may pass on a retry; a review record that does not read is the "
     "user's to repair or remove.",
     "incoming-path": "{0}: the guard looks command names up on its own PATH, so a "
-    "call of this agent that names PATH, BASH_ENV or ENV=, the hash builtin or a "
-    "nameref is refused, whatever it does with them. Run the tools by their names; "
-    "a search for such a word takes its pattern from a file (grep -f FILE).",
+    "call of this agent that names PATH, BASH_ENV, ENV= or PS4, the hash builtin or "
+    "a nameref is refused, whatever it does with them, and so is one that sets a "
+    "variable by a name it does not write out, runs a command word held in a "
+    "variable or sources a file. Write every command out literally; a search for "
+    "such a word takes its pattern from a file (grep -f FILE).",
 }
 # Allowed only on the user's go: the harness asks them. opencode cannot ask, so
 # its plugin refuses: on the agent's own commit or request that names a step to
@@ -830,6 +832,8 @@ class Ctx:
         self.made = set()  # what the call's writers made, which may lead anywhere
         self.reading = []  # the scripts being read, innermost last
         self.texts = []  # every shell text judged: scripts, eval and trap strings
+        self.dynamic = []  # the variables set by a name only the shell knows
+        self.pushed = False  # a git push or send-pack was judged
 
 
 def git(cwd, gargs, *args):
@@ -1273,10 +1277,31 @@ def reader_path(path):
     return cur
 
 
+def reader_files(raw, ctx, cwd):
+    """The files a reader in the event's directory (cwd) opens for a word:
+    each spelling joined to that directory as reader_path() resolves it, not
+    normalised, so a .. after a link climbs from where the link leads, as the
+    kernel does, then followed by reader_path(); globs as the shell expands
+    them. None when the guard cannot tell."""
+    import glob
+
+    words = substitute(raw, ctx, cwd)
+    base = reader_path(cwd) if isinstance(cwd, str) and cwd[:1] == "/" else None
+    out = []
+    for w in words or [None]:
+        p = w and os.path.expanduser(w)
+        if not p or p[:1] != "/" and not base:
+            return None
+        p = p if p[:1] == "/" else base.rstrip("/") + "/" + p
+        for f in (sorted(glob.glob(p)) if GLOB.search(p) else []) or [p]:
+            out.append(reader_path(f))
+    return None if None in out else out
+
+
 def piped(out, ctx, cwd):
     """The literal-aware texts a command writes to a pipe (what output() says
-    it writes), read now, its path placed and followed by reader_path(); None
-    when they cannot be."""
+    it writes), read now from the files reader_files() names; None when they
+    cannot be."""
     how, what = out or (None, None)
     if how == "text":
         return [what]
@@ -1284,8 +1309,7 @@ def piped(out, ctx, cwd):
         return None
     text = ""
     for raw in what:
-        for path in locate(raw, ctx, cwd)[0] or [None]:
-            real = path and reader_path(path)
+        for real in reader_files(raw, ctx, cwd) or [None]:
             if not real or written(real, ctx) or not regular(real):
                 return None
             try:
@@ -2360,26 +2384,69 @@ def reviewer_runs(name, run, ctx, cwd):
 
 
 # What can change the program a command name runs, named anywhere in a call:
-# PATH as a word or a variable, BASH_ENV, ENV=, the hash builtin, a nameref.
+# PATH as a word or a variable, BASH_ENV, ENV=, the hash builtin, a nameref;
+# PS4, whose substitutions bash -x runs.
 LOOKUP_TEXT = Rx(
-    r"(?<!\w)(?:PATH|BASH_ENV)(?!\w)|(?<![\w$])ENV\+?=|(?<![\w./-])hash(?![\w./-])"
+    r"(?<!\w)(?:PATH|BASH_ENV|PS4)(?!\w)|(?<![\w$])ENV\+?=|(?<![\w./-])hash(?![\w./-])"
     r"|(?<![\w-])(?:declare|local|typeset)[ \t](?:[^;&|\n]*[ \t])?-[A-Za-z]*n"
 )
 
 
 def reviewer_text(text, ctx):
     """Refuse shell text of the incoming-review agent that names LOOKUP_TEXT
-    in any form, as written or with its quotes dropped: resolved() looks
-    names up on the hook's own PATH, and that agent only reads."""
+    in any form, as written, with its quotes dropped or brace-expanded:
+    resolved() looks names up on the hook's own PATH, and that agent only
+    reads."""
     if ctx.agent != INCOMING_AGENT:
         return
-    for t in (text, flat(text)):
+    for t in (text, flat(text), braced_text(flat(text))):
         m = LOOKUP_TEXT.search(t)
         if m:
             what = " ".join(m.group().split())
             block(
                 "incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-path"
             )
+
+
+def dynamic_target(name, argv, run, lit):
+    """The first variable a command sets by a name not written out (holding
+    $, a backtick or a brace) -- an assignment env or xargs' env takes, one
+    of export, declare and kin, let, read, mapfile, printf -v, getopts, unset
+    or a nameref -- as text for a message; None. lit: argv as literal-aware
+    text, whose $ and backtick are expansions, or None."""
+    words = lit if lit and len(lit) == len(argv) else argv
+    lrun = words[len(argv) - len(run) :]
+    names = [
+        w.split("=", 1)[0]
+        for w in words[: len(argv) - len(run)]
+        if "=" in w and w[:1] != "-"
+    ]
+    args = lrun[1:]
+    if name in DECLARE:
+        names += [a.split("=", 1)[0] for a in parse_opts(args, "")[1]]
+    elif name == "let":
+        names += [a.split("=", 1)[0] for a in args]
+    names += shell_assigned(name, args)
+    for n in names:
+        if re.search(r"[$`{]", n):
+            return f"{name or 'an assignment'} {shown(n)}"
+    return None
+
+
+def reviewer_dynamic(name, argv, run, lit, ctx):
+    """Refuse, in the incoming-review agent, a command that sets a variable by
+    a name not written out (dynamic_target()), runs a command word that is
+    not, or sources a file: any of them could change what a name runs."""
+    if ctx.agent != INCOMING_AGENT:
+        return
+    what = dynamic_target(name, argv, run, lit)
+    words = lit if lit and len(lit) == len(argv) else argv
+    if not what and run and re.search(r"[$`]", words[len(argv) - len(run)]):
+        what = f"the command word {shown(run[0])}"
+    if not what and name in ("source", "."):
+        what = name
+    if what:
+        block("incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-path")
 
 
 def resolved(word, ctx, cwd):
@@ -6128,7 +6195,7 @@ def git_env_other(ctx, place):
     if key not in ctx.devel:
         found = set()
         for text in {ctx.command or "", *ctx.texts}:
-            t = flat(text)
+            t = braced_text(flat(text))
             for m in GIT_ENV_WORD.finditer(t):
                 name, head, tail = m.group(), t[: m.start()], t[m.end() :]
                 if head[-1:] == "$" or head[-2:] == "${" and not re.match(":?=", tail):
@@ -6145,14 +6212,43 @@ def git_env_other(ctx, place):
     return ctx.devel[key]
 
 
+def braced_text(text):
+    """text with each word brace-expanded as bash would (braces()), quoted or
+    not; a word past braces()' limits stays as written."""
+    return re.sub(
+        r"[^\s{]*\{\S*", lambda m: " ".join(braces(m.group()) or [m.group()]), text
+    )
+
+
+def tilde_value(v):
+    """An assignment value's leading tilde as bash expands it, for
+    substitute(): ~+ as $PWD, ~ and ~user as expanduser() does; None for ~-
+    (the previous directory) or a form expanduser() leaves as it is."""
+    if v[:1] != "~":
+        return v
+    if v.split("/", 1)[0] == "~+":
+        return "$PWD" + v[2:]
+    out = os.path.expanduser(v)
+    return None if out == v else out
+
+
+def push_dynamic(ctx):
+    """Refuse a push in a call that sets a variable by a name not written out
+    (dynamic_target()): it may be GIT_DIR or kin, and re-target the push.
+    Checked at each push, and when the call is judged (a loop or a trap may
+    set it after the push runs)."""
+    if ctx.pushed and ctx.dynamic:
+        unsure(f"{ctx.dynamic[0]} sets a variable whose name only the shell knows")
+
+
 def git_placements(before, ctx, cwd, shell_cwd, gargs):
     """The git options a push is judged under: where git runs (cwd, after
     -C; gargs, its options), and, when GIT_DIR or GIT_WORK_TREE is assigned
     on git itself (before: the words before git), where that places it too,
-    ~ and $PWD expanded in the call's directory (shell_cwd) as bash does;
-    where git runs then only when a repository is there. Any GIT_ENV variable
-    but the write-only ones set otherwise in the call, or a value the guard
-    cannot read, refuses the push."""
+    ~ (tilde_value()) and $PWD expanded in the call's directory (shell_cwd)
+    as bash does; where git runs then only when a repository is there. Any
+    GIT_ENV variable but the write-only ones set otherwise in the call, or a
+    value the guard cannot read, refuses the push."""
     import itertools
 
     other = sorted(git_env_other(ctx, GIT_PLACE) - GIT_WRITE_ONLY)
@@ -6162,9 +6258,8 @@ def git_placements(before, ctx, cwd, shell_cwd, gargs):
     for w in before or ():
         k, _, v = w.partition("=")
         if ASSIGN.match(w) and k in GIT_PLACE:
-            got = substitute(
-                os.path.expanduser(v) if v[:1] == "~" else v, ctx, shell_cwd
-            )
+            tv = tilde_value(v)
+            got = substitute(tv, ctx, shell_cwd) if tv is not None else None
             if not got:
                 unsure(f"{k} is set to a value the guard cannot read")
             # quoted, a ~ stays literal: judged there too where such a path exists
@@ -6202,6 +6297,8 @@ def git_command(argv, ctx, cwd, lit=None, before=None):
             i += 1
     sub = argv[i:]
     if sub[:1] in (["push"], ["send-pack"]):
+        ctx.pushed = True
+        push_dynamic(ctx)
         for placed in git_placements(before, ctx, cwd, shell_cwd, gargs):
             check_push(sub[1:], ctx, cwd, placed + gargs, send=sub[0] == "send-pack")
     elif sub[:1] == ["obs"]:
@@ -6741,7 +6838,7 @@ def git_paths(run, ctx=None, before=()):
     for w in before:
         k, _, v = w.partition("=")
         if ASSIGN.match(w) and GIT_ENV.fullmatch(k.rstrip("+")):
-            out.append(v)
+            out.append(tilde_value(v) or "${OLDPWD}")  # an unknown ~ is unplaced
     out += [
         "${%s}" % k for k in sorted(git_env_other(ctx, GIT_WRITE_PLACE) if ctx else ())
     ]
@@ -7093,6 +7190,11 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
                 cred_word(w, "a redirection", False, ctx, cwd)
     run, shell, env, chdir = unwrap(argv, cwd, ctx)
     before = argv[: len(argv) - len(run)]
+    first = os.path.basename(run[0]) if run else ""
+    reviewer_dynamic(first, argv, run, lit[0], ctx)
+    dynamic = dynamic_target(first, argv, run, lit[0])
+    if dynamic:  # a push anywhere in the call is refused (judge())
+        ctx.dynamic.append(dynamic)
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.
@@ -7474,10 +7576,11 @@ def shell_pass(text, ctx, cwd, depth):
 
 
 def placed(out, ctx, cwd):
-    """out with the files it names placed where the writer ran: cwd."""
+    """out with the files it names placed where the writer ran, cwd, as it
+    opens them (reader_files())."""
     if not out or out[0] != "files":
         return out
-    paths = [locate(raw, ctx, cwd)[0] for raw in out[1]]
+    paths = [reader_files(raw, ctx, cwd) for raw in out[1]]
     if None in paths:
         return ("unknown", "a file where only the shell can place it")
     return ("files", [p for ps in paths for p in ps])
@@ -7972,6 +8075,7 @@ def judge(ev):
                 text, here, depth = ctx.traps.pop(0)
                 ctx.loops = []
                 run_text(text, "shell", ctx, here, depth)
+            push_dynamic(ctx)
         elif isinstance(inp.get("file_path"), str):
             body = inp.get("content", inp.get("new_string"))
             check_write(inp["file_path"], body if isinstance(body, str) else "", ctx)
