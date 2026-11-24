@@ -18,8 +18,9 @@ print("")
 }
 -13: requires_eq	%{expand:%(t=$(echo '%*' | LC_ALL=C xargs -r rpm -q --qf 'Requires: %%{name} = %%{version}\n'); test -n "$t" && echo "$t")}
 -13: shell_mid	plain %(echo %1)
+-13: source_reader	%{expand:%(cat %{SOURCE1} %{-p*})}
 -13: treesitter_grammars	%{lua:
 local names = arg
 print("")
 }
-======================== active 14 empty 0
+======================== active 15 empty 0

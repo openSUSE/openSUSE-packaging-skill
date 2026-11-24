@@ -67,9 +67,11 @@ comment; it fetches everything again first. It refuses PASS and FIXABLE on any o
   Patch, arguments whose every macro, followed through, expands to one plain line; any
   other body (Lua, `%{expand:`, shell) only on a line that stands as it is in the target's
   spec, every macro it reaches through definitions, tag values and host bodies the host's,
-  a checked tag or one of the spec's own defined there by the same lines, and only while
-  the change touches nothing but the spec, its `.changes` and the Source archives checked
-  against their URLs (a host macro may read any file: `%kernel_module_package -p`). A
+  a checked tag or one of the spec's own defined there by the same lines, no `%%` in it or
+  in what it reaches, and only while the change touches nothing but the spec, its
+  `.changes` and the archives of a Source tag the target's spec has whose URL changed in
+  digits alone, none named by the line or what it reaches (a host macro may read any
+  file: `%kernel_module_package -p`). A
   macro the host lacks, one that takes no arguments, and a table rpm did not give whole
   stay findings;
 - **comment:** a URL other than a build.opensuse.org, src.opensuse.org or bugzilla link, an

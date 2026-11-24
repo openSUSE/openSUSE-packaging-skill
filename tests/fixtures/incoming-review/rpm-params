@@ -7,3 +7,4 @@ python_subpackages
 requires_eq
 shell_mid
 treesitter_grammars
+source_reader

@@ -61,8 +61,10 @@
 # no Source or Patch, and every macro the arguments reach expands to one plain
 # line, or the line stands as it is in the target's spec, every macro it
 # reaches the host's, a checked tag or one of the spec's own defined there by
-# the same lines, and the change touches no file but the specs, their .changes
-# and Source archives checked here), a
+# the same lines, no %% in it or in what it reaches, and the change touches no
+# file but the specs, their .changes and the archives of a Source tag the
+# target's spec has whose URL changed in digits alone, none of which the line
+# or its reach names), a
 # tag line with a macro before its colon or continued by a backslash, a URL
 # with a macro the text cannot expand (a name with a define beside its tag is
 # one) or that does not parse, a Source or
@@ -488,6 +490,8 @@ REF = re.compile(r"(?<!%)(?:%%)*%\{?[?!]*(\w+)")
 # is followed as one the line names.
 CHECKED_TAGS = {"name", "version", "release", "epoch"}
 TAG_LINE = re.compile(r"(?i)^\s*(name|version|release|epoch)\s*:(.*)$")
+# A Source or Patch file named by its number: %{SOURCE1}, %SOURCE1, %{S:1}, %{P:1}.
+SOURCE_REF = re.compile(r"SOURCE\d*\b|PATCH\d*\b|%\{?[SP]:")
 HOST = {}
 
 
@@ -746,7 +750,7 @@ def def_lines(lines):
     return out
 
 
-def spec_lines(text, host=None, target=None):
+def spec_lines(text, host=None, target=None, touched=()):
     """(tag, value, line) of each Source and Patch line, the spec's own plain
     %define/%global and Name, Version and URL put in as text; the line
     numbers of Source or Patch tags rpm may take that this reading does not
@@ -765,7 +769,11 @@ def spec_lines(text, host=None, target=None):
     that could define a macro, and every macro reachable from the line, followed
     through definitions, tag values and host bodies, is the host's, a tag rpm
     checks, or one of the spec's own defined by the same lines in both; a name
-    none of these, reached from the line or from the spec's own, is not."""
+    none of these, reached from the line or from the spec's own, is not. Nor
+    is a %% in the line, a definition or a tag value it reaches (rpm expands a
+    %global, an %{expand:} or a tag twice), nor, while touched (the changed
+    archives a Source bump exempts) is not empty, a line that or whose reach
+    names one of them, or a Source or Patch by its number."""
     lines = text.split("\n")
     inner = set()
     for line in lines:
@@ -798,7 +806,7 @@ def spec_lines(text, host=None, target=None):
                 return False
             # (name, strict): a name none of the spec's, the host's or a checked
             # tag's is no answer, but where a host body names it, the host's own
-            todo, seen = [(k, True) for k in REF.findall(whole)], set()
+            todo, seen, texts, bodies = [(k, True) for k in REF.findall(whole)], set(), [whole], []
             while todo:
                 k, strict = todo.pop()
                 if (k, strict) in seen or k in DIRECTIVES:
@@ -807,14 +815,21 @@ def spec_lines(text, host=None, target=None):
                 if k in own:
                     if sdefs.get(k) != tdefs.get(k):
                         return False
+                    texts += sdefs.get(k, [])
                     todo += [(r, True) for d in sdefs.get(k, []) for r in REF.findall(d)]
                 elif k in CHECKED_TAGS:
+                    texts += tagvals.get(k, [])
                     todo += [(r, True) for v in tagvals.get(k, []) for r in REF.findall(v)]
                 elif k in table:
+                    bodies.append(table[k][2])
                     todo += [(r, False) for r in REF.findall(table[k][2])]
                 elif strict:
                     return False
-            return True
+            if any("%%" in t for t in texts):
+                return False
+            # a host body's %% is the host's own, but a file it names counts too
+            texts += bodies
+            return not touched or not any(SOURCE_REF.search(t) or any(n in t for n in touched) for t in texts)
 
     defs, tags, out, untaken, made, split, depth, pre, cont = {}, {}, [], [], [], [], 0, True, False
     for n, line in enumerate(lines, 1):
@@ -1122,22 +1137,31 @@ def analyze(f, src, base, target_exists, tmp, lfs):
                 olds[(n, tag_key(tag))] = v
     # A host macro may read any file of the package (%kernel_module_package -p, a
     # %{SOURCE} it cats): a line passes as it stands in the target's spec only while
-    # the change touches nothing but the specs, their .changes, and the archives a
-    # Source URL names whose bytes are checked against it here.
-    checked = {
-        local_name(v)
-        for n in specs(src)
-        for _, v, _ in spec_lines(text_of(src, n))[0]
-        if is_url(v) and "%" not in v and target_exists and host_of(v) in hosts
-    }
+    # the change touches nothing but the specs, their .changes, and archives a Source
+    # bump names: a Source tag the target's spec has, its URL the target's but for
+    # digits, its host one the target uses, the file its path's last part (no #/),
+    # its bytes checked against it here. Never a Patch or a new tag; and same()
+    # refuses a line that names such an archive.
+    bumped, other_tag = set(), set()
+    for n in specs(src):
+        for tag, v, _ in spec_lines(text_of(src, n))[0]:
+            old = olds.get((n, tag_key(tag)))
+            if (
+                tag_key(tag)[0] == "source" and old is not None and digits(old) == digits(v)
+                and is_url(v) and "%" not in v and "#" not in v and target_exists and host_of(v) in hosts
+            ):
+                bumped.add(local_name(v))
+            else:
+                other_tag.add(local_name(v) if is_url(v) else v)
+    bumped -= other_tag
     others = [
         n for n in changed
-        if n not in removed and n not in checked and ("/" in n or not n.endswith((".spec", ".changes")))
+        if n not in removed and n not in bumped and ("/" in n or not n.endswith((".spec", ".changes")))
     ]
     for n in read(src):
         if n in specs(src):
             theirs = text_of(base, n) if n in base.files and not others else None
-            found, untaken, made, split = spec_lines(text_of(src, n), host=host_table, target=theirs)
+            found, untaken, made, split = spec_lines(text_of(src, n), host=host_table, target=theirs, touched=bumped & set(changed))
             if made and others and n in base.files:
                 f.info.append("host macros: no line of %s passes as it stands in the target's spec, since the change also touches %s" % (n, ", ".join(map(shown, others[:4]))))
         else:
