@@ -731,8 +731,23 @@ fresh host-own-through-tag; addlines both '%requires_eq foo-%{release}'
 sed -i 's/^Release:.*/Release:        0%{rsuffix}/' "$D/src/foo.spec" "$D/tgt/foo.spec"
 sed -i '/^Version:/a %define rsuffix .a' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define rsuffix .a';id;'" "$D/src/foo.spec"; fix
 refused host-own-through-tag PASS "foo.spec line 4: a preamble line a macro of the spec"
+# rpm expands a %global, an %{expand:} and a tag twice: %% there, or in the line, is live.
+fresh host-escaped-global; addlines both '%global libname libfoo%%{sover}' '%requires_eq %{libname}'
+sed -i '/^Version:/a %define sover 1' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define sover 1';id;'" "$D/src/foo.spec"; fix
+refused host-escaped-global PASS "foo.spec line 5: a preamble line a macro of the spec"
+fresh host-escaped-expand; addlines both '%define libname %{expand:libfoo%%{sover}}' '%requires_eq %{libname}'
+sed -i '/^Version:/a %define sover 1' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define sover 1';id;'" "$D/src/foo.spec"; fix
+refused host-escaped-expand PASS "foo.spec line 5: a preamble line a macro of the spec"
+fresh host-escaped-tag; addlines both '%requires_eq foo-%{release}'
+sed -i 's/^Release:.*/Release:        0%%{rsuffix}/' "$D/src/foo.spec" "$D/tgt/foo.spec"
+sed -i '/^Version:/a %define rsuffix .a' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define rsuffix .a';id;'" "$D/src/foo.spec"; fix
+refused host-escaped-tag PASS "foo.spec line 4: a preamble line a macro of the spec"
+fresh host-escaped-line; addlines both '%requires_eq foo%%{sover}'
+sed -i '/^Version:/a %define sover 1' "$D/tgt/foo.spec"; sed -i "/^Version:/a %define sover 1';id;'" "$D/src/foo.spec"; fix
+refused host-escaped-line PASS "foo.spec line 4: a preamble line a macro of the spec"
 # A host macro may read any file of the package: a line passes as it stands only
-# while the change touches nothing but the spec, its .changes and checked archives.
+# while the change touches nothing but the spec, its .changes and the archives of a
+# Source tag the target's spec has, bumped in its URL's digits alone.
 fresh host-kmp-preamble; addlines both '%kernel_module_package -p %name-preamble'
 printf 'Requires: bar\n' > "$D/tgt/foo-preamble"; printf 'Requires: bar\nSource99: https://evil.example/x.tar.gz\n' > "$D/src/foo-preamble"; fix
 refused host-kmp-preamble PASS "$MADE"
@@ -741,6 +756,30 @@ grep -qF "host macros: no line of foo.spec passes as it stands in the target's s
 fresh host-kmp-preamble-same; addlines both '%kernel_module_package -p %name-preamble'
 for s in src tgt; do printf 'Requires: bar\n' > "$D/$s/foo-preamble"; done; fix
 recorded host-kmp-preamble-same PASS
+# preamble <case> <line> <tgt Source1 or -> <src Source1 or Patch9 line> <URL served>:
+# the kmp line in both specs, foo-preamble changed to add a tag, served at the URL
+preamble() {
+  fresh "$1"; addlines both "$2"
+  [ "$3" = - ] || sed -i "/^Source0:/a $3" "$D/tgt/foo.spec"
+  sed -i "/^Source0:/a $4" "$D/src/foo.spec"
+  printf 'Requires: bar\n' > "$D/tgt/foo-preamble"; printf 'Requires: bar\nSource99: https://evil.example/x.tar.gz\n' > "$D/src/foo-preamble"
+  cp "$D/src/foo-preamble" "$D/net/$(fk "$5")"; fix
+}
+KMP='%kernel_module_package -p %name-preamble'
+U=https://example.org/files
+preamble host-preamble-new-source "$KMP" - "Source1:        $U/foo-preamble" "$U/foo-preamble"
+refused host-preamble-new-source PASS "$MADE"
+preamble host-preamble-patch "$KMP" - "Patch9:         $U/notes.txt#/foo-preamble" "$U/notes.txt"
+refused host-preamble-patch PASS "$MADE"
+preamble host-preamble-fragment "$KMP" "Source1:        $U/1.0/notes.txt#/foo-preamble" "Source1:        $U/1.1/notes.txt#/foo-preamble" "$U/1.1/notes.txt"
+refused host-preamble-fragment PASS "$MADE"
+preamble host-preamble-named '%kernel_module_package -p foo-preamble' "Source1:        $U/1.0/foo-preamble" "Source1:        $U/1.1/foo-preamble" "$U/1.1/foo-preamble"
+refused host-preamble-named PASS "$MADE"
+preamble host-preamble-by-number '%source_reader -p x' "Source1:        $U/1.0/foo-preamble" "Source1:        $U/1.1/foo-preamble" "$U/1.1/foo-preamble"
+refused host-preamble-by-number PASS "$MADE"
+# A version bump of a Source tag the target's spec has, named by nothing the line reaches.
+preamble host-preamble-bumped "$KMP" "Source1:        $U/1.0/foo-preamble" "Source1:        $U/1.1/foo-preamble" "$U/1.1/foo-preamble"
+recorded host-preamble-bumped PASS
 # rpm failed, listed nothing, or listed less than it counted: no host macro takes
 # arguments, and the output says why.
 hostfail() {   # hostfail <case> <why>
@@ -752,7 +791,7 @@ fresh host-rpm-failed; addlines both '%requires_eq foo'; : > "$D/rpm/fail"; fix
 hostfail host-rpm-failed "rpm %dump failed (1): error: fake rpm failed"
 fresh host-rpm-empty; addlines both '%requires_eq foo'; printf '========================\n======================== active 0 empty 0\n' > "$D/rpm/dump"; fix
 hostfail host-rpm-empty "rpm's %dump listed nothing"
-fresh host-rpm-short; addlines both '%requires_eq foo'; sed -i '/active 14 empty/d' "$D/rpm/dump"; fix
+fresh host-rpm-short; addlines both '%requires_eq foo'; sed -i '/active 15 empty/d' "$D/rpm/dump"; fix
 hostfail host-rpm-short "rpm's %dump listed nothing, or not every macro whole"
 
 # A name both defined and set by its tag is not sure: rpm takes the later one.
