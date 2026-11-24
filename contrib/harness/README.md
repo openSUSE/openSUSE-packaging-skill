@@ -1004,7 +1004,14 @@ These bypasses stay open on purpose, each an agent's deliberate act:
 - a git alias that pushes (`git -c alias.pp=push pp …`, or one in the repository's
   config) is not read as a push;
 - `HOME=…` or `XDG_CONFIG_HOME=…` pointing at a gitconfig whose `pushInsteadOf` rewrites
-  the remote's URL moves a push the guard judged by the configured URL.
+  the remote's URL moves a push the guard judged by the configured URL;
+- text the shell runs but the guard never parses: `${x@P}` on a variable holding `$(…)`,
+  `PS4=…` under `bash -x`, `PROMPT_COMMAND=…` in an interactive shell;
+- an arithmetic context the scan does not name (a substring offset `${s:y}`) or allexport
+  turned on by `shopt -o allexport` sets a variable named at run time;
+- the incoming-review agent may write files through a redirect, a shell startup file
+  among them (`~/.bash_profile`, `$ZDOTDIR/.zshenv`), which a later `bash -l` or `zsh`
+  runs unread.
 
 ## The bugzilla hand-back guard
 
