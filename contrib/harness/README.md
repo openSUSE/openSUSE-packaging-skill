@@ -531,11 +531,12 @@ session. It asks before:
   Anything else there asks, as someone else's item on `pool/<pkg>` always does. A FILE the
   same call writes, or one whose path or a link on the way passes through `/proc` or `/dev`
   (`/proc/self/cwd` is the guard's own directory, not the shell's), cannot be read now and
-  is refused, for osc's `-c` too; a relative FILE is placed in the event's directory.
-  Only the plain form is judged: `--login src.opensuse.org`, a literal `--repo owner/name` that is no local path (tea reads
-  one as a checkout), no other option, and the tea command alone in the call with nothing
-  for the shell to expand outside quotes; anything else asks, because tea's own remote and
-  login choice can point elsewhere. GitHub (`gh`) is not
+  is refused, for osc's `-c` too; a relative FILE is joined to the event's directory as the
+  kernel resolves it, so a `..` after a link climbs from where the link leads.
+  Only the plain form is judged: `--login src.opensuse.org`, a literal `--repo owner/name`
+  that is no local path (tea reads one as a checkout), no other option, and the tea command
+  alone in the call with nothing for the shell to expand outside quotes; anything else
+  asks, because tea's own remote and login choice can point elsewhere. GitHub (`gh`) is not
   judged, so reviews on your own GitHub projects run;
 - **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
   (also `rq` and `review`) `decline` and `approvenew`; the `accept` and `approve` of a
@@ -596,12 +597,16 @@ and that agent may not parse, build or service-run the submission (the rpm tools
 build`, `osc service`, `osc co`/`up` with the services, `osc commit`, which runs the local
 ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor accept, approve,
 comment or decline. Any shell text of that agent (its command, a script it runs, an `eval`
-or `trap` string) that names `PATH` as a word or a variable, `BASH_ENV`, `ENV=`, the `hash`
-builtin, or a nameref (`declare -n`, `local -n`, `typeset -n`) is refused whatever it does
-with them: the guard looks command names up on its own `PATH`, and the forms that change
-the lookup are too many to match one by one. A search for such a word takes its pattern
-from a file (`grep -f FILE`). On opencode 1.x no review of a contributor's submission
-records.
+or `trap` string), as written, with its quotes dropped or brace-expanded, that names `PATH`
+as a word or a variable, `BASH_ENV`, `ENV=`, `PS4` (`bash -x` runs its substitutions), the
+`hash` builtin, or a nameref (`declare -n`, `local -n`, `typeset -n`) is refused whatever
+it does with them: the guard looks command names up on its own `PATH`, and the forms that
+change the lookup are too many to match one by one. So is a command of that agent that
+sets a variable by a name it does not write out (`export "$x=…"`, `printf -v "$x"`, `read
+"$x"`, `declare "${x}=…"`, `env "$x=…"`, `mapfile`, `let`), whose command word only the
+shell knows (`$x -p …`), or that sources a file (`source`, `.`). A search for such a word
+takes its pattern from a file (`grep -f FILE`). On opencode 1.x no review of a
+contributor's submission records.
 
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
@@ -908,15 +913,17 @@ create must be refused too, the `AI/zzz` create must run, and so must
   git command is refused as unplaced.
 - A push is judged where git runs (`-C`, with its `-c` and `--git-dir` options) and, when
   `GIT_DIR` or `GIT_WORK_TREE` is assigned on the git command itself (`GIT_DIR=… git push`,
-  nothing between them but other assignments), also where that places it, `~` and `$PWD`
-  expanded as bash does; where git runs counts then only when a repository is there. It is
-  refused when either place heads a pool PR or a value cannot be read. Any other form of
-  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or a `GIT_CONFIG*` variable in the call's
-  text -- before `env`, `exec`, `sudo`, a wrapper or a function, exported, unset, read into,
-  declared, a loop name, `let`, `((…))`, a subscript, a nameref's target, a word that only
-  mentions it (a commit message) -- refuses every push in the call (`[push-unknown]`); a
-  `$NAME` or `${NAME}` read does not count. A name built at run time (`${p}DIR`) is not
-  seen.
+  nothing between them but other assignments), also where that places it, `~`, `~+` and
+  `$PWD` expanded as bash does (`~-` and a `~user` the guard cannot expand refuse); where
+  git runs counts then only when a repository is there. It is refused when either place
+  heads a pool PR or a value cannot be read. Any other form of `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR` or a `GIT_CONFIG*` variable in the call's text, brace-expanded -- before
+  `env`, `exec`, `sudo`, a wrapper or a function, exported, unset, read into, declared, a
+  loop name, `let`, `((…))`, a subscript, a nameref's target, a word that only mentions it
+  (a commit message) -- refuses every push in the call (`[push-unknown]`); a `$NAME` or
+  `${NAME}` read does not count. So does any variable the call sets by a name it does not
+  write out (`export "GIT_$v=…"`, `env "$(printf …)=…"`, `printf -v "$x"`, `read "$x"`,
+  `xargs -I{} env {}=…`), wherever it stands in the call.
 - A path to the state directory the call holds only in a file it reads at run time
   (`read -r D < FILE`, `xargs` fed by `cat FILE`, a script run by `python3 -c
   'exec(open(…))'`, `runpy`, `python3 -m` or `make -f`) is not seen, nor one the call
@@ -981,7 +988,13 @@ These bypasses stay open on purpose, each an agent's deliberate act:
 - a command word holding a glob (`/usr/bin/os? rq accept …`) is judged as written, not as
   the program the shell expands it to;
 - a comment's `"$(cat FILE)"` is read when the guard judges the call; a FILE swapped
-  before `cat` reads it (by a process the call does not start) posts the new text.
+  before `cat` reads it (by a process the call does not start) posts the new text;
+- a push is judged as git itself would make it: a shell function named `git`, or a script
+  named `git` the command runs (`/var/tmp/x/git push …`), pushes what it likes;
+- a git alias that pushes (`git -c alias.pp=push pp …`, or one in the repository's
+  config) is not read as a push;
+- `HOME=…` or `XDG_CONFIG_HOME=…` pointing at a gitconfig whose `pushInsteadOf` rewrites
+  the remote's URL moves a push the guard judged by the configured URL.
 
 ## The bugzilla hand-back guard
 

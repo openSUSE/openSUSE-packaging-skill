@@ -78,6 +78,10 @@ clone_ "$work/tokened" leap-16.0 "origin=https://user:tok3n@${F#https://}/pool/x
 # literal ~ directory inside other/ leads to the harmless clone instead.
 ln -s "$work/clone" "$HOME/prclone"; ln -s "$work/other" "$HOME/otherclone"
 mkdir -p "$work/other/~" && ln -s "$work/other" "$work/other/~/prclone"
+# ~+ is the working directory, other/, whose clonelink is the PR-head clone; a
+# literal ~+ directory leads back to other/.
+ln -s "$work/clone" "$work/other/clonelink"
+mkdir -p "$work/other/~+" && ln -s "$work/other" "$work/other/~+/clonelink"
 
 # A skill checkout whose pool-pr.sh stand-in, a target-gate.sh it would run and
 # another script are committed and merged (origin/main, the pinned ref); the
@@ -459,6 +463,16 @@ done
 case_ push-common-dir           2 push-unknown "GIT_COMMON_DIR is set in the call"
 case_ push-common-dir-head      2 push-unknown "GIT_COMMON_DIR is set in the call"
 case_ push-config-env           2 push-unknown "GIT_CONFIG_COUNT is set in the call"
+# A variable set by a name not written out (GIT_$v, a brace, a substitution, xargs'
+# env {}=) may be GIT_DIR: every push in that call is refused, one run before it too.
+for name in push-dyn-var-export push-dyn-brace-export push-dyn-printf-env push-dyn-var-env \
+    push-dyn-xargs-env push-dyn-append push-dyn-loop-after; do
+  case_ "$name" 2 push-unknown "sets a variable whose name only the shell knows"
+done
+case_ push-git-dir-read         0 - ""
+# ~+ is the call's directory; ~- and a ~ form expanduser() leaves are not read.
+case_ push-git-dir-tilde-plus   2 push-pr-head "pool/tesseract-ocr#3"
+case_ push-git-dir-tilde-minus  2 push-unknown "GIT_DIR is set to a value the guard cannot read"
 case_ push-bash-c               2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-shell-heredoc        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-substitution         2 push-pr-head "pool/tesseract-ocr#3"
@@ -2064,6 +2078,9 @@ case_ comment-tea-file-proc-cwd 2 bot-directive-unknown "cannot read the tea com
 case_ comment-tea-file-proc-link 2 bot-directive-unknown "cannot read the tea comment body" -C "$W"
 case_ comment-osc-file-proc-cwd 2 bot-directive-unknown "cannot read the osc comment create body" -C "$W"
 case_ comment-osc-file-stamped  0 - ""
+# A .. after a link in the event's directory climbs from where the link leads, as cat's.
+ask_ comment-tea-file-dotdot    comment "tea comment: incorg/incgit#12 by contrib: not the comment its review recorded"
+ask_ comment-osc-file-dotdot    comment "osc comment create: request 1391001 by contrib: not the comment its review recorded"
 case_ comment-from-reviewer-agent 2 incoming-self "osc comment create from agent incoming-review"
 # An accepted FIXABLE review asks before the Factory forward until devel holds the
 # follow-up, or Factory already holds what was accepted (a _link, and what OBS adds to
@@ -2143,6 +2160,20 @@ case_ reviewer-path-env         2 incoming-self "ENV= from agent incoming-review
 case_ reviewer-path-main        0 - ""
 case_ reviewer-path-subscript-main 0 - ""
 case_ reviewer-hash-main        0 - ""
+# Nor a name it builds or brace-expands, a command word only the shell knows, a file it
+# sources, or PS4, whose substitutions bash -x runs.
+for name in reviewer-path-built-printf reviewer-path-built-read reviewer-path-built-export; do
+  case_ "$name" 2 incoming-self "x from agent incoming-review"
+done
+case_ reviewer-path-built-declare 2 incoming-self "x} from agent incoming-review"
+case_ reviewer-path-brace-export 2 incoming-self "PATH from agent incoming-review"
+case_ reviewer-path-brace-declare 2 incoming-self "PATH from agent incoming-review"
+case_ reviewer-path-source      2 incoming-self "source from agent incoming-review"
+case_ reviewer-path-dot         2 incoming-self ". from agent incoming-review"
+case_ reviewer-path-built-hash  2 incoming-self "the command word"
+case_ reviewer-path-ps4         2 incoming-self "PS4 from agent incoming-review"
+case_ reviewer-path-built-main  0 - ""
+case_ reviewer-path-brace-main  0 - ""
 
 echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
 # script's -c in a cluster, attached, by a prefix of --command or after its file; chrt's
