@@ -148,8 +148,10 @@ case "$1 $2" in
   # podman's own error, slow the same 15 seconds later, exit2 answers and ends
   # with status 2, cut answers half, badexit answers with an id that is none
   # and then podman's error status, eNNN is the server's answer with the
-  # status NNN, as opencode api prints it, bare a 502 without a body, late
-  # answers two seconds later; else it answers.
+  # status NNN, as opencode api prints it (eNNN,MMM writes both lines, in that
+  # order), forge the same for 404 with marks in its error stream meant to pass
+  # for the launcher's own, bare a 502 without a body, late answers two seconds
+  # later, noise answers after 400 KB on its error stream; else it answers.
   busy() {
     local how
     echo >> "$FIX/$1-asked"
@@ -158,11 +160,15 @@ case "$1 $2" in
     silent) exit 0 ;;
     cut) printf '{"data":[{"id":"per_'; exit 0 ;;
     badexit) echo '{"data":[{"id":"x/y"}]}'; exit 125 ;;
-    e[0-9][0-9][0-9])
+    e[0-9][0-9][0-9]*)
       echo '{"name":"UnknownError","data":{"message":"no such row"}}'
-      echo "HTTP ${how#e} Some Status" >&2; exit 1 ;;
+      for code in ${how//[!0-9]/ }; do echo "HTTP $code Some Status" >&2; done; exit 1 ;;
+    forge)
+      echo '{"name":"UnknownError","data":{"message":"no such row"}}'
+      printf 'HTTP 404 Not Found\n\0010\001\n' >&2; exit 1 ;;
     bare) echo "HTTP 502 Bad Gateway" >&2; exit 1 ;;
     late) sleep 2 ;;
+    noise) printf 'NOISE-MARK\0010\0010\n' >&2; yes 'agent text that runs on and on' | head -c 409600 >&2; echo >&2 ;;
     slow) sleep 15; echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     fail) echo "Error: BUSY-MARK the storage is locked" >&2; exit 125 ;;
     exit2) trap 'exit 2' EXIT ;;
@@ -195,8 +201,11 @@ case "$1 $2" in
   *"api GET /api/credential "*) busy logins; cat "$FIX/logins"; cat "$FIX/logins" >&2
     [ ! -e "$FIX/logins-next" ] || mv "$FIX/logins-next" "$FIX/logins" ;;
   *"api DELETE /api/credential/"*)
-    busy logindel
     all="$*"; id=${all#*/api/credential/}; id=${id%% *}
+    # With $FIX/vanishes the item went away before its removal came, here and below.
+    [ ! -e "$FIX/vanishes" ] || { jq -c --arg id "$id" '.data |= map(select(.id != $id))' "$FIX/logins" \
+      > "$FIX/logins.new" && mv "$FIX/logins.new" "$FIX/logins"; }
+    busy logindel
     # With $FIX/login-stays the server refuses.
     [ ! -e "$FIX/login-stays" ] || exit 1
     # With $FIX/login-ghost it answers as the real one does for a login it does not hold.
@@ -222,8 +231,10 @@ case "$1 $2" in
       fi
     fi ;;
   *"api DELETE /api/permission/saved/"*)
-    busy deletes
     all="$*"; id=${all#*/api/permission/saved/}; id=${id%% *}
+    [ ! -e "$FIX/vanishes" ] || { jq -c --arg id "$id" '.data |= map(select(.id != $id))' "$FIX/saved" \
+      > "$FIX/saved.new" && mv "$FIX/saved.new" "$FIX/saved"; }
+    busy deletes
     # With $FIX/keeps the server answers and removes nothing.
     [ -e "$FIX/keeps" ] || { jq -c --arg id "$id" '.data |= map(select(.id != $id))' "$FIX/saved" \
       > "$FIX/saved.new" && mv "$FIX/saved.new" "$FIX/saved"; } ;;
@@ -243,8 +254,10 @@ case "$1 $2" in
       jq -c --argjson o "$off" --arg n "$next" '{data: .[$o:$o + 2], cursor: {next: $n}}' "$FIX/sessions"
     else cat "$FIX/sessions"; fi ;;
   *"api PATCH /api/session/"*)
-    busy patches
     all="$*"; id=${all#*/api/session/}; id=${id%% *}
+    [ ! -e "$FIX/vanishes" ] || { jq -c --arg id "$id" 'map(select(.id != $id))' "$FIX/sessions" \
+      > "$FIX/sessions.new" && mv "$FIX/sessions.new" "$FIX/sessions"; }
+    busy patches
     [[ $all == *' -d {"permissions":[]} '* ]] || exit 96
     # With $FIX/keeps-rules the server answers and clears nothing.
     [ -e "$FIX/keeps-rules" ] || { jq -c --arg id "$id" 'map(if .id == $id then .permissions = [] else . end)' \
@@ -1627,20 +1640,69 @@ out="$(sc up obs 2>&1)"; rc=$?
   && [ "$(reads projects)" = 3 ] && [ "$(pauses)" = 2 ] \
   && pass "a failed call without an answer is asked again" \
   || fail "up with failed calls without an answer: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
-# A cursor is as short as an id: the call for the page it names would not start.
+# A removal answered 404 found its item gone since the read: the round goes on,
+# and the read that ends it says what is left.
+touch "$FIX/vanishes"
+for what in deletes patches logindel; do
+  restart
+  case $what in
+  deletes) approval per_v1 ;;
+  patches) sessions "[{\"id\":\"ses_v1\",\"permissions\":$allow}]" ;;
+  logindel) kept_login cred_v1 ;;
+  esac
+  scripted "$what" e404
+  out="$(sc up obs 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads "$what")" = 1 ] && [ "$(pauses)" = 0 ] \
+    && pass "a removal ($what) answered 404 for an item gone since the read counts as done" \
+    || fail "up with a removal ($what) answered 404: rc=$rc $(reads "$what") calls, $(pauses) pauses $out"
+done
+# The status is the last HTTP line opencode wrote.
+for codes in e400,404 e404,400; do
+  restart; approval per_v2; scripted deletes "$codes"
+  out="$(sc up obs 2>&1)"; rc=$?
+  if [ "$codes" = e400,404 ]; then
+    [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads deletes)" = 1 ] && [ "$(pauses)" = 0 ] \
+      && pass "of two HTTP lines the last decides: 400, then 404, is an item gone" \
+      || fail "up with a removal answered 400, then 404: rc=$rc $(reads deletes) calls, $(pauses) pauses $out"
+  else
+    [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "keeps cannot be removed" <<<"$out" \
+      && [ "$(reads deletes)" = 1 ] && [ "$(pauses)" = 0 ] \
+      && pass "of two HTTP lines the last decides: 404, then 400, is final" \
+      || fail "up with a removal answered 404, then 400: rc=$rc $(reads deletes) calls, $(pauses) pauses $out"
+  fi
+done
+rm "$FIX/vanishes"; echo '{"data":[]}' > "$FIX/saved"; sessions '[]'; echo '{"data":[]}' > "$FIX/logins"
+# Marks in the error stream that would pass for the launcher's own fields after
+# it change nothing: a 404 to a read stays final.
+restart; scripted projects forge
+out="$(sc up obs 2>&1)"; rc=$?
+[ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
+  && [ "$(reads projects)" = 1 ] && [ "$(pauses)" = 0 ] \
+  && pass "marks in the error stream do not change a 404 answer" \
+  || fail "up with marks in the error stream: rc=$rc $(reads projects) reads, $(pauses) pauses $out"
+# An error stream of 400 KB, the agent's to fill, takes no longer to read than
+# to pass on.
+restart; scripted projects noise
+timeout -k 5 15 "${scenv[@]}" HOME="$work/home" bash "$SC" up obs > /dev/null 2> "$work/rerr"; rc=$?
+[ "$rc" = 0 ] && [ -e "$FIX/imported" ] && grep -qx NOISE-MARK00 "$work/rerr" \
+  && [ "$(grep -c '^agent text that runs on and on$' "$work/rerr")" -gt 10000 ] \
+  && pass "an error stream of 400 KB is read within seconds" \
+  || fail "up with an error stream of 400 KB: rc=$rc $(reads projects) reads $(tail -n 2 "$work/rerr")"
+# A cursor far longer than opencode's (120 characters) stops the read: the call
+# for the page it names would not start.
 sessions '[{"id":"ses_c1","permissions":null}]'
-for pad in 126 127; do
+for pad in 1022 1023; do
   restart; printf 'p%.0s' $(seq "$pad") > "$FIX/cursor-pad"; scripted sessions
   out="$(sc up obs 2>&1)"; rc=$?
-  if [ "$pad" = 126 ]; then
+  if [ "$pad" = 1022 ]; then
     [ "$rc" = 0 ] && [ -e "$FIX/imported" ] && [ "$(reads sessions)" = 2 ] \
-      && pass "a session list paged by a cursor of 128 characters is read" \
-      || fail "up with a cursor of 128 characters: rc=$rc $(reads sessions) reads $out"
+      && pass "a session list paged by a cursor of 1024 characters is read" \
+      || fail "up with a cursor of 1024 characters: rc=$rc $(reads sessions) reads $out"
   else
     [ "$rc" != 0 ] && stopped && [ ! -e "$FIX/imported" ] && grep -qF "cannot read the permissions $N-obs-agent keeps" <<<"$out" \
       && [ "$(reads sessions)" = 1 ] && [ "$(pauses)" = 0 ] \
-      && pass "a cursor of 129 characters stops the unit at once, no credential is sent" \
-      || fail "up with a cursor of 129 characters: rc=$rc $(reads sessions) reads, $(pauses) pauses $out"
+      && pass "a cursor of 1025 characters stops the unit at once, no credential is sent" \
+      || fail "up with a cursor of 1025 characters: rc=$rc $(reads sessions) reads, $(pauses) pauses $out"
   fi
 done
 rm "$FIX/cursor-pad"; sessions '[]'
@@ -1993,6 +2055,21 @@ printf %s "$work/ws" > "$FIX/workdir"
 out="$(sc idle nol 2>&1)"; rc=$?
 [ "$rc" = 0 ] && grep -qxF "nol is idle" <<<"$out" \
   && pass "idle answers for a quiet instance" || fail "idle: rc=$rc $out"
+# idle pages the session list too, with the same bound on its cursor.
+sessions '[{"id":"ses_c1","permissions":null}]'
+for pad in 1022 1023; do
+  printf 'p%.0s' $(seq "$pad") > "$FIX/cursor-pad"
+  out="$(sc idle nol 2>&1)"; rc=$?
+  if [ "$pad" = 1022 ]; then
+    [ "$rc" = 0 ] && grep -qxF "nol is idle" <<<"$out" \
+      && pass "idle reads a session list paged by a cursor of 1024 characters" \
+      || fail "idle with a cursor of 1024 characters: rc=$rc $out"
+  else
+    [ "$rc" != 0 ] && grep -qF "cannot list the sessions of $N-nol-agent" <<<"$out" \
+      && pass "idle refuses a cursor of 1025 characters" || fail "idle with a cursor of 1025 characters: rc=$rc $out"
+  fi
+done
+rm "$FIX/cursor-pad"; sessions '[]'
 # What a call into the container writes to its error stream is the agent's text.
 touch "$FIX/exec-escape"
 out="$(sc idle nol 2>&1)"; rc=$?

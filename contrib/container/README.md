@@ -283,8 +283,9 @@ boundary between the agent and what is inside the container.
   lists, and stop when a list cannot be read or a rule stays, after trying again for up
   to five minutes in all, or 60 times each, and at once when a list holds a value that
   is no id (letters, digits and `_`, at most 128), the session list does not end or
-  names its next page with a cursor of more than 128 characters, or the server refuses
-  a request (4xx); a server error (5xx) is tried again. An approval of a project
+  names its next page with a cursor of more than 1024 characters, or the server refuses
+  a request (4xx); a server error (5xx) is tried again, and a removal answered 404
+  found its item gone already. An approval of a project
   the server does not list is found only by a query opencode does not document. That
   clears what was left behind. An agent set on keeping its rules puts them back: a
   database trigger writes them onto the next session.
