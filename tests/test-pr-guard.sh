@@ -377,6 +377,9 @@ for name, target in s["links"].items():
 put(os.path.join(work, "badhome", sd, "incoming", "obs", "1391099.json"), "{")
 put(os.path.join(work, "listless", sd, "incoming", "obs"), "not a directory\n")
 PY
+# A harmless prog.sh beside lnk, and through lnk's .. (deep/) one that pushes a PR head.
+printf 'echo hi\n' > "$W/prog.sh"
+printf 'git -C %s/clone push fork tess-88053-16.0\n' "$work" > "$W/deep/prog.sh"
 
 # ev <name>: the fixture event, placeholders filled in.
 ev() {
@@ -456,10 +459,13 @@ for name in push-git-dir-env push-git-dir-export push-git-dir-bash-c push-git-di
     push-git-dir-exec-c push-git-dir-exec push-git-dir-systemd-run push-git-dir-setpriv \
     push-git-dir-sudo push-git-dir-command push-git-dir-subshell-unset push-git-dir-cond-unset \
     push-git-dir-pipe-unset push-git-dir-func-export push-git-dir-func-prefix \
-    push-git-dir-loop-after push-git-dir-trap push-git-dir-nameref push-git-dir-declare-x \
-    push-git-dir-arith push-git-dir-let push-git-dir-subscript; do
+    push-git-dir-loop-after push-git-dir-trap push-git-dir-declare-x push-git-dir-subscript; do
   case_ "$name" 2 push-unknown "GIT_DIR is set in the call other than on the git command itself"
 done
+# A nameref or arithmetic refuses any push in its call (below), GIT_DIR named or not.
+case_ push-git-dir-nameref      2 push-unknown "the call holds a nameref"
+case_ push-git-dir-arith        2 push-unknown "the call holds an arithmetic context"
+case_ push-git-dir-let          2 push-unknown "the call holds an arithmetic context"
 case_ push-common-dir           2 push-unknown "GIT_COMMON_DIR is set in the call"
 case_ push-common-dir-head      2 push-unknown "GIT_COMMON_DIR is set in the call"
 case_ push-config-env           2 push-unknown "GIT_CONFIG_COUNT is set in the call"
@@ -473,6 +479,29 @@ case_ push-git-dir-read         0 - ""
 # ~+ is the call's directory; ~- and a ~ form expanduser() leaves are not read.
 case_ push-git-dir-tilde-plus   2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-git-dir-tilde-minus  2 push-unknown "GIT_DIR is set to a value the guard cannot read"
+# Ways to set a variable by a name the guard never sees refuse every push in the call:
+# a nameref, allexport, an arithmetic context, xargs, env given a word only the shell
+# knows. Without a push, as the main session's own arithmetic, they pass.
+for name in push-nameref-target push-nameref-for push-nameref-gn push-nameref-local \
+    push-nameref-typeset; do
+  case_ "$name" 2 push-unknown "the call holds a nameref"
+done
+for name in push-allexport-arith push-allexport-let push-allexport-test \
+    push-allexport-declare-i push-allexport-expansion push-allexport-subscript \
+    push-allexport-o; do
+  case_ "$name" 2 push-unknown "the call holds allexport"
+done
+for name in push-arith push-arith-test push-arith-declare-i push-arith-subscript; do
+  case_ "$name" 2 push-unknown "the call holds an arithmetic context"
+done
+case_ push-xargs-env-word       2 push-unknown "the call holds xargs"
+case_ push-env-dynamic-value    2 push-unknown "the call holds env with a word only the shell knows"
+case_ main-arith-no-push        0 - ""
+# A script read from a directory reached through a link: its .. is where bash finds it.
+for name in script-dotdot-pipe script-dotdot-stdin script-dotdot-run script-dotdot-source; do
+  case_ "$name" 2 push-pr-head "pool/tesseract-ocr#3"
+done
+case_ script-pipe-control       0 - ""
 case_ push-bash-c               2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-shell-heredoc        2 push-pr-head "pool/tesseract-ocr#3"
 case_ push-substitution         2 push-pr-head "pool/tesseract-ocr#3"
@@ -1419,7 +1448,7 @@ case_ var-doubling-message       2 request-message-unknown "\$V40"
 echo "--- a FIFO or device is refused, never read"
 case_ run-fifo                   2 exec-unreadable "not a regular file"
 case_ msg-fifo                   2 request-message-unknown "-F"
-case_ run-dev-stdin              2 exec-unreadable "not a regular file"
+case_ run-dev-stdin              2 exec-unreadable "through /proc, /dev or a link loop"
 case_ var-osc-path-sr-long       2 request-message "an osc sr message with 380 characters of prose"
 case_ var-osc-unset-ci-update    2 maintenance-commit "an osc commit into openSUSE:Backports:SLE-15-SP7:Update"
 case_ var-osc-unset-nodevel      2 nodevelproject "an osc request with --nodevelproject"
@@ -2174,6 +2203,16 @@ case_ reviewer-path-built-hash  2 incoming-self "the command word"
 case_ reviewer-path-ps4         2 incoming-self "PS4 from agent incoming-review"
 case_ reviewer-path-built-main  0 - ""
 case_ reviewer-path-brace-main  0 - ""
+# Nor an arithmetic context or allexport, which set a variable by a name it builds,
+# nor a shell's rc file (--rcfile, --init-file, -i), which runs unread.
+for name in reviewer-arith-paren reviewer-arith-let reviewer-arith-test \
+    reviewer-arith-declare-i reviewer-arith-subscript reviewer-arith-expansion; do
+  case_ "$name" 2 incoming-self "an arithmetic context from agent incoming-review"
+done
+case_ reviewer-allexport        2 incoming-self "allexport from agent incoming-review"
+case_ reviewer-rcfile           2 incoming-self "--rcfile"
+case_ reviewer-init-file        2 incoming-self "--init-file"
+case_ reviewer-bash-i           2 incoming-self "bash -i from agent incoming-review"
 
 echo "--- the command a wrapper runs is judged: fakeroot, strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter, setpriv, script -c"
 # script's -c in a cluster, attached, by a prefix of --command or after its file; chrt's

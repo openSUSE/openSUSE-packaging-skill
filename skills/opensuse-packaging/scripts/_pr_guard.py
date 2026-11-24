@@ -673,8 +673,9 @@ MESSAGES = {
     "failed lookup may pass on a retry; a review record that does not read is the "
     "user's to repair or remove.",
     "incoming-path": "{0}: the guard looks command names up on its own PATH, so a "
-    "call of this agent that names PATH, BASH_ENV, ENV= or PS4, the hash builtin or "
-    "a nameref is refused, whatever it does with them, and so is one that sets a "
+    "call of this agent that names PATH, BASH_ENV, ENV= or PS4, the hash builtin, "
+    "a nameref, allexport, arithmetic or a shell's rc file is refused, whatever it "
+    "does with them, and so is one that sets a "
     "variable by a name it does not write out, runs a command word held in a "
     "variable or sources a file. Write every command out literally; a search for "
     "such a word takes its pattern from a file (grep -f FILE).",
@@ -834,6 +835,7 @@ class Ctx:
         self.texts = []  # every shell text judged: scripts, eval and trap strings
         self.dynamic = []  # the variables set by a name only the shell knows
         self.pushed = False  # a git push or send-pack was judged
+        self.push_word = False  # a command has the word push or send-pack
 
 
 def git(cwd, gargs, *args):
@@ -2385,24 +2387,31 @@ def reviewer_runs(name, run, ctx, cwd):
 
 # What can change the program a command name runs, named anywhere in a call:
 # PATH as a word or a variable, BASH_ENV, ENV=, the hash builtin, a nameref;
-# PS4, whose substitutions bash -x runs.
+# PS4, whose substitutions bash -x runs; a shell's rc file (--rcfile,
+# --init-file, -i), which it runs unread.
 LOOKUP_TEXT = Rx(
     r"(?<!\w)(?:PATH|BASH_ENV|PS4)(?!\w)|(?<![\w$])ENV\+?=|(?<![\w./-])hash(?![\w./-])"
     r"|(?<![\w-])(?:declare|local|typeset)[ \t](?:[^;&|\n]*[ \t])?-[A-Za-z]*n"
+    r"|--rcfile|--init-file|(?<![\w.-])(?:ba|da|k|z)?sh\s(?:[^;&|\n]*\s)?-[A-Za-z]*i"
 )
 
 
 def reviewer_text(text, ctx):
     """Refuse shell text of the incoming-review agent that names LOOKUP_TEXT
-    in any form, as written, with its quotes dropped or brace-expanded:
-    resolved() looks names up on the hook's own PATH, and that agent only
-    reads."""
+    in any form, as written, with its quotes dropped or brace-expanded, or
+    holds allexport or an arithmetic context (HIDDEN_SETS), which can set a
+    variable by a name it builds: resolved() looks names up on the hook's own
+    PATH, and that agent only reads."""
     if ctx.agent != INCOMING_AGENT:
         return
     for t in (text, flat(text), braced_text(flat(text))):
         m = LOOKUP_TEXT.search(t)
-        if m:
-            what = " ".join(m.group().split())
+        what = m and " ".join(m.group().split())
+        for label, rx in HIDDEN_SETS if not what else ():
+            if label in ("allexport", "an arithmetic context") and rx.search(t):
+                what = label
+                break
+        if what:
             block(
                 "incoming-self", f"{what} from agent {INCOMING_AGENT}", "incoming-path"
             )
@@ -5378,10 +5387,12 @@ def _substitute(word, ctx, cwd, seen, memo):
     return out if len(out) <= 64 else None
 
 
-def locate(raw, ctx, cwd):
+def locate(raw, ctx, cwd, normalise=True):
     """(paths, None) for the files a word names, globs expanded in cwd as the
     shell would; (None, why) when a literal path cannot be placed; (None, None)
-    when the word keeps something only the shell knows."""
+    when the word keeps something only the shell knows. normalise: drop . and
+    .. as text; without it only . goes, and a .. after a link stays for the
+    kernel's reading."""
     words = substitute(raw, ctx, cwd)
     if words is None:
         return None, None
@@ -5395,7 +5406,10 @@ def locate(raw, ctx, cwd):
                 return None, "the working directory is unknown"
             p = os.path.join(cwd, p)
         found = sorted(glob.glob(p)) if GLOB.search(p) else []
-        paths += [os.path.normpath(f) for f in found or [p]]
+        paths += [
+            os.path.normpath(f) if normalise else re.sub(r"/(?:\.(?:/|$))+", "/", f)
+            for f in found or [p]
+        ]
     return paths, None
 
 
@@ -5507,8 +5521,9 @@ def unread_why(real, skill, ctx, path):
 def scan_file(raw, kind, ctx, cwd, depth, env=(), run=False):
     """Read the scripts a word names when the command runs them; the command's
     own (depth 0) scripts must be readable now, or the call is refused. run:
-    executed by its path, which it then sees as $0."""
-    paths, why = locate(raw, ctx, cwd)
+    executed by its path, which it then sees as $0. A path is placed, not
+    normalised, and followed as the kernel does (reader_path())."""
+    paths, why = locate(raw, ctx, cwd, normalise=False)
     if paths is None:
         if depth == 0:
             if why:
@@ -5520,7 +5535,11 @@ def scan_file(raw, kind, ctx, cwd, depth, env=(), run=False):
 
 
 def scan_path(path, raw, kind, ctx, cwd, depth, env, run):
-    real = os.path.realpath(path)
+    real = reader_path(path)
+    if real is None:  # through /proc or /dev, or a link loop
+        if depth == 0:
+            block("exec-unreadable", f"{raw} (through /proc, /dev or a link loop)")
+        return
     if written(real, ctx):
         block("exec-written", raw)
     if os.path.isdir(real):
@@ -6232,13 +6251,72 @@ def tilde_value(v):
     return None if out == v else out
 
 
+# Shell text that can set or export a variable by a name the guard never sees:
+# a nameref, allexport, an arithmetic context, xargs (its words come from a
+# pipe), an env given a word only the shell knows. Read in each of the call's
+# texts with quotes dropped, brace-expanded.
+HIDDEN_SETS = (
+    (
+        "a nameref",
+        Rx(r"(?<![\w-])(?:declare|typeset|local)\s(?:[^;&|\n]*\s)?-[^\s;&|]*[n$`]"),
+    ),
+    (
+        "allexport",
+        Rx(
+            r"(?<![\w-])set\s(?:[^;&|\n]*\s)?"
+            r"(?:-[A-Za-z]*a|-o\s*allexport|[-+][^\s;&|]*[$`])"
+        ),
+    ),
+    (
+        "an arithmetic context",
+        Rx(
+            r"(?<![\w./-])let\s|\(\(|\$\[|\[\[[^\n]*?\s-(?:eq|ne|lt|le|gt|ge)\s"
+            r"|(?<![\w-])(?:declare|typeset|local)\s(?:[^;&|\n]*\s)?-[A-Za-z]*i"
+            r"|[A-Za-z_]\w*\[(?![0-9]*\]|[@*]\])[^\]\s]*\]"
+        ),
+    ),
+    ("xargs", Rx(r"(?<![\w.-])xargs(?![\w.-])")),
+    (
+        "env with a word only the shell knows",
+        Rx(r"(?:^|[\s;&|(])(?:\S*/)?env\s[^;&|\n]*[$`]"),
+    ),
+)
+
+
+def hidden_set(ctx, kinds=None):
+    """What of HIDDEN_SETS (only those labelled in kinds, if given) any of the
+    call's shell texts holds; None."""
+    for text in [ctx.command or "", *ctx.texts]:
+        t = braced_text(flat(text))
+        for what, rx in HIDDEN_SETS:
+            if (kinds is None or what in kinds) and rx.search(t):
+                return what
+    return None
+
+
+# The HIDDEN_SETS that can also hide the push itself from the parse: xargs runs
+# words from a pipe, env a word only the shell knows (env {} git push).
+PUSH_HIDERS = ("xargs", "env with a word only the shell knows")
+
+
 def push_dynamic(ctx):
     """Refuse a push in a call that sets a variable by a name not written out
-    (dynamic_target()): it may be GIT_DIR or kin, and re-target the push.
-    Checked at each push, and when the call is judged (a loop or a trap may
-    set it after the push runs)."""
+    (dynamic_target()), or whose text holds a way to (hidden_set()): it may be
+    GIT_DIR or kin, and re-target the push. A push the parse may not have seen
+    -- a command with the word push or send-pack -- is refused with xargs or
+    such an env alone. Checked at each push, and when the call is judged (a
+    loop or a trap may set it after the push runs)."""
     if ctx.pushed and ctx.dynamic:
         unsure(f"{ctx.dynamic[0]} sets a variable whose name only the shell knows")
+    what = (
+        hidden_set(ctx)
+        if ctx.pushed
+        else hidden_set(ctx, PUSH_HIDERS)
+        if ctx.push_word
+        else None
+    )
+    if what:
+        unsure(f"the call holds {what}, which may set GIT_DIR or kin unseen")
 
 
 def git_placements(before, ctx, cwd, shell_cwd, gargs):
@@ -7195,6 +7273,7 @@ def one_command(argv, redirs, stdin, ctx, cwd, depth, lit=(None, None)):
     dynamic = dynamic_target(first, argv, run, lit[0])
     if dynamic:  # a push anywhere in the call is refused (judge())
         ctx.dynamic.append(dynamic)
+    ctx.push_word = ctx.push_word or bool({"push", "send-pack"} & set(argv))
     if not run and shell is None:
         # Assignments alone: the shell keeps them, and its children see those
         # of names already in the environment.

@@ -384,6 +384,167 @@
     },
     "cwd": "@OTHER@"
   },
+  "push-nameref-target": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; declare -n R=$x; R=@CLONE@/.git; export R; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-nameref-for": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; declare -n R; for R in $x; do export R=@CLONE@/.git; done; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-nameref-gn": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; declare -gn R=$x; R=@CLONE@/.git; export R; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-nameref-local": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; f() { local -n R=$x; R=@CLONE@/.git; export R; git push fork tess-88053-16.0; }; f"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-nameref-typeset": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; typeset -n R=$x; R=@CLONE@/.git; export R; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-arith": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; set -a; (( $x = 5 )); git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-let": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; y=$x=5; set -a; let y; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-test": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; y=$x=5; set -a; [[ $y -eq 5 ]]; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-declare-i": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; y=$x=5; set -a; declare -i n; n=y; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-expansion": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; set -a; : $(( $x = 5 )); git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-subscript": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; set -a; a[$x=5]=1; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-allexport-o": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "set -o allexport; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-arith": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; (( $x = 5 )); git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-arith-test": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; y=$x=5; [[ $y -eq 5 ]]; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-arith-declare-i": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "declare -i n; n=1; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-arith-subscript": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=GIT_D; x+=IR; a[$x=5]=1; git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-xargs-env-word": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "printf 'GIT_%s=%s\\n' DIR @CLONE@/.git | xargs -I{} env {} git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "push-env-dynamic-value": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "v=1; env FOO=\"$v\" git push fork tess-88053-16.0"
+    },
+    "cwd": "@OTHER@"
+  },
+  "script-dotdot-pipe": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat ../prog.sh | bash"
+    },
+    "cwd": "@WORK@/lnk"
+  },
+  "script-dotdot-stdin": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash < ../prog.sh"
+    },
+    "cwd": "@WORK@/lnk"
+  },
+  "script-dotdot-run": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash ../prog.sh"
+    },
+    "cwd": "@WORK@/lnk"
+  },
+  "script-dotdot-source": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "source ../prog.sh"
+    },
+    "cwd": "@WORK@/lnk"
+  },
+  "script-pipe-control": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat prog.sh | bash"
+    },
+    "cwd": "@WORK@"
+  },
   "cd-call-1": {
     "tool_name": "Bash",
     "tool_input": {
@@ -12106,5 +12267,102 @@
       "command": "osc comment create -c \"$(cat ../c1.txt)\" request 1391001"
     },
     "cwd": "@WORK@/lnk"
+  },
+  "reviewer-arith-paren": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; (( $x = 5 )); ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-arith-let": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; y=$x=5; let y; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-arith-test": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; y=$x=5; [[ $y -eq 5 ]]; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-arith-declare-i": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; y=$x=5; declare -i n; n=y; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-arith-subscript": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; a[$x=5]=1; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-arith-expansion": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "x=PA; x+=TH; : $(( $x = 5 )); ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-allexport": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "set -a; ls"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-rcfile": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash --rcfile /var/tmp/x-review/benv.sh -ic true"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-init-file": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash --init-file /var/tmp/x-review/benv.sh -ic true"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "reviewer-bash-i": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "bash -i < /dev/null"
+    },
+    "cwd": "@PLAIN@",
+    "agent_id": "a790",
+    "agent_type": "incoming-review"
+  },
+  "main-arith-no-push": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "set -a; (( n = 1 )); declare -i k; a[$n]=1; ls /var/tmp"
+    },
+    "cwd": "@PLAIN@"
   }
 }
