@@ -160,6 +160,15 @@ GLOBAL_OPTS = {
     "-V",
 }
 
+# Long flags of external tools the skill's prose names: a prose flag is
+# that tool's, not geectl's, when the tool is named on the same line — the
+# same attribution the bundled scripts get. Only the flags the prose
+# actually cites are listed; a new tool's flags belong here, not in `known`.
+TOOL_FLAGS = {
+    "bash": {"--rcfile", "--init-file"},
+    "curl": {"--globoff", "--max-filesize", "--resolve"},
+}
+
 
 def run_help(binary, args):
     """(exit code, stdout) of `geectl <args> --help`, or (None, error)."""
@@ -427,6 +436,12 @@ def check(base, cli, manifest_leaves, manifest_flags):
                     owners = script_owners.get(flag)
                     if owners and any(
                         _stem_mentioned(stem, raw_lines[n - 1]) for stem in owners
+                    ):
+                        continue
+                    if any(
+                        _stem_mentioned(tool, raw_lines[n - 1])
+                        for tool, flags in TOOL_FLAGS.items()
+                        if flag in flags
                     ):
                         continue
                     findings.append(

@@ -214,6 +214,10 @@ case_ prose-flag-short 0 "geectl citations match geectl" \
   "insert_prose_short $U"
 case_ prose-flag-no-command 0 "geectl citations match geectl" \
   "add 'Note: \`--live\` performs a mutation.'"
+case_ prose-flag-curl-attributed 0 "geectl citations match geectl" \
+  "add 'Run \`geectl build results PRJ\` and fetch with \`curl\` using \`--globoff\`.'"
+case_ prose-flag-curl-unattributed 1 "prose cites --globoff, which no cited \`geectl\` command accepts" \
+  "add 'Run \`geectl build results PRJ\` with \`--globoff\` set.'"
 case_ geectl-missing 2 "cannot run geectl" ":" "--geectl /nonexistent"
 
 [ $fails -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"
