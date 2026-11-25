@@ -59,7 +59,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl local-build build --project PRJ --repo REPO --arch ARCH DIR --live` — local build; `DIR` is the source directory (spec + sources), `REPO` a repository of the checkout's project (`geectl build list-repositories PRJ`), `ARCH` the host's. Flags used here: `--clean`, `--flavor FLAVOR` (multibuild), `--release N`, `--trust-all-projects`, `--alternative-project PRJ`, `--root ROOT` (a build root of its own instead of the shared one; `scripts/target-gate.sh` uses one per package and base), `--noinit`, `--keep-rpms DIR` (keep RPMs), `--prefer-packages DIR` (prefer packages). Never bind-mount host paths into the root. For a Leap pool PR, `scripts/target-gate.sh --build` runs this build — never hand-run it as the proof.
 - `geectl local-build chroot --project PRJ --repo REPO --arch ARCH DIR` — enter the preserved build root of the last build; pipe repro commands in on stdin.
 - `geectl local-build wipe --force REPO ARCH SPEC --live` — delete that build root after unmounting mounts under it; `--force` skips the confirmation, and the root must be named by the build's own options (`--root`, `--flavor`).
-- `geectl local-build log` — log of the last local build.
+- `geectl local-build log --project PRJ REPO ARCH SPEC` — log of the last local build; `--project` names the OBS project, `REPO`/`ARCH`/`SPEC` the build's coordinates.
 - `geectl build buildinfo PRJ PKG REPO ARCH` — the resolved build deps, without building (`--alternative-project PRJ` builds the dep set against another project).
 - `geectl build buildconfig PRJ REPO` — the build configuration.
 - `geectl build list-repositories PRJ` — repository/arch pairs a project builds.
@@ -72,7 +72,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl build whatdependson PRJ PKG REPO ARCH` — reverse build deps (`scripts/rdeps.sh` wraps it).
 - `geectl local-build service-run --service source_validator DIR --live` — the validator gate. `--mode manualrun` runs the `mode="manual"` services; `--mode precommit` the precommit gate. `--mode runall` is refused (no such mode).
 - `geectl local-build precommit DIR --live` — run the precommit gate directly.
-- `geectl remote create-token --operation OP PRJ PKG --live` — a trigger token (e.g. for Gitea PR builds). The maintainer runs it: it prints the token's secret, so an agent never does, and the harness snippets will refuse every `geectl remote create-token` call.
+- `geectl remote create-token --operation OP --project PRJ --package PKG --live` — a trigger token (e.g. for Gitea PR builds). The maintainer runs it: it prints the token's secret, so an agent never does, and the harness snippets will refuse every `geectl remote create-token` call.
 
 ## Requests
 

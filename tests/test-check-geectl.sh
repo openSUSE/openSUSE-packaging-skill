@@ -165,6 +165,44 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+replace_log_call() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+old = "`geectl local-build log --project PRJ REPO ARCH SPEC`"
+new = "`geectl local-build log`"
+assert old in text
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text.replace(old, new, 1))
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+replace_create_token_call() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+old = "`geectl remote create-token --operation OP --project PRJ --package PKG --live`"
+new = "`geectl remote create-token --operation OP PRJ PKG --live`"
+assert old in text
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text.replace(old, new, 1))
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+del_override() { python3 - "$1" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+del data["positional-overrides"]["remote search-packages"]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+PY
+}
+
 case_ clean 0 "geectl citations match geectl" ":"
 case_ unknown-subcommand 1 "\`geectl frobnicate\`: no such geectl command" \
   "add 'Run \`geectl frobnicate PRJ\`.'"
@@ -218,6 +256,12 @@ case_ prose-flag-curl-attributed 0 "geectl citations match geectl" \
   "add 'Run \`geectl build results PRJ\` and fetch with \`curl\` using \`--globoff\`.'"
 case_ prose-flag-curl-unattributed 1 "prose cites --globoff, which no cited \`geectl\` command accepts" \
   "add 'Run \`geectl build results PRJ\` with \`--globoff\` set.'"
+case_ positional-log-bare 1 "takes positionals REPO ARCH SPEC (none cited)" \
+  "replace_log_call $U"
+case_ positional-create-token 1 "takes no positionals (cited PRJ PKG)" \
+  "replace_create_token_call $U"
+case_ positional-override-load-bearing 1 "takes positionals TERM (none cited)" \
+  "del_override $M"
 case_ geectl-missing 2 "cannot run geectl" ":" "--geectl /nonexistent"
 
 [ $fails -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"

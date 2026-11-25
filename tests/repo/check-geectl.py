@@ -11,6 +11,13 @@ leaf):
   * the command exists (a group plus its leaf, or a top-level leaf);
   * every flag cited after it is an option that leaf's parser accepts
     (the global options every command accepts included);
+  * a synopsis line states the leaf's positional arity: the count of its
+    bare words must fit the leaf's Usage line (a manifest row's
+    "positionals" when the binary lacks the leaf, or a
+    "positional-overrides" row when the binary's shape predates the
+    target state). A synopsis line that abbreviates with `…` states
+    nothing; a prose mention names the command, not its arguments, so it
+    is not checked for positionals.
   * a `--flag` cited in prose on the same line as a command is an option
     geectl accepts, so a typo in a prose flag fails too — unless it is a
     bundled script's option whose script is named on the same line
@@ -27,8 +34,11 @@ tests/repo/geectl-target-state.json with the blocking geectl issue or PR
 and the exact shape the skill needs. A citation of one of those is checked
 against the manifest instead of the binary — and the manifest row goes
 stale (a finding) the moment the binary gains the leaf or flag, so the
-row is removed and the citations re-verified live. Positionals are not
-parsed.
+row is removed and the citations re-verified live. A row may also carry
+"positionals": the leaf's positional names in order. A
+"positional-overrides" row records a leaf whose positionals changed since
+the binary: the row's required/optional lists are the target state, and
+the row goes stale the moment the binary's Usage line matches them.
 
   python3 tests/repo/check-geectl.py [--geectl PATH] [--skill NAME]
 
@@ -212,6 +222,8 @@ class GeectlCli:
         self.binary = binary
         self.paths = set()
         self.flags = {}
+        self.positionals = {}
+        self.valued = {}
         rc, out = run_help(binary, [])
         if rc is None or rc != 0:
             raise RuntimeError("cannot run geectl --help")
@@ -244,6 +256,7 @@ class GeectlCli:
         group, leaf = path.split()
         if leaf == "help":
             self.flags[path] = set(GLOBAL_OPTS)
+            self.valued[path] = {"--format"}
             return self.flags[path]
         # `geectl help <group> <leaf>` prints the leaf help; appending
         # --help to the help subcommand does not.
@@ -256,8 +269,85 @@ class GeectlCli:
         flags.update(
             f"-{c}" for c in re.findall(r"^  -([a-zA-Z]),", options, flags=re.M)
         )
+        # A flag takes a value when a <VALUE> follows its name on its
+        # Options line; the rest are booleans. --format is the only valued
+        # global option.
+        valued = {"--format"}
+        valued.update(
+            re.findall(r"^ {6}(--[\w-]+)\s+<[^>]+>", options, flags=re.M)
+        )
+        for short, long in re.findall(
+            r"^  -([a-zA-Z]), (--[\w-]+)\s+<[^>]+>", options, flags=re.M
+        ):
+            valued.add(f"-{short}")
+            valued.add(long)
         self.flags[path] = flags
+        self.valued[path] = valued
         return flags
+
+    def load_valued(self, path):
+        """Flags of a leaf path that take a value, or None when the leaf
+        does not exist."""
+        if path in self.valued:
+            return self.valued[path]
+        if path not in self.paths:
+            return None
+        self.load_flags(path)
+        return self.valued[path]
+
+
+    def load_positionals(self, path):
+        """(required, optional) positional names for a leaf path, in order,
+        parsed from the leaf's Usage line: a bare <NAME> is a required
+        positional, a [NAME] (or [<NAME>]) an optional one; a <NAME> after
+        a flag is that flag's value. None when the leaf is unknown."""
+        if path in self.positionals:
+            return self.positionals[path]
+        if path not in self.paths:
+            return None
+        parts = path.split()
+        if parts[-1] == "help":
+            self.positionals[path] = ([], [])
+            return self.positionals[path]
+        rc, leaf_out = run(self.binary, ["help", *parts])
+        if rc is None or rc != 0:
+            raise RuntimeError(f"cannot run geectl help {path}")
+        required, optional = [], []
+        m = re.search(
+            r"^Usage: geectl " + re.escape(path) + r"\b(.*)$",
+            leaf_out,
+            flags=re.M,
+        )
+        if m:
+            toks = m.group(1).split()
+            i = 0
+            while i < len(toks):
+                tok = toks[i]
+                if tok == "[OPTIONS]":
+                    i += 1
+                    continue
+                if tok.startswith("--") or re.match(r"^-[A-Za-z]$", tok.strip("[]")):
+                    # A flag; its <VALUE>, when the next token carries one,
+                    # is not a positional.
+                    if "=" in tok:
+                        i += 1
+                        continue
+                    if i + 1 < len(toks) and toks[i + 1].strip("[]").startswith("<"):
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+                base = tok[:-3] if tok.endswith("...") else tok
+                pm = re.match(r"^<([A-Za-z][A-Za-z0-9_-]*)>$", base)
+                if pm:
+                    required.append(pm.group(1))
+                else:
+                    pm = re.match(r"^\[<?([A-Za-z][A-Za-z0-9_-]*)>?]$", base)
+                    if pm:
+                        optional.append(pm.group(1))
+                i += 1
+        self.positionals[path] = (required, optional)
+        return self.positionals[path]
 
 
 def load_geectl(binary):
@@ -269,19 +359,82 @@ def load_geectl(binary):
 
 
 def load_manifest():
-    """(leaves, flags) from geectl-target-state.json, or ({}, {}) when the
-    file is absent (no target-state debt). A malformed file fails closed."""
+    """(leaves, flags, overrides) from geectl-target-state.json, or
+    ({}, {}, {}) when the file is absent (no target-state debt). A
+    malformed file fails closed. An override is (issue, required,
+    optional): the target-state positionals of a leaf the binary already
+    has, whose shape predates the target state."""
     if not os.path.exists(MANIFEST):
-        return {}, {}
+        return {}, {}, {}
     with open(MANIFEST, encoding="utf-8") as fh:
         data = json.load(fh)
     leaves = {}
     for path, row in data.get("leaves", {}).items():
-        leaves[path] = (row["issue"], set(row.get("flags", [])))
+        leaves[path] = (
+            row["issue"],
+            set(row.get("flags", [])),
+            row.get("positionals"),
+        )
     flags = {}
     for path, row in data.get("flags", {}).items():
         flags[path] = {flag: entry["issue"] for flag, entry in row.items()}
-    return leaves, flags
+    overrides = {}
+    for path, row in data.get("positional-overrides", {}).items():
+        overrides[path] = (
+            row["issue"],
+            row.get("required", []),
+            row.get("optional", []),
+        )
+    return leaves, flags, overrides
+
+
+def cited_positionals(rest, valued):
+    """Bare words in a cited call that fill positionals, in order. A word
+    after a valued option flag is that flag's value; a word after a boolean
+    flag is a positional, not a value (`--recursive PRJ` names the project
+    to delete)."""
+    out = []
+    prev_valued = False
+    for raw in rest.split():
+        tok = raw.strip("[]`\"'")
+        if tok.endswith("..."):
+            tok = tok[:-3]
+        elif tok not in (".", ".."):
+            # Trailing sentence punctuation — but a bare `.`/`..` is a
+            # path literal filling a positional, not punctuation.
+            tok = tok.rstrip(",.;")
+        if not tok:
+            prev_valued = False
+            continue
+        if tok.startswith("--") or re.match(r"^-[A-Za-z]$", tok):
+            prev_valued = "=" not in tok and tok in valued
+            continue
+        if prev_valued:
+            prev_valued = False
+            continue
+        out.append(tok)
+        prev_valued = False
+    return out
+
+
+def positional_mismatch(provided, required, all_names):
+    """None when the cited positionals fit the leaf's arity, else a
+    message. Only the count is judged: the skill's placeholders (PRJ,
+    PKG, REPO, DIR, FILE) name the CLI's positionals (PROJECT, PACKAGE,
+    REPOSITORY, DIRECTORY, FILENAME) by convention, so a name check would
+    flag every correct citation. A lowercase word is a literal value
+    filling one slot."""
+    if not provided:
+        if required:
+            return f"takes positionals {' '.join(required)} (none cited)"
+        return None
+    if not all_names:
+        return f"takes no positionals (cited {' '.join(provided)})"
+    if len(provided) > len(all_names):
+        return f"takes positionals {' '.join(all_names)} (cited {' '.join(provided)})"
+    if len(provided) < len(required):
+        return f"takes positionals {' '.join(required)} (cited {' '.join(provided)})"
+    return None
 
 
 def docs_of(base):
@@ -310,7 +463,7 @@ def wrong_section_lines(path):
     return out
 
 
-def check(base, cli, manifest_leaves, manifest_flags):
+def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides):
     findings, cited_subs, count = [], {}, 0
     usage = os.path.join(base, "references", "geectl-usage.md")
     wrong_ok = wrong_section_lines(usage) if os.path.exists(usage) else set()
@@ -335,8 +488,11 @@ def check(base, cli, manifest_leaves, manifest_flags):
                     path, rest = f"{word1} {word2}", rest
                 else:
                     path = word1
+                manifest_pos = None
+                valued = None
                 if path in manifest_leaves:
-                    issue, flags = manifest_leaves[path]
+                    issue, flags, manifest_pos = manifest_leaves[path]
+                    valued = set(flags) | {"--format"}
                     count += 1
                     cited_subs.setdefault(path, (rel, n))
                     for flag in OPT.findall(rest):
@@ -351,6 +507,13 @@ def check(base, cli, manifest_leaves, manifest_flags):
                             )
                 elif path in cli.paths:
                     flags = set(cli.load_flags(path))
+                    # The manifest flags for this leaf are main-only
+                    # options the binary lacks; they are valued options
+                    # the skill cites, so their values are not
+                    # positionals either.
+                    valued = cli.load_valued(path) | set(
+                        manifest_flags.get(path, {})
+                    )
                     flags.update(manifest_flags.get(path, {}))
                     count += 1
                     cited_subs.setdefault(path, (rel, n))
@@ -382,6 +545,40 @@ def check(base, cli, manifest_leaves, manifest_flags):
                 for pat, msg in WRONG:
                     if pat.search(call) and not NEGATED.search(before[-40:]):
                         findings.append((rel, n, f"`geectl {path}`: {msg}"))
+                # Positionals, on synopsis calls only: the call states the
+                # full form, so the count of its bare words must fit the
+                # leaf's positional arity. A call after the line's ` — `
+                # is prose, not a synopsis; an abbreviated call (`…`)
+                # states nothing about them.
+                dash = line.find(" — ")
+                if (
+                    SYNOPSIS.match(raw[n - 1])
+                    and dash != -1
+                    and at != -1
+                    and at < dash
+                    and "…" not in rest
+                    and "..." not in rest
+                ):
+                    if manifest_pos is not None:
+                        required, all_names = manifest_pos, manifest_pos
+                    elif path in manifest_overrides:
+                        _issue_o, required, optional = manifest_overrides[path]
+                        all_names = required + optional
+                    elif path in cli.paths:
+                        required, optional = cli.load_positionals(path)
+                        all_names = required + optional
+                    else:
+                        required = all_names = None
+                    if all_names is not None:
+                        mismatch = positional_mismatch(
+                            cited_positionals(rest, valued or set()),
+                            required,
+                            all_names,
+                        )
+                        if mismatch:
+                            findings.append(
+                                (rel, n, f"`geectl {path}`: {mismatch}")
+                            )
     # Prose flags: a `--flag` span on the same line as a `geectl` call cites
     # a flag geectl accepts, even though it sits outside the call span — a
     # typo there would sail through the call check above. Verify each
@@ -401,7 +598,7 @@ def check(base, cli, manifest_leaves, manifest_flags):
     known = set(GLOBAL_OPTS)
     for _path, flags in cli.flags.items():
         known |= set(flags)
-    for _issue, flags in manifest_leaves.values():
+    for _issue, flags, _pos in manifest_leaves.values():
         known |= set(flags)
     for row in manifest_flags.values():
         known |= set(row)
@@ -453,7 +650,7 @@ def check(base, cli, manifest_leaves, manifest_flags):
                         )
                     )
     # A manifest row goes stale the moment the binary gains it.
-    for path, (issue, _flags) in sorted(manifest_leaves.items()):
+    for path, (issue, _flags, _pos) in sorted(manifest_leaves.items()):
         if path in cli.paths:
             findings.append(
                 (
@@ -478,6 +675,22 @@ def check(base, cli, manifest_leaves, manifest_flags):
                         "its citations live",
                     )
                 )
+    # A positional override goes stale the moment the binary's Usage
+    # line matches the target state.
+    for path, (issue, required, optional) in sorted(manifest_overrides.items()):
+        if path not in cli.paths:
+            continue
+        live_required, live_optional = cli.load_positionals(path)
+        if (live_required, live_optional) == (required, optional):
+            findings.append(
+                (
+                    os.path.relpath(MANIFEST, ROOT),
+                    0,
+                    f"positional override for `{path}` (issue #{issue}) "
+                    "now matches geectl; remove the row and re-verify "
+                    "its citations live",
+                )
+            )
     # The reference must define every command the skill uses.
     rel_usage = os.path.relpath(usage, ROOT)
     if not os.path.exists(usage):
@@ -517,7 +730,7 @@ def main(argv=None):
         )
         return 2
     try:
-        manifest_leaves, manifest_flags = load_manifest()
+        manifest_leaves, manifest_flags, manifest_overrides = load_manifest()
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         print(f"check-geectl.py: {MANIFEST} is malformed: {exc}", file=sys.stderr)
         return 2
@@ -539,6 +752,7 @@ def main(argv=None):
                 table,
                 manifest_leaves,
                 manifest_flags,
+                manifest_overrides,
             )
             findings += f
             count += c
