@@ -2951,7 +2951,7 @@ echo "--- the skill's own tools, and every suite, run unrefused and unasked"
 asks_ok() {   # asks_ok <file>: the rules its ask may name, where the ask is intended
   case $1 in
     # a mutation case runs its mutant through eval, which the guard cannot read
-    test-autoforward-gate.sh|test-check-flags.sh|test-check-osc.sh|test-forward-check.sh) echo eval-dynamic ;;
+    test-autoforward-gate.sh|test-check-flags.sh|test-check-geectl.sh|test-check-osc.sh|test-forward-check.sh) echo eval-dynamic ;;
     test-incoming-requests.sh|test-preflight.sh|test-sr-status.sh) echo eval-dynamic ;;
     # each case is a command line run through eval
     test-cone-status.sh) echo eval-dynamic ;;
