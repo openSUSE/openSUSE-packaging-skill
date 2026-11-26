@@ -38,6 +38,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl commit -m MSG --live` — commit the checkout; `--noservice` skips the services it would run first, so a gated tree is committed as judged.
 - `geectl changelog validate DIR` — validate the `.changes` entries (`--target-project PRJ --target-package PKG` adds the target-relative rules).
 - `geectl changelog generate DIR` — emit the skeleton entry (`--write` prepends it; `--author AUTHOR` sets the author line, in `Name <email>` form); prefer `scripts/changes-prepend.sh`.
+- `geectl changelog identity [DIR]` — print the resolved `.changes` entry author in `Name <email>` form (config `[identity]`, then `VC_REALNAME`/`VC_MAILADDR`, then the OBS account, then git identity).
 - `geectl branch branch-package --project PRJ --package PKG [--target-project TGT_PRJ [--target-package TGT_PKG]] --live` — branch into `home:<you>:branches:PRJ` (or TGT_PRJ).
 - `geectl branch create --project PRJ --package PKG --live` — branch a git-backed package in one step: the Gitea fork plus the OBS fork into a test project with the source project's repositories. The first-build wait is opt-in (`--first-build-deadline-secs N`; 0 skips it).
 - `geectl branch copy-package --source-project SRC_PRJ --source-package SRC_PKG --target-project DST_PRJ --target-package DST_PKG --live` — server-side copy; `--expand` copies a linked source expanded, `--keep-link` keeps a link a link.
