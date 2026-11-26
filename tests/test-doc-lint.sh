@@ -198,6 +198,15 @@ BDEP='grep[[:space:]]+[^|;]*['"'"'"]<bdep'
 printf 'geectl build buildinfo p k r a | grep %s<bdep%s | cut -d\" -f2\nthe set of `<bdep project=\"x\">` entries\n' "'" "'" | grep -cE "$BDEP" | grep -qx 1 \
   && pass "bdep-grep pattern self-test" || fail "bdep-grep pattern self-test: the regex is broken"
 hits=$(grep -nE "$BDEP" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+# The forward end-state (entry 1): accepting forwards by default, so the
+# old claims are forbidden in the geectl docs. osc-usage.md is excluded —
+# its claims are true for osc, and entry 23 deletes it.
+FORWARD_PHRASES='no forward (option|flag)|does not forward|refuses? Factory as the target'
+printf 'Accepting does not forward.\nThere is no forward option.\ngeectl has no forward flag.\n`request file` refuses Factory as the target.\n' | grep -ciE "$FORWARD_PHRASES" | grep -qx 4 \
+  && pass "forward-phrase pattern self-test" || fail "forward-phrase pattern self-test: the regex is broken"
+hits=$(grep -rniE "$FORWARD_PHRASES" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md | grep -v 'references/osc-usage.md')
+[ -z "$hits" ] && pass "no doc states the stale forward end-state" \
+  || { fail "a doc states the stale forward end-state (accepting forwards by default):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 [ -z "$hits" ] && pass "no doc greps buildinfo for '<bdep'" \
   || { fail "a doc greps buildinfo for '<bdep' (read it as JSON instead):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 # A bare `geectl local-build log` citation is missing its required

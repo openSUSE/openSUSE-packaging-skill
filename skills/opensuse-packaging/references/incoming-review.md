@@ -116,7 +116,7 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
    src.opensuse.org").
 3. Forward through the normal gate: `scripts/autoforward-gate.sh` ELIGIBLE, then
    `scripts/forward-check.py <devel-project> <package>` DUE, then the agent files the Factory
-   request (`references/submit-watch.md` "Filing an SR"). Accepting does not forward by itself.
+   request (`references/submit-watch.md` "Filing an SR") — only when the accept did not forward it (a refused forward, or `--no-forward`). The accept forwards by default.
 
 ## FIXABLE
 
