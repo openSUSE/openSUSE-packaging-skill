@@ -176,7 +176,20 @@ GLOBAL_OPTS = {
 # actually cites are listed; a new tool's flags belong here, not in `known`.
 TOOL_FLAGS = {
     "bash": {"--rcfile", "--init-file"},
-    "curl": {"--globoff", "--max-filesize", "--resolve"},
+    "curl": {"--globoff", "--max-filesize", "--resolve", "--config", "--next"},
+    # Long flags of the other tools the guard doc cites in prose, named
+    # on the same line (same attribution as the bundled scripts): a
+    # geectl typo that merely collides with one of these still fails.
+    "git": {"--work-tree", "--output=", "--output-dir=", "--config"},
+    "tea": {"--login", "-title"},
+    "git-obs": {"--commit"},
+    "wget": {"--next", "--no-config"},
+    "httpie": {"--ignore-stdin"},
+    "opencode": {"--agent"},
+    "cp": {"--target-directory="},
+    # Removed flag, named in prose as gone (leap-sync.sh no longer takes
+    # it, so it cannot live in script-usage.md's synopsis).
+    "leap-sync": {"--refresh"},
 }
 
 

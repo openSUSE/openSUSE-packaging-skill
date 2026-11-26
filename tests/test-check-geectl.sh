@@ -256,6 +256,10 @@ case_ prose-flag-curl-attributed 0 "geectl citations match geectl" \
   "add 'Run \`geectl build results PRJ\` and fetch with \`curl\` using \`--globoff\`.'"
 case_ prose-flag-curl-unattributed 1 "prose cites --globoff, which no cited \`geectl\` command accepts" \
   "add 'Run \`geectl build results PRJ\` with \`--globoff\` set.'"
+case_ prose-flag-git-attributed 0 "geectl citations match geectl" \
+  "add 'Run \`geectl build results PRJ\` and read the tree with \`git\` using \`--work-tree\`.'"
+case_ prose-flag-git-unattributed 1 "prose cites --work-tree, which no cited \`geectl\` command accepts" \
+  "add 'Run \`geectl build results PRJ\` with \`--work-tree\` set.'"
 case_ positional-log-bare 1 "takes positionals REPO ARCH SPEC (none cited)" \
   "replace_log_call $U"
 case_ positional-create-token 1 "takes no positionals (cited PRJ PKG)" \
