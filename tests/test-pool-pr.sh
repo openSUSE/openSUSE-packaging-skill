@@ -455,8 +455,8 @@ ls_ dir-missing 2 "--dir: no such directory" -- --dir "$work/no-such-dir" foo
 
 # Refusals before the clone: nothing is left in --dir.
 D=$(d ls10)
-ls_ no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- --dir "$D" foo
-ls_ login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- --dir "$D" foo
+ls_ no-login 6 "could not read your src.opensuse.org user through geectl: ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" FAKE_NOLOGIN=1 -- --dir "$D" foo
+ls_ login-unparseable 6 "could not read your src.opensuse.org user through geectl" 'FAKE_USER={"id": 7}' -- --dir "$D" foo
 ls_ pr-list-network 6 "could not query open PRs for pool/foo: ERROR: Failed to establish a new connection" FAKE_PRS_FAIL=1 -- --dir "$D" foo
 ls_ pr-list-unparseable 6 "cannot rule out a duplicate" "FAKE_PRS=$work/bad.json" -- --dir "$D" foo
 ls_ pool-repo-unreachable 6 "could not reach pool/nosuch" -- --dir "$D" nosuch

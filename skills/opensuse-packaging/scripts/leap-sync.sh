@@ -20,10 +20,9 @@
 # create the branch first (a contributor PR cannot create a branch); this script
 # errors out in that case. See references/leap-slfo.md.
 #
-# Requires: geectl for the open-PR check, a git-obs login for src.opensuse.org
-# (the user lookup; git-obs reads its own credentials: this script reads
-# none), git-lfs, and for --remote an SSH key there (target-gate.sh pushes
-# the build branch over SSH).
+# Requires: geectl for the open-PR check and the user lookup (it reads its
+# own credentials: this script reads none), git-lfs, and for --remote an SSH
+# key there (target-gate.sh pushes the build branch over SSH).
 #
 # Usage: leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]   (branch default: leap-16.0)
 #   --dir     where the clone and the per-branch worktrees go (default: .)
@@ -59,14 +58,11 @@ dir=$(cd "$dir" 2>/dev/null && pwd -P) || { echo "--dir: no such directory" >&2;
 # form too; on Linux the two are the same path.
 tmp=$(cd /tmp 2>/dev/null && pwd -P 2>/dev/null || echo /tmp)
 case "$dir/" in /tmp/*|$tmp/*) echo "REFUSING: $dir is under /tmp — pass --dir elsewhere (e.g. under /var/tmp)" >&2; exit 2;; esac
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
+# The forge user, through geectl: the token owner of the configured Gitea instance.
 tmpd=$(mktemp --directory -p "${TMPDIR:-/var/tmp}" leap-sync.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$tmpd"' EXIT
-gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed -e '1{' -e '/^Response:$/d' -e '}'; }
-gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
-  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr)" >&2; exit 6; }
+user=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/werr" | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { err=$(tail -1 "$tmpd/werr" 2>/dev/null); echo "could not read your src.opensuse.org user through geectl: ${err:-no usable answer}" >&2; exit 6; }
 
 # --- duplicate-PR guard: refuse to double-file over someone else's open PR ---
 # The open PRs, as one list from the unified pull-request surface: geectl
