@@ -1,8 +1,8 @@
 #!/bin/bash
-# test-incoming-requests.sh — incoming-requests.py offline: fake `geectl` and
-# `git-obs` on PATH answer from a per-case fixture tree (a missing fixture is a
-# 404; one holding @HANG answers nothing for 20s), and HOME is empty unless a
-# case plants something there. Each case mutates the base fixtures and expects
+# test-incoming-requests.sh — incoming-requests.py offline: fake `geectl` on
+# PATH answers from a per-case fixture tree (a missing fixture is a 404; one
+# holding @HANG answers nothing for 20s), and HOME is empty unless a case
+# plants something there. Each case mutates the base fixtures and expects
 # an exit code plus a line. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
@@ -24,21 +24,14 @@ case "$*" in
   "remote project-meta "*) f="meta-$(printf %s "$3" | tr '/' '_')_project" ;;
   "remote package-meta "*) f="meta-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
   "request search --state new --state review") f=requests ;;
+  "gitea whoami") f=whoami ;;
+  "pull-request search "*) f="prsearch-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "pull-request show "*) f="show-$(printf %s "$3" | tr -c 'A-Za-z0-9._:-' '_')" ;;
   *) echo "fake geectl: unexpected $*" >&2; exit 99 ;;
 esac
 [ -f "$FIX/geectl/$f" ] || { printf '{"error":{"code":"not_found","context":"no such thing"}}\n' >&2; exit 3; }
 [ "$(cat "$FIX/geectl/$f")" = @HANG ] && exec sleep 20
 cat "$FIX/geectl/$f"
-EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-# Only the src.opensuse.org login may answer: the default one can be another forge.
-[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-f="$FIX/gitea$(printf %s "$5" | tr '?&=' '___')"
-[ -f "$f" ] || { echo "*** Error: 404 Not Found" >&2; exit 1; }
-[ "$(cat "$f")" = @HANG ] && exec sleep 20
-cat "$f"
 EOF
 chmod +x "$work/bin/"*
 
@@ -58,10 +51,13 @@ put "$B/geectl/packages-by-person" '{"packages": []}'
 put "$B/geectl/meta-devel:example_project" '{"name": "devel:example", "persons": [{"name": "tester", "role": "maintainer"}], "groups": [], "scmsync": null}'
 put "$B/geectl/meta-devel:example_foo" '{"name": "foo", "project": "devel:example", "persons": []}'
 putreqs "$REQ100"
-PRS="gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50"
+# prspath <query> — the pull-request search fixture path, relative to $B
+prspath() { printf 'geectl/prsearch-%s' "$(printf %s "pull-request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+PRS="$(prspath "--backend gitea --reviewer tester --state open")"
+put "$B/geectl/whoami" '{"login": "tester", "full_name": "Tester", "email": "tester@example.org"}'
 put "$B/$PRS" \
-  '[{"number": 7, "title": "Update bar", "created_at": "2026-09-21T10:00:00Z", "repository": {"full_name": "pool/bar"}, "user": {"login": "someone-else"}}]'
-put "$B/gitea/repos/pool/bar/pulls/7" '{"number": 7, "requested_reviewers": [{"login": "tester"}], "requested_reviewers_teams": [], "user": {"login": "someone-else"}}'
+  '{"pull_requests": [{"reference": "gitea:pool/bar#7", "title": "Update bar", "author": "someone-else", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}}], "count": 1}'
+put "$B/geectl/show-gitea:pool_bar_7" '{"reference": "gitea:pool/bar#7", "title": "Update bar", "author": "someone-else", "status": "open", "merged": false, "source": {"repository": "someone-else/bar", "branch": "x", "commit": "7777777777777777777777777777777777777777"}, "target": {"repository": "pool/bar", "branch": "main", "commit": null}, "reviews": [{"reviewer": "tester", "state": "asked", "comment": "", "when": null}]}'
 
 # case_ <name> <expected rc> <expected message> <mutation> [incoming-requests args...]
 # XENV holds extra environment for the run; SHORT=("$work/short.py") runs the
@@ -83,10 +79,11 @@ case_() {
 case_ both-buckets 0 "pool/bar#7	PR	pool/bar	open" ":" --format plain
 grep -qF "100	submit	devel:example/foo	new" <<<"$LAST" && pass "both-buckets: the SR row" || fail "both-buckets: SR row: $LAST"
 
-# src.opensuse.org is read through git-obs only, which keeps its own login: a
-# tea token on disk is never loaded. yaml.py stands in for pyyaml (JSON is
-# YAML) and leaves a mark when anything parses the tea config; the proxy
-# refuses on the loopback, so a direct fetch would show as a warning too.
+# src.opensuse.org is read through geectl's typed leaves, which keep their
+# own login: a tea token on disk is never loaded. yaml.py stands in for
+# pyyaml (JSON is YAML) and leaves a mark when anything parses the tea
+# config; the proxy refuses on the loopback, so a direct fetch would show
+# as a warning too.
 mkdir -p "$work/pylib"
 printf 'import json\nimport os\n\n\ndef safe_load(f):\n    open(os.environ["FIX"] + "/tea-read", "w").close()\n    return json.load(f)\n' > "$work/pylib/yaml.py"
 XENV=(PYTHONPATH="$work/pylib" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 no_proxy= NO_PROXY=)
@@ -97,7 +94,7 @@ XENV=()
 [ ! -e "$work/tea-token-ignored/tea-read" ] && ! grep -qF "direct src.opensuse.org fetch" <<<"$LAST" \
   && pass "tea-token-ignored: the tea config is never read" || fail "tea-token-ignored: the tea config was read: $LAST"
 
-# geectl and git-obs have hung for good in the field. A call that does not answer
+# geectl has hung for good in the field. A call that does not answer
 # times out and is reported like any other failure, never as an empty result.
 cat > "$work/short.py" <<'EOF'
 import importlib.util
@@ -115,15 +112,15 @@ case_ hang-request-search 2 "geectl timed out after 3s" "put \$B/geectl/requests
 case_ hang-project-search 2 "geectl timed out after 3s" "put \$B/geectl/projects-by-person @HANG"
 case_ hang-package-search 2 "geectl timed out after 3s" "put \$B/geectl/packages-by-person @HANG"
 case_ hang-pr-search 0 "100	submit	devel:example/foo	new" \
-  "put \$B/gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50 @HANG" --format plain
-grep -qF "git-obs timed out after 3s" <<<"$LAST" && grep -qF "PR leg skipped" <<<"$LAST" \
+  "put \$B/$PRS @HANG" --format plain
+grep -qF "geectl timed out after 3s" <<<"$LAST" && grep -qF "PR leg skipped" <<<"$LAST" \
   && pass "hang-pr-search: the skipped PR leg is reported" || fail "hang-pr-search: $LAST"
 grep -qxF "src.opensuse.org PRs: UNKNOWN (see stderr)" <<<"$LAST" \
   && pass "hang-pr-search: stdout says the PRs are unknown" || fail "hang-pr-search: no UNKNOWN line: $LAST"
 # With no OBS request either, "nothing needs you" would be a guess.
 case_ hang-pr-search-no-srs 0 "src.opensuse.org PRs UNKNOWN" \
   "put \$B/geectl/requests '{\"requests\": []}' &&
-   put \$B/gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50 @HANG"
+   put \$B/$PRS @HANG"
 ! grep -qF "no requests or PRs need" <<<"$LAST" && pass "hang-pr-search-no-srs: no all-clear" \
   || fail "hang-pr-search-no-srs: claims nothing is pending: $LAST"
 python3 -c 'import importlib.util, sys
@@ -142,22 +139,29 @@ out="$(GEECTL_OBS_USERNAME=tester PATH="$work/py-only" HOME="$work" python3 "$IR
   && pass "missing geectl: a failed query (rc=2)" || { fail "missing geectl: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 case_ nothing-pending 0 "no requests or PRs need 'tester' personally right now" \
   "put \$B/geectl/requests '{\"requests\": []}' &&
-   put \$B/gitea/repos/issues/search_type_pulls_review_requested_true_state_open_limit_50 '[]'"
+   put \$B/$PRS '{\"pull_requests\": [], \"count\": 0}'"
 
 # Your own SR or PR is not incoming, whoever is asked to review it.
 case_ drops-own-sr 0 "100	submit	devel:example/foo	new" \
   "putreqs \"\$REQ100\" \"\$SR101\"" --format plain
 ! grep -q "^101	" <<<"$LAST" && pass "drops-own-sr: your own SR is not listed" || fail "drops-own-sr: $LAST"
 case_ drops-own-pr 0 "pool/bar#7	PR" \
-  "put \$B/$PRS '[{\"number\": 7, \"title\": \"Update bar\", \"created_at\": \"2026-09-21T10:00:00Z\", \"repository\": {\"full_name\": \"pool/bar\"}, \"user\": {\"login\": \"someone-else\"}},
-    {\"number\": 8, \"title\": \"Update baz\", \"created_at\": \"2026-09-21T11:00:00Z\", \"repository\": {\"full_name\": \"pool/baz\"}, \"user\": {\"login\": \"tester\"}}]' &&
-   put \$B/gitea/repos/pool/baz/pulls/8 '{\"number\": 8, \"requested_reviewers\": [{\"login\": \"tester\"}], \"user\": {\"login\": \"tester\"}}'" --format plain
+  "put \$B/$PRS '{\"pull_requests\": [{\"reference\": \"gitea:pool/bar#7\", \"title\": \"Update bar\", \"author\": \"someone-else\", \"status\": \"open\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}},
+    {\"reference\": \"gitea:pool/baz#8\", \"title\": \"Update baz\", \"author\": \"tester\", \"status\": \"open\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}}], \"count\": 2}'" --format plain
 ! grep -qF "pool/baz#8" <<<"$LAST" && pass "drops-own-pr: your own PR is not listed" || fail "drops-own-pr: $LAST"
+# The reviewer flag takes the forge login from gitea whoami, never the OBS user.
+case_ reviewer-is-gitea-login 0 "pool/bar#7	PR	pool/bar	open" \
+  "put \$B/geectl/whoami '{\"login\": \"gitea-user\", \"full_name\": \"Gitea User\", \"email\": \"g@example.org\"}' &&
+   put \$B/\$(prspath \"--backend gitea --reviewer gitea-user --state open\") '{\"pull_requests\": [{\"reference\": \"gitea:pool/bar#7\", \"title\": \"Update bar\", \"author\": \"someone-else\", \"status\": \"open\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}}], \"count\": 1}' &&
+   put \$B/geectl/show-gitea:pool_bar_7 '{\"reference\": \"gitea:pool/bar#7\", \"title\": \"Update bar\", \"author\": \"someone-else\", \"status\": \"open\", \"merged\": false, \"source\": {\"repository\": \"someone-else/bar\", \"branch\": \"x\", \"commit\": \"7777777777777777777777777777777777777777\"}, \"target\": {\"repository\": \"pool/bar\", \"branch\": \"main\", \"commit\": null}, \"reviews\": [{\"reviewer\": \"gitea-user\", \"state\": \"asked\", \"comment\": \"\", \"when\": null}]}'" --format plain
+grep -qF "pull-request search --backend gitea --reviewer gitea-user --state open" "$work/reviewer-is-gitea-login/calls" \
+  && ! grep -qF "pull-request search --backend gitea --reviewer tester" "$work/reviewer-is-gitea-login/calls" \
+  && pass "reviewer-is-gitea-login: the search uses the whoami login, not --user" || fail "reviewer-is-gitea-login: $(cat "$work/reviewer-is-gitea-login/calls" 2>/dev/null)" 
 # A description or title is third-party text: an escape sequence (ESC or C1)
 # and a bidi override are stripped, the words kept.
 case_ sanitizes-desc 0 "update foo evil" \
   "printf '{\"requests\": [{\"id\": 100, \"creator\": \"someone-else\", \"state\": {\"name\": \"new\", \"when\": \"2026-09-20T10:00:00\"}, \"description\": \"update \\xc2\\x9b31mfoo \\xe2\\x80\\xaeevil\", \"actions\": [{\"type\": \"submit\", \"source_project\": \"devel:other\", \"source_package\": \"foo\", \"target_project\": \"devel:example\", \"target_package\": \"foo\"}], \"reviews\": []}]}' > \$B/geectl/requests &&
-   put \$B/$PRS '[{\"number\": 7, \"title\": \"Update \\u001b[31mbar\\u202e\", \"created_at\": \"2026-09-21T10:00:00Z\", \"repository\": {\"full_name\": \"pool/bar\"}, \"user\": {\"login\": \"someone-else\"}}]'" \
+   put \$B/$PRS '{\"pull_requests\": [{\"reference\": \"gitea:pool/bar#7\", \"title\": \"Update \\u001b[31mbar\\u202e\", \"author\": \"someone-else\", \"status\": \"open\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}}], \"count\": 1}'" \
   --format plain
 python3 -I -c 'import sys; t = sys.stdin.read(); sys.exit(any(c in t for c in "\x1b\x9b" + chr(0x202E)) or "Update bar" not in t)' <<<"$LAST" \
   && pass "sanitizes-desc: no escape or bidi character survives" || fail "sanitizes-desc: $(printf '%s' "$LAST" | od -c | head -20)"

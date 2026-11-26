@@ -15,10 +15,10 @@ Buckets:
      where pr-guard's accept check is stricter.
   B. SR state=review, pending review by_user==you OR by_project/by_package you
      maintain. by_group reviews SKIPPED even if you're a member.
-  C. Gitea PR, state=open, you're in `requested_reviewers` by exact login.
-     Team-only reviewers (`requested_reviewers_teams`, not you individually)
-     SKIPPED — re-verified per PR since the API's `review_requested` filter
-     doesn't reliably distinguish personal from team-membership matches.
+  C. Gitea PR, state=open, with a pending review asked of you personally
+     (`pull-request show` reviews, state `asked`, naming your login).
+     Team-only asks (`@team`, not you individually) SKIPPED — re-verified
+     per PR, since the search answer carries no requested-reviewer info.
 
 Maintainership (A/B) = OBS person search, verified per target against the
 package and project meta (the person search matches any role, so a bugowner
@@ -26,16 +26,16 @@ alone does not count). Git/scmsync packages the OBS index can't see are NOT
 covered: no typed leaf reads the git `_maintainership.json` index
 (`references/git-workflow.md` "Maintainership lives in git"), and the script
 says so on stderr. One global `request search` call regardless of package
-count. Bucket C: one issues/search + one PR-detail call per candidate.
+count. Bucket C: one pull-request search + one pull-request show per candidate.
 Descriptions and titles are third-party text, printed through _sanitize.py.
 
-Gitea (bucket C) is read through `git-obs -G src.opensuse.org api`. git-obs
-reads its login itself (shared with tea by default); this script never reads
-it. -G picks the login named src.opensuse.org, or the only one for that host
-(`git-obs login add`), so a default login for another forge is never used. A
-failure skips bucket C with a stderr warning; A/B still report, and the output
-says the src.opensuse.org PRs are UNKNOWN. `--no-prs` skips bucket C outright.
-Every geectl / git-obs call times out after 60s and then counts as a failed
+Gitea (bucket C) is read through `geectl pull-request search --backend
+gitea --reviewer <login>` and `geectl pull-request show`: the login comes
+from `geectl gitea whoami` (the token owner), which may differ from the OBS
+--user, and the reviewer flag accepts no other login. A failure skips bucket
+C with a stderr warning; A/B still report, and the output says the
+src.opensuse.org PRs are UNKNOWN. `--no-prs` skips bucket C outright.
+Every geectl call times out after 60s and then counts as a failed
 query, never as an empty answer.
 
 Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
@@ -50,6 +50,7 @@ OBS query/parse failure (never read as "nothing pending"). Gitea leg fails soft.
 """
 
 import os
+import re
 import sys
 import argparse
 import subprocess
@@ -59,7 +60,7 @@ sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
-# seconds per geectl / git-obs call: both have hung for good, and a harness
+# seconds per geectl call: geectl has hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first
 TIMEOUT = 60
 
@@ -92,6 +93,35 @@ def geectl_json(args, what):
     except ValueError as e:
         sys.stderr.write(f"ERROR: unparseable {what}: {e}\n")
         sys.exit(2)
+
+
+def gitea_json(args):
+    """The parsed JSON payload of a soft geectl read for bucket C; None on
+    any failure (no Gitea token, network, bad JSON), with a WARNING, so the
+    caller can skip bucket C cleanly."""
+    r = run(["geectl"] + args)
+    if r.returncode != 0:
+        sys.stderr.write(
+            f"WARNING: geectl {' '.join(args)} failed: {r.stderr.strip()}\n"
+        )
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(
+            f"WARNING: geectl {' '.join(args)} returned unparsable output ({e})\n"
+        )
+        return None
+
+
+def gitea_login():
+    """The src.opensuse.org login from `geectl gitea whoami` (the token
+    owner): the --reviewer flag accepts no other login, and it may differ
+    from the OBS --user. None on failure."""
+    payload = gitea_json(["gitea", "whoami"])
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("login") or None
 
 
 def whois_user():
@@ -283,57 +313,63 @@ def fetch_incoming_srs(user, verbose):
 
 
 # ---------- Gitea (src.opensuse.org) PR leg -- bucket C ----------
-# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
-
-
-def gitea_get(path):
-    """`git-obs api <path>` -- strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (no src.opensuse.org login,
-    network, HTTP error, bad JSON) so the caller can skip bucket C cleanly."""
-    # -G: the default login may belong to another forge
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
-    if r.returncode != 0:
-        sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
-        return None
-    out = r.stdout
-    if out.startswith("Response:"):
-        out = out.split("\n", 1)[1] if "\n" in out else ""
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError as e:
-        sys.stderr.write(
-            f"WARNING: git-obs api {path} returned unparsable output ({e})\n"
-        )
-        return None
+# Read through geectl's typed leaves: the token stays in geectl's config,
+# no token is read here.
 
 
 def fetch_review_prs(user, verbose):
-    """Bucket C: open src.opensuse.org PRs where `user` is an individually
-    requested reviewer. Returns a list of row dicts, or None if the leg is
-    unavailable entirely (no login/network -- caller falls back to OBS-only)."""
-    issues = gitea_get(
-        "/repos/issues/search?type=pulls&review_requested=true&state=open&limit=50"
-    )
-    if issues is None:
+    """Bucket C: open src.opensuse.org PRs where the token owner is an
+    individually requested reviewer. Returns a list of row dicts, or None
+    if the leg is unavailable entirely (no login/network -- caller falls
+    back to OBS-only). The reviewer flag takes the token owner's login
+    from `gitea whoami` (the OBS user may differ); the search answer
+    carries no requested-reviewer info, so each candidate is re-verified
+    through `pull-request show`: a pending `asked` review naming the login
+    personally counts, a team-only ask (`@team`) does not."""
+    login = gitea_login()
+    if login is None:
         sys.stderr.write(
             "WARNING: src.opensuse.org PR leg skipped (no usable "
             "login/network) -- OBS-only view. Pass --no-prs to silence.\n"
         )
         return None
+    payload = gitea_json(
+        [
+            "pull-request",
+            "search",
+            "--backend",
+            "gitea",
+            "--reviewer",
+            login,
+            "--state",
+            "open",
+        ]
+    )
+    if not isinstance(payload, dict):
+        sys.stderr.write(
+            "WARNING: src.opensuse.org PR leg skipped (no usable "
+            "login/network) -- OBS-only view. Pass --no-prs to silence.\n"
+        )
+        return None
+    issues = payload.get("pull_requests", [])
 
     rows = []
     team_gated_skipped = 0
     own_skipped = 0
     for it in issues:
-        repo = (it.get("repository") or {}).get("full_name", "?")
-        num = it.get("number")
+        ref = it.get("reference") or ""
+        m = re.fullmatch(r"gitea:([\w.+-]+/[\w.+-]+)#(\d+)", ref)
+        if not m:
+            continue
+        repo, num = m.group(1), int(m.group(2))
         title = first_line(_sanitize.sanitize(it.get("title", "")))
-        created = it.get("created_at", "?")
-        if (it.get("user") or {}).get("login") == user:
+        # Neither the search nor the show carries a created date.
+        created = "?"
+        if (it.get("author") or "") == login:
             own_skipped += 1
             continue
 
-        pr = gitea_get(f"/repos/{repo}/pulls/{num}")
+        pr = gitea_json(["pull-request", "show", f"gitea:{repo}#{num}"])
         if pr is None:
             rows.append(
                 {
@@ -350,14 +386,17 @@ def fetch_review_prs(user, verbose):
             )
             continue
 
-        if (pr.get("user") or {}).get("login") == user:
+        if (pr.get("author") or "") == login:
             own_skipped += 1
             continue
-        reviewers = {
-            (r.get("login") or "") for r in (pr.get("requested_reviewers") or [])
-        }
-        teams = pr.get("requested_reviewers_teams") or []
-        if user not in reviewers:
+        asked = [r for r in (pr.get("reviews") or []) if r.get("state") == "asked"]
+        personal = any(r.get("reviewer") == login for r in asked)
+        teams = [
+            r.get("reviewer", "")[1:]
+            for r in asked
+            if (r.get("reviewer") or "").startswith("@")
+        ]
+        if not personal:
             # only reachable via a team you belong to (or a stale search-index
             # hit) -- same exclusion as an OBS by_group review
             team_gated_skipped += 1
