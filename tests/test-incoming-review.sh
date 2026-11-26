@@ -230,7 +230,7 @@ if k("kind", "obs") == "obs":
     if opts.get("makeoriginolder") == "true":
         act["makeoriginolder"] = True
     put("geectl", "request show %s" % rid,
-        json.dumps({"id": int(rid), "creator": creator, "state": {"name": "review", "when": "2026-11-20T10:00:00"},
+        json.dumps({"id": int(rid), "creator": creator, "state": {"name": k("state", "review"), "when": "2026-11-20T10:00:00"},
                     "description": "Update foo to 1.1", "actions": [act] * int(k("actions", "1")),
                     "reviews": [], "history": []}))
     base = "1" * 32 if linkbase == "stale" or tgt is None else srcmd5(tgt)
@@ -1057,8 +1057,8 @@ done
 fresh prune-open; fix; recorded prune-open BLOCK; irv --prune
 expect prune-open 0 "prune: 0 removed, 1 stay, 0 not read"
 [ -e "$SF" ] && pass "prune-open: an open request keeps its stamp" || fail "prune-open: the stamp is gone"
-fresh prune-lookup-failed; fix; recorded prune-lookup-failed PASS; knob state accepted; fix; touch "$D/obs/_request_1001.fail"
-irv --prune; expect prune-lookup-failed 5 "prune: $SF stays: osc api /request/1001 failed"
+fresh prune-lookup-failed; fix; recorded prune-lookup-failed PASS; knob state accepted; fix; touch "$D/geectl/$(fk "request show 1001").fail"
+irv --prune; expect prune-lookup-failed 5 "prune: $SF stays: geectl request show 1001 failed"
 [ -e "$SF" ] && pass "prune-lookup-failed: a failed lookup removes nothing" || fail "prune-lookup-failed: the stamp is gone"
 # Accepted FIXABLE: held while devel's files (but _link) are the request's source files.
 fresh prune-fixable-held; fix; recorded prune-fixable-held FIXABLE
@@ -1068,8 +1068,8 @@ expect prune-fixable-held 0 "prune: 0 removed, 1 stay, 0 not read"
 printf 'follow-up\n' > "$D/tgt/fix.patch"; fix; irv --prune
 expect "prune-fixable-held: the follow-up landed" 0 "pruned $SF: request 1001 accepted"
 fresh prune-fixable-held-unread; fix; recorded prune-fixable-held-unread FIXABLE
-knob state accepted; fix; touch "$D/obs/$(fk '/source/devel:example/foo?expand=1').fail"; irv --prune
-expect prune-fixable-held-unread 5 "stays: osc api /source/devel:example/foo?expand=1 failed"
+knob state accepted; fix; touch "$D/geectl/$(fk "remote list-files devel:example foo").fail"; irv --prune
+expect prune-fixable-held-unread 5 "stays: geectl remote list-files devel:example foo failed"
 [ -e "$SF" ] && pass "prune-fixable-held-unread: kept" || fail "prune-fixable-held-unread: the stamp is gone"
 fresh prune-fixable-declined; fix; recorded prune-fixable-declined FIXABLE; knob state declined; fix; irv --prune
 expect prune-fixable-declined 0 "pruned $SF: request 1001 declined"
@@ -1098,7 +1098,7 @@ irv --prune; expect prune-not-a-stamp 5 "prune: 1 removed, 0 stay, 2 not read"
 # --show and --record prune first, and go on.
 fresh prune-on-show; fix; recorded prune-on-show PASS
 sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$(stampf obs 1002)"
-printf '<request id="1002" creator="contrib"><state name="revoked"/></request>' > "$D/obs/$(fk /request/1002)"
+printf '{"id": 1002, "creator": "contrib", "state": {"name": "revoked", "when": "2026-11-20T10:00:00"}, "description": "", "actions": [], "reviews": [], "history": []}' > "$D/geectl/$(fk "request show 1002")"
 showkey prune-on-show
 grep -qxF "pruned $(stampf obs 1002): request 1002 revoked" <<<"$out" && [ ! -e "$(stampf obs 1002)" ] && [ -e "$SF" ] \
   && pass "prune-on-show: the final stamp went, the open one stayed" || { fail "prune-on-show"; printf '%s\n' "$out" | sed 's/^/    /'; }

@@ -1353,6 +1353,7 @@ def build_obs(f, sprj, spkg, ssrc, tprj, tpkg, target_exists, leap):
     out = {"project": sprj, "package": spkg, "required": False, "results": {}, "srcmd5": "", "green": False, "notes": []}
     f.build = out
     what = "%s/%s" % (sprj, spkg)
+    note = lambda why: out["notes"].append(clean("%s: %s" % (what, why)))  # noqa: E731
     _, cur, _ = listing(sprj, spkg, what=what)
     out["srcmd5"] = cur
     if cur != ssrc:
@@ -1818,10 +1819,10 @@ def holds(st):
     want = dig(st, "obs", "action", "source", "files")
     if not (isinstance(prj, str) and PRJ.fullmatch(prj) and isinstance(pkg, str) and PKG.fullmatch(pkg) and isinstance(want, dict)):
         return True
-    raw = obs("/source/%s/%s?expand=1" % (q(prj), q(pkg)), missing_ok=True)
-    if raw is None:
+    got = listing(prj, pkg, missing_ok=True)
+    if got is None:
         return True
-    files, _ = listing(xml(raw, "%s/%s" % (prj, pkg), "directory"), "%s/%s" % (prj, pkg))
+    files, _, _ = got
     now = {n: m for n, (m, _, _) in files.items() if n != "_link"}
     return now == {k: v for k, v in want.items() if k != "_link"}
 
@@ -1844,9 +1845,11 @@ def final(kind, path):
     fixable = st["verdict"] == "FIXABLE"
     if kind == "obs":
         rid = ident[1]
-        root = xml(obs("/request/%s" % rid), "request %s" % rid, "request")
-        state = root.find("state")
-        name = state.get("name") if state is not None and root.get("id") == rid else None
+        req = geectl(["request", "show", rid])
+        if not isinstance(req, dict) or req.get("id") != int(rid):
+            raise Lookup("request %s: no state of it" % rid)
+        state = req.get("state") if isinstance(req.get("state"), dict) else {}
+        name = state.get("name") if isinstance(state.get("name"), str) else None
         if not name:
             raise Lookup("request %s: no state of it" % rid)
         # pr-guard holds the forward on every FIXABLE stamp whose source devel still
