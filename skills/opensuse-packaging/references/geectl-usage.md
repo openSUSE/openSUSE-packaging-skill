@@ -92,12 +92,21 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl request accept --comment MSG ID --live` · `geectl request decline --comment MSG ID --live` · `geectl request revoke --comment MSG ID --live` — act on a request (accept/decline only on your own, or with the user's explicit go). Accepting forwards to the request's link parent by default (`--no-forward` skips it; `-m`/`--forward-message ENTRY` overrides the forwarded `.changes` entry, else it stays the original description); a refused forward is reported and the accept stands, with the work staying queued in the devel project. Accept cleans up: the branch package is deleted, and its test project with it when empty.
 - `geectl pull-request merge REFERENCE --live` · `geectl pull-request decline REFERENCE --live` · `geectl pull-request withdraw REFERENCE --live` — act on a submission through the unified surface: an OBS submit request or a Gitea pull request, named by `obs:<id>` or `gitea:<owner>/<repo>#<number>`. Merge accepts (OBS) or merges (Gitea) and forwards to the link parent by default (`--no-forward` skips it; `-m`/`--forward-message ENTRY` overrides the forwarded `.changes` entry); on OBS a refused forward is reported and the accept stands, on Gitea the forward is resolved and validated before the merge lands. After the merge the branch home is cleaned up like the OBS arm's; merges done outside geectl are left for `gitea cleanup-forks`. Decline declines (OBS) or closes (Gitea); withdraw revokes (OBS) or closes (Gitea).
 - `geectl pull-request approve REFERENCE --live` — approve a submission as the review asked of the target (OBS: the acting user's review; Gitea: the token owner's review).
+- `geectl pull-request submit --base main --title TITLE --body BODY` — file a submission from the working copy in the current directory: a Gitea pull request from a git-backed checkout, an OBS submit request from an OBS-native one; `--repo`/`--head` name the Gitea repo and branch, `--draft` opens it as a draft.
+- `geectl pull-request show REFERENCE` — show one pull request: metadata only (title, state, reviews, the head in `source.commit`), no diff — the diff gap is geectl #416.
+- `geectl pull-request comments REFERENCE` — list a pull request's comments, oldest first.
+- `geectl pull-request comment --body BODY REFERENCE --live` — comment on a pull request.
+- `geectl pull-request request-changes REFERENCE --live` — ask for changes on a pull request, as `approve` but with the review declined instead of accepted.
+- `geectl pull-request search --backend BACKEND --repo REPO --state STATE` — search pull requests: OBS submit requests and Gitea pull requests as one list; `--creator` narrows it to one author.
+- `geectl request change-review-state ID STATE --live` — change one review's state (`new`/`accepted`/`declined`); `--user`/`--group`/`--project`/`--package` address the review, `--comment` the message.
+- `geectl request change-state ID STATE --live` — change a request's state (`new`/`review`/`accepted`/`declined`/`revoked`).
 - `geectl request add-review --user USER --comment MSG ID --live` — ask a user to review a request (`--group`, `--project`, `--package` address the other review forms).
 
 ## Lookup
 
 - `geectl remote devel-project PKG [--target-project PRJ]` — the registered devel project.
 - `geectl remote maintainers PRJ PKG` — maintainers of a package.
+- `geectl gitea maintainers OWNER REPO` — maintainers from the git side: the project maintainers and the per-package maintainers in the repo's `_maintainership.json`, read from the repo's default branch.
 - `geectl remote owners PRJ PKG` — owners of a package (project/package scope); bugowners included, not the maintainer set.
 - `geectl remote owners-for-binary BINARY` — owners of the source package shipping that binary.
 - `geectl remote project-meta PRJ` — a project's persons (maintainers, reviewers).

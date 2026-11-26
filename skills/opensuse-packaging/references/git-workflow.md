@@ -26,13 +26,13 @@ $ geectl remote package-meta devel:languages:perl perl-Mojolicious
 </package>
 ```
 
-Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format). Consequences, all of them silent:
+Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format) — read it with `geectl gitea maintainers OWNER REPO`. Consequences, all of them silent:
 
 - `geectl remote search-packages-by-person <u>` — **returns nothing** for it: the OBS person index has no git-defined entries.
 - `geectl remote search-projects-by-person <u>` — returns only the *project-level* entries, no package rows.
 - `geectl remote owners-for-binary <pkg>` — the same OBS owners for the package shipping that binary, so it falls all the way back to the `openSUSE:Factory` project owners (a Factory release-manager account plus `group:factory-maintainers`), which reads as "nobody maintains this" when in fact somebody does, in git.
 
-**The OBS side and the git side are two different reads, and neither alone is the answer.** `geectl remote maintainers <project> <pkg>` reads only the OBS `_meta` — for a scmsync package that stub names nobody, so the output is the project fallback owners, not the maintainer. **Reading only that output is actively misleading.** The git answer lives in the repo's `_maintainership.json` (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format) — read that file before drawing any conclusion. There is no typed geectl form for the git side: `geectl remote search-projects-by-person <user>` lists only the projects whose OBS meta names the user. Note the entries are **per-product and the name can differ per product** — coordinate with the maintainer of the branch you are actually touching.
+**The OBS side and the git side are two different reads, and neither alone is the answer.** `geectl remote maintainers <project> <pkg>` reads only the OBS `_meta` — for a scmsync package that stub names nobody, so the output is the project fallback owners, not the maintainer. **Reading only that output is actively misleading.** The git answer lives in the repo's `_maintainership.json` (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format) — read it with `geectl gitea maintainers OWNER REPO` (the git-side counterpart of `remote maintainers`, read from the repo's default branch) before drawing any conclusion. `geectl remote search-projects-by-person <user>` lists only the projects whose OBS meta names the user. Note the entries are **per-product and the name can differ per product** — coordinate with the maintainer of the branch you are actually touching.
 
 Devel-project resolution is unaffected: `geectl remote devel-project <pkg>` and `scripts/devel-of.sh` still return `devel:openSUSE:Factory/hwdata` correctly.
 
@@ -44,7 +44,7 @@ Related git support worth knowing: `geectl maintenance maintained-instances --pa
 
 - **`geectl` is the OBS client**: forking, building and filing all go through it (see `references/geectl-usage.md`).
 - **`git-lfs` is mandatory** — source tarballs are stored in LFS, configured by the repo's `.gitattributes` (`*.gz *.xz *.zst *.bz2 *.tar … filter=lfs`). After `git add`-ing a tarball, confirm it's a pointer with `git cat-file -p :<tarball>` (should print `version https://git-lfs.github.com/spec/v1` + oid + size), **not** the raw binary. The working-tree file stays the real tarball, so `geectl local-build build` still sees real sources.
-- **CLI clients**: `geectl` (OBS work — forking, building, requests), `tea` (Gitea CLI — logins, fork, PR), and `git-obs` (PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed. No curl against the API and no token handling: `references/geectl-usage.md` "Tool discipline".
+- **CLI clients**: `geectl` (OBS work — forking, building, requests), `tea` (Gitea CLI — logins, fork, PR), and `geectl pull-request submit` / the `pull-request` review leaves (PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed. No curl against the API and no token handling: `references/geectl-usage.md` "Tool discipline".
 - **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`. The pool PR scripts (`scripts/pool-pr.sh`, `scripts/target-gate.sh --remote`) push over SSH, LFS objects included, and read the forge through `git-obs -G src.opensuse.org api`: they need this key and a git-obs login, and read no token. Every push goes over SSH ("Push over SSH only" below).
 
 ## Push over SSH only
@@ -103,7 +103,7 @@ Contributors send **pull requests on Gitea**, not OBS submit requests. **Target 
 
 ```
 # after git commit + git push to your fork:
-git-obs -G src.opensuse.org pr create --title "..." --description "..." --target-branch main
+geectl pull-request submit --base main --title "..." --body "..."
 # or use tea:  tea pulls create --login <login> --repo <devel-project>/<pkg> --head <youruser>:<branch> --base main
 # or the Gitea web UI.
 ```
@@ -140,7 +140,7 @@ What happens after the PR opens:
 - The **`autogits-devel` bot** automatically opens a second PR against the project's `_ObsPrj` repo.
 - The **`autogits_obs_staging_bot`** creates an OBS build project, builds the change, and **posts build results as a comment on your PR** — this is your server-side build feedback (you don't need an OBS home branch just to see if it builds).
 - Prefix the PR title with **`WIP:`** to suppress the bot automation while iterating.
-- Maintainer approves → bot auto-merges. A maintainer's own PR auto-merges on a successful build. The approve form, pinned to the head reviewed: `git-obs -G src.opensuse.org pr review approve --commit <head-sha> <owner>/<repo>#<N>`, never `--reviewer`. A contributor's PR to the user's package is approved only after its incoming review recorded PASS or FIXABLE at that head, on the user's go (`references/incoming-review.md` "Devel PRs on src.opensuse.org"); agents never merge one.
+- Maintainer approves → bot auto-merges. A maintainer's own PR auto-merges on a successful build. The approve form, pinned to the head reviewed: `geectl pull-request show gitea:<owner>/<repo>#<N>` must report `source.commit` as the head reviewed, then `geectl pull-request approve gitea:<owner>/<repo>#<N> --live`, never `--reviewer`. Review actions are `geectl pull-request show` / `comments` / `approve` / `request-changes` / `comment` on the `gitea:<owner>/<repo>#<N>` handle. (`pull-request show` is metadata only — no diff; the diff gap is geectl #416.) A contributor's PR to the user's package is approved only after its incoming review recorded PASS or FIXABLE at that head, on the user's go (`references/incoming-review.md` "Devel PRs on src.opensuse.org"); agents never merge one.
 
 **Submitting to `openSUSE:Factory` is still an OBS request, not a Git PR** — it is *not* managed through Git/Gitea. After your change lands in the devel project (PR merged), file the forward from the OBS devel project (see "Submit requests" in `references/submit-watch.md`). The whole Factory review chain (`factory-auto`, `licensedigger`, staging, `opensuse-review-team`) is unchanged.
 
