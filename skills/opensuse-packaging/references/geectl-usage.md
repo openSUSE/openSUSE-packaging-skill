@@ -67,6 +67,9 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl build results PRJ --package PKG` — remote status; `--repository REPO`, `--arch ARCH`, `--code CODE`, `--lastbuild`, `--oldstate` scope it.
 - `geectl build wait-for-results --deadline-secs N PRJ --package PKG` — wait for the build to settle.
 - `geectl build build-log PRJ PKG REPO ARCH` — remote build log; `--lastsucceeded` shows the last green one, `--start -N` the tail.
+- `geectl build rebuild-package PRJ PKG REPO ARCH --live` — rebuild a package server-side without touching the sources.
+- `geectl build build-status PRJ PKG REPO ARCH` — the build status code for a package.
+- `geectl build build-history PRJ PKG REPO ARCH` — the completed builds for a package, newest first.
 - `geectl build list-binaries PRJ REPO ARCH --package PKG` — list remote build results.
 - `geectl build download-binary --output PATH PRJ PKG REPO ARCH FILE` — download one built file.
 - `geectl build download-binary --all --output DIR PRJ PKG REPO ARCH` — download every listed binary into the directory.
