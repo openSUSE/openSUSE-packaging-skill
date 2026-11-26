@@ -99,7 +99,7 @@ Content-sync a package's Leap pool branch up to factory and build that exact tre
 
 ## `target-gate.sh`
 
-Builds **the exact tree a Leap pool PR will carry, against that PR's own target** — `openSUSE:Backports:SLE-16.0` or `-16.1` `standard`, on the arches of `openSUSE:Backports:SLE-16.x:PullRequest` `standard`, what the PR bot builds (16.1's PR project builds fewer arches than Backports itself) — and stamps the verdict at `<git-common-dir>/target-gate/<tree>-<base>.json`, keyed on `HEAD^{tree}` plus the base. `pool-pr.sh` refuses to push without a GREEN build and a PASS review in that stamp, so any commit after it means build and review again — except the build of a commit that changes only `.changes` files against the base's last GREEN tree: `--build` and `--remote` carry that build to it (`mode: carried`, `from: <tree>`) once `changes-lint.sh` passes the entries the change touches, and build when it does not (or when a file is dropped). The review never carries, and `--build` on a tree stamped already builds it for real.
+Builds **the exact tree a Leap pool PR will carry, against that PR's own target** — `openSUSE:Backports:SLE-16.0` or `-16.1` `standard`, on the arches of `openSUSE:Backports:SLE-16.x:PullRequest` `standard`, what the PR bot builds (16.1's PR project builds fewer arches than Backports itself) — and stamps the verdict at `<git-common-dir>/target-gate/<tree>-<base>.json`, keyed on `HEAD^{tree}` plus the base. `pool-pr.sh` refuses to push without a GREEN build and a PASS review in that stamp, so any commit after it means build and review again — except the build of a commit that changes only `.changes` files against the base's last GREEN tree: `--build` and `--remote` carry that build to it (`mode: carried`, `from: <tree>`) once `geectl changelog validate` passes the entries the change touches, and build when it does not (or when a file is dropped). The review never carries, and `--build` on a tree stamped already builds it for real.
 
 Traps it encodes: a green build of **another checkout** (the tesseract-ocr PRs: the devel checkout was built and the hand-edited pool tree pushed unbuilt — the build log must name `processing recipe <this clone>/<pkg>.spec`); **the wrong base's root** (a per-package, per-base `--root <build-root base>/<pkg>-<base>-<arch>`, and a tripwire on the `rpm-config-SUSE` release the build log shows init_buildsystem installing, `-160000.` or `-160100.`); **the i586 whitelist** (flavor/arch pairs are decided as OBS decides them, from obs-build's `queryrecipe` for ExclusiveArch/ExcludeArch and `queryconfig` for the Backports onlybuild/excludebuild lists, so an arch OBS marks excluded is not a red); a **bind-mounted `/dev`** under the root (`geectl local-build build --clean` would wipe the host's — any mount at or under the root refuses the build).
 
@@ -149,17 +149,7 @@ Scaffold + verify a pinned-commit `obs_scm` `_service` for tagless upstreams (re
 
 ## `changes-prepend.sh`
 
-Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure). Refuses (exit 3, nothing written) when the file already differs from its committed version (looked up as `changes-guard.sh` does): an entry is already pending, and a second prepend would stack two into one submission — edit that top entry, then `changes-guard.sh --amend-top`. With no `--author` and no `$CHANGES_AUTHOR` the author is what a bare `geectl changelog generate` writes (`vc-identity.sh`), never git's identity: sr#1385844 shipped the git address that way.
-
-## `changes-lint.sh`
-
-Format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); the pre-SR gate against "fix the format of the changes entries" declines. Also flags a bullet that names a CVE id as not fixed (`not (yet) fixed`, `unpatched`, `does not address`, `tracked separately`, `remains open` and kin) unless the bullet states that fix (`Fix CVE-…`, `CVE-…: fixed`, a patch named for the id): any CVE id in `.changes` reads as fixed by that update. The same reason flags a not-affected bullet (`not affected`, `is not affected by`, `unaffected`, `no longer affected`, `does not affect`, `not vulnerable`, `not impacted`, `above the fixed version`, `above the X.Y fix`, `already fixed in X.Y`/`upstream`) that carries a CVE or `boo#`/`bsc#`/`bnc#` id — also through the bullets a `:` bullet saying so lists, though a scope note in a header that does not open with the phrase leaves its `CVE-…:` sub-bullets alone — unless it states that this update fixes the id (`Fix … (boo#N)`, `CVE-… (bsc#N): fixed`, `… so this update fixes it`, `above the X fix` beside `bump`/`update`/`->`/`to X.Y`). A fix that also says what is not affected (it opens `CVE-…:`, has a fix or bump verb — `close`, `harden`, `reject` and kin — or names a patch) answers only for the ids next to that phrase, and the finding names the ids: the assessment goes in the bug comment. Real decline: pool/gh PR #11, a "Not affected, vendored dependencies are above the fixed version" sub-list. And a bullet that names an OBS request (`sr#N`, `SR N`, `rq N`, `request #N`; not `pull request #N`) or a staging order (`lands after`, `stage together`): those go in the SR message, the `.changes` ships in the RPM. Real case: sr#1385697, "lands after SR 1385569". The same goes for submission or review status (`factory-auto`, the source validator or a source-URL validation, the Factory forward): ibus-typing-booster's entry said "failing source-URL validation of the Factory forward". A line over 67 characters that could have been wrapped there is flagged too — 67 is the `.changes` convention (`references/changelog-rules.md`). That entry was one 271-character line, and sr#1392409's review caught a 69-column one by hand. A word too long to fit at its indentation may run over, but only on a line of its own: what comes before it breaks first. **Security claims need their ids**: an incomplete CVE id (`CVE-2026-XXXX`, `CVE-2026`, `CVE-2026-12`) is always flagged, and so is a top-level bullet (its sub-bullets included) that says `CVEs`/`CVE` or claims a security fix (`security fix/issue/update/release`, `vulnerability`) without a full CVE id — a `boo#`/`bsc#` or GHSA id stands in for the id of a security claim (and of a `CVE pending` beside it), never of `CVEs`; patch names, paths and URLs are not read, nor negations (`no security fixes`, `non-security`), and a bullet ending in `:` takes its ids from the bullets after it. Vague security bullets took nine fix rounds in one week; the security tracker keys off the literal ids. A well-formed id that is wrong is not caught.
-
-`--author 'Name <email>'` (`gate.sh` passes what `vc-identity.sh` prints): an entry whose author shares that name *or* that address must carry both exactly; another packager's entry passes, so a forwarded update keeps its author.
-
-## `vc-identity.sh`
-
-Prints the `Name <email>` a bare `geectl changelog generate` writes, from the OBS account's own record (`geectl remote whois $GEECTL_OBS_USERNAME`): the real name, falling back to the login when the account carries none, with the account's email. The git identity is not it (real case: sr#1385844 shipped an entry signed with the git address). Exit 3 when the whois read fails or the account carries no usable name/email; never a guess, and never git's identity.
+Verified `.changes` prepend (separator-count + insertion-only checks; restores on failure). Refuses (exit 3, nothing written) when the file already differs from its committed version (looked up as `changes-guard.sh` does): an entry is already pending, and a second prepend would stack two into one submission — edit that top entry, then `changes-guard.sh --amend-top`. With no `--author` and no `$CHANGES_AUTHOR` the author is what a bare `geectl changelog generate` writes (`geectl changelog identity`), never git's identity: sr#1385844 shipped the git address that way.
 
 ## `changes-patches.sh`
 
@@ -171,7 +161,7 @@ Integrity gate: assert a `.changes` edit is *insertion-only* — the committed b
 remain an exact byte-suffix of the new file, so no already-committed entry can be overwritten,
 folded in, reordered or deleted (auto-detects the baseline from `.osc/sources/` or
 `git show HEAD`; `--base FILE` overrides the baseline outright). Runs at every commit gate next
-to `changes-lint.sh`; the mechanical enforcement of "never modify previous entries" after a
+to `geectl changelog validate`; the mechanical enforcement of "never modify previous entries" after a
 fan-out agent breached it (folded a standalone prior entry into its new one).
 
 **`--amend-top "<Your Name> <you@example.com>"` — amend your OWN top entry.** Use it while the
@@ -181,7 +171,7 @@ contains your own unmerged entry, so reworking it after review feedback trips th
 though nothing published was touched. That entry is a draft describing an unreleased revision,
 and one coherent entry per submission beats stacking fixup bullets, so `--amend-top` permits
 exactly that edit — grow, reword, rewrite, refresh the date. AUTHOR is your own name, never
-another packager's: the committed top entry must also name the `$GEECTL_OBS_USERNAME` user, and Factory's
+another packager's: the committed top entry must also name the resolved geectl identity (`geectl changelog identity`), and Factory's
 copy (`geectl remote cat`, or `changes-guard.sh --released DIR` offline) must not hold it yet — sr#1385744 passed
 `--amend-top` another packager's name and rewrote that packager's devel entry. It still refuses
 any change from the second entry down, a foreign top entry (in the baseline *or* the
@@ -312,7 +302,7 @@ The commit/SR gate chain as ONE tool call: the SR target, the tracked files
 (osc checkouts and geectl working copies), no copy of a skill script, the parse-time code the specs add
 (parse-surface), source_validator, factory-auto's
 URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
-(rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
+(rpmbuild -bp, without --build-log), spec-cleaner, `geectl changelog validate`,
 changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
 check, the spec header, terse spec comments, the patch tags, a new .changes
 entry for a changed tree and the sources' prebuilt binaries
@@ -330,10 +320,8 @@ Usage: gate.sh [DIR] [--entries N] [--amend-top AUTHOR] [--squash-mine AUTHOR] [
        gate.sh [DIR] --review FILE
        gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX] [--arches REGEX]
   DIR          package checkout (default .)
-  --entries N  entries the submission adds vs the target (changes-lint and
-               changes-patches, default 1)
-  changes-lint also checks those entries' author against what a bare
-  `geectl changelog generate` writes (vc-identity.sh); with no identity from geectl changelog generate it is red.
+  --entries N  entries the submission adds vs the target (`geectl changelog
+               validate` and changes-patches, default 1)
   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
   --squash-mine  the new top entry folds the run of your own unaccepted entries
                under it into one, when the user asks for it (changes-guard)

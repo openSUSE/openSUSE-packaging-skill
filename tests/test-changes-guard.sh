@@ -44,14 +44,15 @@ mk mid; { old1; old2; } > "$work/mid/base/foo.changes"
 { new1; old1 | sed 's/(upstreamed)/(upstreamed; drop leftover file)/'; old2; } > "$work/mid/foo.changes"
 case_ old-entry-reworded 1 "not an exact suffix" --base "$work/mid/base/foo.changes" "$work/mid/foo.changes"
 
-# --amend-top: the top entry must be the OBS user's (geectl remote whois) and not yet in
-# Factory (the --released dir, else geectl remote cat). A fake geectl answers both.
+# --amend-top: the top entry must be the resolved geectl identity's (`geectl
+# changelog identity`) and not yet in Factory (the --released dir, else geectl
+# remote cat). A fake geectl answers both.
 mkdir -p "$work/bin"
 cat > "$work/bin/geectl" <<'GEectl'
 #!/bin/bash
 case "$1 $2" in
-  "remote whois") [ "${WHOIS_MODE:-ok}" = ok ] || { echo "geectl: whois failed" >&2; exit 1; }
-         printf '%s' '{"login": "jpackager", "email": "jane@example.com", "realname": "Jane Packager", "state": "confirmed"}' ;;
+  "changelog identity") [ "${IDENTITY_MODE:-ok}" = ok ] || { echo "geectl: identity failed" >&2; exit 1; }
+         printf '%s' 'Jane Packager <jane@example.com>' ;;
   "remote cat") [ "$3 $4 $5 $6 $7" = "openSUSE:Factory foo foo.changes --format text" ] || { echo "fake geectl: unexpected $*" >&2; exit 9; }
        case "${CAT_MODE:-}" in
          404) printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "$3" "$4" "$5" >&2; exit 3 ;;
@@ -64,7 +65,6 @@ esac
 GEectl
 chmod +x "$work/bin/geectl"
 export PATH="$work/bin:$PATH"
-export GEECTL_OBS_USERNAME=jpackager
 
 mk own; mkdir -p "$work/own/factory"; old2 > "$work/own/factory/foo.changes"
 { entry "Sat Oct 17 10:00:00 UTC 2026" "$JANE" "- Update to 2.3"; old2; } > "$work/own/base/foo.changes"
@@ -79,7 +79,7 @@ mk foreign; mkdir -p "$work/foreign/factory"; old2 > "$work/foreign/factory/foo.
 { old1 | sed 's/^- Drop patch:$/- Spec cleanup: drop the Group tag\n- Drop patch:/'; old2; } > "$work/foreign/foo.changes"
 case_ amend-foreign 1 "the top entry is not yours" --amend-top "$OTHER" \
   --released "$work/foreign/factory" --base "$work/foreign/base/foo.changes" "$work/foreign/foo.changes"
-WHOIS_MODE=fail case_ amend-whois-fails 3 "cannot tell whether the top entry is yours" --amend-top "$OTHER" \
+IDENTITY_MODE=fail case_ amend-identity-fails 3 "cannot tell whether the top entry is yours" --amend-top "$OTHER" \
   --released "$work/foreign/factory" --base "$work/foreign/base/foo.changes" "$work/foreign/foo.changes"
 
 mk ownrel; mkdir -p "$work/ownrel/factory"

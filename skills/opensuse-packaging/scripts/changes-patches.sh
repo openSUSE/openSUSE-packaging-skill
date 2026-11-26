@@ -9,7 +9,7 @@
 # mention in an untouched older entry does not count. Files named on a
 # Source: line are exempt; a brand-new package is skipped.
 #
-# Nothing else local checks this: changes-lint.sh is format-only,
+# Nothing else local checks this: `geectl changelog validate` is format-only,
 # changes-guard.sh is insertion-only, source_validator only cross-checks
 # spec<->files. Real case: a three-patch rename cost three SRs in a row —
 # first described with a glob, then with the added side still a glob.

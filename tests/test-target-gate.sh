@@ -67,6 +67,13 @@ case "$sub" in
   config)
     [ "$1" = show ] || { echo "fake geectl: unexpected config $*" >&2; exit 99; }
     printf '{"build_cache_dir": "%s"}\n' "$FAKE_CACHE" ;;
+  changelog)
+    # validate is a canned verdict: VALIDATE_FAIL=1 stands in for a real
+    # V-finding (the malformed-header fixture below); the gate's wiring is
+    # what this suite proves — the rules themselves are geectl's tests.
+    [ "$1" = validate ] || { echo "fake geectl: unexpected changelog $*" >&2; exit 99; }
+    [ -z "${VALIDATE_FAIL:-}" ] || { echo "foo.changes:2: V11: header date does not parse" >&2; exit 24; }
+    exit 0 ;;
   remote)
     leaf=$1; shift
     case "$leaf" in
@@ -517,8 +524,8 @@ case_ carry-review-then-green 0 "VERDICT: GREEN — tree $N12 on leap-16.0: buil
 case_ carry-rebuilt-for-real 0 "VERDICT: GREEN — tree $N12 on leap-16.0: built aarch64" "cd $C && bash $TG --build && bash $TG"
 check_ carry-rebuilt-is-local "[ \"\$(calls '^geectl local-build build ')\" = 1 ] && grep -q '\"mode\": \"local\"' $(stampf "$C")"
 chg "$C" "Fix the build on Leap 16.0, again" "Thu Sep 24 2026 - T <t@example.com>"; (cd "$C" && git commit -qam badhdr)
-case_ carry-lint-fails-builds 0 "foo.changes fails changes-lint — building" "cd $C && bash $TG --build"
-check_ carry-lint-fails-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
+case_ carry-validate-fails-builds 0 "foo.changes fails changelog validate — building" "cd $C && VALIDATE_FAIL=1 bash $TG --build"
+check_ carry-validate-fails-built "[ \"\\$(calls '^geectl local-build build ')\" = 1 ]"
 chg "$C" "Fix the build on Leap 16.0, once more"; (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam spec)
 case_ carry-spec-changed-builds 0 "built aarch64" "cd $C && bash $TG --build"
 check_ carry-spec-changed-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"

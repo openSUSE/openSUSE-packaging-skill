@@ -78,7 +78,7 @@ are always-on, not a phase.
 - **Build logs never enter context.** `geectl local-build build … > log 2>&1 </dev/null`, then
   `scripts/build-summary.sh log` (its exit code is the verdict). On failure, grep the log for the
   error class and read that window with `sed -n`, never `cat`/`tail -500`.
-- **Gates in one call**: `scripts/gate.sh` runs source_validator + changes-lint + changes-guard +
+- **Gates in one call**: `scripts/gate.sh` runs source_validator + `geectl changelog validate` + changes-guard +
   changes-patches and prints one verdict block — four tool results become one.
 - `geectl diff` → `| head -N` or per-file; `geectl remote package-log` → `--limit N`; `geectl build results` → the package, not the
   project; a geectl read → pipe its JSON through a python one-liner that prints the fields you need.

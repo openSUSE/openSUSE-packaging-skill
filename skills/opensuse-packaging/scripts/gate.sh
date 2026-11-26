@@ -3,7 +3,7 @@
 # (geectl working copies), no copy of a skill script, the parse-time code the specs add
 # (parse-surface), source_validator, factory-auto's
 # URL check (download_files), the spec as rpm parses it (rpmspec -P), %prep
-# (rpmbuild -bp, without --build-log), spec-cleaner, changes-lint.sh,
+# (rpmbuild -bp, without --build-log), spec-cleaner, `geectl changelog validate`,
 # changes-guard.sh, changes-patches.sh, a one-Legal-Review-Notice-per-License
 # check, the spec header, terse spec comments, the patch tags, a new .changes
 # entry for a changed tree and the sources' prebuilt binaries
@@ -21,10 +21,8 @@
 #        gate.sh [DIR] --review FILE
 #        gate.sh [DIR] --obs-build [--rpms DIR] [--repos REGEX] [--arches REGEX]
 #   DIR          package checkout (default .)
-#   --entries N  entries the submission adds vs the target (changes-lint and
-#                changes-patches, default 1)
-#   changes-lint also checks those entries' author against what a bare
-#   `geectl changelog generate` writes (vc-identity.sh); with no identity from it it is red.
+#   --entries N  entries the submission adds vs the target (`geectl changelog
+#                validate` and changes-patches, default 1)
 #   --amend-top  the .changes top entry is yours and still unaccepted (changes-guard)
 #   --squash-mine  the new top entry folds the run of your own unaccepted entries
 #                under it into one, when the user asks for it (changes-guard)
@@ -2253,15 +2251,16 @@ fi
 
 changes=( *.changes )
 if [ -e "${changes[0]}" ]; then
-  lint=(--entries "$entries")
-  if me=$("$HERE/vc-identity.sh" 2> "$log/vc-identity.txt"); then lint+=(--author "$me"); else me=""; fi
-  "$HERE/changes-lint.sh" "${lint[@]}" "${changes[@]}" > "$log/changes-lint.txt" 2>&1; rc=$?
-  if [ -z "$me" ]; then
-    { cat "$log/vc-identity.txt"; echo "author not checked: no identity from geectl changelog generate to compare against"; } \
-      >> "$log/changes-lint.txt"
-    [ $rc != 0 ] || rc=1
-  fi
-  show changes-lint $rc "$log/changes-lint.txt"
+  # The format check is geectl's: `changelog validate` owns the newest-N
+  # entries' separators, headers, bullets and author form (V11), the
+  # request/staging/status mentions and the CVE rules (V12); the gate adds no
+  # author check of its own — generate writes the author, validate checks the
+  # form. With a target it also checks the older entries against the target's
+  # copy; without one it checks the newest entries only.
+  vargs=(--entries "$entries")
+  if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then vargs+=(--target-project "$tprj" --target-package "$tpkg"); fi
+  geectl changelog validate . "${vargs[@]}" > "$log/changelog-validate.txt" 2>&1; rc=$?
+  show changelog-validate $rc "$log/changelog-validate.txt"
   guard=(); [ -n "$amend" ] && guard+=(--amend-top "$amend"); [ -n "$squash" ] && guard+=(--squash-mine "$squash")
   if [ -n "$tprj" ] && [ "$tprj" != "$own" ]; then
     # Against the target's copy, not the checkout's own committed one: a branch
@@ -2283,7 +2282,7 @@ if [ -e "${changes[0]}" ]; then
   fi
   show changes-guard $rc "$log/changes-guard.txt"
 else
-  echo "## changes-lint / changes-guard: no *.changes in $(pwd)"; red+=(changes)
+  echo "## changelog-validate / changes-guard: no *.changes in $(pwd)"; red+=(changes)
 fi
 
 cp_args=(. --entries "$entries")

@@ -22,7 +22,7 @@
 #                  quoted further down are ignored); needs a GREEN build first
 #   (no mode)      check: GREEN build and PASS review for HEAD's tree and base
 # Carried: when HEAD's tree differs from the base's last GREEN tree only in
-# .changes files and changes-lint passes the entries they touch, --build and
+# .changes files and `geectl changelog validate` passes the entries they touch, --build and
 # --remote stamp that build for HEAD's tree (mode carried) without building;
 # the review never carries. A tree stamped already is built for real.
 # PR arches: the standard repository of openSUSE:Backports:SLE-16.x:PullRequest,
@@ -233,7 +233,7 @@ def last(sd, base, tree):
 
 
 def touched(new):
-    # changes-lint --entries: down to the deepest entry of NEW that the
+    # changelog validate --entries: down to the deepest entry of NEW that the
     # stamped tree's copy (stdin) lacks verbatim.
     def entries(text):
         return [e for e in re.split(r"(?m)^(?=---)", text) if e.strip()]
@@ -658,17 +658,17 @@ say "target-gate: $pkg tree ${tree:0:12} (commit ${head:0:12}) on $base -> $prj 
 mkdir -p "$sd" || refuse "cannot create $sd"
 [ ${#anc[@]} -eq 0 ] || say "note: HEAD extends your open PR ${anc[0]} — pool-pr.sh updates that PR"
 
-# A changelog changes nothing that builds but a heading changes-lint checks, so
-# a .changes-only step from the base's last GREEN tree carries that build, not
-# its review. A tree stamped already is built for real.
+# A changelog changes nothing that builds but a heading `geectl changelog
+# validate` checks, so a .changes-only step from the base's last GREEN tree
+# carries that build, not its review. A tree stamped already is built for real.
 if [ ! -e "$stamp" ] && from=$(py last "$sd" "$base" "$tree") \
    && ns=$(git diff --no-renames --name-status "$from" HEAD 2>/dev/null) && [ -n "$ns" ] \
    && files=$(awk -F'\t' '$1 !~ /^[AM]$/ || $2 !~ /\.changes$/ {exit 1} {print $2}' <<<"$ns"); then
   carry=1
   while IFS= read -r f; do
     n=$({ git show "$from:$f" 2>/dev/null || :; } | py touched "$f") || n=1
-    if ! out=$("$HERE/changes-lint.sh" --entries "$n" "$f" 2>&1); then
-      say "note: $f fails changes-lint — building, not carrying tree ${from:0:12}:"
+    if ! out=$(geectl changelog validate "$(dirname -- "$f")" --entries "$n" 2>&1); then
+      say "note: $f fails changelog validate — building, not carrying tree ${from:0:12}:"
       printf '%s\n' "$out" | head -5
       carry=0
     fi

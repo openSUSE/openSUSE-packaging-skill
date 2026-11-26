@@ -34,7 +34,7 @@ Run `scripts/preflight.sh` first (HARD RULE — never repackage what devel alrea
 **The gate to leave this block — and before any commit to a devel project and any SR. All six, every package and flavor, on Tumbleweed and Leap 16 for x86_64 and aarch64 (more only when the user names them; a red devel is reported, never fixed or blocking); in OBS-ONLY mode gates 2–6 run in the checkout BEFORE the commit to your own branch or scratch project (`geectl commit` rewrites the committed copy they compare against), and only gate 1 waits for the OBS build:**
 1. a clean `geectl local-build build` of the spec and sources you commit (local, or its OBS log in OBS-ONLY mode — `references/update-build.md` "Build modes"; outside a Leap pool tree a `.changes`-only edit keeps the last green one) — `scripts/build-summary.sh`'s exit code *is* the verdict; **for a Leap pool branch, `scripts/target-gate.sh --build` (or `target-gate.sh --remote`) in the pool clone itself — a green build of any other checkout is not evidence**;
 2. a green `geectl local-build service-run --service source_validator --live` — never read through a pipe;
-3. `scripts/changes-lint.sh --entries <n-new> <pkg>.changes` — `source_validator` does not check `.changes` *format*;
+3. `geectl changelog validate --entries <n-new>` — `source_validator` does not check `.changes` *format*;
 4. `scripts/changes-guard.sh <pkg>.changes` — nor its *integrity*; the edit must be insertion-only. **The one case where a red guard is still correct to commit is a `check_dates_in_changes` header repair** (`references/changelog-rules.md` "Sanctioned exception 2"); every other red guard is a real defect;
 5. `scripts/changes-patches.sh` — every patch added/removed vs the SR **target** named by literal filename, or factory-auto declines;
 6. **then the adversarial change review (`agents/changes-review.md`) must have COMPLETED and returned `PASS`** — the mechanical gates judge format, not whether the change or the entry is correct. Never by its author: the update-build sub-agent starts its own changes-review sub-agent (nested; opencode needs `experimental.subagent_depth: 2`), which records its verdict; the orchestrator reviews only on `REVIEW-PENDING`.
@@ -89,8 +89,6 @@ Call these instead of hand-writing OBS-API / Repology / Gitea queries. **geectl 
 - `leap-status.sh` — in Leap? at what version per branch? PR already open?
 - `scm-snapshot.sh` — scaffold + verify a pinned-commit `obs_scm` `_service`. **`--update` edits ONLY the obs_scm `revision` param, in place.**
 - `changes-prepend.sh` — verified `.changes` prepend (separator-count + insertion-only checks), preferred over hand-editing.
-- `changes-lint.sh` — format-lint the newest N `.changes` entries (separators, headers, blank lines, bullets); with `--author`, your entries carry exactly your name and address.
-- `vc-identity.sh` — the `Name <email>` the changelog layer uses, read from `geectl remote whois LOGIN`; the only author for your entries, never git's identity.
 - `quilt-test-series.sh` / `quilt-prep.sh` — CVE-backport test loop: push patches one by one, refresh offset-only applies, comment out rejects; `references/quilt-patches.md` "CVE patch backporting (quilt + spec)".
 - `changes-patches.sh` — factory-auto's patch-mention rule, run locally against the SR **target** (not your branch's last commit).
 - `refsection.py` — print ONE section of a reference (by heading or bold lead-in) instead of Reading the file; `--list` for the outline; every pointer here is its argument.
@@ -167,7 +165,7 @@ The order matters: spec-cleaner output is mechanically correct *style*; the wiki
 
 ### Adding a `.changes` entry
 
-`geectl changelog generate --write --author AUTHOR` writes the entry; `geectl changelog validate` checks it. **HARD RULE — a prepend is an *insertion*, never a rewrite:** never `open(f,"w").write(hdr + open(f).read())` or any other truncate-then-read form (it silently deletes every previous entry), and afterwards verify the separator count went up by exactly one and that `geectl diff` shows a pure insertion. Prefer `scripts/changes-prepend.sh`, which is canonical by construction, then `scripts/changes-lint.sh --entries <n>`.
+`geectl changelog generate --write` writes the entry; `geectl changelog validate` checks it. **HARD RULE — a prepend is an *insertion*, never a rewrite:** never `open(f,"w").write(hdr + open(f).read())` or any other truncate-then-read form (it silently deletes every previous entry), and afterwards verify the separator count went up by exactly one and that `geectl diff` shows a pure insertion. Prefer `scripts/changes-prepend.sh`, which is canonical by construction, then `geectl changelog validate --entries <n>`.
 
 **One entry per change** (amend your unaccepted top entry, don't stack a second), full `Full Name <email>` author line, `LC_ALL=C date -u "+%a %b %_d %T UTC %Y"` for the header, a **blank line at the end of the block**, and **never touch an already-released entry** (narrow exceptions only). The bullet records *net change*, not the journey.
 

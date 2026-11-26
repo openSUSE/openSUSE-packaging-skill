@@ -147,7 +147,7 @@ something the others structurally cannot:
    --build-log`, `--obs-build`).
 2. **A green `source_validator`** (`geectl local-build service-run --service source_validator DIR --live`) — it catches missing/orphaned
    sources, unparseable specs and bad license tags. Never read its verdict through a pipe.
-3. **`scripts/changes-lint.sh --entries <n-new> <pkg>.changes`** — because `source_validator` does
+3. **`geectl changelog validate --entries <n-new>`** — because `source_validator` does
    **not** validate `.changes` *format*: it passes on a missing blank line before a separator, and on
    a malformed date (`Thu Jul 09 00:00:00 UTC` instead of the space-padded `Thu Jul  9 …`). Both are
    things a human reviewer declines for, and in a multi-package fan-out they sail through the green

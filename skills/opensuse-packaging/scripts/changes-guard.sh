@@ -7,8 +7,9 @@
 # one, deleting that entry's separator+date header — factory-auto passes it,
 # but it silently rewrites history and misdates past work).
 #
-# It is the integrity companion to changes-lint.sh (which checks *format* of
-# the newest entries). Run BOTH at every commit gate, alongside source_validator.
+# It is the integrity companion to `geectl changelog validate` (which checks
+# *format* of the newest entries). Run BOTH at every commit gate, alongside
+# source_validator.
 #
 # Check: the committed baseline must be an exact byte-suffix of the working
 # file. That holds iff all new bytes are prepended above the old content —
@@ -22,8 +23,9 @@
 #                reworded, or rewritten, date refreshed — provided BOTH the
 #                committed top entry and its replacement carry AUTHOR (YOUR own
 #                name, e.g. 'Jane Packager'; never another packager's) in the
-#                header, the committed one names the geectl user ($GEECTL_OBS_USERNAME), and
-#                openSUSE:Factory's copy of the .changes does not hold that entry
+#                header, the committed one names the resolved geectl identity
+#                (`geectl changelog identity`), and openSUSE:Factory's copy of
+#                the .changes does not hold that entry
 #                yet. Use this only for an update already committed to the devel
 #                project but NOT yet accepted into openSUSE:Factory: that entry
 #                describes an unreleased revision, so it is a draft, not history,
@@ -37,15 +39,15 @@
 #                Also allow the run of YOUR OWN entries at the top to be folded
 #                into ONE new entry carrying AUTHOR, when the user asks for one
 #                entry per submission: every entry the new one replaces must
-#                name the geectl user ($GEECTL_OBS_USERNAME) and be absent from openSUSE:Factory
-#                (the --amend-top checks, for each), and every entry below the
-#                folded run stays byte-for-byte identical. Another packager's
-#                entry is never folded (swift-lang: a rewrite of the whole file
-#                deleted them).
+#                name the resolved geectl identity (`geectl changelog identity`)
+#                and be absent from openSUSE:Factory (the --amend-top checks,
+#                for each), and every entry below the folded run stays
+#                byte-for-byte identical. Another packager's entry is never
+#                folded (swift-lang: a rewrite of the whole file deleted them).
 #   --released DIR
 #                openSUSE:Factory's copy of each .changes, by file name, for the
 #                --amend-top and --squash-mine checks (offline/tests; a file missing there = not in
-#                Factory; the geectl whois check still runs). Default: `geectl remote cat openSUSE:Factory <pkg> <file> --format text`, the
+#                Factory; the identity check still runs). Default: `geectl remote cat openSUSE:Factory <pkg> <file> --format text`, the
 #                package from .osc/_package or the git checkout's directory name;
 #                a 404 means a new package.
 #   Baseline auto-detection order: .osc/sources/<name> (classic osc checkout),
@@ -133,28 +135,25 @@ amend_top_ok() {                   # $1 = work, $2 = base, $3 = author substring
        >/dev/null 2>&1
 }
 
-# Are these baseline entries (by header line) the OBS user's own? AUTHOR is the
-# caller's word; the geectl user is $GEECTL_OBS_USERNAME, whose name and email
-# come from `geectl remote whois`. 0 = yes, 1 = no, 3 = cannot tell (said on
-# stderr).
+# Are these baseline entries (by header line) the resolved geectl identity's
+# own? The identity is what `geectl changelog generate` writes, printed by
+# `geectl changelog identity` (geectl #467) — the guard never re-derives it.
+# 0 = yes, 1 = no, 3 = cannot tell (said on stderr).
 top_mine() {                       # $1 = work, $2 = what ("the top entry"), $3... = header lines
-  local work=$1 what=$2 whois name mail bh; shift 2
-  [ -n "${GEECTL_OBS_USERNAME:-}" ] || { echo "$work: cannot tell whether $what is yours: set GEECTL_OBS_USERNAME" >&2; return 3; }
-  whois="$(geectl remote whois "$GEECTL_OBS_USERNAME" 2>/dev/null)" || whois=""
-  name="$(printf '%s' "$whois" | python3 -I -c 'import sys, json
-try: print(json.load(sys.stdin).get("realname") or "")
-except Exception: print("")' 2>/dev/null)"
-  mail="$(printf '%s' "$whois" | python3 -I -c 'import sys, json
-try: print(json.load(sys.stdin).get("email") or "")
-except Exception: print("")' 2>/dev/null)"
+  local work=$1 what=$2 ident name mail bh; shift 2
+  ident="$(geectl changelog identity --format text 2>/dev/null)" || ident=""
+  if [ -z "$ident" ]; then
+    echo "$work: cannot tell whether $what is yours: geectl changelog identity failed" >&2; return 3
+  fi
+  name="${ident% <*}"; mail="${ident##*<}"; mail="${mail%>}"
   if [ -z "$name$mail" ]; then
-    echo "$work: cannot tell whether $what is yours: geectl remote whois $GEECTL_OBS_USERNAME failed" >&2; return 3
+    echo "$work: cannot tell whether $what is yours: geectl changelog identity printed nothing usable" >&2; return 3
   fi
   for bh in "$@"; do
     if { [ -n "$name" ] && [[ $bh == *" - $name <"* ]]; } || { [ -n "$mail" ] && [[ $bh == *"<$mail>"* ]]; }; then
       continue
     fi
-    echo "$work: ERROR — $what is not yours ('$bh'; geectl remote whois $GEECTL_OBS_USERNAME: $name <$mail>): another" \
+    echo "$work: ERROR — $what is not yours ('$bh'; geectl changelog identity: $name <$mail>): another" \
          "packager's entry is history, never a draft. Restore it byte-for-byte and write" \
          "a new entry on top." >&2
     return 1

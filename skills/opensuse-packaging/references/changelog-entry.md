@@ -1,7 +1,7 @@
 # Adding a `.changes` entry — the mechanics
 
 Owner of: the entry template, the prepend-is-an-insertion HARD RULE, and the
-`changes-prepend.sh` / `changes-lint.sh` / `changes-guard.sh --amend-top` mechanics.
+`changes-prepend.sh` / `geectl changelog validate` / `changes-guard.sh --amend-top` mechanics.
 
 The *format and content* rules — bullet levels (`-`/`*`, no third level), thematic grouping, the
 condense-auto-generated-changelog drop/keep list, the no-URL rule, patch naming, CVE ids (with the
@@ -46,9 +46,9 @@ reviewers will reject the entry. (`%_d` is the space-padded day: `Thu Jul  9`, n
 
 The header line is `<date> - Full Name <email>` (e.g. `Jane Packager <jane@example.com>`), never a
 bare email. Your own entries carry **exactly what `geectl changelog generate` writes** — the same name and the
-same address (`scripts/vc-identity.sh` prints it) — not your git identity, and not an address an
+same address (`geectl changelog identity` prints it) — not your git identity, and not an address an
 older entry happens to use (real case: sr#1385844 shipped the git address under the right name).
-`gate.sh`'s changes-lint refuses an entry that shares only the name or only the address. If a source service (`changesgenerate`) stamps the entry
+If a source service (`changesgenerate`) stamps the entry
 with just a bare email, rewrite it to the full form before committing.
 
 ## Prepend is an *insertion*, never a rewrite — HARD RULE
@@ -69,14 +69,14 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
 `open(f,"w").write(hdr+open(f).read())` one-liner truncated all three `.changes`, dropping the
 `Initial package` entries; the reviewer declined all three SRs.)
 
-## The scripts — `changes-prepend.sh`, `changes-lint.sh`, `changes-guard.sh`
+## The scripts — `changes-prepend.sh`, `geectl changelog validate`, `changes-guard.sh`
 
 - **`scripts/changes-prepend.sh` mechanizes the prepend + verification — prefer it over
   hand-editing**, because the block it emits is canonical by construction (separator count and
   insertion-only are checked; it restores the file on failure). It refuses a file that already
   differs from its committed version — see
   `references/changelog-entry.md` "One `.changes` entry per change — amend, don't stack".
-- Whichever way you write it, re-run **`scripts/changes-lint.sh --entries <n>`** afterwards: it
+- Whichever way you write it, re-run **`geectl changelog validate --entries <n>`** afterwards: it
   format-lints the newest N entries (separators, headers, blank lines, bullets) and is the pre-SR
   gate against "fix the format of the changes entries" declines. `source_validator` does **not**
   check `.changes` format.
@@ -87,7 +87,7 @@ changelog entries"*). (Real case: the fastmcp/bugzilla-mcp cone — a
   your OWN top entry while it is committed to devel (or pushed to an open PR/SR branch) but **not
   yet accepted into Factory** — on a git branch the auto-detected baseline is the *branch HEAD*,
   which already contains your unmerged entry. AUTHOR is always your own name: the guard checks the
-  entry against your OBS identity (the identity `scripts/vc-identity.sh` prints) and Factory's copy, and refuses another packager's entry, an entry
+  entry against your resolved identity (`geectl changelog identity` prints it) and Factory's copy, and refuses another packager's entry, an entry
   Factory already has, any change from the second entry down, and emptying the entry. Stop using
   it once the submission is accepted; the entry is history then.
 - **`changes-guard.sh --squash-mine "<Your Name>"`** (and `gate.sh --squash-mine`) folds the run of

@@ -109,8 +109,10 @@ case "$1 $2" in
   "remote list-files") m=$(md5sum < "$FACTORY/foo.changes" | cut -d' ' -f1)
     echo "{\"project\": \"openSUSE:Factory\", \"package\": \"foo\", \"files\": [{\"name\": \"foo.changes\", \"size\": 1, \"mtime\": 1, \"md5\": \"$m\"}, {\"name\": \"foo.spec\", \"size\": 1, \"mtime\": 1, \"md5\": \"00000000000000000000000000000000\"}]}"; exit 0 ;;
   "remote cat") [ "$3 $4" = "openSUSE:Factory foo" ] && [ -f "$FACTORY/$5" ] && { cat "$FACTORY/$5"; exit 0; } ;;
-  "remote whois") [ -n "${VC_FAIL:-}" ] && { echo '{"error":{"code":"auth_failed","context":"no such user"}}' >&2; exit 1; }
-    echo '{"login": "jpackager", "email": "jane@example.com", "realname": "Jane Packager", "state": "confirmed"}'; exit 0 ;;
+  "changelog validate") [ -n "${VALIDATE_FAIL:-}" ] && { echo "foo.changes:2: V11: author must be 'Name <email>'" >&2; exit 24; }
+    exit 0 ;;
+  "changelog identity") [ -n "${IDENTITY_FAIL:-}" ] && { echo "geectl changelog identity: no identity resolves" >&2; exit 1; }
+    echo 'Jane Packager <jane@example.com>'; exit 0 ;;
 esac
 # A 404 renders by --format: JSON by default, plain text with --format text.
 case "$*" in
@@ -194,22 +196,22 @@ grep -qF "## changes-guard: rc=0" <<<"$out" && grep -qF "2 of your unreleased en
   && pass "--squash-mine: devel's own unaccepted entries fold into one" \
   || { fail "--squash-mine through the gate"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
-# changes-lint checks the new entry's author against what geectl changelog
-# generate writes: the git address under the same name is red (sr#1385844),
-# and an identity geectl changelog generate cannot give leaves the author
-# unchecked, which is red too.
+# `geectl changelog validate` checks the newest entries' format — the gate
+# adds no author check of its own: generate writes the author, validate checks
+# the form, so the git address under the same name passes the format gate
+# (sr#1385844 is generate's to prevent, not the gate's to re-check).
 out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
-grep -qF "## changes-lint: rc=0" <<<"$out" && pass "author as geectl changelog generate writes it: changes-lint green" \
-  || { fail "author as geectl changelog generate writes it"; printf '%s\n' "$out" | sed 's/^/    /'; }
+grep -qF "## changelog-validate: rc=0" <<<"$out" && pass "well-formed newest entry: changelog-validate green" \
+  || { fail "well-formed newest entry: changelog-validate"; printf '%s\n' "$out" | sed 's/^/    /'; }
 devel "$work/git-email" 1; sed -i '2s/<jane@example.com>$/<jane@personal.example>/' "$work/git-email/foo.changes"
 out="$(FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/git-email" 2>&1)"
-grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "is not what geectl changelog generate writes" <<<"$out" \
-  && pass "git address under the same name: changes-lint red" \
+grep -qF "## changelog-validate: rc=0" <<<"$out" \
+  && pass "git address under the same name: format valid, changelog-validate green" \
   || { fail "git address under the same name"; printf '%s\n' "$out" | sed 's/^/    /'; }
-out="$(VC_FAIL=1 FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
-grep -qF "## changes-lint: rc=1" <<<"$out" && grep -qF "author not checked" <<<"$out" \
-  && pass "geectl changelog generate gives no identity: changes-lint red" \
-  || { fail "geectl changelog generate gives no identity"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$(VALIDATE_FAIL=1 FACTORY="$work/factory" PATH="$work/bin:$PATH" bash "$GATE" "$work/devel-one" 2>&1)"
+grep -qF "## changelog-validate: rc=24" <<<"$out" \
+  && pass "validate fails: changelog-validate red, gate red" \
+  || { fail "validate fails: changelog-validate red"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # A fork-PR clone tracks the pushed fork branch, which already holds the
 # change, so changes-patches compares clean against it; --git-base names the
@@ -491,6 +493,16 @@ cat > "$work/obin/geectl" <<'EOF'
 #!/bin/bash
 [ -n "${GEO_LOG:-}" ] && printf '%s\n' "$*" >> "$GEO_LOG"
 case "$1" in
+  changelog)
+    case "$2" in
+      validate)
+        [ -n "${VALIDATE_FAIL:-}" ] && { echo "foo.changes:2: V11: author must be 'Name <email>'" >&2; exit 24; }
+        exit 0 ;;
+      identity)
+        [ -n "${IDENTITY_FAIL:-}" ] && { echo "geectl changelog identity: no identity resolves" >&2; exit 1; }
+        echo 'Jane Packager <jane@example.com>'; exit 0 ;;
+      *) echo "fake geectl: unexpected changelog $*" >&2; exit 99 ;;
+    esac ;;
   remote)
     case "$2" in
       link-target)
