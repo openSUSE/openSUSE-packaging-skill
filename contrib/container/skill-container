@@ -279,6 +279,9 @@ cmd_secrets() {
 	resolve
 	# All of them are complete before any replaces the secret of an earlier run.
 	geectl=$(geectl_login)
+	# The password is in $geectl now; drop it from the environment so no
+	# child of this launcher (and no fake in the test) can read it.
+	unset GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 	tea=$(tea_login)
 	github=$(gh_login)
 	model=$(PATH=$userpath OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" auth export "$model_auth")
@@ -1166,6 +1169,9 @@ cmd_import() {
 }
 cmd=${1-}
 [ $# -eq 0 ] || shift
+# Only `secrets` reads the login; every other command must not carry the
+# password to its children.
+[ "$cmd" = secrets ] || unset GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 case $cmd in
 secrets) cmd_secrets "$@" ;;
 ssh-key) cmd_ssh_key "$@" ;;
