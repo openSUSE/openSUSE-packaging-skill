@@ -161,6 +161,16 @@ printf 'run `gate.sh && osc ci -m x`\nthen `osc ci -m x` alone\n' | grep -cE "$C
 hits=$(grep -nE "$CHAIN" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
 [ -z "$hits" ] && pass "no doc chains a commit or submit after another command" \
   || { fail "a doc chains osc ci/sr after another command (pr-guard refuses it):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
+# The geectl form of the same rule: a filing or an accept chained after
+# another command is refused the same way (gate in one call, the geectl
+# mutation in the next).
+CHAIN_GEECLT='&&[[:space:]]*geectl[[:space:]]+(commit|request[[:space:]]+(file|refile|accept)|pull-request[[:space:]]+(submit|merge))\b'
+# shellcheck disable=SC2016  # the backticks are the probe's markdown
+printf 'run `gate.sh && geectl request file --live`\nthen `geectl request file --live` alone\n' | grep -cE "$CHAIN_GEECLT" | grep -qx 1 \
+  && pass "chained-geectl pattern self-test" || fail "chained-geectl pattern self-test: the regex is broken"
+hits=$(grep -nE "$CHAIN_GEECLT" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no doc chains a geectl filing or accept after another command" \
+  || { fail "a doc chains a geectl filing or accept after another command (pr-guard refuses it):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 # The agent runs its own commits and requests (SKILL.md "End state"): a doc
 # that tells it to confirm intent or ask before one hands the step back to
 # the user, as "confirm intent first, same as osc commit" did.
@@ -171,4 +181,48 @@ printf 'a commit — confirm intent first, same as `osc commit`\nshow the diff, 
 hits=$(grep -niE "$ASKS" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
 [ -z "$hits" ] && pass "no doc asks for the user's go before the agent's own commit" \
   || { fail "a doc asks for a go before the agent's own commit (it runs them itself):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
+# The geectl form: --live is the mutation flag, and the agent runs its own
+# --live mutations (dry-run is the default); a doc that tells it to confirm
+# intent or ask first before one hands the step back to the user.
+ASKS_GEECLT='(confirm (the )?intent|ask (the user )?(first|before))[^.]*\bgeectl\b[^.]*--live\b'
+# shellcheck disable=SC2016  # the backticks are the probe's markdown
+printf 'confirm intent first, then `geectl request accept 123 --live`\nrun `geectl request accept 123 --live` after the review\n' | grep -ciE "$ASKS_GEECLT" | grep -qx 1 \
+  && pass "ask-before-live pattern self-test" || fail "ask-before-live pattern self-test: the regex is broken"
+hits=$(grep -niE "$ASKS_GEECLT" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no doc asks for the user's go before the agent's own --live mutation" \
+  || { fail "a doc asks for a go before the agent's own --live mutation (it runs them itself):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
+# buildinfo is JSON: never grep it for the XML `<bdep` tag (entry 5).
+# Prose naming `<bdep ...>` passes; only a grep for it is flagged.
+BDEP='grep[[:space:]]+[^|;]*['"'"'"]<bdep'
+# shellcheck disable=SC2016  # the quotes are the probe's markdown
+printf 'geectl build buildinfo p k r a | grep %s<bdep%s | cut -d\" -f2\nthe set of `<bdep project=\"x\">` entries\n' "'" "'" | grep -cE "$BDEP" | grep -qx 1 \
+  && pass "bdep-grep pattern self-test" || fail "bdep-grep pattern self-test: the regex is broken"
+hits=$(grep -nE "$BDEP" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no doc greps buildinfo for '<bdep'" \
+  || { fail "a doc greps buildinfo for '<bdep' (read it as JSON instead):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
+# A bare `geectl local-build log` citation is missing its required
+# --project (entry 6). The citation is the backticked span; prose
+# naming the leaf without citing it passes.
+log_lint() {
+  python3 - "$@" <<'PY'
+import re, sys
+LOG = re.compile(r"`geectl\s+local-build\s+log\b([^`]*)`")
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            for m in LOG.finditer(line):
+                # A bare leaf name is prose, not a citation: only a
+                # span carrying arguments must name --project.
+                if m.group(1).strip() and "--project" not in m.group(1):
+                    print(f"{path}:{n}")
+PY
+}
+probe="$HERE/fixtures/doc-lint/bare-log.md"
+want=$(grep -n -- '<!-- flag -->' "$probe" | cut -d: -f1 | paste -s -d' ' -)
+got=$(log_lint "$probe" | cut -d: -f2 | paste -s -d' ' -)
+[ -n "$want" ] && [ "$got" = "$want" ] && pass "bare-log self-test (lines $want caught, the rest passed)" \
+  || fail "bare-log self-test: caught lines '${got}', want '${want}' — the check is broken, nothing below is trustworthy"
+hits=$(log_lint "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
+[ -z "$hits" ] && pass "no bare geectl local-build log citation" \
+  || { fail "a doc cites geectl local-build log without --project:"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 [ $fails -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
