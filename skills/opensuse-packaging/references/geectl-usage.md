@@ -11,7 +11,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 **HARD RULE — every service through its own client.** A hand-rolled HTTP call skips the client's auth and error handling and every check this skill documents.
 
 - **OBS: `geectl`** — a command from this page. There is no generic API command: a read the typed commands do not cover is a missing leaf, not a workaround — never curl, wget or urllib `api.opensuse.org` or `build.opensuse.org`, and never hand-roll an HTTP call to either.
-- **src.opensuse.org: the bundled scripts, `tea` or `git-obs`**, and `git-obs -G src.opensuse.org api` when none of them fits — never curl or urllib its API, and never `tea api` for a lookup: it exits 0 on an HTTP 404. Name the forge on every call — `git-obs -G src.opensuse.org`, `tea … --login <login>` — or the tool takes its default login, possibly another forge's, and that forge's 404 reads as "not there". Push over SSH. Forms: `references/git-workflow.md` "Gitea CLI — tea 0.15.1 cheat sheet".
+- **src.opensuse.org: the bundled scripts, `tea` or `geectl`** — a `gitea` / `pull-request` command from this page. There is no generic API command: a read the typed commands do not cover is a missing leaf, not a workaround — never curl or urllib its API, and never `tea api` for a lookup: it exits 0 on an HTTP 404. Name the forge on every call — `tea … --login <login>` — or the tool takes its default login, possibly another forge's, and that forge's 404 reads as "not there". Push over SSH. Forms: `references/git-workflow.md` "Gitea CLI — tea 0.15.1 cheat sheet".
 - **GitHub: `gh api`**, which authenticates itself — never an unauthenticated `curl` of `api.github.com`, which runs into the rate limit within a sweep.
 - **Unpack into `/var/tmp`**, never `/tmp`: a vendor tree or an RPM extraction there runs `/tmp` out of space or inodes for every session on the host.
 - **Credentials stay inside the tools.** Never read a geectl config file, a password file, or an API-key file, and never put a token in a URL, a header or argv — no `Authorization:` header, no `GIT_ASKPASS` script; the CLIs read their own config (`references/token-auth.md` "Agent rules"). A step that seems to need the raw token needs another tool.
@@ -115,6 +115,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl gitea raw-file OWNER REPO PATH [--ref REF]` — print one file from a repository verbatim; a missing file is `NotFound`, never empty content.
 - `geectl gitea commit-statuses OWNER REPO SHA` — list a commit's statuses: the CI states reported for that commit.
 - `geectl gitea repo-get OWNER REPO` — show a repository: owner, default branch, privacy, clone URLs, and the token owner's permissions.
+- `geectl gitea branch-list OWNER REPO` — list the branches of a repository.
 - `geectl gitea cleanup-forks --live` — list obsolete Gitea forks and their OBS home test projects, and delete them. A project is deleted only when its description marker names a fork that no longer exists on Gitea; dry-run is the default.
 - `geectl remote owners PRJ PKG` — owners of a package (project/package scope); bugowners included, not the maintainer set.
 - `geectl remote owners-for-binary BINARY` — owners of the source package shipping that binary.

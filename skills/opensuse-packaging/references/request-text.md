@@ -95,7 +95,7 @@ Reading a thread never needs the user's go:
 geectl request list-comments <id>                                            # an OBS request
 tea comments list --login src.opensuse.org --repo <owner>/<pkg> <n>          # a Gitea issue or PR
 tea pulls review-comments --login src.opensuse.org --repo <owner>/<pkg> <n>  # inline review comments, ids
-git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # any other read: a GET
+geectl pull-request comments gitea:<owner>/<pkg>#<n>     # any other read: a GET
 ```
 
 `tea comments` with no subcommand **adds** a comment, whatever flag follows (there is no

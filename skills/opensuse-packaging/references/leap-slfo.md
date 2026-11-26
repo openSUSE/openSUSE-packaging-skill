@@ -10,7 +10,7 @@ Check the three feeds for Leap 16.0, in this order:
 geectl remote package-meta SUSE:SLFO:1.2 <pkg>        # SLE base (scmsync'd from pool ?trackingbranch=slfo-1.2)
 geectl remote package-meta openSUSE:Backports:SLE-16.0 <pkg>
 # and the per-product branches in the git pool:
-git-obs -G src.opensuse.org api /repos/pool/<pkg>/branches   # look for leap-16.0 / leap-16.1 / slfo-1.2 / slfo-main
+geectl gitea branch-list pool <pkg>   # look for leap-16.0 / leap-16.1 / slfo-1.2 / slfo-main
 ```
 
 | Branches present in `pool/<pkg>` | Origin | PR target for Leap | Reviewed by | Notes |
@@ -94,7 +94,7 @@ A Gitea PR merges into an *existing* base branch, and a normal contributor has `
 
 **Confirm "is it in Leap?" and "can I even do it?" with two API checks before promising anything:**
 - *In Leap?* `scripts/leap-status.sh <pkg>` — it lists the `pool/<pkg>` branches and checks `products/PackageHub`'s per-Leap `.gitmodules`; exit 3 = not in Leap. **Only a `factory` branch ⇒ not in Leap**, and a `[submodule "<pkg>"]` entry pointing at `pool/<pkg>` is what actually puts it there. (`geectl remote list-packages openSUSE:Backports:SLE-16.0` also lists what's there.)
-- *Can I onboard it?* `git-obs -G src.opensuse.org api /repos/pool/<pkg>` → `.permissions.push`, as your login sees it. **`false` ⇒ stop** — you can't create the `leap-16.x` branch, and a `products/PackageHub` submodule PR would point at a branch that can't exist yet. Report it as a release-team request, don't burn cycles forking.
+- *Can I onboard it?* `geectl gitea repo-get pool <pkg>` → the token owner's permissions, as your login sees it. **`false` ⇒ stop** — you can't create the `leap-16.x` branch, and a `products/PackageHub` submodule PR would point at a branch that can't exist yet. Report it as a release-team request, don't burn cycles forking.
 - **A whole *stack* can be Factory-only even when its leaf libs are in Leap.** (Real case: zathura + its 5 plugins had only a `factory` branch each, while their deps `girara`/`mupdf` *were* in Leap. The girara/mupdf updates are normal PRs to their existing `leap-16.x` branches; the zathura stack needs the non-self-service onboarding above. Note the bug being "fixed in Leap" can be moot — if the consumer isn't shipped in Leap, the bug never affected Leap.)
 
 ## 5. Closing the loop with bugzilla / in-flight fixups
