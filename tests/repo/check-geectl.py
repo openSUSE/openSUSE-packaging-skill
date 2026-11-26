@@ -244,15 +244,18 @@ class GeectlCli:
             if name == "help":
                 self.paths.add("help")
                 self.flags["help"] = set(GLOBAL_OPTS)
+                self.valued["help"] = {"--format"}
                 continue
             rc, group_out = run_help(binary, [name])
             if rc is None or rc != 0:
                 raise RuntimeError(f"cannot run geectl {name} --help")
             leaves = command_names(group_out)
             if not leaves:
-                # A top-level leaf with no subcommands (e.g. version).
+                # A top-level leaf with no subcommands (e.g. version):
+                # its flags load lazily from `geectl help <leaf>`,
+                # like a group leaf's — GLOBAL_OPTS alone would fail
+                # every cited leaf flag (e.g. `commit -m`).
                 self.paths.add(name)
-                self.flags[name] = set(GLOBAL_OPTS)
                 continue
             for leaf in leaves:
                 self.paths.add(f"{name} {leaf}")
@@ -266,16 +269,24 @@ class GeectlCli:
             return self.flags[path]
         if path not in self.paths:
             return None
-        group, leaf = path.split()
-        if leaf == "help":
-            self.flags[path] = set(GLOBAL_OPTS)
-            self.valued[path] = {"--format"}
-            return self.flags[path]
-        # `geectl help <group> <leaf>` prints the leaf help; appending
-        # --help to the help subcommand does not.
-        rc, leaf_out = run(self.binary, ["help", group, leaf])
-        if rc is None or rc != 0:
-            raise RuntimeError(f"cannot run geectl help {path}")
+        parts = path.split()
+        if len(parts) == 1:
+            # A top-level leaf (`commit`, `checkout`, ...): its help is
+            # `geectl help <leaf>`, with the same Options section.
+            rc, leaf_out = run(self.binary, ["help", parts[0]])
+            if rc is None or rc != 0:
+                raise RuntimeError(f"cannot run geectl help {path}")
+        else:
+            group, leaf = parts
+            if leaf == "help":
+                self.flags[path] = set(GLOBAL_OPTS)
+                self.valued[path] = {"--format"}
+                return self.flags[path]
+            # `geectl help <group> <leaf>` prints the leaf help; appending
+            # --help to the help subcommand does not.
+            rc, leaf_out = run(self.binary, ["help", group, leaf])
+            if rc is None or rc != 0:
+                raise RuntimeError(f"cannot run geectl help {path}")
         flags = set(GLOBAL_OPTS)
         options = leaf_out.split("Options:", 1)[-1] if "Options:" in leaf_out else ""
         flags.update(re.findall(r"^ {6}(--[\w-]+)", options, flags=re.M))

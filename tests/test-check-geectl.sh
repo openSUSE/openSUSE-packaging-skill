@@ -192,14 +192,43 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
-del_override() { python3 - "$1" <<'PY'
+manifest_add_leaf() { python3 - "$M" <<'PY'
 import json, sys
 path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
     data = json.load(fh)
-del data["positional-overrides"]["remote search-packages"]
+data["leaves"]["frobnicate"] = {"issue": 999, "flags": ["--rev"]}
 with open(path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    json.dump(data, fh)
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+add_synopsis() { python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith("## Wrong forms"):
+        lines.insert(i, "- `geectl frobnicate --rev X` — a target-state leaf (test fixture).")
+        break
+else:
+    raise SystemExit("no Wrong forms section")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+add_override() { python3 - "$M" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+data["positional-overrides"]["remote search-packages"] = {
+    "issue": 999, "required": ["TERM"], "optional": [],
+}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
 PY
 }
 
@@ -211,11 +240,11 @@ case_ unknown-flag 1 "geectl build results has no option --nope" \
 case_ fenced-citation 1 "geectl build results has no option --nope2" \
   "printf '\`\`\`\ngeectl build results --nope2 PRJ\n\`\`\`\n' >> $T && grep -q -- --nope2 $T"
 case_ target-state-leaf 0 "geectl citations match geectl" \
-  "add 'Run \`geectl checkout PRJ PKG\`.'"
+  "manifest_add_leaf $M && add_synopsis $U && add 'Run \`geectl frobnicate --rev X\`.'"
 case_ target-state-flag 0 "geectl citations match geectl" \
   "add 'Run \`geectl request search --since 2026-01-01 --state new\`.'"
-case_ target-state-flag-unknown 1 "target-state leaf (issue #17) has no flag --bogus" \
-  "add 'Run \`geectl checkout --bogus PRJ PKG\`.'"
+case_ target-state-flag-unknown 1 "target-state leaf (issue #999) has no flag --bogus" \
+  "manifest_add_leaf $M && add_synopsis $U && add 'Run \`geectl frobnicate --bogus\`.'"
 case_ stale-manifest-leaf 1 "target-state leaf \`remote cat\` (issue #999) now exists in geectl" \
   "manifest_add $M"
 case_ stale-manifest-flag 1 "target-state flag \`--limit\` on \`build job-history\` (issue #999) now exists in geectl" \
@@ -265,7 +294,7 @@ case_ positional-log-bare 1 "takes positionals REPO ARCH SPEC (none cited)" \
 case_ positional-create-token 1 "takes no positionals (cited PRJ PKG)" \
   "replace_create_token_call $U"
 case_ positional-override-load-bearing 1 "takes positionals TERM (none cited)" \
-  "del_override $M"
+  "add_override $M"
 case_ geectl-missing 2 "cannot run geectl" ":" "--geectl /nonexistent"
 
 [ $fails -eq 0 ] && echo "ALL PASS" || echo "$fails FAILED"
