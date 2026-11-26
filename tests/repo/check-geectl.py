@@ -29,19 +29,21 @@ leaf):
   * the known wrong forms are not recommended outside geectl-usage.md's
     "Wrong forms" section.
 
-Target state: leaves and flags geectl does not have yet are listed in
-tests/repo/geectl-target-state.json with the blocking geectl issue or PR
-and the exact shape the skill needs. A citation of one of those is checked
-against the manifest instead of the binary — and the manifest row goes
-stale (a finding) the moment the binary gains the leaf or flag, so the
-row is removed and the citations re-verified live. A row may also carry
-"positionals": the leaf's positional names in order. A
-"positional-overrides" row records a leaf whose positionals changed since
-the binary: the row's required/optional lists are the target state, and
-the row goes stale the moment the binary's Usage line matches them. A
-"global-flags" row records a global option geectl does not have yet: it
-is accepted in any call and in prose, and goes stale the moment the
-binary's top-level `--help` lists it.
+Target state: when the skill cites a leaf or flag geectl does not have
+yet, the row lives in tests/repo/geectl-target-state.json with the
+blocking geectl issue or PR and the exact shape the skill needs. A
+citation of one of those is checked against the manifest instead of the
+binary — and the manifest row goes stale (a finding) the moment the
+binary gains the leaf or flag, so the row is removed and the citations
+re-verified live. A row may also carry "positionals": the positional
+names of a leaf, in order. A "positional-overrides" row records a leaf
+whose positionals changed since the binary: the required/optional
+lists are the target state, and the row goes stale the moment the
+Usage line of the binary matches them. A "global-flags" row records a
+global option geectl does not have yet: it is accepted in any call and
+in prose, and goes stale the moment the top-level `--help` of the
+binary lists it. No such rows exist right now: the file is absent and
+the checker reads it as empty.
 
   python3 tests/repo/check-geectl.py [--geectl PATH] [--skill NAME]
 
@@ -247,9 +249,7 @@ class GeectlCli:
         # check: a manifest global flag goes stale the moment one of
         # these names it.
         options = out.split("Options:", 1)[-1] if "Options:" in out else ""
-        self.top_flags = set(
-            re.findall(r"^ {6}(--[^\s=]+)", options, flags=re.M)
-        )
+        self.top_flags = set(re.findall(r"^ {6}(--[^\s=]+)", options, flags=re.M))
         for name in command_names(out):
             if name == "help":
                 self.paths.add("help")
@@ -307,9 +307,7 @@ class GeectlCli:
         # Options line; the rest are booleans. --format is the only valued
         # global option.
         valued = {"--format"}
-        valued.update(
-            re.findall(r"^ {6}(--[\w-]+)\s+<[^>]+>", options, flags=re.M)
-        )
+        valued.update(re.findall(r"^ {6}(--[\w-]+)\s+<[^>]+>", options, flags=re.M))
         for short, long in re.findall(
             r"^  -([a-zA-Z]), (--[\w-]+)\s+<[^>]+>", options, flags=re.M
         ):
@@ -328,7 +326,6 @@ class GeectlCli:
             return None
         self.load_flags(path)
         return self.valued[path]
-
 
     def load_positionals(self, path):
         """(required, optional) positional names for a leaf path, in order,
@@ -421,8 +418,7 @@ def load_manifest():
             row.get("optional", []),
         )
     global_flags = {
-        flag: entry["issue"]
-        for flag, entry in data.get("global-flags", {}).items()
+        flag: entry["issue"] for flag, entry in data.get("global-flags", {}).items()
     }
     return leaves, flags, overrides, global_flags
 
@@ -502,8 +498,14 @@ def wrong_section_lines(path):
     return out
 
 
-def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides,
-          manifest_global_flags):
+def check(
+    base,
+    cli,
+    manifest_leaves,
+    manifest_flags,
+    manifest_overrides,
+    manifest_global_flags,
+):
     findings, cited_subs, count = [], {}, 0
     usage = os.path.join(base, "references", "geectl-usage.md")
     wrong_ok = wrong_section_lines(usage) if os.path.exists(usage) else set()
@@ -551,17 +553,12 @@ def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides,
                     # options the binary lacks; they are valued options
                     # the skill cites, so their values are not
                     # positionals either.
-                    valued = cli.load_valued(path) | set(
-                        manifest_flags.get(path, {})
-                    )
+                    valued = cli.load_valued(path) | set(manifest_flags.get(path, {}))
                     flags.update(manifest_flags.get(path, {}))
                     count += 1
                     cited_subs.setdefault(path, (rel, n))
                     for flag in OPT.findall(rest):
-                        if (
-                            flag not in flags
-                            and flag not in manifest_global_flags
-                        ):
+                        if flag not in flags and flag not in manifest_global_flags:
                             findings.append(
                                 (
                                     rel,
@@ -619,9 +616,7 @@ def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides,
                             all_names,
                         )
                         if mismatch:
-                            findings.append(
-                                (rel, n, f"`geectl {path}`: {mismatch}")
-                            )
+                            findings.append((rel, n, f"`geectl {path}`: {mismatch}"))
     # Prose flags: a `--flag` span on the same line as a `geectl` call cites
     # a flag geectl accepts, even though it sits outside the call span — a
     # typo there would sail through the call check above. Verify each

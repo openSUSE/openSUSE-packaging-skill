@@ -144,10 +144,14 @@ PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add() { python3 - "$M" <<'PY'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {"_comment": "test fixture", "flags": {}, "leaves": {},
+            "positional-overrides": {}, "global-flags": {}}
 data["leaves"]["remote cat"] = {"issue": 999, "flags": ["--rev"]}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh)
@@ -155,10 +159,14 @@ PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add_global_flag() { python3 - "$M" <<'PY'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {"_comment": "test fixture", "flags": {}, "leaves": {},
+            "positional-overrides": {}, "global-flags": {}}
 data["global-flags"]["--debug"] = {"issue": 999, "kind": "issue"}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh)
@@ -166,10 +174,14 @@ PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add_flag() { python3 - "$M" <<'PY'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {"_comment": "test fixture", "flags": {}, "leaves": {},
+            "positional-overrides": {}, "global-flags": {}}
 data["flags"]["build job-history"] = {"--limit": {"issue": 999, "kind": "issue"}}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh)
@@ -204,10 +216,14 @@ PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add_leaf() { python3 - "$M" <<'PY'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {"_comment": "test fixture", "flags": {}, "leaves": {},
+            "positional-overrides": {}, "global-flags": {}}
 data["leaves"]["frobnicate"] = {"issue": 999, "flags": ["--rev"]}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh)
@@ -231,10 +247,14 @@ PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 add_override() { python3 - "$M" <<'PY'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {"_comment": "test fixture", "flags": {}, "leaves": {},
+            "positional-overrides": {}, "global-flags": {}}
 data["positional-overrides"]["remote search-packages"] = {
     "issue": 999, "required": ["TERM"], "optional": [],
 }
