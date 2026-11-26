@@ -27,7 +27,7 @@
 # the review never carries. A tree stamped already is built for real.
 # PR arches: the standard repository of openSUSE:Backports:SLE-16.x:PullRequest,
 # where the PR bot builds. Your PRs: those whose head repo belongs to the user
-# of your git-obs login for src.opensuse.org, the identity pool-pr.sh updates by.
+# of your src.opensuse.org login, the identity pool-pr.sh updates by.
 # Refused before anything is built: a dirty worktree (ignored and untracked
 # files count), a detached HEAD, unsmudged LFS files, a clone under /tmp or a
 # scratchpad, HEAD not on top of origin/<base>, HEAD stacked on more than one
@@ -35,9 +35,9 @@
 # does not build (never emulated), a flavor with no native route, a mounted
 # root. Every failed lookup is a refusal or a red, never a green.
 # Stamp: <git-common-dir>/target-gate/<tree>-<base>.json
-# Needs: geectl, git-lfs, obs-build (queryrecipe) and a git-obs login for
-# src.opensuse.org; --remote pushes over SSH (gitea@src.opensuse.org) with your
-# key. git-obs and ssh read their own credentials: this script reads none.
+# Needs: geectl, git-lfs, obs-build (queryrecipe) and a src.opensuse.org
+# login (geectl's Gitea token); --remote pushes over SSH (gitea@src.opensuse.org)
+# with your key. geectl and ssh read their own credentials: this script reads none.
 #
 # Exit: 0 = green (check: build GREEN and review PASS), 1 = red (the check is
 # named), 2 = refused or usage, 3 = no stamp, stale stamp or remote build pending.
@@ -92,7 +92,7 @@ def now():
 
 
 def login():
-    # The user of the login git-obs used: GET /user.
+    # The user of the login: GET /user.
     try:
         d = json.load(sys.stdin)
     except ValueError:
@@ -114,21 +114,31 @@ def geectluser():
     return 0
 
 def pulls(base, user):
+    # The pull-request search payload (PullRequestSummary): one row per
+    # own PR as "<number>\t<head sha>\t<head branch>". Yours = your fork
+    # heads it, as pool-pr.sh decides — the head repo's owner, in any
+    # letter case, not who opened it; a deleted fork has no repo.
     try:
         d = json.load(sys.stdin)
     except ValueError:
         return 1
     if not isinstance(d, list):
         return 1
-    print(len(d))
     for p in d:
-        if (p.get("base") or {}).get("ref") != base:
+        m = re.fullmatch(r"gitea:([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*)#([0-9]+)", p.get("reference") or "")
+        if not m:
+            return 1
+        if (p.get("target") or {}).get("branch") != base:
             continue
-        h = p.get("head") or {}
-        owner = ((h.get("repo") or {}).get("owner") or {}).get("login") or ""
+        src = p.get("source") or {}
+        owner = (src.get("repository") or "").split("/")[0]
         if owner.lower() != user.lower():
             continue
-        print("%s\t%s\t%s" % (p.get("number"), h.get("sha") or "", h.get("ref") or ""))
+        head = src.get("commit") or ""
+        ref = src.get("branch") or ""
+        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
+            return 1
+        print("%s\t%s\t%s" % (m.group(3), head, ref))
     return 0
 
 
@@ -623,20 +633,17 @@ bad=$(printf '%s\n' "$lfs" | awk '$2 == "-" {print $3}' | paste -sd' ')
 
 git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null || refuse "no origin/$base — git fetch origin $base"
 git merge-base --is-ancestor "origin/$base" HEAD || refuse "HEAD does not contain origin/$base — rebase onto it"
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
+# The forge user, still through git-obs: geectl has no whoami leaf yet.
+# gapi reads its own login (-G: the default one may be another forge's)
+# and exits non-zero on an HTTP error; the open-PRs read below is geectl.
 gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d;}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
 guser=$(gapi /user | py login) || refuse "cannot read your src.opensuse.org user through git-obs: $(gerr)"
-mine=""; page=1
-while :; do
-  js=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50&page=$page") \
-    || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $(gerr)"
-  rows=$(printf '%s' "$js" | py pulls "$base" "$guser") || refuse "unparseable open-PR list for pool/$pkg"
-  mine+=$(tail -n +2 <<<"$rows")$'\n'
-  [ "$(head -1 <<<"$rows")" -ge 50 ] || break
-  page=$((page + 1))
-done
+# One call: pull-request search pages the Gitea list internally (bounded
+# at 500), so there is no page loop here.
+js=$(timeout 60 geectl pull-request search --backend gitea --repo "pool/$pkg" --state open 2>"$tmpd/gerr") \
+  || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $(gerr)"
+mine=$(printf '%s' "$js" | py pulls "$base" "$guser") || refuse "unparseable open-PR list for pool/$pkg"
 # One such PR is the one this tree updates; two means HEAD carries both.
 anc=()
 while IFS=$'\t' read -r num sha ref; do
@@ -699,9 +706,10 @@ if [ "$mode" = remote ]; then
   br="leapgate/$base-${head:0:12}"
   url="$G/$guser/$pkg?trackingbranch=$br#$head"
 
-  # An existing fork is no error to git-obs; a failure shows, the push decides.
-  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
-    || say "git-obs repo fork pool/$pkg failed: $(tail -1 <<<"$forkerr")"
+  # An existing fork is no error: repo-fork returns the existing fork
+  # instead of failing. A failure shows, the push decides.
+  forkerr=$(timeout 60 geectl gitea repo-fork pool "$pkg" --live 2>&1 >/dev/null) \
+    || say "geectl gitea repo-fork pool/$pkg failed: $(tail -1 <<<"$forkerr")"
   git remote add leapgate "$GS:$guser/$pkg.git" 2>/dev/null || git remote set-url leapgate "$GS:$guser/$pkg.git"
   # A fork does not share the parent's LFS store, and the pre-push hook would
   # upload every object in the history: exactly this tree's objects first,

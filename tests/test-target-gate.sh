@@ -252,6 +252,12 @@ print(json.dumps({"name":sys.argv[2],"title":None,"description":None,"persons":[
     [ -z "${FAKE_BUILD_COMMIT:-}" ] || { echo "- $FAKE_BUILD_COMMIT" >> foo.changes; git commit -qam "$FAKE_BUILD_COMMIT"; }
     [ -z "${FAKE_BUILD_RC:-}" ] || exit "$FAKE_BUILD_RC"
     [ "$v" = finished ] ;;
+  pull-request)
+    [ "$1" = search ] || { echo "fake geectl: unexpected pull-request $*" >&2; exit 99; }
+    [ -z "${FAKE_PULLS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
+    p=${FAKE_PULLS:-}; if [ -n "$p" ]; then cat "$p"; else echo '[]'; fi ;;
+  gitea)
+    [ "$1" = repo-fork ] || { echo "fake geectl: unexpected gitea $*" >&2; exit 99; } ;;
   *) echo "fake geectl: unexpected subcommand $sub" >&2; exit 99 ;;
 esac
 EOF
@@ -315,14 +321,9 @@ echo "git-obs $*" >> "$FAKE/calls"
 [ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
 shift 3
 case "$1 ${2:-}" in
-  "repo fork") ;;
   "api /user")
     [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
     u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}" ;;
-  "api "*pulls*)
-    [ -z "${FAKE_PULLS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
-    p=${FAKE_PULLS:-}; case "$2" in *page=2*) p=${FAKE_PULLS2:-};; esac
-    if [ -n "$p" ]; then cat "$p"; else echo '[]'; fi ;;
   *) echo "fake git-obs: unexpected $*" >&2; exit 99 ;;
 esac
 EOF
@@ -729,7 +730,7 @@ case_ pr-list-garbage 2 "unparseable open-PR list for pool/foo" "FAKE_PULLS=$FAK
 C=$(fresh stacked); (cd "$C" && printf -- '- two\n' >> foo.changes && git commit -qam two)
 B0=$(git -C "$C" rev-parse origin/leap-16.0); B1=$(git -C "$C" rev-parse HEAD~1); B2=$(git -C "$C" rev-parse HEAD)
 # pr NUM BASE AUTHOR SHA [HEAD-REPO-OWNER (default AUTHOR)]
-pr() { printf '{"number":%s,"base":{"ref":"%s"},"user":{"login":"%s"},"head":{"sha":"%s","ref":"h%s","repo":{"owner":{"login":"%s"}}}}' "$1" "$2" "$3" "$4" "$1" "${5:-$3}"; }
+pr() { printf '{"reference":"gitea:pool/foo#%s","title":"t%s","author":"%s","status":"open","source":{"repository":"%s/foo","branch":"h%s","commit":"%s"},"target":{"repository":"pool/foo","branch":"%s","commit":"%s"}}' "$1" "$1" "$3" "${5:-$3}" "$1" "$4" "$2" "$B0"; }
 printf '[%s,%s]\n' "$(pr 7 leap-16.0 $U "$B1")" "$(pr 8 leap-16.0 $U "$B2")" > "$FAKE/stacked.json"
 case_ stacked-head 2 "stacked: HEAD contains the heads of your open PRs #7 (h7) #8 (h8) to leap-16.0" \
   "FAKE_PULLS=$FAKE/stacked.json bash $TG $C --build"
@@ -742,10 +743,10 @@ case_ extends-one-pr 0 "note: HEAD extends your open PR #7 (h7)" "FAKE_PULLS=$FA
 SIB=$(git -C "$C" commit-tree 'HEAD~1^{tree}' -p HEAD~1 -m sibling)
 printf '[%s,%s]\n' "$(pr 7 leap-16.0 $U "$B1")" "$(pr 11 leap-16.0 $U "$SIB")" > "$FAKE/sibling.json"
 case_ sibling-pr-not-stacked 0 "note: HEAD extends your open PR #7 (h7)" "FAKE_PULLS=$FAKE/sibling.json bash $TG $C --build"
-# The stack sits on the second page of open PRs.
-{ printf '['; for n in $(seq 100 149); do [ "$n" = 100 ] || printf ','; pr "$n" leap-16.0 someone "$B0"; done; echo ']'; } > "$FAKE/page1.json"
-case_ stacked-on-page-2 2 "stacked: HEAD contains the heads of your open PRs #7 (h7) #8 (h8) to leap-16.0" \
-  "FAKE_PULLS=$FAKE/page1.json FAKE_PULLS2=$FAKE/stacked.json bash $TG $C --build"
+# The stack sits among fifty other open PRs: one search call lists them all.
+{ printf '['; for n in $(seq 100 149); do [ "$n" = 100 ] || printf ','; pr "$n" leap-16.0 someone "$B0"; done; printf ',%s,%s' "$(pr 7 leap-16.0 $U "$B1")" "$(pr 8 leap-16.0 $U "$B2")"; echo ']'; } > "$FAKE/long.json"
+case_ stacked-in-long-list 2 "stacked: HEAD contains the heads of your open PRs #7 (h7) #8 (h8) to leap-16.0" \
+  "FAKE_PULLS=$FAKE/long.json bash $TG $C --build"
 # Yours = your fork heads it, as pool-pr.sh decides, in any letter case; not
 # who opened it.
 printf '[%s,%s]\n' "$(pr 7 leap-16.0 someone "$B1" Tester)" "$(pr 8 leap-16.0 someone "$B2" TESTER)" > "$FAKE/byfork.json"
@@ -807,7 +808,7 @@ PY
 export FAKE_LFS='*'
 case_ remote-first-call 3 "pointed $GPRJ/foo at $BR#${H:0:12}" "bash $TG $C --remote"
 check_ remote-pushed-branch "[ \"\$(git -C $work/forge/$U/foo.git rev-parse refs/heads/$BR)\" = $H ]"
-check_ remote-pushed-lfs "grep -q '^git-lfs push --object-id leapgate a\{64\}$' $FAKE/calls && grep -qx 'git-obs -G src.opensuse.org -q repo fork pool/foo' $FAKE/calls && ! grep -q '^tea ' $FAKE/calls"
+check_ remote-pushed-lfs "grep -q '^git-lfs push --object-id leapgate a\{64\}$' $FAKE/calls && grep -qx 'geectl gitea repo-fork pool foo --live' $FAKE/calls && ! grep -q '^tea ' $FAKE/calls"
 check_ remote-pushes-over-ssh "[ \"\$(git -C $C config --get remote.leapgate.url)\" = gitea@src.opensuse.org:$U/foo.git ]"
 check_ remote-lfs-before-ref "l=\$(grep -n '^git-lfs push' $FAKE/calls | cut -d: -f1); r=\$(grep -n '^forge-receive refs/heads/$BR\$' $FAKE/calls | cut -d: -f1); [ -n \"\$l\" ] && [ -n \"\$r\" ] && [ \"\$l\" -lt \"\$r\" ]"
 check_ remote-pkg-meta "grep -qF '<scmsync>https://src.opensuse.org/$U/foo?trackingbranch=$BR#$H</scmsync>' $PKGMETA && grep -qF '<disable repository=\"leap-16.1\" />' $PKGMETA"
@@ -963,7 +964,7 @@ bash "$TG" "$C5" --remote >/dev/null; FAKE_OBSINFO_COMMIT=$H5 bash "$TG" "$C5" -
 chg "$C5" "Fix the build on Leap 16.0"; (cd "$C5" && git commit -qam reword)
 case_ remote-carry-changes-only 0 "only foo.changes differs from GREEN tree $(git -C "$C5" rev-parse 'HEAD~1^{tree}' | cut -c1-12)" \
   "bash $TG $C5 --remote"
-check_ remote-carry-no-obs-no-push "! grep -qE '^(geectl (remote|build)|git-lfs push|tea |git-obs .*fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
+check_ remote-carry-no-obs-no-push "! grep -qE '^(geectl (remote|build)|git-lfs push|tea |geectl gitea repo-fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
 unset FAKE_LFS
 
 # Static: git-obs and ssh hold the forge credentials; the gate reads none and passes none on.
