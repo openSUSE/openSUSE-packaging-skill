@@ -26,13 +26,13 @@ $ geectl remote package-meta devel:languages:perl perl-Mojolicious
 </package>
 ```
 
-Its maintainers are in a **`_maintainership.json`** file in the git repo (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format) — read it with `geectl gitea maintainers OWNER REPO`. Consequences, all of them silent:
+Its maintainers are in a **`_maintainership.json`** file in the git repo — read it with `geectl gitea maintainers OWNER REPO`. Consequences, all of them silent:
 
 - `geectl remote search-packages-by-person <u>` — **returns nothing** for it: the OBS person index has no git-defined entries.
 - `geectl remote search-projects-by-person <u>` — returns only the *project-level* entries, no package rows.
 - `geectl remote owners-for-binary <pkg>` — the same OBS owners for the package shipping that binary, so it falls all the way back to the `openSUSE:Factory` project owners (a Factory release-manager account plus `group:factory-maintainers`), which reads as "nobody maintains this" when in fact somebody does, in git.
 
-**The OBS side and the git side are two different reads, and neither alone is the answer.** `geectl remote maintainers <project> <pkg>` reads only the OBS `_meta` — for a scmsync package that stub names nobody, so the output is the project fallback owners, not the maintainer. **Reading only that output is actively misleading.** The git answer lives in the repo's `_maintainership.json` (`git-obs -G src.opensuse.org file maintainership migrate` converts the legacy format) — read it with `geectl gitea maintainers OWNER REPO` (the git-side counterpart of `remote maintainers`, read from the repo's default branch) before drawing any conclusion. `geectl remote search-projects-by-person <user>` lists only the projects whose OBS meta names the user. Note the entries are **per-product and the name can differ per product** — coordinate with the maintainer of the branch you are actually touching.
+**The OBS side and the git side are two different reads, and neither alone is the answer.** `geectl remote maintainers <project> <pkg>` reads only the OBS `_meta` — for a scmsync package that stub names nobody, so the output is the project fallback owners, not the maintainer. **Reading only that output is actively misleading.** The git answer lives in the repo's `_maintainership.json` — read it with `geectl gitea maintainers OWNER REPO` (the git-side counterpart of `remote maintainers`, read from the repo's default branch) before drawing any conclusion. `geectl remote search-projects-by-person <user>` lists only the projects whose OBS meta names the user. Note the entries are **per-product and the name can differ per product** — coordinate with the maintainer of the branch you are actually touching.
 
 Devel-project resolution is unaffected: `geectl remote devel-project <pkg>` and `scripts/devel-of.sh` still return `devel:openSUSE:Factory/hwdata` correctly.
 
@@ -45,7 +45,7 @@ Related git support worth knowing: `geectl maintenance maintained-instances --pa
 - **`geectl` is the OBS client**: forking, building and filing all go through it (see `references/geectl-usage.md`).
 - **`git-lfs` is mandatory** — source tarballs are stored in LFS, configured by the repo's `.gitattributes` (`*.gz *.xz *.zst *.bz2 *.tar … filter=lfs`). After `git add`-ing a tarball, confirm it's a pointer with `git cat-file -p :<tarball>` (should print `version https://git-lfs.github.com/spec/v1` + oid + size), **not** the raw binary. The working-tree file stays the real tarball, so `geectl local-build build` still sees real sources.
 - **CLI clients**: `geectl` (OBS work — forking, building, requests), `tea` (Gitea CLI — logins, fork, PR), and `geectl pull-request submit` / the `pull-request` review leaves (PR create/review). Check `tea logins list` for an existing `src.opensuse.org` login before assuming auth is needed. No curl against the API and no token handling: `references/geectl-usage.md` "Tool discipline".
-- **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`. The pool PR scripts (`scripts/pool-pr.sh`, `scripts/target-gate.sh --remote`) push over SSH, LFS objects included, and read the forge through `git-obs -G src.opensuse.org api`: they need this key and a git-obs login, and read no token. Every push goes over SSH ("Push over SSH only" below).
+- **SSH**: clone via `gitea@src.opensuse.org:<owner>/<pkg>.git`; your SSH key must be registered at https://src.opensuse.org/user/settings/keys. First clone may need the host key — `ssh-keyscan src.opensuse.org >> ~/.ssh/known_hosts`. The pool PR scripts (`scripts/pool-pr.sh`, `scripts/target-gate.sh --remote`) push over SSH, LFS objects included, and read the forge through `geectl`'s typed leaves (`pull-request search`, `gitea repo-fork`): they need this key and a geectl Gitea token, and read no token themselves. The user lookup and the PR filing still go through `git-obs -G src.opensuse.org api` until geectl gains those leaves, so a git-obs login is still needed for those two reads. Every push goes over SSH ("Push over SSH only" below).
 
 ## Push over SSH only
 
@@ -67,7 +67,7 @@ Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea 
 - Edit its title or description: `tea pulls edit --login <login> --repo <owner>/<pkg> --title "<title>" --description "<text>" <n>`.
 - Comment on it: `tea comments --login <login> --repo <owner>/<pkg> <n> "<text>"`, or a text of several lines written to FILE in an earlier call: `... <n> "$(cat FILE)"`, the command alone; `tea comments list` with the same options reads them (without `list` it adds one: `references/request-text.md` "Comments: reading them, posting an approved one").
 - Reply inside a reviewer's thread: `tea pulls reply --login <login> --repo <owner>/<pkg> <n> <comment-id> "<text>"`, the id from `tea pulls review-comments`; resolving is in "Responding to a PR review" below.
-- Anything else: `git-obs -G src.opensuse.org api [-X METHOD] [--data JSON] /repos/<owner>/<pkg>/…` — the path is relative to `/api/v1`, and an HTTP error exits non-zero. `-G` picks the login by its name or by the forge's host name; without it git-obs takes the default login. Not `tea api`: it exits 0 on a 404, so a failed lookup reads as success.
+- Anything else: the typed `gitea` and `pull-request` leaves of geectl — `geectl gitea raw-file OWNER REPO PATH [--ref REF]` for a file read (a missing file is `NotFound`, never empty content), `geectl gitea commit-statuses OWNER REPO SHA` for a commit's CI states, `geectl gitea repo-get OWNER REPO` (the token owner's permissions included), `geectl pull-request show gitea:OWNER/REPO#N` / `comments` / `search --backend gitea --repo OWNER/REPO --state open` for pull requests. There is no generic API command: a read the typed commands do not cover is a missing leaf, not a workaround. Not `tea api`: it exits 0 on a 404, so a failed lookup reads as success.
 
 ## Command mapping (classic checkout → git workflow)
 
@@ -86,7 +86,7 @@ Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea 
 Two ways, and the difference matters:
 
 - **`geectl branch create --project <devel-project> --package <pkg> --live`** (recommended) — branches a git-backed package in one step: the Gitea fork (`<youruser>/<pkg>`) plus the OBS fork into a test project (`home:<you>:branches:<devel-project>`) with the source project's repositories. Use this when you want OBS to build your changes before/without a PR. The two steps separately are `geectl gitea repo-fork <owner> <pkg> --live` + `geectl branch branch-package --project <devel-project> --package <pkg> --live` (the OBS-only branch, for when the Gitea fork already exists).
-- **`tea repos fork --login <login> --repo <owner>/<pkg>`** (or `git-obs -G src.opensuse.org repo fork <owner>/<pkg>`) — Gitea-only fork, **no** OBS build branch. Sufficient when you'll rely on a local `geectl local-build build` plus the post-PR autogits bot build (below). Lighter weight; no OBS home project left behind to clean up.
+- **`tea repos fork --login <login> --repo <owner>/<pkg>`** (or `geectl gitea repo-fork <owner> <pkg> --live`) — Gitea-only fork, **no** OBS build branch. Sufficient when you'll rely on a local `geectl local-build build` plus the post-PR autogits bot build (below). Lighter weight; no OBS home project left behind to clean up.
 
 ## Local build in a git checkout — the gotchas
 
@@ -112,7 +112,7 @@ On PR opening, `geectl pull-request build-comment --project <test-project> --pac
 
 The description follows the SR message rule: `references/request-text.md` "SR and PR messages".
 
-If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `git-obs -G src.opensuse.org pr create`. Never fall back to curl with a token taken from the tea config; `git-obs -G src.opensuse.org api -X POST /repos/<devel-project>/<pkg>/pulls --data "$(python3 -c 'import json; print(json.dumps({"head": "<you>:<branch>", "base": "main", "title": "<title>", "body": open("body.txt").read()}))')"` covers what the CLIs lack. **Build that JSON with `json.dumps`, as here, never by pasting the text into a quoted string** — a literal `"`, a backtick or a newline breaks it after the branch is already pushed, and you get `invalid character '…'` and *no PR*.
+If `tea` fails to read a fresh checkout (`core.repositoryformatversion does not support extension: objectformat`, seen with older builds), run it from outside the checkout with `--login` and `--repo` spelled out, or use `geectl pull-request submit --base main --title "..." --body "..."`. Never fall back to curl with a token taken from the tea config; `geectl pull-request submit` covers what `tea` cannot file.
 
 ## Forwarding to Factory
 
@@ -123,7 +123,7 @@ run `scripts/gate.sh`, let the changes review record its `--review`, add `--obs-
   A checkout without `.git` stamps only with no directory, symlink or dotfile but `.osc` and `.git*`. After the sync, `geectl update --live` and rerun.
   The review's PASS names the `tree <key12>` gate.sh printed; `--review` also takes the checkout's `git rev-parse HEAD^{tree}` (its first 12 characters) while gate.sh holds the checkout to the synced commit, and records it under gate.sh's key.
 - **No `geectl commit` there.** OBS takes the sources from git, so pr-guard refuses a `geectl commit` in a scmsync checkout; a change goes by PR.
-- **Who may forward it unattended** (`scripts/autoforward-gate.sh`, and pr-guard's accept-forward ask). A project whose `_meta` has `<scmsync>https://src.opensuse.org/<owner>/<repo>…` keeps its roles in that repository, read through `git-obs` (pr-guard: anonymously) at the branch or commit its `#fragment` names (`?ref=`; the default branch without one; a fragment that is no plain name, `[A-Za-z0-9][A-Za-z0-9_.-]*` without `..`, is not eligible):
+- **Who may forward it unattended** (`scripts/autoforward-gate.sh`, and pr-guard's accept-forward ask). A project whose `_meta` has `<scmsync>https://src.opensuse.org/<owner>/<repo>…` keeps its roles in that repository, read through `geectl gitea raw-file <owner> <repo> <path> --ref <ref>` (pr-guard reads the same files anonymously, without a login) at the branch or commit its `#fragment` names (`--ref <ref>`; the default branch without one; a fragment that is no plain name, `[A-Za-z0-9][A-Za-z0-9_.-]*` without `..`, is not eligible):
   - maintainers: `_maintainership.json`, the package's list, else the project's `""` list; each entry a list of plain logins (`@` for a group), anything else does not parse. Only the legacy `{"<name>": ["<login>", …]}` form is read: the versioned form, a `_maintainership/` directory, a 404 or a failed read is not eligible, with the reason;
   - reviewers: every name in `workflow.config`'s `Reviewers`, autogits' key for the reviewers it adds to each PR (a list or an object; a `+`, `-`, `*` or `~` prefix only says where and how firmly), blocks like an OBS `reviewer` role; present, it must be a list or an object of plain names (`false`, `""` or `null` does not parse). autogits parses the file as JSON with comments and trailing commas (hujson), and so do these scripts. `ReviewGroups` only name groups `Reviewers` uses; `ReviewRequired` is not read (it asks a second maintainer to review the PR, which the merge already had). No `workflow.config` means no reviewer;
   - a reviewer role in the OBS package or project `_meta` still counts, and a `<scmsync>` on another host, or one these scripts cannot parse (a CDATA section or a comment in the `_meta`, or a second `<scmsync>`, too), is not eligible: never an OBS fallback.
@@ -208,8 +208,8 @@ The bot-built-it assumption above holds for **autogits-managed** devel repos. It
 Two-call tell:
 
 ```
-git-obs -G src.opensuse.org api /repos/<org>/<pkg>/contents/.obs           # 404 error → no integration
-git-obs -G src.opensuse.org api /repos/<org>/<pkg>/commits/<sha>/statuses   # []  → nothing ever reported
+geectl gitea raw-file <org> <pkg> .obs/workflows.yml   # NotFound → no integration
+geectl gitea commit-statuses <org> <pkg> <sha>         # [] → nothing ever reported
 ```
 
 Switching it on takes **three** pieces, and **only the first can live in the repo**:

@@ -112,6 +112,9 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl remote devel-project PKG [--target-project PRJ]` — the registered devel project.
 - `geectl remote maintainers PRJ PKG` — maintainers of a package.
 - `geectl gitea maintainers OWNER REPO` — maintainers from the git side: the project maintainers and the per-package maintainers in the repo's `_maintainership.json`, read from the repo's default branch.
+- `geectl gitea raw-file OWNER REPO PATH [--ref REF]` — print one file from a repository verbatim; a missing file is `NotFound`, never empty content.
+- `geectl gitea commit-statuses OWNER REPO SHA` — list a commit's statuses: the CI states reported for that commit.
+- `geectl gitea repo-get OWNER REPO` — show a repository: owner, default branch, privacy, clone URLs, and the token owner's permissions.
 - `geectl gitea cleanup-forks --live` — list obsolete Gitea forks and their OBS home test projects, and delete them. A project is deleted only when its description marker names a fork that no longer exists on Gitea; dry-run is the default.
 - `geectl remote owners PRJ PKG` — owners of a package (project/package scope); bugowners included, not the maintainer set.
 - `geectl remote owners-for-binary BINARY` — owners of the source package shipping that binary.
