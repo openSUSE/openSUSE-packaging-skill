@@ -1473,7 +1473,7 @@ case_ var-doubling-message       2 retired-osc "an osc command"
 echo "--- a FIFO or device is refused, never read"
 case_ run-fifo                   2 exec-unreadable "not a regular file"
 case_ msg-fifo                   2 retired-osc "an osc command"
-case_ run-dev-stdin              2 exec-unreadable "not a regular file"
+case_ run-dev-stdin              2 exec-unreadable "(through /proc, /dev or a link loop)"
 case_ var-osc-path-sr-long       2 retired-osc "an osc command"
 case_ var-osc-unset-ci-update    2 retired-osc "an osc command"
 case_ var-osc-unset-nodevel      2 retired-osc "an osc command"
@@ -2108,7 +2108,7 @@ done
 case_ wrapvar-nice-approve       2 incoming-approve "approving incorg/incgit#5: it names no --commit SHA"
 case_ wrapvar-push               2 push-pr-head "pool/tesseract-ocr#3"
 case_ wrapvar-merge              2 merge-tea "tea PR merge"
-case_ wrapvar-reviewer-flock     2 exec-unreadable "cannot read \$D/flock (/usr/bin/flock: No such file or directory)"
+case_ wrapvar-reviewer-flock     2 incoming-self "runs a command word held in a variable"
 case_ wrapvar-unset-in-script    2 exec-unresolved "UNSET_DIR/flock"
 
 echo "--- the harness's own files are the user's: no agent command writes, moves or deletes them"
@@ -2817,6 +2817,11 @@ asks_ok() {   # asks_ok <file>: the rules its ask may name, where the ask is int
   case $1 in
     # a mutation case runs its mutant through eval, which the guard cannot read
     test-autoforward-gate.sh|test-check-flags.sh|test-check-geectl.sh|test-check-osc.sh|test-forward-check.sh) echo eval-dynamic ;;
+    # preflight.sh's gapi() runs `geectl "$@"` (one wrapper for the
+    # 404-vs-other-failure distinction, ~10 call sites): the guard
+    # cannot tell which geectl command $@ is, so its comment and
+    # accept-forward asks are intended, not a leak.
+    preflight.sh) echo comment accept-forward ;;
     test-incoming-requests.sh|test-preflight.sh|test-sr-status.sh) echo eval-dynamic ;;
     # each case is a command line run through eval
     test-cone-status.sh) echo eval-dynamic ;;

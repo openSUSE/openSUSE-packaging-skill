@@ -83,7 +83,7 @@ fi
 # package checkout: it has a _project but no _package.)
 mkdir -p "$prj/.osc" && printf 'devel:example\n' > "$prj/.osc/_project"
 out="$("$SCRIPT" "$prj" 2>&1)"; rc=$?
-if [ "$rc" = 2 ] && grep -q 'osc project checkout — cd into the package directory' <<<"$out" && ! grep -q Traceback <<<"$out"; then
+if [ "$rc" = 2 ] && grep -q 'project checkout — cd into the package directory' <<<"$out" && ! grep -q Traceback <<<"$out"; then
   pass "bare .osc project dir: exit 2 with a pointer, no traceback"
 else
   fail "neither git nor --base: expected rc=2 and a pointer, got rc=$rc"

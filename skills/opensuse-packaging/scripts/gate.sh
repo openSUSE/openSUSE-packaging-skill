@@ -1911,7 +1911,7 @@ cd -P -- "$dir" || exit 2
 # verdict about no package.
 specs=( *.spec )
 if [ ! -e "${specs[0]}" ] && [ ! -r .osc/_package ] && [ -z "$(git config --get geectl.package 2>/dev/null || true)" ]; then
-  if [ -r .osc/_project ]; then echo "gate.sh: $(pwd): osc project checkout — cd into the package directory" >&2
+  if [ -r .osc/_project ]; then echo "gate.sh: $(pwd): project checkout — cd into the package directory" >&2
   else echo "gate.sh: $(pwd): no *.spec, no .osc/_package and no geectl working copy — not a package checkout" >&2; fi
   exit 2
 fi

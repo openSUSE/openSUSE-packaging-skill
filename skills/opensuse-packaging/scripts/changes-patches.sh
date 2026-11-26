@@ -90,7 +90,7 @@ if base is not None:
     where = base
 elif os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(os.path.join(d, ".osc/_scm")):
     if not os.path.isfile(os.path.join(d, ".osc/_package")):
-        fail(f"{d}: osc project checkout — cd into the package directory")
+        fail(f"{d}: project checkout — cd into the package directory")
     pkg = read(os.path.join(d, ".osc/_package")).strip()
     prj = read(os.path.join(d, ".osc/_project")).strip()
     new_files = {f for f in os.listdir(d)

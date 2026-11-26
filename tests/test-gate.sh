@@ -64,7 +64,7 @@ for n in 0 x -1; do
     && pass "--entries $n: usage error, no gate ran" || { fail "--entries $n: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 done
 mkdir -p "$work/project/.osc" && printf 'devel:example\n' > "$work/project/.osc/_project"
-case_ project-checkout 2 "osc project checkout — cd into the package directory" "$work/project"
+case_ project-checkout 2 "project checkout — cd into the package directory" "$work/project"
 ! grep -q '^## ' <<<"$LAST" && pass "project-checkout: no gate ran" || fail "project-checkout: gates ran: $LAST"
 mkdir -p "$work/empty"
 case_ empty-dir 2 "no *.spec, no .osc/_package and no geectl working copy" "$work/empty"
@@ -1374,9 +1374,11 @@ open(os.path.join(gm, "scmpkg.xml"), "w").write('<package name="scmpkg"><devel p
 open(os.path.join(gm, "gitea", "repos_example__ObsPrj_raw__maintainership.json"), "w").write('{"scmpkg": ["tester"]}')
 PY
 GUARD="$HERE/../skills/opensuse-packaging/scripts/pr-guard.py"
+# The command rides as a shell string (data to the guard), not a python
+# list: ["osc", "sr"] is the one spelling the retired-osc rule reads.
 fwd() { python3 -I -c 'import json, sys
-print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": " ".join(["osc", "sr"] + sys.argv[2:])}}))' \
-  "$work" devel:example scmpkg openSUSE:Factory -m "'Update scmpkg to 1.0'" \
+print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' \
+  "$work" "osc sr devel:example scmpkg openSUSE:Factory -m 'Update scmpkg to 1.0'" \
   | HOME="$work/home" PR_GUARD_META_DIR="$GM" PR_GUARD_GITEA_DIR="$GM/gitea" PR_GUARD_OBS_USER=tester python3 "$GUARD" 2>&1; }
 out=$(fwd); rc=$?
 [ "$rc" = 0 ] && [ -z "$out" ] && pass "scmsync forward over the stamped files: pr-guard lets it through" \
