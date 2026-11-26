@@ -3531,7 +3531,7 @@ def factory_holds(pkg, files, what, ctx):
 def gitea_hold(prj, pkg, stamps, what, ctx):
     """fixable_pending()'s check of FIXABLE devel PR reviews, (path, stamp)
     each: those of the repository the package's <scmsync> names hold while
-    the tree of the commit OBS synced equals their head's files, and Factory
+    the tree of the commit OBS synced holds their head's changed files, and Factory
     does not hold devel's files, which are then the head's. git_obs_approve()
     approves only a repository named as the package; one such review whose
     repository the package does not sync from, or names none, asks too. A
@@ -3583,8 +3583,13 @@ def gitea_hold(prj, pkg, stamps, what, ctx):
         want = field(st, "gitea", "files")
         if not isinstance(want, dict):
             block("incoming-hold", f"{what}: {path}: it names no head files")
-        if files == want and not factory_holds(
-            pkg, expanded(prj, pkg, what, ctx), what, ctx
+        if (
+            want
+            and all(
+                isinstance(sha, str) and files.get(name) == sha
+                for name, sha in want.items()
+            )
+            and not factory_holds(pkg, expanded(prj, pkg, what, ctx), what, ctx)
         ):
             ask(ctx, "incoming-hold", f"{what}: PR {st['id']} by {st['creator']}")
 

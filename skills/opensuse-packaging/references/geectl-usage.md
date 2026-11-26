@@ -99,7 +99,8 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl pull-request approve REFERENCE --live` — approve a submission as the review asked of the target (OBS: the acting user's review; Gitea: the token owner's review).
 - `geectl pull-request submit --base main --title TITLE --body BODY` — file a submission from the working copy in the current directory: a Gitea pull request from a git-backed checkout, an OBS submit request from an OBS-native one; `--repo`/`--head` name the Gitea repo and branch, `--draft` opens it as a draft.
 - `geectl pull-request build-comment --project PRJ --package PKG gitea:OWNER/REPO#N --live` — post the build-link comment on a Gitea PR: the OBS build results for the test project and package, as a link plus a one-line per-instance summary. Posted once, on PR opening; no polling, no live update, no edit. An OBS handle is refused.
-- `geectl pull-request show REFERENCE` — show one pull request: metadata only (title, state, reviews, the head in `source.commit`), no diff — the diff gap is geectl #416.
+- `geectl pull-request show REFERENCE` — show one pull request: metadata only (title, state, reviews, the head in `source.commit`, the merge base in `merge_base`), no diff.
+- `geectl pull-request diff REFERENCE` — show a pull request's unified diff.
 - `geectl pull-request comments REFERENCE` — list a pull request's comments, oldest first.
 - `geectl pull-request comment --body BODY REFERENCE --live` — comment on a pull request.
 - `geectl pull-request request-changes REFERENCE --live` — ask for changes on a pull request, as `approve` but with the review declined instead of accepted.
