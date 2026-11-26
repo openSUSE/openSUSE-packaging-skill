@@ -356,6 +356,21 @@ def gitea(path):
         raise Lookup("git-obs api %s: an unparseable answer (%s)" % (path, e))
 
 
+def pr_comments(owner, repo, num):
+    """`geectl pull-request comments gitea:<owner>/<repo>#<num>` — the typed
+    leaf for a PR's issue comments, in the old git-obs shape [{user:
+    {login}, body}] — the leaf's ReviewComment [{author, created, body}]
+    renamed — so the staging-bot scan below is unchanged."""
+    j = geectl(["pull-request", "comments", "gitea:%s/%s#%s" % (owner, repo, num)])
+    if not isinstance(j, dict) or not isinstance(j.get("comments"), list):
+        raise Lookup("the comments of %s/%s#%s: a malformed answer" % (owner, repo, num))
+    return [
+        {"user": {"login": c.get("author")}, "body": c.get("body")}
+        for c in j["comments"]
+        if isinstance(c, dict)
+    ]
+
+
 def valid_path(p):
     parts = p.split("/")
     return all(x and x not in (".", "..") and not CTRL.search(x) for x in parts)
@@ -1399,7 +1414,7 @@ def build_pr(f, owner, repo, num, head):
     out = {"project": "", "required": False, "results": {}, "srcmd5": "", "green": False,
            "verdict": "none", "note": "no build of this head"}
     f.build = out
-    cm = gitea("/repos/%s/%s/issues/%s/comments" % (owner, repo, num))
+    cm = pr_comments(owner, repo, num)
     if not isinstance(cm, list) or not all(isinstance(c, dict) for c in cm):
         raise Lookup("the comments of %s/%s#%s: a malformed answer" % (owner, repo, num))
     prj = ""

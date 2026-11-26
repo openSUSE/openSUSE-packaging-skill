@@ -106,7 +106,8 @@ chmod +x "$work/bin/"*
 # ---------------------------------------------------------------- fixture builder
 # Every geectl answer, keyed as the fake keys a command line, from the case's
 # src/ and tgt/ trees and its knobs in k/ (a missing knob takes the default
-# below). The gitea answers below are unchanged: that leg still reads git-obs.
+# below). The gitea answers below are unchanged: that leg still reads git-obs,
+# except the PR comments, which build_pr reads through geectl now.
 cat > "$work/mkfix.py" <<'PY'
 import base64
 import hashlib
@@ -321,7 +322,11 @@ else:
         put("geectl", "remote list-files %s %s" % (pp, r), list_json(pp, r, files))
         put("geectl", "remote package-log %s %s --limit 1" % (pp, r), log_json(pp, r, srcmd5(files)))
         results(pp, r, srcmd5(files))
-    put("gitea", "/repos/%s/%s/issues/7/comments" % (o, r), json.dumps(comments))
+    put("geectl", "pull-request comments gitea:%s/%s#7" % (o, r),
+        json.dumps({"reference": "gitea:%s/%s#7" % (o, r),
+                    "comments": [{"author": c["user"]["login"], "created": c.get("created_at"),
+                                  "body": c.get("body")} for c in comments],
+                    "count": len(comments)}))
 PY
 
 # ---------------------------------------------------------------- base trees
@@ -1140,9 +1145,9 @@ irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "git-obs api /repos/
 fresh lk-pr-truncated; knob kind gitea; fix; sed -i 's/"truncated": false/"truncated": true/' "$D"/gitea/_repos_pool_foo_git_trees_*
 irv --show pool/foo#7; expect "lookup-fails-is-5: a truncated tree" 5 "a malformed or truncated answer"
 # A PR's build is not required, but a failed lookup of it is no answer either.
-fresh lk-pr-build; knob kind gitea; fix; touch "$D/gitea/$(fk /repos/pool/foo/issues/7/comments).fail"
-irv --show pool/foo#7; expect "lookup-fails-is-5: the PR comments fail" 5 "git-obs api /repos/pool/foo/issues/7/comments failed"
-fresh lk-pr-build-malformed; knob kind gitea; fix; printf '{"comments": []}' > "$D/gitea/$(fk /repos/pool/foo/issues/7/comments)"
+fresh lk-pr-build; knob kind gitea; fix; touch "$D/geectl/$(fk "pull-request comments gitea:pool/foo#7").fail"
+irv --show pool/foo#7; expect "lookup-fails-is-5: the PR comments fail" 5 "geectl pull-request comments gitea:pool/foo#7 failed"
+fresh lk-pr-build-malformed; knob kind gitea; fix; printf '{"reference": "gitea:pool/foo#7", "comments": {}}' > "$D/geectl/$(fk "pull-request comments gitea:pool/foo#7")"
 irv --show pool/foo#7; expect "lookup-fails-is-5: malformed PR comments" 5 "the comments of pool/foo#7: a malformed answer"
 fresh lk-pr-results-empty; knob kind gitea; knob prbuild 1; fix
 : > "$D/geectl/$(fk "build results devel:example:PullRequest:7 --package foo --multibuild")"
