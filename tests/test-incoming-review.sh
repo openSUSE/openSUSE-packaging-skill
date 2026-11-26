@@ -1,5 +1,5 @@
 #!/bin/bash
-# test-incoming-review.sh — incoming-review.sh offline: fake geectl, git-obs,
+# test-incoming-review.sh — incoming-review.sh offline: fake geectl,
 # tea, curl and getent on PATH answer from each case's fixture tree (a missing
 # fixture is a 404, one with a .fail beside it a 500; a URL may redirect, a host
 # resolve to any address), a fake rpm in the case's own bin serves its macro
@@ -58,17 +58,6 @@ f="$FIX/geectl/$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')"
 [ -f "$f" ] || notfound "$@" 
 cat "$f"
 EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-# Only the src.opensuse.org login may answer: the default one can be another forge.
-[ "${1:-} ${2:-} ${3:-} ${4:-}" = "-G src.opensuse.org -q api" ] && [ $# -eq 5 ] \
-  || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-f="$FIX/gitea/$(printf %s "$5" | tr -c 'A-Za-z0-9._:-' '_')"
-[ ! -e "$f.fail" ] || { echo "*** Error: 500 Internal Server Error" >&2; exit 1; }
-[ -f "$f" ] || { echo "*** Error: 404 Not Found" >&2; exit 1; }
-cat "$f"
-EOF
 # curl as the recorder runs it: one request, its status, the address it reached
 # (the --resolve pin, or net/<url>.ip) and the redirect target on stdout (-w),
 # the body in -o; net/<url>.redirect answers 302 to what it holds.
@@ -106,10 +95,11 @@ chmod +x "$work/bin/"*
 # ---------------------------------------------------------------- fixture builder
 # Every geectl answer, keyed as the fake keys a command line, from the case's
 # src/ and tgt/ trees and its knobs in k/ (a missing knob takes the default
-# below). The gitea answers below are unchanged: that leg still reads git-obs,
-# except the PR comments, which build_pr reads through geectl now.
+# below). The Gitea leg reads through geectl now: `pull-request show` for the
+# PR, `pull-request diff` for the files it changes, `gitea raw-file` for
+# their bytes at the head and the merge base.
 cat > "$work/mkfix.py" <<'PY'
-import base64
+import difflib
 import hashlib
 import json
 import os
@@ -273,7 +263,6 @@ else:
     creator, o, r = k("creator", "contrib"), k("prowner", "pool"), k("prrepo", "foo")
     # a SHA-256 repository with the knob sha256: every object id 64 hex
     GH = hashlib.sha256 if k("sha256", "0") == "1" else hashlib.sha1
-    W = len(GH().hexdigest())
 
     def gsha(b):
         return GH(b"blob %d\0" % len(b) + b).hexdigest()
@@ -290,27 +279,65 @@ else:
             ents[p] = ("120000", t.encode())
         return ents
 
-    def tree_json(ents):
-        dirs = sorted({os.path.dirname(p) for p in ents if "/" in p})
-        items = [{"path": d, "mode": "040000", "type": "tree", "sha": "9" * W} for d in dirs]
-        items += [{"path": p, "mode": m, "type": "blob", "sha": gsha(b), "size": len(b)} for p, (m, b) in sorted(ents.items())]
-        return json.dumps({"sha": "8" * W, "truncated": False, "page": 1, "total_count": len(items), "tree": items}, indent=1)
-
     def commit(name, ents):
         return GH(name.encode() + json.dumps(sorted((p, m, gsha(b)) for p, (m, b) in ents.items())).encode()).hexdigest()
 
+    def pr_diff(head_t, base_t):
+        """The unified diff of the base tree to the head tree, as Gitea
+        renders it: one `diff --git` section per changed file, with its
+        mode and index lines, the hunks, and `Binary files ... differ`
+        for a binary one."""
+        out = []
+        for p in sorted(set(head_t) | set(base_t)):
+            h, b = head_t.get(p), base_t.get(p)
+            if h is not None and b is not None and h == b:
+                continue
+            hm, hb = h if h is not None else (None, None)
+            bm, bb = b if b is not None else (None, None)
+            out.append("diff --git a/%s b/%s" % (p, p))
+            binary = (hb is not None and b"\0" in hb) or (bb is not None and b"\0" in bb)
+            if h is None:
+                out.append("deleted file mode %s" % bm)
+                out.append("index %s..%s" % (gsha(bb)[:7], "0" * 7))
+            elif b is None:
+                out.append("new file mode %s" % hm)
+                out.append("index %s..%s" % ("0" * 7, gsha(hb)[:7]))
+            else:
+                if hm != bm:
+                    out.append("old mode %s" % bm)
+                    out.append("new mode %s" % hm)
+                if hb != bb:
+                    out.append("index %s..%s %s" % (gsha(bb)[:7], gsha(hb)[:7], hm))
+            if binary:
+                out.append("Binary files a/%s and b/%s differ" % (p, p))
+                continue
+            if h is not None and b is not None and hb == bb:
+                continue  # a mode change only: no content headers
+            old = bb.decode("utf-8", "surrogateescape").splitlines(True) if bb is not None else []
+            new = hb.decode("utf-8", "surrogateescape").splitlines(True) if hb is not None else []
+            out += difflib.unified_diff(old, new,
+                                        "a/" + p if b is not None else "/dev/null",
+                                        "b/" + p if h is not None else "/dev/null")
+        return "".join(ln if ln.endswith("\n") else ln + "\n" for ln in out)
+
     head_t, base_t = gtree("src"), gtree("tgt")
     head, mb = commit("head", head_t), commit("base", base_t)
-    pr = {"number": 7, "title": "Update foo to 1.1", "body": "Please have a look.", "state": k("prstate", "open"),
-          "merged": k("merged", "0") == "1", "user": {"login": creator}, "merge_base": mb,
-          "head": {"sha": head, "ref": "update", "repo": {"full_name": "contrib/%s" % r}},
-          "base": {"sha": k("basesha", mb), "ref": k("baseref", "factory"), "repo": {"full_name": "%s/%s" % (o, r)}}}
-    put("gitea", "/repos/%s/%s/pulls/7" % (o, r), json.dumps(pr))
-    for sha, ents in ((head, head_t), (mb, base_t)):
-        put("gitea", "/repos/%s/%s/git/trees/%s?recursive=true&per_page=1000" % (o, r, sha), tree_json(ents))
-        for _, b in ents.values():
-            put("gitea", "/repos/%s/%s/git/blobs/%s" % (o, r, gsha(b)),
-                json.dumps({"sha": gsha(b), "size": len(b), "encoding": "base64", "content": base64.b64encode(b).decode()}))
+    state = k("prstate", "open")
+    merged = k("merged", "0") == "1"
+    show = {"reference": "gitea:%s/%s#7" % (o, r), "title": "Update foo to 1.1",
+            "description": "Please have a look.", "author": creator,
+            "status": "open" if state == "open" else ("merged" if merged else "closed"),
+            "draft": False, "merged": merged, "mergeable": True, "merge_base": mb,
+            "source": {"repository": "contrib/%s" % r, "branch": "update", "commit": head},
+            "target": {"repository": "%s/%s" % (o, r), "branch": k("baseref", "factory"),
+                       "commit": k("basesha", mb)},
+            "reviews": [], "reviews_error": None, "labels": []}
+    put("geectl", "pull-request show gitea:%s/%s#7" % (o, r), json.dumps(show))
+    put("geectl", "pull-request diff gitea:%s/%s#7" % (o, r),
+        json.dumps({"reference": "gitea:%s/%s#7" % (o, r), "diff": pr_diff(head_t, base_t), "xml": False}))
+    for ents, ref in ((head_t, head), (base_t, mb)):
+        for p, (m, b) in ents.items():
+            put("geectl", "gitea raw-file %s %s %s --ref %s" % (o, r, p, ref), b)
     # the staging bot's build of the head: only with the knob
     comments = []
     if k("prbuild", "0") == "1":
@@ -390,7 +417,7 @@ fresh() {
   printf 'def foreign_accept(ctx, run):\n    return None\n' > "$D/home/.claude/hooks/_pr_guard.py"
 }
 knob() { printf '%s\n' "$2" > "$D/k/$1"; }
-fix() { rm -rf "$D/obs" "$D/gitea"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
+fix() { rm -rf "$D/geectl"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
 irv() { out="$(FIX=$D HOME=$D/home TMPDIR=$D/tmp PATH="$D/bin:$work/bin:$PATH" bash "$IRV" "$@" 2>&1)"; rc=$?; }
 keyof() { sed -n 's/^key \([0-9a-f]\{64\}\)$/\1/p' <<<"$out" | tail -n 1; }
 vfile() { printf '%s %s key %s\n%s\n' "$1" "$2" "$3" "$4" > "$D/verdict.txt"; }
@@ -1140,10 +1167,11 @@ lk "an empty job history" "an empty answer" record
 fresh lk-file; fix; SSRC=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["entries"][0]["srcmd5"])' "$D/geectl/$(fk "remote package-log $SP foo --range 3:3")")
 printf 'tampered\n' > "$D/geectl/$(fk "remote cat --rev $SSRC --format text $SP foo foo.spec")"
 lk "a file whose bytes do not match its md5" "the bytes fetched do not match"
-fresh lk-pr-404; knob kind gitea; fix; rm "$D/gitea/$(fk /repos/pool/foo/pulls/7)"
-irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "git-obs api /repos/pool/foo/pulls/7 failed"
-fresh lk-pr-truncated; knob kind gitea; fix; sed -i 's/"truncated": false/"truncated": true/' "$D"/gitea/_repos_pool_foo_git_trees_*
-irv --show pool/foo#7; expect "lookup-fails-is-5: a truncated tree" 5 "a malformed or truncated answer"
+fresh lk-pr-404; knob kind gitea; fix; rm "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")"
+irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "geectl pull-request show gitea:pool/foo#7 failed"
+fresh lk-pr-diff-malformed; knob kind gitea; fix
+printf '{"reference": "gitea:pool/foo#7", "diff": "not a diff\\n", "xml": false}' > "$D/geectl/$(fk "pull-request diff gitea:pool/foo#7")"
+irv --show pool/foo#7; expect "lookup-fails-is-5: a malformed diff" 5 "a malformed diff"
 # A PR's build is not required, but a failed lookup of it is no answer either.
 fresh lk-pr-build; knob kind gitea; fix; touch "$D/geectl/$(fk "pull-request comments gitea:pool/foo#7").fail"
 irv --show pool/foo#7; expect "lookup-fails-is-5: the PR comments fail" 5 "geectl pull-request comments gitea:pool/foo#7 failed"
@@ -1170,9 +1198,10 @@ grep -q '^osc ' "$D/calls" && fail "show-key-pr: osc was called" || pass "show-k
 fresh record-pr-pass; knob kind gitea; fix
 recorded record-pr-pass PASS "$GOOD" pool/foo#7 gitea pool_foo_7
 stampok record-pr-pass "$SF" kind=gitea id=pool/foo#7 verdict=PASS "key=$K" gitea.owner=pool gitea.repo=foo \
-  gitea.number=7 gitea.base_ref=factory "gitea.head=~$(sed -n 's/.*"sha": "\([0-9a-f]\{40\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")" \
-  "gitea.files=~\"foo.spec\"" "gitea.files=~\"sub/notes.txt\"" build.project= build.required=false build.verdict=none \
+  gitea.number=7 gitea.base_ref=factory "gitea.head=~$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["commit"])' "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")")" \
+  "gitea.files=~\"foo.spec\"" build.project= build.required=false build.verdict=none \
   "build.note=no build of this head" build.green=false
+grep -qv 'sub/notes.txt' "$SF" && pass "record-pr-pass: the stamp's files map holds the changed files only" || fail "record-pr-pass: the stamp's files map holds an unchanged file"
 
 fresh record-pr-built; knob kind gitea; knob prbuild 1; fix
 recorded record-pr-built PASS "$GOOD" pool/foo#7 gitea pool_foo_7
@@ -1183,19 +1212,18 @@ stampok record-pr-built "$SF" build.project=devel:example:PullRequest:7 build.ve
 # and the staging build's obsinfo names a 64-hex commit.
 fresh record-pr-sha256; knob kind gitea; knob sha256 1; knob prbuild 1; fix
 recorded record-pr-sha256 PASS "$GOOD" pool/foo#7 gitea pool_foo_7
-H64=$(sed -n 's/.*"sha": "\([0-9a-f]\{64\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")
+H64=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["commit"])' "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")")
 [ -n "$H64" ] && grep -qxF "build devel:example:PullRequest:7" <<<"$out" \
   && pass "record-pr-sha256: a 64-hex head, built" || fail "record-pr-sha256: head '$H64'"
 stampok record-pr-sha256 "$SF" "gitea.head=$H64" build.verdict=green "gitea.files=~\"foo.spec\""
 fresh record-pr-sha256-tampered; knob kind gitea; knob sha256 1; fix
 # the head's foo.spec answers other bytes than its id
 python3 -I -c '
-import glob, json, sys
-d = sys.argv[1] + "/gitea/"
-head = json.load(open(d + "_repos_pool_foo_pulls_7"))["head"]["sha"]
-tree = json.load(open(glob.glob(d + "_repos_pool_foo_git_trees_" + head + "*")[0]))["tree"]
-p = d + "_repos_pool_foo_git_blobs_" + next(e["sha"] for e in tree if e["path"] == "foo.spec")
-j = json.load(open(p)); j["content"] = "dGFtcGVyZWQK"; json.dump(j, open(p, "w"))' "$D"
+import json, re, sys
+d = sys.argv[1] + "/geectl/"
+head = json.load(open(d + "pull-request_show_gitea_pool_foo_7"))["source"]["commit"]
+key = re.sub(r"[^A-Za-z0-9._:-]", "_", "gitea raw-file pool foo foo.spec --ref " + head)
+open(d + key, "wb").write(b"tampered\n")' "$D"
 irv --show pool/foo#7; expect "record-pr-sha256-tampered: a blob unlike its 64-hex id" 5 "the bytes fetched do not match"
 # One repository has one hash: a head of one length and a base of the other is no answer.
 fresh record-pr-mixed-ids; knob kind gitea; knob sha256 1; knob basesha "$(printf 'a%.0s' $(seq 1 40))"; fix
