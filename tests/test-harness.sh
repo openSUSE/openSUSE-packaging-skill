@@ -464,10 +464,13 @@ if tomllib is not None:
           + (f" -- {globs}" if globs else ""))
     req = load("codex/requirements.toml")["permissions"]["filesystem"]["deny_read"]
     check(all(p.startswith("/home/USER/") for p in req), "codex: requirements deny_read is absolute")
-if shutil.which("codex"):
+# Resolve codex once: the child runs with the bare PATH (/usr/bin:/bin),
+# where a codex outside it would be unfindable by name.
+codex = shutil.which("codex")
+if codex:
     for want, *argv in fixture("codex-probes.json")["cases"]:
         r = subprocess.run(
-            ["codex", "execpolicy", "check", "--resolve-host-executables",
+            [codex, "execpolicy", "check", "--resolve-host-executables",
              "--rules", os.path.join(H, "codex/opensuse-packaging.rules"), *argv],
             env=bare_env(fake, CODEX_HOME=os.path.join(fake, ".codex")),
             capture_output=True, text=True)
