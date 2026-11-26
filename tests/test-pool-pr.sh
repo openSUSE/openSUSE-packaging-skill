@@ -79,6 +79,13 @@ EOF
 cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
 printf 'geectl %s\n' "$*" >> "$EV"
+if [ "$1" = gitea ]; then
+  # repo-fork pool <pkg> --live: an existing fork is no error.
+  [ "$2" = repo-fork ] || { echo "fake geectl: unexpected gitea $*" >&2; exit 99; }
+  printf 'fork %s\n' "$*" >> "$EV"
+  [ -z "${FAKE_FORK_OUT:-}" ] || echo "$FAKE_FORK_OUT" >&2
+  exit "${FAKE_FORK_RC:-0}"
+fi
 [ "$1" = --format ] && [ "$2" = json ] || { echo "fake geectl: no --format json: $*" >&2; exit 99; }
 shift 2
 [ "$1 $2" = "pull-request search" ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
@@ -89,17 +96,13 @@ shift 2
 cat "${FAKE_PRS:-$EMPTY}"
 EOF
 # git-obs reads its own login; the fake answers as the user "tester". It also
-# forks and writes the PR itself: the pull-request surface has no create leaf.
+# writes the PR itself: the pull-request surface has no create leaf; the fork
+# goes through geectl gitea repo-fork now.
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
 # Every call names the forge: the default login may be another forge's.
 [ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
 shift 3
-if [ "$1" = repo ]; then
-  printf 'fork %s\n' "$*" >> "$EV"
-  [ -z "${FAKE_FORK_OUT:-}" ] || echo "$FAKE_FORK_OUT" >&2
-  exit "${FAKE_FORK_RC:-0}"
-fi
 [ "$1" = api ] || { echo "fake git-obs: unexpected $1" >&2; exit 99; }
 shift; m=GET; data=""
 while [ $# -gt 1 ]; do
@@ -118,7 +121,7 @@ case "$m $path" in
   PATCH*) n=${path##*/}; echo "{\"number\": $n, \"html_url\": \"https://src.opensuse.org/pool/foo/pulls/$n\"}";;
 esac
 EOF
-# A tripwire: the scripts fork and write through git-obs, never tea.
+# A tripwire: the scripts write PRs through git-obs, never tea.
 cat > "$work/bin/tea" <<'EOF'
 #!/bin/bash
 printf 'tea %s\n' "$*" >> "$EV"
@@ -270,8 +273,8 @@ pp post-rejected 6 "PR POST rejected" 'FAKE_RESP={"message": "pull request alrea
 pp post-http-error 6 "PR POST failed: ERROR: 409 Conflict" FAKE_API_FAIL=POST -- "$C"
 pp lfs-push-fails 6 "LFS object push to tester/foo failed" "FAKE_OID=$OID" "FAKE_GIT_FAIL=lfs push" -- "$C"
 nopush lfs-push-fails
-# A fork error is shown, then the push decides; git-obs reuses an existing fork.
-pp fork-error-surfaced 0 "git-obs repo fork failed: ERROR: 403 Forbidden: fork quota exceeded" FAKE_FORK_RC=1 "FAKE_FORK_OUT=ERROR: 403 Forbidden: fork quota exceeded" -- "$C"
+# A fork error is shown, then the push decides; geectl reuses an existing fork.
+pp fork-error-surfaced 0 "geectl gitea repo-fork failed: ERROR: 403 Forbidden: fork quota exceeded" FAKE_FORK_RC=1 "FAKE_FORK_OUT=ERROR: 403 Forbidden: fork quota exceeded" -- "$C"
 pp fork-exists 0 "PR opened" "FAKE_FORK_OUT= * Fork already exists: tester/foo" -- "$C"
 ! grep -qF "fork failed" <<<"$out" && pass "fork-exists: reused silently" || fail "fork-exists: reported as a failure"
 mkdir -p "$work/scratch"
@@ -291,7 +294,7 @@ grep -q "^push .* --no-verify fork $SHA:refs/heads/$NEWHEAD\$" "$EV" && ! grep -
 grep -q "^lfs-push .*--object-id fork $OID\$" "$EV" && pass "open-new: the tree's LFS objects pushed by id" || fail "open-new: lfs push argv"
 grep -qF "\"head\": \"tester:$NEWHEAD\", \"base\": \"leap-16.0\", \"title\": \"Update to 2.0\", \"body\": \"Synced body.\"" "$EV" \
   && pass "open-new: POST names head, base, and HEAD's subject/body" || fail "open-new: POST payload $(grep POST "$EV")"
-grep -qx "fork repo fork pool/foo" "$EV" && [ "$(n_of '^tea ')" = 0 ] && pass "open-new: fork ensured through git-obs" || fail "open-new: no git-obs fork"
+grep -qx "fork gitea repo-fork pool foo --live" "$EV" && [ "$(n_of '^tea ')" = 0 ] && pass "open-new: fork ensured through geectl" || fail "open-new: no geectl fork"
 grep -qF "sr-status.py --pr pool/foo#12" <<<"$out" && pass "open-new: next step printed" || fail "open-new: no next step"
 [ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo.git" ] && [ "$(n_of '^askpass ')" = 0 ] \
   && pass "open-new: objects and ref go over SSH, no credential helper" \

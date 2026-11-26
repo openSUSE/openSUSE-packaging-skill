@@ -16,10 +16,10 @@
 # else's open PR on the base (no double-filing), two of yours, and a head
 # branch that already heads a PR to another base (one head branch, one base).
 #
-# Requires: geectl for the open-PR listing, a git-obs login for src.opensuse.org
-# (the user lookup, the fork, and the PR create/update: the pull-request
-# surface has no create leaf) and an SSH key there (geectl, git-obs and ssh
-# read their own credentials: this script reads none), git-lfs.
+# Requires: geectl for the open-PR listing and the fork, a git-obs login
+# for src.opensuse.org (the user lookup and the PR create/update: the
+# pull-request surface has no create leaf) and an SSH key there (geectl,
+# git-obs and ssh read their own credentials: this script reads none), git-lfs.
 #
 # Usage: pool-pr.sh DIR [--title T] [--body-file F] [--replace]
 #   --title      PR title (default: HEAD's commit subject)
@@ -86,8 +86,10 @@ oids=$(printf '%s\n' "$lfs" | awk 'NF {print $1}')
 
 tmpd=$(mktemp -d -p "${TMPDIR:-/var/tmp}" pool-pr.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$tmpd"' EXIT
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
+# The forge user and the PR filing, still through git-obs: geectl has no
+# whoami leaf, and pull-request submit needs a fork checkout, not a pool
+# clone. gapi reads its own login (-G: the default one may be another
+# forge's) and exits non-zero on an HTTP error.
 gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed -e '1{' -e '/^Response:$/d' -e '}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
 user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
@@ -207,9 +209,10 @@ else
 fi
 
 if [ "$mode" = new ]; then
-  # An existing fork is no error to git-obs; a failure shows, the push decides.
-  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
-    || echo "git-obs repo fork failed: $(tail -1 <<<"$forkerr")" >&2
+  # An existing fork is no error: repo-fork returns the existing fork
+  # instead of failing. A failure shows, the push decides.
+  forkerr=$(timeout 60 geectl gitea repo-fork pool "$pkg" --live 2>&1 >/dev/null) \
+    || echo "geectl gitea repo-fork failed: $(tail -1 <<<"$forkerr")" >&2
   hrepo="$user/$pkg"
 else
   # The PR's own head repo: pushing anywhere else leaves the PR on its old tree.
@@ -236,7 +239,7 @@ fi
 pushopt=""; [ "$mode" = update ] && pushopt="--force"
 # shellcheck disable=SC2086  # empty $pushopt must expand to no argument
 git -C "$dir" push -q --no-verify $pushopt fork "$sha:refs/heads/$head" \
-  || { echo "push to $hrepo:$head failed (does the fork exist? see the git-obs output above)" >&2; exit 6; }
+  || { echo "push to $hrepo:$head failed (does the fork exist? see the repo-fork output above)" >&2; exit 6; }
 
 [ -n "$title" ] || title=$(git -C "$dir" log -1 --format=%s "$sha")
 if [ -n "$bodyfile" ]; then body=$(cat "$bodyfile"); else body=$(git -C "$dir" log -1 --format=%b "$sha"); fi
