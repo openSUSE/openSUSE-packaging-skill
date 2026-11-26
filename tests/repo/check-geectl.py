@@ -38,7 +38,10 @@ row is removed and the citations re-verified live. A row may also carry
 "positionals": the leaf's positional names in order. A
 "positional-overrides" row records a leaf whose positionals changed since
 the binary: the row's required/optional lists are the target state, and
-the row goes stale the moment the binary's Usage line matches them.
+the row goes stale the moment the binary's Usage line matches them. A
+"global-flags" row records a global option geectl does not have yet: it
+is accepted in any call and in prose, and goes stale the moment the
+binary's top-level `--help` lists it.
 
   python3 tests/repo/check-geectl.py [--geectl PATH] [--skill NAME]
 
@@ -240,6 +243,13 @@ class GeectlCli:
         rc, out = run_help(binary, [])
         if rc is None or rc != 0:
             raise RuntimeError("cannot run geectl --help")
+        # The binary's top-level options, for the global-flags staleness
+        # check: a manifest global flag goes stale the moment one of
+        # these names it.
+        options = out.split("Options:", 1)[-1] if "Options:" in out else ""
+        self.top_flags = set(
+            re.findall(r"^ {6}(--[^\s=]+)", options, flags=re.M)
+        )
         for name in command_names(out):
             if name == "help":
                 self.paths.add("help")
@@ -383,13 +393,14 @@ def load_geectl(binary):
 
 
 def load_manifest():
-    """(leaves, flags, overrides) from geectl-target-state.json, or
-    ({}, {}, {}) when the file is absent (no target-state debt). A
-    malformed file fails closed. An override is (issue, required,
-    optional): the target-state positionals of a leaf the binary already
-    has, whose shape predates the target state."""
+    """(leaves, flags, overrides, global_flags) from
+    geectl-target-state.json, or ({}, {}, {}, {}) when the file is absent
+    (no target-state debt). A malformed file fails closed. An override is
+    (issue, required, optional): the target-state positionals of a leaf
+    the binary already has, whose shape predates the target state. A
+    global flag is {flag: issue}."""
     if not os.path.exists(MANIFEST):
-        return {}, {}, {}
+        return {}, {}, {}, {}
     with open(MANIFEST, encoding="utf-8") as fh:
         data = json.load(fh)
     leaves = {}
@@ -409,7 +420,11 @@ def load_manifest():
             row.get("required", []),
             row.get("optional", []),
         )
-    return leaves, flags, overrides
+    global_flags = {
+        flag: entry["issue"]
+        for flag, entry in data.get("global-flags", {}).items()
+    }
+    return leaves, flags, overrides, global_flags
 
 
 def cited_positionals(rest, valued):
@@ -487,7 +502,8 @@ def wrong_section_lines(path):
     return out
 
 
-def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides):
+def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides,
+          manifest_global_flags):
     findings, cited_subs, count = [], {}, 0
     usage = os.path.join(base, "references", "geectl-usage.md")
     wrong_ok = wrong_section_lines(usage) if os.path.exists(usage) else set()
@@ -542,7 +558,10 @@ def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides):
                     count += 1
                     cited_subs.setdefault(path, (rel, n))
                     for flag in OPT.findall(rest):
-                        if flag not in flags:
+                        if (
+                            flag not in flags
+                            and flag not in manifest_global_flags
+                        ):
                             findings.append(
                                 (
                                     rel,
@@ -619,7 +638,7 @@ def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides):
     # tool, not a flag, so it is not a prose flag; a line with no `geectl`
     # call has no command to attribute the flag to, so it is skipped.
     # Wrong forms define nothing.
-    known = set(GLOBAL_OPTS)
+    known = set(GLOBAL_OPTS) | set(manifest_global_flags)
     for _path, flags in cli.flags.items():
         known |= set(flags)
     for _issue, flags, _pos in manifest_leaves.values():
@@ -699,6 +718,19 @@ def check(base, cli, manifest_leaves, manifest_flags, manifest_overrides):
                         "its citations live",
                     )
                 )
+    # A manifest global flag goes stale the moment the binary's
+    # top-level --help lists it.
+    for flag, issue in sorted(manifest_global_flags.items()):
+        if flag in cli.top_flags:
+            findings.append(
+                (
+                    os.path.relpath(MANIFEST, ROOT),
+                    0,
+                    f"target-state global flag `{flag}` (issue #{issue}) "
+                    "now exists in geectl; remove the row and re-verify "
+                    "its citations live",
+                )
+            )
     # A positional override goes stale the moment the binary's Usage
     # line matches the target state.
     for path, (issue, required, optional) in sorted(manifest_overrides.items()):
@@ -754,7 +786,9 @@ def main(argv=None):
         )
         return 2
     try:
-        manifest_leaves, manifest_flags, manifest_overrides = load_manifest()
+        manifest_leaves, manifest_flags, manifest_overrides, manifest_global = (
+            load_manifest()
+        )
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         print(f"check-geectl.py: {MANIFEST} is malformed: {exc}", file=sys.stderr)
         return 2
@@ -777,6 +811,7 @@ def main(argv=None):
                 manifest_leaves,
                 manifest_flags,
                 manifest_overrides,
+                manifest_global,
             )
             findings += f
             count += c

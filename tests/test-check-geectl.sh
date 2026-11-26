@@ -154,6 +154,17 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 # shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
+manifest_add_global_flag() { python3 - "$M" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+data["global-flags"]["--debug"] = {"issue": 999, "kind": "issue"}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
+PY
+}
+# shellcheck disable=SC2317,SC2329  # called from the mutations, through eval
 manifest_add_flag() { python3 - "$M" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -249,6 +260,10 @@ case_ stale-manifest-leaf 1 "target-state leaf \`remote cat\` (issue #999) now e
   "manifest_add $M"
 case_ stale-manifest-flag 1 "target-state flag \`--limit\` on \`build job-history\` (issue #999) now exists in geectl" \
   "manifest_add_flag $M"
+case_ stale-manifest-global-flag 1 "target-state global flag \`--debug\` (issue #999) now exists in geectl" \
+  "manifest_add_global_flag $M"
+case_ target-state-global-flag 0 "geectl citations match geectl" \
+  "add 'Run \`geectl remote whois LOGIN\` with \`--instance\` set.'" 
 case_ service-run-runall 1 "no such mode; name the service and its mode, never runall" \
   "add 'Run \`geectl local-build service-run --mode runall .\`.'"
 case_ runall-negated 0 "geectl citations match geectl" \

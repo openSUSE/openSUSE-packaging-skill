@@ -36,6 +36,8 @@ for a named instance needs that instance's entry in the config file — the
 variable supplements the config, it does not replace it. `geectl config show`
 reports credential status, never a secret value.
 
+Per-call instance selection is the global `--instance` flag (`geectl --instance=ALIAS ...`): the flag beats the environment and the working-copy state, and credentials resolve from the flagged instance's own env keys only.
+
 ## Auth transport
 
 The client sends the token as an HTTP `Authorization: Bearer <token>` header
