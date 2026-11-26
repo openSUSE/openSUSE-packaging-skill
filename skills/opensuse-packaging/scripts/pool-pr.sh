@@ -16,8 +16,8 @@
 # else's open PR on the base (no double-filing), two of yours, and a head
 # branch that already heads a PR to another base (one head branch, one base).
 #
-# Requires: geectl for the open-PR listing and the fork, a git-obs login
-# for src.opensuse.org (the user lookup and the PR create/update: the
+# Requires: geectl for the open-PR listing, the user lookup and the fork,
+# a git-obs login for src.opensuse.org (the PR create/update: the
 # pull-request surface has no create leaf) and an SSH key there (geectl,
 # git-obs and ssh read their own credentials: this script reads none), git-lfs.
 #
@@ -86,14 +86,14 @@ oids=$(printf '%s\n' "$lfs" | awk 'NF {print $1}')
 
 tmpd=$(mktemp -d -p "${TMPDIR:-/var/tmp}" pool-pr.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$tmpd"' EXIT
-# The forge user and the PR filing, still through git-obs: geectl has no
-# whoami leaf, and pull-request submit needs a fork checkout, not a pool
-# clone. gapi reads its own login (-G: the default one may be another
-# forge's) and exits non-zero on an HTTP error.
+# The forge user, through geectl: the token owner of the configured Gitea
+# instance. The PR filing below stays on git-obs: pull-request submit
+# needs a fork checkout, not a pool clone. gapi reads its own login (-G:
+# the default one may be another forge's) and exits non-zero on an HTTP error.
 gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed -e '1{' -e '/^Response:$/d' -e '}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
-  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr) — nothing pushed" >&2; exit 6; }
+user=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/gerr" | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { echo "could not read your src.opensuse.org user through geectl: $(gerr) — nothing pushed" >&2; exit 6; }
 
 # The open PRs, as one list from the unified pull-request surface: geectl
 # pages the forge's list itself (bounded at 500), so one call reads them all.

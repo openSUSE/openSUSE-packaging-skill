@@ -88,6 +88,12 @@ if [ "$1" = gitea ]; then
 fi
 [ "$1" = --format ] && [ "$2" = json ] || { echo "fake geectl: no --format json: $*" >&2; exit 99; }
 shift 2
+if [ "$1" = gitea ]; then
+  [ "$2" = whoami ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
+  [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" >&2; exit 1; }
+  printf '%s\n' "${FAKE_USER:-{\"login\": \"tester\"}}"
+  exit 0
+fi
 [ "$1 $2" = "pull-request search" ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
 shift 2
 [ "$1" = --backend ] && [ "$2" = gitea ] && [ "$3" = --repo ] && case "$4" in pool/*) ;; *) echo "fake geectl: unexpected repo $4" >&2; exit 99;; esac \
@@ -95,9 +101,9 @@ shift 2
 [ -z "${FAKE_PRS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
 cat "${FAKE_PRS:-$EMPTY}"
 EOF
-# git-obs reads its own login; the fake answers as the user "tester". It also
-# writes the PR itself: the pull-request surface has no create leaf; the fork
-# goes through geectl gitea repo-fork now.
+# The fake writes the PR itself: the pull-request surface has no create leaf;
+# the fork goes through geectl gitea repo-fork now, the user lookup through
+# geectl gitea whoami.
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
 # Every call names the forge: the default login may be another forge's.
@@ -113,9 +119,6 @@ printf 'api %s %s %s\n' "$m" "$path" "$data" >> "$EV"
 # As git-obs does: an HTTP error is exit 1 and one ERROR line.
 [ "${FAKE_API_FAIL:-}" = "$m" ] && { echo "ERROR: 409 Conflict: b'{\"message\":\"refused\"}'" >&2; exit 1; }
 case "$m $path" in
-  "GET /user")
-    [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
-    u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}";;
   POST*) if [ -n "${FAKE_RESP:-}" ]; then echo "$FAKE_RESP"
          else echo '{"number": 12, "html_url": "https://src.opensuse.org/pool/foo/pulls/12"}'; fi;;
   PATCH*) n=${path##*/}; echo "{\"number\": $n, \"html_url\": \"https://src.opensuse.org/pool/foo/pulls/$n\"}";;
@@ -217,9 +220,9 @@ C4="$work/c4"; mkclone "$C4" factory
 pp upstream-not-leap 2 "tracks 'origin/factory', not origin/leap-16.x" -- "$C4"
 pp lfs-objects-missing 2 "missing or corrupt here" FAKE_FSCK_RC=1 -- "$C"
 nowrites lfs-objects-missing
-pp no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- "$C"
+pp no-login 6 "could not read your src.opensuse.org user through geectl: ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" FAKE_NOLOGIN=1 -- "$C"
 nopush no-login
-pp login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- "$C"
+pp login-unparseable 6 "could not read your src.opensuse.org user through geectl" 'FAKE_USER={"id": 7}' -- "$C"
 nopush login-unparseable
 pp lfs-ls-files-fails 2 "git lfs ls-files failed" "FAKE_GIT_FAIL=lfs ls-files" -- "$C"
 nowrites lfs-ls-files-fails
