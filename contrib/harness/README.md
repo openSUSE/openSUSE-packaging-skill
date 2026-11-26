@@ -50,10 +50,15 @@ Every snippet denies, as far as its harness can express it:
   - tea: `tea login helper`, its alias `git-credential`, and `tea login edit`/`e`, also
     spelled `logins`;
   - geectl: `geectl remote create-token` as a whole (it prints the token's secret;
-    the maintainer runs it, an agent never does). There is no config dump, no HTTP
-    debugging and no generic API form: `geectl config show` prints the endpoints and
-    credential status only, never a secret value, and `--debug`/`--debug-body` print
-    redacted bodies, never headers;
+    the maintainer runs it, an agent never does), and a `GEECTL_OBS_*` or
+    `GEECTL_GITEA_*` value on the command line (an env assignment before a
+    command, or an expansion in it): the login comes from the environment the
+    harness provides, never from argv. The Codex and Antigravity prefixes
+    cannot express a mid-command substring, so they carry no such rule.
+    There is no config dump, no HTTP debugging and no generic API form:
+    `geectl config show` prints the endpoints and credential status only,
+    never a secret value, and `--debug`/`--debug-body` print redacted bodies,
+    never headers;
   - git: `git credential fill`, and `git credential-<helper> get` or
     `git-credential-<helper> get`;
   - the desktop keyring, which holds gh's token: `secret-tool lookup` and `search`;

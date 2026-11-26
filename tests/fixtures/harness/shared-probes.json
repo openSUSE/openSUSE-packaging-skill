@@ -66,7 +66,9 @@
     "cd ~/.config && cat gh/hosts.yml",
     "wget --post-data x https://src.opensuse.org/api/v1/repos/AI/x/pulls/3/merge",
     "wget --post-data x https://gitea.example/api/v1/repos/pool/x/pulls/3/merge",
-    "sudo umount /var/tmp/build-root/x/proc"
+    "sudo umount /var/tmp/build-root/x/proc",
+    "GEECTL_OBS_PASSWORD=x geectl remote whois",
+    "GEECTL_GITEA_TOKEN=x geectl gitea repo-get a b"
   ],
   "pass": [
     "pytest src/scmrepo/git/credentials.py",

@@ -85,6 +85,8 @@
     { "action": "shell", "resource": "tea login e*", "effect": "deny" },
     { "action": "shell", "resource": "tea logins e*", "effect": "deny" },
     { "action": "shell", "resource": "geectl *remote create-token*", "effect": "deny" },
+    { "action": "shell", "resource": "*GEECTL_OBS_*", "effect": "deny" },
+    { "action": "shell", "resource": "*GEECTL_GITEA_*", "effect": "deny" },
     { "action": "shell", "resource": "*credential fill*", "effect": "deny" },
     { "action": "shell", "resource": "*secret-tool lookup*", "effect": "deny" },
     { "action": "shell", "resource": "*secret-tool search*", "effect": "deny" },

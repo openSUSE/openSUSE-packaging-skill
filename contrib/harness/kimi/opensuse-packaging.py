@@ -54,6 +54,7 @@ COMMANDS = [
     (r"\btea\b", r"\blogins?\s+(?:edit|e)\b"),
     (r"\bsecret-tool\s+(?:lookup|search)\b",),
     (r"\bcredential\s+fill\b",),
+    (r"\bGEECTL_(?:OBS|GITEA)_",),
     (r"\bgit[\s-]credential-", r"(?:^|\s)get\b"),
     (
         r"\b(?:curl|wget)\b",

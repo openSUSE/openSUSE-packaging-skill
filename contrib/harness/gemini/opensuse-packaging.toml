@@ -25,7 +25,7 @@ denyMessage = "Credentials stay inside geectl, tea and git-obs, and OBS and the 
 
 [[rule]]
 toolName = "run_shell_command"
-commandRegex = '(?:[^\x00]*\bgh\s+auth\s+(token|status|git-credential)\b|[^\x00]*gitcredentials-helper|[^\x00]*\blogins?\s+(helper|git-credential)\b|[^\x00]*\bcredential\s+fill\b|[^\x00]*\bgit[- ]credential-[\w.-]{1,64}\s+get\b|[^\x00]*\bsecret-tool\s+(lookup|search)\b|[^\x00]*\bgeectl\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+--[a-z-]+\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+--[a-z-]+\s+[^\s;&|]+\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+-[a-zA-Z]\s+remote\s+create-token\b|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bgit[- ]obs\s)(?=[^\x00;&|]*?\blogin\s+list\b)|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\btea\s)(?=[^\x00;&|]*?\blogins?\s+(edit|e)\b))'
+commandRegex = '(?:[^\x00]*\bgh\s+auth\s+(token|status|git-credential)\b|[^\x00]*gitcredentials-helper|[^\x00]*\blogins?\s+(helper|git-credential)\b|[^\x00]*\bcredential\s+fill\b|[^\x00]*\bgit[- ]credential-[\w.-]{1,64}\s+get\b|[^\x00]*\bsecret-tool\s+(lookup|search)\b|[^\x00]*\bgeectl\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+--[a-z-]+\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+--[a-z-]+\s+[^\s;&|]+\s+remote\s+create-token\b|[^\x00]*\bgeectl\s+-[a-zA-Z]\s+remote\s+create-token\b|[^\x00]*\bGEECTL_(?:OBS|GITEA)_|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\bgit[- ]obs\s)(?=[^\x00;&|]*?\blogin\s+list\b)|[^\x00]*?(?:(?<=[;&|])|(?<=command":"))(?=[^\x00;&|]*?\btea\s)(?=[^\x00;&|]*?\blogins?\s+(edit|e)\b))'
 decision = "deny"
 priority = 999
 denyMessage = "This command prints a token or password; the tools use their credentials themselves."

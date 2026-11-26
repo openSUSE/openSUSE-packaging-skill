@@ -47,6 +47,8 @@
       "Bash(tea login e*)",
       "Bash(tea logins e*)",
       "Bash(geectl *remote create-token*)",
+      "Bash(*GEECTL_OBS_*)",
+      "Bash(*GEECTL_GITEA_*)",
       "Bash(*credential fill*)",
       "Bash(*secret-tool lookup*)",
       "Bash(*secret-tool search*)",

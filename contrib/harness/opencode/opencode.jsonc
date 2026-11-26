@@ -81,6 +81,8 @@
       "tea login e*": "deny",
       "tea logins e*": "deny",
       "geectl *remote create-token*": "deny",
+      "*GEECTL_OBS_*": "deny",
+      "*GEECTL_GITEA_*": "deny",
       "*credential fill*": "deny",
       "*secret-tool lookup*": "deny",
       "*secret-tool search*": "deny",
