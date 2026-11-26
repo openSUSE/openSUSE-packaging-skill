@@ -1,5 +1,5 @@
 #!/bin/bash
-# test-preflight.sh — preflight.sh offline: fake `geectl` and `git-obs` on PATH
+# test-preflight.sh — preflight.sh offline: a fake `geectl` on PATH
 # answer from a per-case fixture tree (a missing fixture is a 404, one holding
 # @500 a 500), and a fake `curl` fails and records that it was called. The base
 # package foo has devel devel:example at 1.1 against openSUSE:Factory at 1.0,
@@ -26,6 +26,8 @@ case "$*" in
   "remote cat --format text "*) f="cat-$(printf %s "$5" | tr '/' '_')_$(printf %s "$6" | tr '/' '_')_$(printf %s "$7" | tr '/' '_')" ;;
   "remote list-packages "*) f="ls-$(printf %s "$3" | tr '/' '_')" ;;
   "request search "*) f="search-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "pull-request search "*) f="prs-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "gitea raw-file "*) f="raw-$3%$4%$(printf %s "$5" | tr / %)" ; [ "$6" = --ref ] && f="$f%ref=$7" ;;
   *) echo "fake geectl: unexpected $*" >&2; exit 99 ;;
 esac
 [ -f "$FIX/$f" ] || {
@@ -35,19 +37,9 @@ esac
   esac
   printf '{"error":{"code":"not_found","context":"no such thing"}}\n' >&2; exit 3
 }
+[ "$(cat "$FIX/$f")" = @HANG ] && exec sleep 20
 [ "$(cat "$FIX/$f")" = @500 ] && { echo "Server returned an error: HTTP Error 500: Internal" >&2; exit 1; }
 cat "$FIX/$f"
-EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"; readlink "/proc/$$/fd/2" >> "$FIX/stderr-paths"
-# Only the src.opensuse.org login may answer: the default one can be another forge.
-[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-echo "Response:" >&2
-f="$FIX/gitea$(printf %s "$5" | tr '?&=' '___')"
-[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
-[ "$(cat "$f")" = @HANG ] && exec sleep 20
-cat "$f"
 EOF
 cat > "$work/bin/curl" <<'EOF'
 #!/bin/bash
@@ -62,6 +54,9 @@ put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 # spath <query> — that fixture's path under $B (the case's copy in a mutation)
 spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+Q_PRS="--backend gitea --repo example/foo --state open"
+# prs <query> <json> — the pull-request-search fixture for the query as preflight.sh passes it
+prs() { printf '%s\n' "$2" > "$B/prs-$(printf %s "pull-request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 Q_IN="--target-project devel:example --target-package foo --type submit --state new --state review"
 Q_OUT="--target-project openSUSE:Factory --target-package foo --type submit --state new --state review --source-project devel:example"
 Q_DEC="--target-project openSUSE:Factory --target-package foo --type submit --state declined --source-project devel:example"
@@ -195,24 +190,25 @@ calls="$(cat "$dir/calls")"
   || { fail "pkg-plus: expected rc=0 and a literal foo++ in the calls, got rc=$got"; printf '%s\n' "$calls" | sed 's/^/    /'; }
 
 # A git devel project's in-flight update is a PR on src.opensuse.org, read
-# through git-obs pinned to that login. A failed or unreadable read is
+# through `geectl pull-request search`. A failed or unreadable read is
 # CHECK-FAILED, never "open PRs: none".
-SCM="put \$B/meta-devel:example_project '{\"name\": \"devel:example\", \"persons\": [], \"groups\": [], \"scmsync\": \"https://src.opensuse.org/example/_ObsPrj\"}' && mkdir -p \$B/gitea/repos/example/foo"
-PULLS='gitea/repos/example/foo/pulls_state_open'
+SCM="put \$B/meta-devel:example_project '{\"name\": \"devel:example\", \"persons\": [], \"groups\": [], \"scmsync\": \"https://src.opensuse.org/example/_ObsPrj\"}'"
+PULLS='prs-pull-request_search_--backend_gitea_--repo_example_foo_--state_open' '
 # A PR's head: the one it has now, and an older one a review may have been of.
 HEAD1=1111111111111111111111111111111111111111; HEAD0=0000000000000000000000000000000000000000
-HD="\"head\": {\"sha\": \"$HEAD1\"}"
-case_ scm-no-prs 4 "open PRs:       none" "$SCM && echo '[]' > \$B/$PULLS"
-no_curl() { ! grep -q '^curl ' "$work/$1/calls" && pass "$1: git-obs, not curl" || fail "$1: curl was called"; }
+SRC="\"source\": {\"repository\": \"tester/foo\", \"branch\": \"update-foo\", \"commit\": \"$HEAD1\"}"
+TGT="\"target\": {\"repository\": \"example/foo\", \"branch\": \"factory\", \"commit\": \"$HEAD0\"}"
+case_ scm-no-prs 4 "open PRs:       none" "$SCM && prs \"\$Q_PRS\" '[]'"
+no_curl() { ! grep -q '^curl ' "$work/$1/calls" && pass "$1: geectl, not curl" || fail "$1: curl was called"; }
 no_curl scm-no-prs
 case_ scm-pr-open 3 "VERDICT: STOP - already in flight: PR #5 -> factory: Update foo to 1.2" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+  "$SCM && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo to 1.2\", \"author\": \"tester\", \"status\": \"open\", $SRC, $TGT}]'"
 ! grep -qF "$HEAD1" <<<"$LAST" && pass "scm-pr-open: the head is not shown" || fail "scm-pr-open: $LAST"
-case_ scm-pr-lookup-failed 2 "CHECK FAILED: could not query open PRs on example/foo: ERROR: 404 Not Found" "$SCM"
+case_ scm-pr-lookup-failed 2 "CHECK FAILED: could not query open PRs on example/foo: {\"error\":{\"code\":\"not_found\",\"context\":\"no such thing\"}}" "$SCM"
 grep -qF "VERDICT: CHECK-FAILED" <<<"$LAST" && ! grep -qF "open PRs:       none" <<<"$LAST" \
   && pass "scm-pr-lookup-failed: not read as none" || fail "scm-pr-lookup-failed: $LAST"
-case_ scm-pr-unparsable 2 "unparseable PR list for example/foo" "$SCM && echo '<html>' > \$B/$PULLS"
-case_ scm-pr-empty-answer 2 "unparseable PR list for example/foo" "$SCM && : > \$B/$PULLS"
+case_ scm-pr-unparsable 2 "unparseable PR list for example/foo" "$SCM && prs \"\$Q_PRS\" '<html>'"
+case_ scm-pr-empty-answer 2 "unparseable PR list for example/foo" "$SCM && prs \"\$Q_PRS\" ''"
 # Captured stderr goes to a mktemp file under $TMPDIR, never a predictable
 # /tmp path another user could plant first.
 paths="$(cat "$work/scm-no-prs/stderr-paths")"
@@ -220,20 +216,20 @@ grep -q "^$work/scm-no-prs/tmp/" <<<"$paths" && ! grep -q '^/tmp/preflight\.' <<
   && pass "stderr captured under \$TMPDIR" || fail "stderr capture paths: $paths"
 left="$(find "$work/scm-no-prs/tmp" "$work/scm-pr-lookup-failed/tmp" -type f)"
 [ -z "$left" ] && pass "the capture file is removed, on CHECK-FAILED too" || fail "left behind: $left"
-# A git-obs read that never answers is cut off and CHECK-FAILED. A stand-in
+# A geectl read that never answers is cut off and CHECK-FAILED. A stand-in
 # `timeout` gives the real one 2s whatever the script asks for.
 mkdir -p "$work/tbin"
 printf '#!/bin/bash\nshift\nexec %q 2 "$@"\n' "$(command -v timeout)" > "$work/tbin/timeout" && chmod +x "$work/tbin/timeout"
 XPATH="$work/tbin"
-case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: git-obs timed out after 30s" \
-  "$SCM && echo @HANG > \$B/$PULLS"
+case_ scm-pr-hang 2 "CHECK FAILED: could not query open PRs on example/foo: geectl timed out after 30s" \
+  "$SCM && prs \"\$Q_PRS\" @HANG"
 XPATH=""
 ! grep -qF "open PRs:       none" <<<"$LAST" && pass "scm-pr-hang: not read as none" || fail "scm-pr-hang: $LAST"
 case_ scm-pr-no-author 2 "unparseable PR list for example/foo" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\"}]' > \$B/$PULLS"
+  "$SCM && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo to 1.2\", \"status\": \"open\", $SRC, $TGT}]'"
 # Without a head nobody can tell whether a review is still of the PR.
 case_ scm-pr-no-head 2 "unparseable PR list for example/foo" \
-  "$SCM && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+  "$SCM && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo to 1.2\", \"author\": \"tester\", \"status\": \"open\", $TGT}]'"
 
 # A contributor's open SR or devel PR on a package you maintain is reviewed
 # before your update: INCOMING (5), each item annotated from its review stamp,
@@ -258,8 +254,8 @@ grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "incoming
 case_ own-and-incoming 3 "VERDICT: STOP - already in flight: SR 2000011 [new] devel:other/foo -> devel:example by tester" \
   "$MAINT && inq \"\$SR_C, \$SR_OWN\""
 grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "own-and-incoming: the contributor's SR is listed" || fail "own-and-incoming: $LAST"
-PR_C="$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo to 1.2\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+PR_C="$SCM && put \$B/raw-example%_ObsPrj%_maintainership.json '{\"foo\": [\"tester\"]}' \
+   && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo to 1.2\", \"author\": \"someone-else\", \"status\": \"open\", $SRC, $TGT}]'"
 case_ incoming-pr 5 "example/foo#5 by someone-else: not reviewed" "$PR_C"
 grep -qF "VERDICT: INCOMING" <<<"$LAST" && pass "incoming-pr: INCOMING" || fail "incoming-pr: $LAST"
 case_ others-forward 3 "VERDICT: STOP - already in flight: SR 2000012 [new] devel:example/foo -> openSUSE:Factory by someone-else" \
@@ -285,15 +281,15 @@ for order in "$A_DEV,$A_TGT" "$A_TGT,$A_DEV"; do
     "$MAINT && srch \"\$Q_IN\" \"\$sr\" && srch \"\$Q_SWEEP\" \"\$sr\""
 done
 # Your own PR in flight beats a contributor's.
-case_ own-pr-and-incoming 3 "VERDICT: STOP - already in flight: PR #6 -> factory: My update (None) by tester" \
-  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && echo '{\"foo\": [\"tester\"]}' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}},
-             {\"number\": 6, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"My update\", \"user\": {\"login\": \"tester\"}}]' > \$B/$PULLS"
+case_ own-pr-and-incoming 3 "VERDICT: STOP - already in flight: PR #6 -> factory: My update (https://src.opensuse.org/example/foo/pulls/6) by tester" \
+  "$SCM && put \$B/raw-example%_ObsPrj%_maintainership.json '{\"foo\": [\"tester\"]}' \
+   && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo\", \"author\": \"someone-else\", \"status\": \"open\", $SRC, $TGT},
+             {\"reference\": \"gitea:example/foo#6\", \"title\": \"My update\", \"author\": \"tester\", \"status\": \"open\", $SRC, $TGT}]'"
 # Who maintains it is no answer when the lookup crashed, came back empty or
 # does not parse: CHECK-FAILED, never "not yours".
 case_ maintainer-deep-json 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
-  "$SCM && mkdir -p \$B/gitea/repos/example/_ObsPrj/raw && printf '%*s' 100000 '' | tr ' ' '[' > \$B/gitea/repos/example/_ObsPrj/raw/_maintainership.json \
-   && echo '[{\"number\": 5, \"base\": {\"ref\": \"factory\"}, $HD, \"title\": \"Update foo\", \"user\": {\"login\": \"someone-else\"}}]' > \$B/$PULLS"
+  "$SCM && printf '%*s' 100000 '' | tr ' ' '[' > \$B/raw-example%_ObsPrj%_maintainership.json \
+   && prs \"\$Q_PRS\" '[{\"reference\": \"gitea:example/foo#5\", \"title\": \"Update foo\", \"author\": \"someone-else\", \"status\": \"open\", $SRC, $TGT}]'"
 case_ maintainer-empty-answer 2 "CHECK FAILED: could not tell whether you maintain devel:example/foo" \
   "$CONTRIB && : > \$B/meta-devel:example_foo"
 case_ incoming-no-creator 2 "unparseable SR collection (incoming)" "$MAINT && inq \"\$SR_NOCREATOR\""
@@ -394,17 +390,18 @@ for n, (pkg, prj, git) in enumerate(cases):
                 "scmsync": "https://src.opensuse.org/o/P#main" if scm in prj else None}
     geo = {("remote", "package-meta", "d:p", "foo"): pkg_meta,
            ("remote", "project-meta", "d:p"): prj_meta}
+    if git is not None:
+        geo[("gitea", "raw-file", "o", "P", "_maintainership.json", "--ref", "main")] = json.dumps(git)
 
     def fake(cmd):
         if cmd[0] == "geectl":
             payload = geo.get(tuple(cmd[1:]))
             if payload is None:
                 return subprocess.CompletedProcess(cmd, 3, "", '{"error":{"code":"not_found"}}')
+            if cmd[1:3] == ["gitea", "raw-file"]:
+                return subprocess.CompletedProcess(cmd, 0, payload, "")
             return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
-        p = cmd[-1]
-        if p in ans:
-            return subprocess.CompletedProcess(cmd, 0, ans[p], "")
-        return subprocess.CompletedProcess(cmd, 1, "", "HTTP Error 404 | ERROR: 404 Not Found")
+        raise AssertionError(f"unexpected non-geectl call: {cmd}")
 
     want = guard["maintains"]("d:p", "foo", guard["Ctx"]("/"))[0]
     if _incoming.maintains("tester", "d:p", "foo", fake)[0] != want:

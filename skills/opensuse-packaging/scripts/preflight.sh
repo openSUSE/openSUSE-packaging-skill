@@ -10,7 +10,7 @@
 #   3. outgoing devel -> Factory SRs (the one that lands the update)
 #   4. for a git/scmsync devel project: open PRs on the devel Gitea repo
 #      (MANDATORY — an in-flight update there is a PR, not an SR; a geectl-only
-#      check gives a false PROCEED), read with `git-obs -G src.opensuse.org`;
+#      check gives a false PROCEED), read with `geectl pull-request search`;
 #      a failed or unreadable answer is CHECK-FAILED, never "none"
 #   5. a `reviewer` role (package or project _meta) held by someone OTHER than
 #      you -> prints a REVIEWER ROLE notice. That person asked to see changes
@@ -93,7 +93,7 @@ fi
 [ -n "$user" ] || user="${GEECTL_OBS_USERNAME:-}"
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
-# captured stderr of geectl / git-obs: mktemp under $TMPDIR, not a guessable /tmp name
+# captured stderr of geectl: mktemp under $TMPDIR, not a guessable /tmp name
 errf="$(mktemp)" || fail "mktemp failed"; trap 'rm -f "$errf"' EXIT
 
 # Third-party text (foreign .changes entries, PR titles, spec fields) is
@@ -322,29 +322,36 @@ if [ -n "$devel" ]; then
   if [ -n "$scm" ]; then
     org="$(printf '%s' "$scm" | sed -E 's#https?://src\.opensuse\.org/##; s#[/?].*##')"
     echo "scmsync:        $scm (git devel project — checking Gitea PRs on $org/$pkg)"
-    # -G: without it git-obs takes its default login, which may be another forge
-    resp="$(timeout 30 git-obs -G src.opensuse.org -q api "/repos/$org/$pkg/pulls?state=open" 2>"$errf")"; grc=$?
-    err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
-    [ "$grc" = 124 ] && err="git-obs timed out after 30s"
-    [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
+    resp="$(timeout 30 geectl pull-request search --backend gitea --repo "$org/$pkg" --state open 2>"$errf")"; grc=$?
+    err="$(cat "$errf" 2>/dev/null || true)"
+    [ "$grc" = 124 ] && err="geectl timed out after 30s"
+    [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-geectl exit $grc}"
     # "<author>\t<line>\t<head sha>" per PR; a PR without a number, an author
-    # or a head is no list (the head says whether a review is still of it)
+    # or a head is no list (the head says whether a review is still of it).
+    # The search payload carries no URL: the PR lives at
+    # https://src.opensuse.org/<org>/<pkg>/pulls/<num>, the forge this leg
+    # already names.
     prs_by="$(printf '%s' "$resp" | python3 -I -c '
 import re, sys, json
 raw = sys.stdin.read()
-if raw.startswith("Response:"): raw = raw.split("\n", 1)[1] if "\n" in raw else ""
 try: d = json.loads(raw)
 except Exception: sys.exit(2)
 if not isinstance(d, list): sys.exit(2)
 for p in d:
-    num = p.get("number"); base = (p.get("base") or {}).get("ref")
-    who = (p.get("user") or {}).get("login"); head = (p.get("head") or {}).get("sha")
-    if type(num) is not int or not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
+    m = re.fullmatch(r"gitea:([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*)#([0-9]+)", p.get("reference") or "")
+    if not m: sys.exit(2)
+    org, repo, num = m.group(1), m.group(2), m.group(3)
+    base = (p.get("target") or {}).get("branch")
+    who = p.get("author"); head = (p.get("source") or {}).get("commit")
+    if not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
         sys.exit(2)
     if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
         sys.exit(2)
+    if not isinstance(base, str) or not base:
+        sys.exit(2)
     # one line each: a newline in a title could forge another PR
-    title, url = (" ".join(str(x).split()) for x in (p.get("title"), p.get("html_url")))
+    title = " ".join(str(p.get("title")).split())
+    url = f"https://src.opensuse.org/{org}/{repo}/pulls/{num}"
     print(f"{who}\tPR #{num} -> {base}: {title} ({url}) by {who}\t{head}")
 ')" || fail "unparseable PR list for $org/$pkg"
     # PR titles are foreign-authored; sanitize AFTER the rc-gated capture above

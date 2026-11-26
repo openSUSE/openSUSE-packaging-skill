@@ -34,7 +34,7 @@ import re
 import subprocess
 import sys
 
-TIMEOUT = 30  # seconds per geectl / git-obs call when run as a command
+TIMEOUT = 30  # seconds per geectl call when run as a command
 
 # _pr_guard.py's GIT_LOGIN, GIT_REF and PROJECT_GIT.
 GIT_LOGIN = re.compile(r"@?[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -99,22 +99,24 @@ def geectl_json(args, run=run, cache=None):
 
 def git_get(owner, repo, name, ref, run=run, cache=None):
     """The text of file name in src.opensuse.org's owner/repo at ref (its
-    default branch when ""), through git-obs; None for a 404, else Unknown."""
-    path = f"/repos/{owner}/{repo}/raw/{name}" + (f"?ref={ref}" if ref else "")
-    if cache is not None and path in cache:
-        return cache[path]
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
+    default branch when ""), through `geectl gitea raw-file`; None for a
+    404, else Unknown. A missing file is NotFound, never empty content."""
+    key = ("gitea", "raw-file", owner, repo, name) + (("--ref", ref) if ref else ())
+    if cache is not None and key in cache:
+        return cache[key]
+    args = ["gitea", "raw-file", owner, repo, name]
+    if ref:
+        args += ["--ref", ref]
+    r = run(["geectl", *args])
     if r.returncode == 0:
         text = r.stdout
-        if text.startswith("Response:"):
-            text = text.split("\n", 1)[1] if "\n" in text else ""
-    elif "ERROR: 404" in r.stderr:
+    elif "not_found" in r.stderr:
         text = None
     else:
-        why = r.stderr.strip().splitlines()[-1:] or [f"git-obs exited {r.returncode}"]
+        why = r.stderr.strip().splitlines()[-1:] or [f"geectl exited {r.returncode}"]
         raise Unknown(f"cannot read {owner}/{repo}/{name}: {why[0]}")
     if cache is not None:
-        cache[path] = text
+        cache[key] = text
     return text
 
 
