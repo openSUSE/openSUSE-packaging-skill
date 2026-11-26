@@ -1,9 +1,10 @@
 #!/bin/bash
 # Print the author identity `geectl changelog generate` writes into a
 # .changes header — 'Full Name <email>' — in the order it resolves:
-# the VC_REALNAME / VC_MAILADDR environment, then the OBS account's
-# own record (`geectl remote whois`), then git identity
-# (`user.name` / `user.email`, local then global then system).
+# the config file's `[identity]` section, then the VC_REALNAME /
+# VC_MAILADDR environment, then the OBS account's own record
+# (`geectl remote whois`), then git identity (`user.name` /
+# `user.email`, local then global then system).
 # A level that yields nothing falls through to the next; a level
 # that is half-set or fails stops with an error naming it. With no
 # identity from any level it refuses.
@@ -32,6 +33,74 @@ identity_ok() {
   case "$email" in *[[:space:]]*) return 1 ;; esac
   return 0
 }
+
+# The config level: the `[identity]` section of the geectl config file
+# (`$XDG_CONFIG_HOME/geectl/config.toml`, default
+# `~/.config/geectl/config.toml`). A missing file, or a file with no
+# `[identity]`, falls through. Two config files at different paths, a
+# half-set, misshapen or unknown-keyed `[identity]`, or a malformed file
+# stops with an error naming it.
+config_out=$(python3 -I -c 'import os, sys, tomllib
+xdg = os.environ.get("XDG_CONFIG_HOME")
+home = os.environ.get("HOME")
+xdg_path = xdg + "/geectl/config.toml" if xdg and os.path.isabs(xdg) else None
+def_path = home + "/.config/geectl/config.toml" if home and os.path.isabs(home) else None
+if xdg_path and def_path and xdg_path != def_path and os.path.exists(xdg_path) and os.path.exists(def_path):
+    print("vc-identity.sh: two geectl config files found (" + xdg_path + " and " + def_path + "); remove one", file=sys.stderr)
+    sys.exit(2)
+path = xdg_path or def_path
+if path is None:
+    print("vc-identity.sh: cannot locate a config directory: set XDG_CONFIG_HOME or HOME", file=sys.stderr)
+    sys.exit(2)
+if not os.path.exists(path):
+    sys.exit(1)
+try:
+    with open(path, "rb") as fh:
+        data = tomllib.load(fh)
+except tomllib.TOMLDecodeError as exc:
+    print("vc-identity.sh: " + path + " is not valid TOML: " + str(exc), file=sys.stderr)
+    sys.exit(2)
+except OSError as exc:
+    print("vc-identity.sh: cannot read " + path + ": " + str(exc), file=sys.stderr)
+    sys.exit(2)
+ident = data.get("identity")
+if ident is None:
+    sys.exit(1)
+if not isinstance(ident, dict):
+    print("vc-identity.sh: " + path + ": '\''identity'\'' must be a table", file=sys.stderr)
+    sys.exit(2)
+for key in ident:
+    if key not in ("name", "email"):
+        print("vc-identity.sh: " + path + ": unknown config key '\''identity." + key + "'\''", file=sys.stderr)
+        sys.exit(2)
+name = ident.get("name")
+email = ident.get("email")
+if name is None:
+    print("vc-identity.sh: " + path + ": '\''[identity]'\'' needs both '\''name'\'' and '\''email'\'' (missing '\''name'\'')", file=sys.stderr)
+    sys.exit(2)
+if email is None:
+    print("vc-identity.sh: " + path + ": '\''[identity]'\'' needs both '\''name'\'' and '\''email'\'' (missing '\''email'\'')", file=sys.stderr)
+    sys.exit(2)
+def as_str(value, key):
+    if not isinstance(value, str):
+        print("vc-identity.sh: " + path + ": '\''" + key + "'\'' must be a string", file=sys.stderr)
+        sys.exit(2)
+    text = value.strip()
+    if not text:
+        print("vc-identity.sh: " + path + ": '\''" + key + "'\'' must not be empty", file=sys.stderr)
+        sys.exit(2)
+    return text
+name = as_str(name, "identity.name")
+email = as_str(email, "identity.email")
+if "@" not in email or any(c.isspace() for c in email):
+    print("vc-identity.sh: " + path + ": '\''[identity]'\'': identity needs a non-empty name and an email address", file=sys.stderr)
+    sys.exit(2)
+print(name + " <" + email + ">")' 2>&1); config_rc=$?
+case "$config_rc" in
+  0) printf '%s\n' "$config_out"; exit 0 ;;
+  1) ;; # no identity in the config: fall through
+  *) printf '%s\n' "$config_out" >&2; exit 3 ;;
+esac
 
 # The environment level: both variables or neither. One without the
 # other is a misconfiguration, and a misshapen pair is one too.
@@ -115,5 +184,5 @@ if command -v git >/dev/null 2>&1; then
   fi
 fi
 
-echo "vc-identity.sh: no changelog identity found: set VC_REALNAME and VC_MAILADDR, an OBS login with a real name and email, or git user.name and user.email" >&2
+echo "vc-identity.sh: no changelog identity found: set an [identity] section in the geectl config, VC_REALNAME and VC_MAILADDR, an OBS login with a real name and email, or git user.name and user.email" >&2
 exit 3
