@@ -1400,6 +1400,8 @@ def scan(f, src, base, tmp, specs):
             return []
         more, capped, needed = False, [], []
         for n in out.decode("utf-8", "replace").splitlines():
+            if not n:  # needs prints a blank line when nothing is left to fetch
+                continue
             if n.startswith("incomplete: "):
                 capped.append(clean(n[len("incomplete: "):]))
                 continue
