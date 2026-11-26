@@ -1,8 +1,9 @@
 #!/bin/bash
 # test-sr-status.sh — proves sr-status.py reads a pool PR's build from OBS, not
 # from the staging bot's last comment. Offline: fake `geectl` and `git-obs` on PATH
-# serve fixtures from a per-case tree; every src.opensuse.org read goes through
-# git-obs (one case plants a tea token to prove it is never read). The fixtures replay
+# serve fixtures from a per-case tree; single-PR reads go through geectl
+# pull-request show/comments, the list legs still through git-obs (one case
+# plants a tea token to prove it is never read). The fixtures replay
 # pool/tesseract-ocr #3 (built d09d8d0, head 760972c, pinned by a hand-made
 # products PR) and #4 (built at the head by the bot's branch). Every case
 # mutates one thing and expects the exit code plus the line that names it.
@@ -49,6 +50,8 @@ case "$*" in
     printf '%s]}\n' "$out"; exit 0 ;;
   "request search "*) f="search-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
   "request list-comments "*) f="comments-$3" ;;
+  "pull-request show "*) f="show-$(printf %s "$3" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "pull-request comments "*) f="cmts-$(printf %s "$3" | tr -c 'A-Za-z0-9._:-' '_')" ;;
   "remote cat "*) f="cat-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')_$(printf %s "$5" | tr '/' '_')" ;;
   "remote package-log "*) f="log-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
   "remote link-target "*) f="link-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
@@ -87,13 +90,21 @@ put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 # spath <query> — that fixture's path under $B (the case's copy in a mutation)
 spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+# showpath/cmtspath <repo> <num> — the pull-request show/comments fixture path
+showpath() { printf '%s/show-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z0-9._:-' '_')"; }
+cmtspath() { printf '%s/cmts-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z0-9._:-' '_')"; }
 Q_OPEN="--creator tester --type submit --with-history --state new --state review --state declined"
 Q_ALL="--creator tester --type submit --with-history --state new --state review --state declined --state accepted --state revoked --state superseded"
 closed_q() { printf '%s' "--creator tester --type submit --state accepted --state revoked --state superseded --since $1"; }
 later_q() { printf '%s' "--target-project $1 --target-package $2 --type submit --state new --state review --state accepted"; }
 SINCE=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)).strftime("%Y-%m-%d"))')
 SINCE3=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).strftime("%Y-%m-%d"))')
-pr() { # <num> <head sha> <base> [merged] [state]
+pr() { # <num> <head sha> <base> [merged] [state] — the pull-request show
+  # payload, plus the git-obs pulls fixture the list legs still read
+  put "$(showpath pool/tesseract-ocr "$1")" "{\"reference\": \"gitea:pool/tesseract-ocr#$1\",
+    \"title\": \"\", \"author\": \"a-packager\", \"status\": \"${5:-open}\", \"merged\": ${4:-false},
+    \"source\": {\"repository\": \"a-packager/tesseract-ocr\", \"branch\": \"tess-$3\", \"commit\": \"$2\"},
+    \"target\": {\"repository\": \"pool/tesseract-ocr\", \"branch\": \"$3\", \"commit\": null}, \"reviews\": []}"
   put "$G/pool/tesseract-ocr/pulls/$1" "{\"number\": $1, \"state\": \"${5:-open}\",
     \"merged\": ${4:-false}, \"created_at\": \"2026-09-23T15:50:00+02:00\",
     \"head\": {\"ref\": \"tess-$3\", \"sha\": \"$2\",
@@ -142,10 +153,13 @@ built() { # <project> <srcmd5>: sources, and both building arches' last build, a
     jobhist "$1" "$a/tesseract-ocr" "$2" || return 1
   done
 }
-pin() { # <project> <products PR> <head repo> <head ref>
+pin() { # <project> <products PR> <head repo> <head ref> — the pin is read
+  # through pull-request show now, so only its show fixture is written
   put "$B/meta-$(printf %s "$1" | tr '/' '_')" "{\"name\": \"$1\", \"url\": \"https://src.opensuse.org/products/PackageHub/pulls/$2\"}"
-  put "$G/products/PackageHub/pulls/$2" "{\"number\": $2, \"state\": \"open\",
-    \"head\": {\"ref\": \"$4\", \"sha\": \"4b829d7e9b56\", \"repo\": {\"full_name\": \"$3\"}}}"
+  put "$(showpath products/PackageHub "$2")" "{\"reference\": \"gitea:products/PackageHub#$2\",
+    \"title\": \"\", \"author\": \"\", \"status\": \"open\", \"merged\": false,
+    \"source\": {\"repository\": \"$3\", \"branch\": \"$4\", \"commit\": \"4b829d7e9b56\"},
+    \"target\": {\"repository\": \"products/PackageHub\", \"branch\": \"main\", \"commit\": null}, \"reviews\": []}"
 }
 BR='![Build results](https://br.opensuse.org/status'
 S3=5d1c3c52e3d0e8a09c1f0f6c0b8a7e21
@@ -156,6 +170,9 @@ pr 3 $H3 leap-16.0
 put "$G/pool/tesseract-ocr/issues/3/comments" "[
  {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P3/tesseract-ocr)\"},
  {\"user\": {\"login\": \"a-reviewer\"}, \"body\": \"package fails to build\"}]"
+put "$(cmtspath pool/tesseract-ocr 3)" "{\"reference\": \"gitea:pool/tesseract-ocr#3\", \"comments\": [
+ {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P3/tesseract-ocr)\"},
+ {\"author\": \"a-reviewer\", \"body\": \"package fails to build\"}], \"count\": 2}"
 obsinfo $P3 $B3
 results $P3 failed
 built $P3 $S3
@@ -165,6 +182,9 @@ pr 4 $H4 leap-16.1
 put "$G/pool/tesseract-ocr/issues/4/comments" "[
  {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P4/tesseract-ocr)\"},
  {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}]"
+put "$(cmtspath pool/tesseract-ocr 4)" "{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [
+ {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P4/tesseract-ocr)\"},
+ {\"author\": \"autogits_obs_staging_bot\", \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}], \"count\": 2}"
 obsinfo $P4 $H4
 results $P4 succeeded
 built $P4 $S4
@@ -200,7 +220,7 @@ case_() {
     printf '%s\n' "$out" | sed 's/^/    /'
   }
 }
-no_geectl_calls() { ! grep -q '^geectl ' <<<"$CALLS" && pass "$1: no OBS call" || fail "$1: queried OBS: $CALLS"; }
+no_obs_calls() { ! grep -qE '^geectl (request|remote|build) ' <<<"$CALLS" && pass "$1: no OBS call" || fail "$1: queried OBS: $CALLS"; }
 
 # ---------------------------------------------------------------- --pr
 case_ tesseract-4-green-at-head 0 "VERDICT: GREEN at the PR head" ":" --pr 'pool/tesseract-ocr#4'
@@ -217,7 +237,7 @@ case_ stale-bot-branch-needs-this-pr 4 "hand-made branch products/PackageHub:PR_
   "obsinfo $P4 $B3 && pin $P4 3353 products/PackageHub 'PR_tesseract-ocr#3'" --pr 'pool/tesseract-ocr#4'
 # A failed pin lookup must not turn a stale build into anything milder.
 case_ stale-pin-unreadable 4 "products/PackageHub#3356, branch unknown (lookup failed)" \
-  "rm \$G/products/PackageHub/pulls/3356" --pr 'pool/tesseract-ocr#3'
+  "rm \$(showpath products/PackageHub 3356)" --pr 'pool/tesseract-ocr#3'
 case_ stale-pin-meta-missing 4 "pinned by an unknown products PR (lookup failed)" \
   "rm \$B/meta-$P3" --pr 'pool/tesseract-ocr#3'
 case_ stale-pin-meta-unparsable 4 "pinned by an unknown products PR (lookup failed)" \
@@ -262,27 +282,27 @@ case_ srcmd5-absent 2 "could not read the $P4/tesseract-ocr srcmd5 (lookup faile
   "put \$B/log-${P4}_tesseract-ocr '{\"entries\": [{\"rev\": 7}]}'" --pr 'pool/tesseract-ocr#4'
 case_ no-results-yet 3 "VERDICT: PENDING — no build results yet" \
   "put \$B/results-$P4 '{\"state\": 0, \"results\": []}'" --pr 'pool/tesseract-ocr#4'
-case_ no-bot-comment 3 "VERDICT: PENDING — no staging-bot build comment (PR opened 2026-09-23)" \
-  "put \$G/pool/tesseract-ocr/issues/4/comments '[]'" --pr 'pool/tesseract-ocr#4'
-no_geectl_calls no-bot-comment
+case_ no-bot-comment 3 "VERDICT: PENDING — no staging-bot build comment (PR opened ?)" \
+  "put \$(cmtspath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [], \"count\": 0}'" --pr 'pool/tesseract-ocr#4'
+no_obs_calls no-bot-comment
 # Only the bot's own comment counts: a pasted green project is not evidence.
 case_ human-pasted-project 3 "no staging-bot build comment" \
-  "put \$G/pool/tesseract-ocr/issues/4/comments '[{\"user\": {\"login\": \"a-packager\"}, \"body\": \"$BR/$P4/tesseract-ocr)\"}]'" \
+  "put \$(cmtspath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [{\"author\": \"a-packager\", \"body\": \"$BR/$P4/tesseract-ocr)\"}], \"count\": 1}'" \
   --pr 'pool/tesseract-ocr#4'
 # A re-created products PR means a new project: the bot's latest link wins.
 case_ latest-bot-project-wins 0 "VERDICT: GREEN at the PR head" \
-  "put \$G/pool/tesseract-ocr/issues/4/comments '[
-   {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/${P4}0/tesseract-ocr)\"},
-   {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P4/tesseract-ocr)\"}]'" \
+  "put \$(cmtspath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [
+   {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/${P4}0/tesseract-ocr)\"},
+   {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P4/tesseract-ocr)\"}], \"count\": 2}'" \
   --pr 'pool/tesseract-ocr#4'
 case_ bot-link-to-project-page 0 "VERDICT: GREEN at the PR head" \
-  "put \$G/pool/tesseract-ocr/issues/4/comments '[
-   {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}]'" \
+  "put \$(cmtspath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [
+   {\"author\": \"autogits_obs_staging_bot\", \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}], \"count\": 1}'" \
   --pr 'pool/tesseract-ocr#4'
 case_ linkless-bot-comment-keeps-project 0 "VERDICT: GREEN at the PR head" \
-  "put \$G/pool/tesseract-ocr/issues/4/comments '[
-   {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P4/tesseract-ocr)\"},
-   {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"Build is started\"}]'" \
+  "put \$(cmtspath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [
+   {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P4/tesseract-ocr)\"},
+   {\"author\": \"autogits_obs_staging_bot\", \"body\": \"Build is started\"}], \"count\": 2}'" \
   --pr 'pool/tesseract-ocr#4'
 case_ failed-at-head 1 "VERDICT: RED at the PR head" \
   "results $P4 succeeded failed" --pr 'pool/tesseract-ocr#4'
@@ -302,14 +322,14 @@ case_ other-package-ignored 0 "VERDICT: GREEN at the PR head" \
 case_ nothing-built 1 "RED — nothing built" \
   "results $P4 excluded disabled" --pr 'pool/tesseract-ocr#4'
 case_ merged 0 "VERDICT: MERGED" "pr 4 $H4 leap-16.1 true closed" --pr 'pool/tesseract-ocr#4'
-no_geectl_calls merged
+no_obs_calls merged
 case_ closed-unmerged 1 "VERDICT: CLOSED without a merge" "pr 4 $H4 leap-16.1 false closed" --pr 'pool/tesseract-ocr#4'
 case_ obsinfo-missing 2 "VERDICT: UNKNOWN — could not read $P4/tesseract-ocr/_scmsync.obsinfo (lookup failed)" \
   "rm \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo" --pr 'pool/tesseract-ocr#4'
 case_ obsinfo-no-commit 2 "VERDICT: UNKNOWN — no commit: in _scmsync.obsinfo" \
   "put \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo 'mtime: 1'" --pr 'pool/tesseract-ocr#4'
 case_ pr-head-missing 2 "VERDICT: UNKNOWN — no the PR head" \
-  "put \$G/pool/tesseract-ocr/pulls/4 '{\"number\": 4, \"state\": \"open\", \"base\": {\"ref\": \"leap-16.1\"}}'" \
+  "put \$(showpath pool/tesseract-ocr 4) '{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"status\": \"open\", \"source\": {\"repository\": \"a-packager/tesseract-ocr\", \"branch\": \"tess-leap-16.1\"}, \"target\": {\"repository\": \"pool/tesseract-ocr\", \"branch\": \"leap-16.1\"}}'" \
   --pr 'pool/tesseract-ocr#4'
 case_ obsinfo-network 6 "(network failure)" \
   "put \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo @NET" --pr 'pool/tesseract-ocr#4'
@@ -333,12 +353,13 @@ urlopen|<urlopen error EOF occurred in violation of protocol>
 http-5xx|Server returned an error: HTTP Error 502: Bad Gateway
 http-429|Server returned an error: HTTP Error 429: Too Many Requests
 EOF
-case_ network-git-obs-5xx 6 "could not read pool/tesseract-ocr#4 (network failure)" \
-  "put \$G/pool/tesseract-ocr/pulls/4 '@ERR *** Error: 503 Service Unavailable'" --pr 'pool/tesseract-ocr#4'
-# src.opensuse.org is read through git-obs only, which keeps its own login: a
-# tea token on disk is never loaded. yaml.py stands in for pyyaml (JSON is
-# YAML) and leaves a mark when anything parses the tea config; the proxy
-# refuses on the loopback, so a direct fetch would show as a warning too.
+case_ network-geectl-5xx 6 "could not read pool/tesseract-ocr#4 (network failure)" \
+  "put \$(showpath pool/tesseract-ocr 4) '@ERR *** Error: 503 Service Unavailable'" --pr 'pool/tesseract-ocr#4'
+# src.opensuse.org is read through geectl (single-PR reads) and git-obs (the
+# list legs), each keeping its own login: a tea token on disk is never loaded.
+# yaml.py stands in for pyyaml (JSON is YAML) and leaves a mark when anything
+# parses the tea config; the proxy refuses on the loopback, so a direct fetch
+# would show as a warning too.
 mkdir -p "$work/pylib"
 printf 'import json\nimport os\n\n\ndef safe_load(f):\n    open(os.environ["FIX"] + "/tea-read", "w").close()\n    return json.load(f)\n' > "$work/pylib/yaml.py"
 XENV=(PYTHONPATH="$work/pylib" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 no_proxy= NO_PROXY=)
@@ -355,9 +376,9 @@ case_ results-unparsable 2 "could not read the $P4 results (lookup failed)" \
 case_ pr-missing 2 "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#9 (lookup failed)" \
   ":" --pr 'pool/tesseract-ocr#9'
 case_ pr-network 6 "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (network failure)" \
-  "put \$G/pool/tesseract-ocr/pulls/4 @NET" --pr 'pool/tesseract-ocr#4'
+  "put \$(showpath pool/tesseract-ocr 4) @NET" --pr 'pool/tesseract-ocr#4'
 case_ comments-missing 2 "VERDICT: UNKNOWN — could not read the PR comments (lookup failed)" \
-  "rm \$G/pool/tesseract-ocr/issues/4/comments" --pr 'pool/tesseract-ocr#4'
+  "rm \$(cmtspath pool/tesseract-ocr 4)" --pr 'pool/tesseract-ocr#4'
 case_ bad-pr-spec 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/tesseract-ocr'
 case_ pr-with-ids 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/tesseract-ocr#4' 1234
 
@@ -376,9 +397,9 @@ sys.argv = sys.argv[1:]
 sys.exit(mod.main())
 EOF
 SHORT=("$work/short.py")
-case_ hang-git-obs-pr 6 "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (network failure)" \
-  "put \$G/pool/tesseract-ocr/pulls/4 @HANG" --pr 'pool/tesseract-ocr#4'
-grep -qF "git-obs timed out after 3s" <<<"$LAST" && pass "hang-git-obs-pr: says it timed out" || fail "hang-git-obs-pr: $LAST"
+case_ hang-geectl-pr 6 "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (network failure)" \
+  "put \$(showpath pool/tesseract-ocr 4) @HANG" --pr 'pool/tesseract-ocr#4'
+grep -qF "geectl timed out after 3s" <<<"$LAST" && pass "hang-geectl-pr: says it timed out" || fail "hang-geectl-pr: $LAST"
 case_ hang-geectl-obsinfo 6 "could not read $P4/tesseract-ocr/_scmsync.obsinfo (network failure)" \
   "put \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo @HANG" --pr 'pool/tesseract-ocr#4'
 case_ hang-geectl-collection 2 "geectl timed out after 3s" \
@@ -402,8 +423,8 @@ spec.loader.exec_module(m); sys.exit(0 if m.TIMEOUT < 120 else 1)' "$SR" \
 mkdir -p "$work/py-only" && ln -sf "$(command -v python3)" "$work/py-only/python3"
 out="$(PATH="$work/py-only" HOME="$work" python3 "$SR" --pr 'pool/tesseract-ocr#4' 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF "VERDICT: UNKNOWN — could not read pool/tesseract-ocr#4 (lookup failed)" <<<"$out" \
-  && grep -qF "git-obs: command not found" <<<"$out" && ! grep -q Traceback <<<"$out" \
-  && pass "missing git-obs: lookup failed (rc=2)" || { fail "missing git-obs: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  && grep -qF "geectl: command not found" <<<"$out" && ! grep -q Traceback <<<"$out" \
+  && pass "missing geectl: lookup failed (rc=2)" || { fail "missing geectl: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------- the table
 case_ table-stale-sorts-first 0 "| PR | #3 | tesseract-ocr | pool/tesseract-ocr:leap-16.0 |" ":"
@@ -656,6 +677,16 @@ pr_comments_fixtures() { # <fixture tree>
   printf '%s' '[{"user": {"login": "a-maint"}, "body": "why?", "created_at": "2026-10-11T09:00:00+00:00"},
    {"user": {"login": "me"}, "body": "because", "created_at": "2026-10-12T09:00:00+00:00"}]' > "$G/other/handled/issues/6/comments"
   echo @NET > "$G/other/broken/issues/8/comments"
+  # pr_others_comments reads comments through pull-request comments now
+  put "$(cmtspath somegroup/example 2)" '{"reference": "gitea:somegroup/example#2", "comments": [
+   {"author": "a-maint", "created": "2026-10-18T09:00:00Z", "body": "Please run geectl local-build service-run"},
+   {"author": "legaldb", "created": "2026-10-19T09:00:00Z", "body": "legal ok"},
+   {"author": "autogits_obs_staging_bot", "created": "2026-10-19T10:00:00Z", "body": "Build successful"},
+   {"author": "packagehub-review", "created": "2026-10-19T11:00:00Z", "body": "Review by packagehub-review represents a group of reviewers"}], "count": 4}'
+  put "$(cmtspath other/handled 6)" '{"reference": "gitea:other/handled#6", "comments": [
+   {"author": "a-maint", "created": "2026-10-11T09:00:00+00:00", "body": "why?"},
+   {"author": "me", "created": "2026-10-12T09:00:00+00:00", "body": "because"}], "count": 2}'
+  echo @NET > "$(cmtspath other/broken 8)"
 }
 case_ summary-pr-comments 0 'PR somegroup/example#2 a-maint 2026-10-18: "Please run geectl local-build service-run"' \
   "summary_fixtures \$B && pr_comments_fixtures \$B" --summary
@@ -664,7 +695,7 @@ for want in "comments by others since your last action: 4 request(s) or PR(s), 2
             "PR builds not read: sr-status.py --pr pool/<pkg>#<n> for pool/tesseract-ocr#4"; do
   grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-comments: $want" || fail "summary-pr-comments: missing '$want'"
 done
-! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && ! grep -q 'pool/tesseract-ocr/issues/4/comments' <<<"$CALLS" \
+! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && ! grep -q 'pull-request comments gitea:pool/tesseract-ocr#4' <<<"$CALLS" \
   && pass "summary-pr-comments: handled, bot and comment-less PRs stay out" || fail "summary-pr-comments: $LAST"
 # The count includes reviews, which the issue comments call does not return:
 # when it is short, the reviews are read too. A change request is to answer;
@@ -692,15 +723,24 @@ EOF
   echo '[{"user": {"login": "maint"}, "body": "merge ok", "created_at": "2026-10-19T09:00:00Z"}]' > "$G/other/merge-ok/issues/11/comments"
   echo '[]' > "$G/other/rv-broken/issues/12/comments"
   echo @NET > "$G/other/rv-broken/pulls/12/reviews"
+  # pr_others_comments reads reviews from the show payload now
+  put "$(showpath other/reviewed 9)" '{"reference": "gitea:other/reviewed#9", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/reviewed", "branch": "x", "commit": "1111111111111111111111111111111111111111"}, "target": {"repository": "other/reviewed", "branch": "main", "commit": null}, "reviews": [{"reviewer": "mcepl", "state": "changes_requested", "comment": "FTBFS", "when": "2026-10-19T09:00:00Z"}, {"reviewer": "me", "state": "commented", "comment": "", "when": "2026-10-12T09:00:00Z"}]}'
+  put "$(showpath other/approved 10)" '{"reference": "gitea:other/approved#10", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/approved", "branch": "x", "commit": "1111111111111111111111111111111111111111"}, "target": {"repository": "other/approved", "branch": "main", "commit": null}, "reviews": [{"reviewer": "oertel", "state": "approved", "comment": "", "when": "2026-10-19T09:00:00Z"}]}'
+  echo @NET > "$(showpath other/rv-broken 12)"
+  # ...and the comments fixtures those show reads are gated on
+  put "$(cmtspath other/reviewed 9)" '{"reference": "gitea:other/reviewed#9", "comments": [{"author": "autogits_obs_staging_bot", "created": "2026-10-19T08:00:00Z", "body": "Build failed"}], "count": 1}'
+  put "$(cmtspath other/approved 10)" '{"reference": "gitea:other/approved#10", "comments": [], "count": 0}'
+  put "$(cmtspath other/merge-ok 11)" '{"reference": "gitea:other/merge-ok#11", "comments": [{"author": "maint", "created": "2026-10-19T09:00:00Z", "body": "merge ok"}], "count": 1}'
+  put "$(cmtspath other/rv-broken 12)" '{"reference": "gitea:other/rv-broken#12", "comments": [], "count": 0}'
 }
-case_ summary-pr-reviews 0 'PR other/reviewed#9 mcepl 2026-10-19 [change request, +2 inline]: "FTBFS"' \
+case_ summary-pr-reviews 0 'PR other/reviewed#9 mcepl 2026-10-19 [change request]: "FTBFS"' \
   "summary_fixtures \$B && pr_review_fixtures \$B" --summary
 for want in "comments by others since your last action: 5 request(s) or PR(s), 3 UNKNOWN (comment fetch failed)" \
             "approved since your last action: PR other/approved#10 by oertel, PR other/merge-ok#11 by maint" \
             "PR other/rv-broken#12 UNKNOWN (comment fetch failed)"; do
   grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-reviews: $want" || fail "summary-pr-reviews: missing '$want'"
 done
-! grep -qE 'PR other/(approved|merge-ok)#1[01] (oertel|maint)' <<<"$LAST" && ! grep -q 'somegroup/example/pulls/2/reviews' <<<"$CALLS" \
+! grep -qE 'PR other/(approved|merge-ok)#1[01] (oertel|maint)' <<<"$LAST" && ! grep -q 'pull-request show gitea:somegroup/example#2' <<<"$CALLS" \
   && pass "summary-pr-reviews: approvals are not questions; no reviews call when the count is met" || fail "summary-pr-reviews: $LAST"
 # Under --deadline the PRs come first (few, and the end of the queue is what
 # gets cut): the skipped list keeps that order.

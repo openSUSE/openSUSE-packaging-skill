@@ -235,7 +235,10 @@ def human_comment(req_id, state):
 
 
 # ---------- Gitea (src.opensuse.org) PR leg ----------
-# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
+# Single-PR reads go through `geectl pull-request show` / `pull-request
+# comments`. The list legs in fetch_prs still go through `git-obs api`:
+# git-obs keeps its own login, and no whoami leaf exists yet, so the
+# created / review-requested legs cannot be typed.
 
 
 def gitea_get(path, errors=None):
@@ -262,6 +265,39 @@ def gitea_get(path, errors=None):
         if errors is not None:
             errors.append(f"unparsable output ({e})")
         return None
+
+
+def pr_show(repo, num, errors=None):
+    """`geectl pull-request show gitea:<repo>#<num>` — the typed leaf for one
+    PR. Returns the PullRequest payload, or None on failure (text appended
+    to `errors`). Callers read head from `source` (repository, branch,
+    commit), base from `target.branch`, state from the unified `status`
+    (open/merged/closed/...), reviews from `reviews` [{reviewer, state,
+    comment, when}]. No created_at, no merged_at, no merge_base."""
+    return geectl(
+        ["pull-request", "show", f"gitea:{repo}#{num}"], hard=False, errors=errors
+    )
+
+
+def pr_comments(repo, num, errors=None):
+    """`geectl pull-request comments gitea:<repo>#<num>` — the typed leaf for
+    a PR's issue comments. Returns them in the old git-obs shape
+    [{user: {login}, created_at, body}] — the leaf's ReviewComment
+    [{author, created, body}] renamed — or None on failure (text appended
+    to `errors`)."""
+    payload = geectl(
+        ["pull-request", "comments", f"gitea:{repo}#{num}"], hard=False, errors=errors
+    )
+    if not isinstance(payload, dict):
+        return None
+    return [
+        {
+            "user": {"login": c.get("author")},
+            "created_at": c.get("created"),
+            "body": c.get("body"),
+        }
+        for c in payload.get("comments", [])
+    ]
 
 
 def human_line(cmts):
@@ -388,12 +424,12 @@ def pin_of(prj, pkg, num, errors):
     if not m:
         return "an unknown products PR (lookup failed)", "pin unknown", "check by hand"
     name = f"{m[1]}#{m[2]}"
-    p = gitea_get(f"/repos/{m[1]}/pulls/{m[2]}", errors)
+    p = pr_show(m[1], int(m[2]), errors)
     if p is None:
         return f"{name}, branch unknown (lookup failed)", name, "check it by hand"
-    head = p.get("head") or {}
-    ref = _sanitize.sanitize(head.get("ref") or "?")
-    owner = _sanitize.sanitize((head.get("repo") or {}).get("full_name") or "?")
+    src = p.get("source") or {}
+    ref = _sanitize.sanitize(src.get("branch") or "?")
+    owner = _sanitize.sanitize(src.get("repository") or "?")
     if ref == f"PR_{pkg}#{num}" and owner == m[1]:
         return (
             f"{name}, bot branch {ref}",
@@ -419,13 +455,20 @@ def pr_build(repo, num, pr, cmts, errors):
             found = PR_PROJECT.findall(c.get("body") or "")
             prj = found[-1] if found else prj
     if not prj:
+        # The show payload carries no created date; the list leg's pull
+        # payload still does.
         since = (pr.get("created_at") or "?")[:10]
         return (
             "pending",
             "no PR build yet",
             [f"PENDING — no staging-bot build comment (PR opened {since})"],
         )
-    head = ((pr.get("head") or {}).get("sha") or "").lower()
+    # Head is source.commit on the show payload, head.sha on the list leg's
+    # pull payload; both feed pr_build.
+    head = (
+        ((pr.get("source") or {}).get("commit") or "")
+        or ((pr.get("head") or {}).get("sha") or "")
+    ).lower()
     pkg = repo.split("/")[-1]
     info = geectl(
         ["remote", "cat", prj, pkg, SCMSYNC_INFO, "--format", "text"],
@@ -492,19 +535,19 @@ def pr_build(repo, num, pr, cmts, errors):
 def pr_mode(repo, num):
     """--pr: print one PR's build verdict and return its PR_EXIT code."""
     errors = []
-    pr = gitea_get(f"/repos/{repo}/pulls/{num}", errors)
+    pr = pr_show(repo, num, errors)
     if pr is None:
         v, _, why = failure(errors, f"{repo}#{num}")
         print(f"{repo}#{num}\nVERDICT: UNKNOWN — {why[0]}")
         return PR_EXIT[v]
-    print(f"{repo}#{num} → {(pr.get('base') or {}).get('ref', '?')}")
-    if pr.get("merged") or pr.get("merged_at"):
+    print(f"{repo}#{num} → {(pr.get('target') or {}).get('branch', '?')}")
+    if pr.get("merged"):
         print("VERDICT: MERGED")
         return PR_EXIT["merged"]
-    if pr.get("state") == "closed":
+    if pr.get("status") == "closed":
         print("VERDICT: CLOSED without a merge")
         return PR_EXIT["closed"]
-    cmts = gitea_get(f"/repos/{repo}/issues/{num}/comments", errors)
+    cmts = pr_comments(repo, num, errors)
     v, _, lines = pr_build(repo, num, pr, cmts, errors)
     for ln in lines[:-1]:
         print(ln)
@@ -523,7 +566,10 @@ def fetch_prs(state, brief, leg):
     awaiting the user's review (leg='review-requested'); per-PR detail
     (base branch, mergeable, bot-build + human comments) only in full mode.
     Returns (rows, full) — full when the page came back at PR_PAGE, so more
-    may exist — or None on failure (caller falls back)."""
+    may exist — or None on failure (caller falls back). Still on git-obs:
+    the search has no typed leaf, and the created leg needs the user's own
+    login (no whoami leaf) while the review-requested leg needs a reviewer
+    filter the search does not take."""
     q_state = "open" if state == "open" else "all"
     issues = gitea_get(
         f"/repos/issues/search?type=pulls&{leg.replace('-', '_')}=true"
@@ -980,22 +1026,24 @@ def pr_others_comments(pr):
     """What others said on one of your PRs since your last word there (its
     opening, or your latest comment or review), bots aside. issues/search's
     count includes reviews, which /issues/<n>/comments does not return, so
-    when it is short the reviews are read too. Returns (when, who, text,
-    kind) oldest first — kind "comment", "change request" or "approval", with
-    ", +N inline" for review comments — or None when a fetch failed."""
+    when it is short the show payload's reviews are read too. Returns (when,
+    who, text, kind) oldest first — kind "comment", "change request" or
+    "approval" — or None when a fetch failed. The show payload carries no
+    per-review inline count, so reviews carry no ", +N inline" bit."""
     num = pr["id"].lstrip("#")
-    cmts = gitea_get(f"/repos/{pr['repo']}/issues/{num}/comments")
+    cmts = pr_comments(pr["repo"], int(num))
     if cmts is None:
         return None
     reviews = []
     if len(cmts) < (pr.get("ncomments") or 0):
-        reviews = gitea_get(f"/repos/{pr['repo']}/pulls/{num}/reviews")
-        if reviews is None:
+        show = pr_show(pr["repo"], int(num))
+        if show is None:
             return None
+        reviews = show.get("reviews") or []
     author = pr.get("author")
     marks = [iso(pr.get("created"))]
     marks += [iso(c.get("created_at")) for c in cmts if login(c) == author]
-    marks += [iso(r.get("submitted_at")) for r in reviews if login(r) == author]
+    marks += [iso(r.get("when")) for r in reviews if r.get("reviewer") == author]
     marks = [m for m in marks if m is not None]
     last = max(marks) if marks else None
 
@@ -1014,20 +1062,18 @@ def pr_others_comments(pr):
             (c.get("created_at"), who, body, "approval" if merge_ok else "comment")
         )
     for r in reviews:
-        who, state = login(r), (r.get("state") or "").upper()
-        if who == author or is_bot(who) or not newer(r.get("submitted_at")):
+        who, state = r.get("reviewer"), (r.get("state") or "").lower()
+        if who == author or is_bot(who) or not newer(r.get("when")):
             continue
-        inline = r.get("comments_count") or 0
-        if state == "APPROVED":
+        if state == "approved":
             kind = "approval"
-        elif state == "REQUEST_CHANGES":
+        elif state == "changes_requested":
             kind = "change request"
-        elif r.get("body") or inline:
+        elif r.get("comment"):
             kind = "comment"
         else:
             continue
-        kind += f", +{inline} inline" if inline else ""
-        out.append((r.get("submitted_at"), who, r.get("body") or "", kind))
+        out.append((r.get("when"), who, r.get("comment") or "", kind))
     floor = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     return sorted(out, key=lambda x: iso(x[0]) or floor)
 
