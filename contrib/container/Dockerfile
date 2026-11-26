@@ -7,19 +7,19 @@ ADD skill.tar /src/
 
 # geectl is not shipped on OBS: download the pinned release tarball and
 # verify it against the release's SHA256SUMS; no toolchain in the image.
-# Pinned to 0.2.2.
+# Pinned to 0.2.3.
 FROM opensuse/tumbleweed:latest AS geectl
 RUN zypper -n in --no-recommends curl tar \
     && zypper clean -a
 RUN set -eu; \
     case "$(uname -m)" in \
-      x86_64) asset=geectl-0.2.2-x86_64-unknown-linux-gnu.tar.gz ;; \
-      aarch64) asset=geectl-0.2.2-aarch64-unknown-linux-gnu.tar.gz ;; \
+      x86_64) asset=geectl-0.2.3-x86_64-unknown-linux-gnu.tar.gz ;; \
+      aarch64) asset=geectl-0.2.3-aarch64-unknown-linux-gnu.tar.gz ;; \
       *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
     esac; \
     cd /tmp; \
-    curl -fsSL -o SHA256SUMS https://github.com/scarabeusiv/geectl/releases/download/v0.2.2/SHA256SUMS; \
-    curl -fsSL -o "$asset" "https://github.com/scarabeusiv/geectl/releases/download/v0.2.2/$asset"; \
+    curl -fsSL -o SHA256SUMS https://github.com/scarabeusiv/geectl/releases/download/v0.2.3/SHA256SUMS; \
+    curl -fsSL -o "$asset" "https://github.com/scarabeusiv/geectl/releases/download/v0.2.3/$asset"; \
     grep " $asset$" SHA256SUMS | sha256sum -c -; \
     tar -xzf "$asset" -C /usr/local/bin geectl; \
     rm -f SHA256SUMS "$asset"
