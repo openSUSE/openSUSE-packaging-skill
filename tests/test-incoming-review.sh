@@ -1221,9 +1221,9 @@ fresh record-pr-sha256-tampered; knob kind gitea; knob sha256 1; fix
 python3 -I -c '
 import json, re, sys
 d = sys.argv[1] + "/geectl/"
-head = json.load(open(d + "pull-request_show_gitea_pool_foo_7"))["source"]["commit"]
-key = re.sub(r"[^A-Za-z0-9._:-]", "_", "gitea raw-file pool foo foo.spec --ref " + head)
-open(d + key, "wb").write(b"tampered\n")' "$D"
+key = lambda s: re.sub(r"[^A-Za-z0-9._:-]", "_", s)
+head = json.load(open(d + key("pull-request show gitea:pool/foo#7")))["source"]["commit"]
+open(d + key("gitea raw-file pool foo foo.spec --ref " + head), "wb").write(b"tampered\n")' "$D"
 irv --show pool/foo#7; expect "record-pr-sha256-tampered: a blob unlike its 64-hex id" 5 "the bytes fetched do not match"
 # One repository has one hash: a head of one length and a base of the other is no answer.
 fresh record-pr-mixed-ids; knob kind gitea; knob sha256 1; knob basesha "$(printf 'a%.0s' $(seq 1 40))"; fix
