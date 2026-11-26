@@ -633,12 +633,10 @@ bad=$(printf '%s\n' "$lfs" | awk '$2 == "-" {print $3}' | paste -sd' ')
 
 git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null || refuse "no origin/$base — git fetch origin $base"
 git merge-base --is-ancestor "origin/$base" HEAD || refuse "HEAD does not contain origin/$base — rebase onto it"
-# The forge user, still through git-obs: geectl has no whoami leaf yet.
-# gapi reads its own login (-G: the default one may be another forge's)
-# and exits non-zero on an HTTP error; the open-PRs read below is geectl.
-gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d;}'; }
+# The forge user, through geectl: the token owner of the configured Gitea
+# instance. The open-PRs read below is geectl too.
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-guser=$(gapi /user | py login) || refuse "cannot read your src.opensuse.org user through git-obs: $(gerr)"
+guser=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/gerr" | py login) || refuse "cannot read your src.opensuse.org user through geectl: $(gerr)"
 # One call: pull-request search pages the Gitea list internally (bounded
 # at 500), so there is no page loop here.
 js=$(timeout 60 geectl pull-request search --backend gitea --repo "pool/$pkg" --state open 2>"$tmpd/gerr") \

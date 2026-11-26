@@ -62,6 +62,8 @@ cat > "$work/bin/geectl" <<'EOF'
 # a stored meta that is not XML is printed raw, so the script reports it
 # as unparseable instead of overwriting it.
 echo "geectl $*" >> "$FAKE/calls"
+# The global --format flag precedes the subcommand (gitea whoami is a JSON read).
+if [ "$1" = --format ]; then [ "$2" = json ] || { echo "fake geectl: unexpected format $2" >&2; exit 99; }; shift 2; fi
 sub=$1; shift
 case "$sub" in
   config)
@@ -264,7 +266,13 @@ print(json.dumps({"name":sys.argv[2],"title":None,"description":None,"persons":[
     [ -z "${FAKE_PULLS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
     p=${FAKE_PULLS:-}; if [ -n "$p" ]; then cat "$p"; else echo '[]'; fi ;;
   gitea)
-    [ "$1" = repo-fork ] || { echo "fake geectl: unexpected gitea $*" >&2; exit 99; } ;;
+    case "$1" in
+      repo-fork) ;;
+      whoami)
+        [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" >&2; exit 1; }
+        printf '%s\n' "${FAKE_USER:-{\"login\":\"tester\",\"full_name\":\"T\",\"email\":\"t@example.com\"}}" ;;
+      *) echo "fake geectl: unexpected gitea $*" >&2; exit 99 ;;
+    esac ;;
   *) echo "fake geectl: unexpected subcommand $sub" >&2; exit 99 ;;
 esac
 EOF
@@ -320,19 +328,6 @@ else:
         "scmsync": root.findtext("scmsync"),
     }
 print(json.dumps(doc))
-EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FAKE/calls"
-# Every call names the forge: the default login may be another forge's.
-[ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
-shift 3
-case "$1 ${2:-}" in
-  "api /user")
-    [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
-    u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}" ;;
-  *) echo "fake git-obs: unexpected $*" >&2; exit 99 ;;
-esac
 EOF
 # A tripwire: nothing goes through tea.
 cat > "$work/bin/tea" <<'EOF'
@@ -722,9 +717,9 @@ case_ no-origin-base 2 "no origin/leap-16.1" "bash $TG $C --branch leap-16.1 --b
 C=$(fresh offbase)
 git -C "$C" update-ref refs/remotes/origin/leap-16.0 "$(git -C "$C" commit-tree 'HEAD~1^{tree}' -p HEAD~1 -m moved)"
 case_ not-on-base 2 "HEAD does not contain origin/leap-16.0" "bash $TG $C --build"
-case_ no-login 2 "cannot read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" \
+case_ no-login 2 "cannot read your src.opensuse.org user through geectl: ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" \
   "FAKE_NOLOGIN=1 bash $TG $X --build"
-case_ login-unparseable 2 "cannot read your src.opensuse.org user through git-obs" "FAKE_USER='{\"id\": 7}' bash $TG $X --build"
+case_ login-unparseable 2 "cannot read your src.opensuse.org user through geectl" "FAKE_USER='{\"id\": 7}' bash $TG $X --build"
 case_ pr-lookup-failed 2 "cannot read the open PRs of pool/foo (lookup failed, not 'none'): ERROR: Failed to establish a new connection" \
   "FAKE_PULLS_FAIL=1 bash $TG $X --build"
 # A tea config that exists but cannot be read: nothing needs it.
