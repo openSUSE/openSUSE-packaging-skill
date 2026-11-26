@@ -20,8 +20,8 @@
 # devel-factory/_ObsPrj) has stub package meta with no persons: its
 # maintainers are in the project git's _maintainership.json (the package's
 # list, else the project's ""), and the Reviewers of its workflow.config are
-# reviewer roles too. Both are read through git-obs, at the branch or commit
-# the scmsync #fragment names.
+# reviewer roles too. Both are read through `geectl gitea raw-file`, at the
+# branch or commit the scmsync #fragment names.
 # And the project must be the one Factory develops the package in: a request
 # accepted anywhere else lands in the wrong devel project (real case: apache-arrow
 # accepted into Application:Geo, whose package only linked to science).
@@ -117,11 +117,18 @@ print(meta.get("scmsync") or "")
 }
 
 # File $2 of the project git $1 (owner/repo) at ref $3 ("": its default
-# branch) into $4: 0 read, 4 absent, 5 failed.
+# branch) into $4: 0 read, 4 absent, 5 failed. A missing file is NotFound,
+# never empty content — the 404 is the existence answer.
 _gitfile() {
-  local err
-  err="$(timeout 60 git-obs -G src.opensuse.org -q api "/repos/$1/raw/$2${3:+?ref=$3}" 2>&1 >"$4")" && return 0
-  grep -q 'ERROR: 404' <<<"$err" && return 4
+  local err owner repo rc
+  owner="${1%%/*}"; repo="${1#*/}"
+  if [ -n "${3:-}" ]; then
+    err="$(timeout 60 geectl gitea raw-file "$owner" "$repo" "$2" --ref "$3" 2>&1 >"$4")"; rc=$?
+  else
+    err="$(timeout 60 geectl gitea raw-file "$owner" "$repo" "$2" 2>&1 >"$4")"; rc=$?
+  fi
+  [ "$rc" = 0 ] && return 0
+  grep -q '"code":"not_found"' <<<"$err" && return 4
   return 5
 }
 

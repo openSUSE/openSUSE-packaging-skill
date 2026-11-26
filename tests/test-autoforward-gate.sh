@@ -1,9 +1,10 @@
 #!/bin/bash
 # test-autoforward-gate.sh — autoforward-gate.sh offline: a fake `geectl` on PATH
-# answers package-meta, project-meta, link-target and list-packages lookups
-# from a per-case fixture tree (a missing file is a 404, "@ERR" fails the
-# call). The package foo lives in devel:a, which openSUSE:Factory names as its
-# devel project; tester maintains it and nobody reviews. Exit 0 = all assertions hold.
+# answers package-meta, project-meta, link-target, list-packages and gitea
+# raw-file lookups from a per-case fixture tree (a missing file is a 404,
+# "@ERR" fails the call). The package foo lives in devel:a, which
+# openSUSE:Factory names as its devel project; tester maintains it and nobody
+# reviews. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -19,29 +20,37 @@ mkdir -p "$work/bin"
 cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
 echo "geectl $*" >> "$FIX/calls"
+if [ "$1 $2" = "gitea raw-file" ]; then
+  # raw-file <owner> <repo> <path> [--ref <ref>]: the fixture keeps the
+  # owner/repo/path structure, so a_b/c and a/b_c stay apart.
+  f="$FIX/raw/$3%$4%$(printf %s "$5" | tr / %)"
+  [ "$6" = --ref ] && f="$f%ref=$7"
+  [ -f "$f" ] || { printf '%s' '{"error":{"code":"not_found","context":"fake 404"}}' >&2; exit 3; }
+  [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
+  cat "$f"
+  exit 0
+fi
 f="$FIX/meta/$(printf %s "$*" | tr -c 'A-Za-z0-9' '_')"
 [ -f "$f" ] || { printf '%s' '{"error":{"code":"not_found","context":"fake 404"}}' >&2; exit 3; }
 [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
 cat "$f"
 EOF
 chmod +x "$work/bin/geectl"
-# git-obs answers the project git's files from $FIX/gitea/<path, / as %>.
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-f="$FIX/gitea/$(printf %s "${5#/}" | tr / %)"
-[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
-[ "$(cat "$f")" = @ERR ] && { echo "ERROR: 500 Internal Server Error" >&2; exit 1; }
-cat "$f"
-EOF
-chmod +x "$work/bin/git-obs"
-
 B="$work/base"
-mkdir -p "$B/meta" "$B/gitea"
+mkdir -p "$B/meta" "$B/raw"
 meta() { printf '%s\n' "$2" > "$B/meta/$(printf %s "$1" | tr -c 'A-Za-z0-9' '_')"; }
 nometa() { rm -f "$B/meta/$(printf %s "$1" | tr -c 'A-Za-z0-9' '_')"; }
-gitea() { printf '%s\n' "$2" > "$B/gitea/$(printf %s "$1" | tr / %)"; }
+# A project git's file, repos/<owner>/<repo>/raw/<path>[?ref=<ref>], as the
+# fake-geectl raw-file fixture: $B/raw/<owner>%<repo>%<path, / as %>
+# [%ref=<ref>].
+gitea() {
+  local p="$1" ref="" owner rest repo fpath f
+  case "$p" in *\?ref=*) ref="${p#*\?ref=}"; p="${p%%\?ref=*}";; esac
+  p="${p#repos/}"; owner="${p%%/*}"; rest="${p#*/}"; repo="${rest%%/*}"; fpath="${rest#*/raw/}"
+  f="$B/raw/$owner%$repo%$(printf %s "$fpath" | tr / %)"
+  [ -n "$ref" ] && f="$f%ref=$ref"
+  printf '%s\n' "$2" > "$f"
+}
 FOO_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
 FOO_FACTORY='{"name": "foo", "project": "openSUSE:Factory", "devel": {"project": "devel:a", "package": "foo"}, "persons": [], "groups": []}'
 FACTORY_FOO='{"name": "foo", "project": "openSUSE:Factory", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
@@ -150,10 +159,10 @@ case_ git-reviewer        3 "BLOCKED — explicit reviewer role: qa-bot" \
   "gitea $W '{\"Workflows\": [\"pr\"], \"Reviewers\": [\"+qa-bot\",],}'" devel:g hw
 case_ git-reviewer-object 3 "BLOCKED — explicit reviewer role: legal" \
   "gitea $W '{\"Reviewers\": {\"~legal\": {\"IgnoreSubmoduleChanges\": true}}}'" devel:g hw
-case_ git-no-workflow     0 "ELIGIBLE" "rm gitea/repos%gorg%_ObsPrj%raw%workflow.config" devel:g hw
+case_ git-no-workflow     0 "ELIGIBLE" "rm raw/gorg%_ObsPrj%workflow.config" devel:g hw
 case_ git-json-broken     5 "UNREADABLE — gorg/_ObsPrj's _maintainership.json did not parse" "gitea $M '{\"hw\": [\"tester\"'" devel:g hw
 case_ git-json-absent     5 "UNREADABLE — gorg/_ObsPrj has no _maintainership.json" \
-  "rm gitea/repos%gorg%_ObsPrj%raw%_maintainership.json" devel:g hw
+  "rm raw/gorg%_ObsPrj%_maintainership.json" devel:g hw
 case_ git-json-fails      5 "UNREADABLE — cannot read gorg/_ObsPrj/_maintainership.json" "gitea $M @ERR" devel:g hw
 case_ git-workflow-broken 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
   "gitea $W '{\"Reviewers\": \"qa-bot\"}'" devel:g hw
@@ -164,9 +173,9 @@ case_ git-other-host      5 "UNREADABLE — devel:g is kept in https://example.o
 # plain ref is not read at all.
 case_ git-ref             0 "ELIGIBLE — package maintainer in gorg/_ObsPrj/_maintainership.json at devel" \
   "meta 'remote project-meta devel:g' \"\$GIT_PROJ_REF\"; gitea $M '{\"hw\": [\"other\"]}'; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{}'" devel:g hw
-grep -qx 'git-obs -G src.opensuse.org -q api /repos/gorg/_ObsPrj/raw/_maintainership.json?ref=devel' "$work/git-ref/calls" \
-  && grep -qx 'git-obs -G src.opensuse.org -q api /repos/gorg/_ObsPrj/raw/workflow.config?ref=devel' "$work/git-ref/calls" \
-  && pass "git-ref: both files read at the ref" || fail "git-ref: $(grep git-obs "$work/git-ref/calls")"
+grep -qx 'geectl gitea raw-file gorg _ObsPrj _maintainership.json --ref devel' "$work/git-ref/calls" \
+  && grep -qx 'geectl gitea raw-file gorg _ObsPrj workflow.config --ref devel' "$work/git-ref/calls" \
+  && pass "git-ref: both files read at the ref" || fail "git-ref: $(grep 'gitea raw-file' "$work/git-ref/calls")"
 case_ git-ref-reviewer    3 "BLOCKED — explicit reviewer role: qa" \
   "meta 'remote project-meta devel:g' \"\$GIT_PROJ_REF\"; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{\"Reviewers\": [\"qa\"]}'" devel:g hw
 case_ git-ref-absent      5 "UNREADABLE — gorg/_ObsPrj has no _maintainership.json at devel" \
@@ -201,12 +210,12 @@ case_ git-entry-false     5 "UNREADABLE — gorg/_ObsPrj's _maintainership.json 
 case_ git-group-entry     4 "NOT_YOURS — not a maintainer in gorg/_ObsPrj/_maintainership.json (maintainers: @team)" \
   "gitea $M '{\"\": [\"tester\"], \"hw\": [\"@team\"]}'" devel:g hw
 # An OBS reviewer role still counts.
-case_ git-obs-reviewer    3 "BLOCKED — explicit reviewer role: qa" \
+case_ obs-reviewer        3 "BLOCKED — explicit reviewer role: qa" \
   "meta 'remote project-meta devel:g' \"\$GIT_PROJ_QA\"" devel:g hw
 case_ git-batch           4 $'devel:g/other\tNOT_YOURS' \
   "meta 'remote package-meta devel:g other' '{\"name\": \"other\", \"project\": \"devel:g\", \"persons\": [], \"groups\": []}'; printf 'devel:g\thw\ndevel:g\tother\n' > rows" --batch rows
-grep -qF $'devel:g/hw\tELIGIBLE' <<<"$LAST" && [ "$(grep -c 'raw/_maintainership.json$' "$work/git-batch/calls")" = 1 ] \
-  && pass "--batch reads a project git's _maintainership.json once" || fail "git-batch: $(grep git-obs "$work/git-batch/calls")"
+grep -qF $'devel:g/hw\tELIGIBLE' <<<"$LAST" && [ "$(grep -c 'gitea raw-file gorg _ObsPrj _maintainership.json$' "$work/git-batch/calls")" = 1 ] \
+  && pass "--batch reads a project git's _maintainership.json once" || fail "git-batch: $(grep 'gitea raw-file' "$work/git-batch/calls")"
 # One --batch run, project gits whose names a flat key would merge (a_b/c and
 # a/b_c), and one project git at two refs: each read for itself.
 BATCH2="meta 'remote package-meta devel:p x' '{\"name\": \"x\", \"project\": \"devel:p\", \"persons\": [], \"groups\": []}'; meta 'remote project-meta devel:p' '{\"name\": \"devel:p\", \"scmsync\": \"https://src.opensuse.org/a_b/c\", \"persons\": [], \"groups\": []}'
