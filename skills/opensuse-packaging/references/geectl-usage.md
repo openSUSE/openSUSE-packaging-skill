@@ -72,7 +72,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl build whatdependson PRJ PKG REPO ARCH` — reverse build deps (`scripts/rdeps.sh` wraps it).
 - `geectl local-build service-run --service source_validator DIR --live` — the validator gate. `--mode manualrun` runs the `mode="manual"` services; `--mode precommit` the precommit gate. `--mode runall` is refused (no such mode).
 - `geectl local-build precommit DIR --live` — run the precommit gate directly.
-- `geectl remote create-token --operation OP --project PRJ --package PKG --live` — a trigger token (e.g. for Gitea PR builds). The maintainer runs it: it prints the token's secret, so an agent never does, and the harness snippets will refuse every `geectl remote create-token` call.
+- `geectl remote create-token --operation OP --project PRJ --package PKG --live` — a trigger token (e.g. for Gitea PR builds). The maintainer runs it: it prints the token's secret, so an agent never does, and the harness snippets refuse a `geectl remote create-token` call — except that a global option before the subcommand (`geectl --live remote create-token`) gets past the Codex and Antigravity prefixes (see `contrib/harness/README.md` "Limits").
 
 ## Requests
 
