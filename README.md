@@ -10,9 +10,9 @@ read as ordinary instruction documents.
 
 | Skill | Use it for |
 |---|---|
-| `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `osc`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
+| `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `geectl`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
 
-Requirements: `bash`, `python3` (3.11+, standard library only), `osc`, `curl`. Individual
+Requirements: `bash`, `python3` (3.11+, standard library only), `geectl`, `curl`. Individual
 helpers use `tea` or `gh` where the task needs them; the agent runs `rpmcrab` over built
 packages itself.
 
@@ -25,7 +25,7 @@ skills/opensuse-packaging/   the skill — this directory is the unit of distrib
                              see SKILL.md's block pointers for what to load when;
                              references/untrusted-content.md is the cross-cutting
                              prompt-injection policy every block inherits
-  scripts/                   reusable osc / Repology / bugzilla / Gitea / distro helpers —
+  scripts/                   reusable geectl / Repology / bugzilla / Gitea / distro helpers —
                              one line each in SKILL.md "Bundled scripts"; the full
                              catalog (flags, exit codes, the trap each one encodes)
                              is scripts/README.md
@@ -53,7 +53,7 @@ plain text — no other file depends on it.
 
 Canonical repository: https://github.com/openSUSE/openSUSE-packaging-skill
 
-Requirements: `bash`, `python3`, `osc` and `curl`. The helper scripts use only the Python
+Requirements: `bash`, `python3`, `geectl` and `curl`. The helper scripts use only the Python
 standard library.
 
 With a skill installer:
