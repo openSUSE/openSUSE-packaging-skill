@@ -10,7 +10,7 @@
 # /var/tmp), removed on every exit; it never builds, never runs a service,
 # never parses a spec with rpm (the advisory scanner _parse_scan.py reads it as
 # text; rpm only lists the host's own macros), and reads no credential: geectl
-# and git-obs log in themselves.
+# logs in itself.
 #
 # Usage: incoming-review.sh --show <sr#ID | owner/repo#N>
 #        incoming-review.sh --record <ID> FILE   (or --record=<ID> FILE)
@@ -23,7 +23,7 @@
 #             - when none built the head), and last `key <sha256>`: a hash over
 #             the request's actions, its source rev, srcmd5 and file md5s and
 #             the target's file md5s (a PR: its head, base, base branch and
-#             merge base and both trees)
+#             merge base and the files it changes, each side at its own ref)
 #   --record  FILE's first line is `PASS|FIXABLE|BLOCK <ID> key <sha256>`, the
 #             rest is the comment as it will be posted (the blank space around
 #             it dropped; the stamp's comment_sha256 is its UTF-8 sha256). A
@@ -341,26 +341,120 @@ def listing(prj, pkg, rev=None, what=None, missing_ok=False, depth=0):
     return files, srcmd5, False
 
 
-def gitea(path):
-    rc, out, err = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
-    if rc != 0:
-        raise Lookup("git-obs api %s failed (%d): %s" % (path, rc, last(err) or "no message"))
-    text = out.decode("utf-8", "replace")
-    if text.startswith("Response:"):
-        text = text.split("\n", 1)[1] if "\n" in text else ""
-    if not text.strip():
-        raise Lookup("git-obs api %s: an empty answer" % path)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        raise Lookup("git-obs api %s: an unparseable answer (%s)" % (path, e))
+def raw_file(owner, repo, name, ref):
+    """The bytes of name at ref through `geectl gitea raw-file`, None for a
+    404; an empty file reads as b"", never as no answer."""
+    return geectl(["gitea", "raw-file", owner, repo, name, "--ref", ref],
+                  text=True, missing_ok=True, empty_ok=True)
+
+
+DIFF_GIT = re.compile(r"diff --git a/(\S+) b/(\S+)$")
+DIFF_INDEX = re.compile(r"index ([0-9a-f]+)\.\.([0-9a-f]+)(?: [0-9]+)?$")
+
+
+def parse_pr_diff(text, label):
+    """[(old, new, old_mode, new_mode, old_id, new_id)] for each file the
+    unified diff touches: old/new None when the file is added/removed, the
+    modes from its mode lines (100644 when it names none), the ids from its
+    index line (None when it names none, or all zeroes). A diff that names
+    no file, or one whose headers disagree, is no answer; an empty diff
+    names no file and is one."""
+    files, cur, hunks = [], None, False
+
+    def finish():
+        nonlocal cur
+        if cur is None:
+            return
+        old, new = cur["old"], cur["new"]
+        if cur["minus"] is not None and cur["minus"] != old:
+            raise Lookup("%s: a malformed diff (--- names %s)" % (label, shown(cur["minus"])))
+        if cur["plus"] is not None and cur["plus"] != new:
+            raise Lookup("%s: a malformed diff (+++ names %s)" % (label, shown(cur["plus"])))
+        if old is None and new is None:
+            raise Lookup("%s: a malformed diff (a file with no name)" % label)
+        for n in (old, new):
+            if n is not None and (not valid_path(n) or any(n in (e[0], e[1]) for e in files)):
+                raise Lookup("%s: a malformed diff (a bad or repeated name %s)" % (label, shown(n)))
+        for k in ("old_mode", "new_mode"):
+            if cur[k] is None:
+                cur[k] = "100644"
+            if cur[k] not in MODES:
+                raise Lookup("%s: a malformed diff (mode %s)" % (label, cur[k]))
+        files.append((old, new, cur["old_mode"], cur["new_mode"], cur["old_id"], cur["new_id"]))
+        cur = None
+
+    def start(ln):
+        m = DIFF_GIT.fullmatch(ln)
+        if not m:
+            raise Lookup("%s: a malformed diff (%s)" % (label, shown(ln[:80])))
+        return {"old": m.group(1), "new": m.group(2), "old_mode": None,
+                "new_mode": None, "old_id": None, "new_id": None,
+                "minus": None, "plus": None}
+
+    for ln in text.splitlines():
+        if hunks:
+            if ln.startswith("diff --git "):
+                hunks = False
+            else:
+                continue
+        if cur is None:
+            if not ln:
+                continue
+            cur = start(ln)
+            continue
+        if ln.startswith("diff --git "):
+            finish()
+            cur = start(ln)
+            continue
+        if ln.startswith("@@ ") or ln.startswith("Binary files "):
+            finish()
+            hunks = True
+            continue
+        m = DIFF_INDEX.fullmatch(ln)
+        if m:
+            cur["old_id"] = None if set(m.group(1)) == {"0"} else m.group(1)
+            cur["new_id"] = None if set(m.group(2)) == {"0"} else m.group(2)
+            continue
+        if ln.startswith("old mode "):
+            cur["old_mode"] = ln[len("old mode "):]
+            continue
+        if ln.startswith("new mode "):
+            cur["new_mode"] = ln[len("new mode "):]
+            continue
+        if ln.startswith("new file mode "):
+            cur["new_mode"] = ln[len("new file mode "):]
+            cur["old"] = None
+            continue
+        if ln.startswith("deleted file mode "):
+            cur["old_mode"] = ln[len("deleted file mode "):]
+            cur["new"] = None
+            continue
+        if ln.startswith("similarity index "):
+            continue
+        if ln.startswith("rename from "):
+            cur["old"] = ln[len("rename from "):]
+            continue
+        if ln.startswith("rename to "):
+            cur["new"] = ln[len("rename to "):]
+            continue
+        if ln.startswith("--- "):
+            cur["minus"] = None if ln[4:] == "/dev/null" else ln[4:].removeprefix("a/")
+            continue
+        if ln.startswith("+++ "):
+            cur["plus"] = None if ln[4:] == "/dev/null" else ln[4:].removeprefix("b/")
+            continue
+        raise Lookup("%s: a malformed diff (%s)" % (label, shown(ln[:80])))
+    finish()
+    if text.strip() and not files:
+        raise Lookup("%s: a malformed diff (no file)" % label)
+    return files
 
 
 def pr_comments(owner, repo, num):
     """`geectl pull-request comments gitea:<owner>/<repo>#<num>` — the typed
-    leaf for a PR's issue comments, in the old git-obs shape [{user:
-    {login}, body}] — the leaf's ReviewComment [{author, created, body}]
-    renamed — so the staging-bot scan below is unchanged."""
+    leaf for a PR's issue comments, [{user: {login}, body}] — the leaf's
+    ReviewComment [{author, created, body}] renamed — so the staging-bot
+    scan below is unchanged."""
     j = geectl(["pull-request", "comments", "gitea:%s/%s#%s" % (owner, repo, num)])
     if not isinstance(j, dict) or not isinstance(j.get("comments"), list):
         raise Lookup("the comments of %s/%s#%s: a malformed answer" % (owner, repo, num))
@@ -376,36 +470,56 @@ def valid_path(p):
     return all(x and x not in (".", "..") and not CTRL.search(x) for x in parts)
 
 
-def gitea_tree(owner, repo, sha):
-    what = "the tree of %s/%s at %s" % (owner, repo, sha[:12])
-    j = gitea("/repos/%s/%s/git/trees/%s?recursive=true&per_page=1000" % (owner, repo, sha))
-    if not isinstance(j, dict) or not isinstance(j.get("tree"), list) or j.get("truncated") is not False:
-        raise Lookup("%s: a malformed or truncated answer" % what)
-    files = {}
-    for e in j["tree"]:
-        if not isinstance(e, dict):
-            raise Lookup("%s: a malformed entry" % what)
-        p, mode, typ, s = e.get("path"), e.get("mode"), e.get("type"), e.get("sha")
-        if typ == "tree" and isinstance(p, str) and valid_path(p):
-            continue
-        size = e.get("size", 0) if typ == "blob" else 0
-        if (
-            not isinstance(p, str)
-            or not valid_path(p)
-            or p in files
-            or typ not in ("blob", "commit")
-            or mode not in MODES
-            or not isinstance(s, str)
-            or not GIT_ID.fullmatch(s)
-            or not isinstance(size, int)
-            or isinstance(size, bool)
-            or size < 0
-        ):
-            raise Lookup("%s: a malformed entry (%s)" % (what, shown(str(p))))
-        files[p] = (s, size, mode)
-    if not files:
-        raise Lookup("%s: no file" % what)
-    return files
+def gitea_trees(owner, repo, num, head, mb, entries):
+    """(src, base) Trees of the files the PR changes, each side at its own
+    ref: each file's id the blob id of the bytes raw-file serves, checked
+    against the diff's index line when it names one. A file the diff names
+    that raw-file does not serve is no answer. Each tree fetches a file the
+    scanner names with it, by name and that tree's ref, when it lacks it."""
+    label = "%s/%s#%s" % (owner, repo, num)
+    hfiles, bfiles, hstore, bstore = {}, {}, {}, {}
+
+    def fetch_at(name, ref, mode, want_id, store):
+        b = raw_file(owner, repo, name, ref)
+        if b is None:
+            return None
+        ident = git_hash(ref)(b"blob %d\0" % len(b) + b).hexdigest()
+        if want_id is not None and not ident.startswith(want_id):
+            raise Lookup("%s: the bytes fetched do not match %s" % (shown(name), want_id))
+        store[name] = b
+        return (ident, len(b), mode)
+
+    def named_for(files, store, ref):
+        def named(name):
+            if name in files:
+                return True
+            b = raw_file(owner, repo, name, ref)
+            if b is None:
+                return False
+            files[name] = (git_hash(ref)(b"blob %d\0" % len(b) + b).hexdigest(), len(b), "100644")
+            store[name] = b
+            return True
+        return named
+
+    def fetch_from(store):
+        def fetch(name, ident):
+            return store[name]
+        return fetch
+
+    blobok = lambda b, ident: git_blob(b, ident) == ident  # noqa: E731
+    for old, new, omode, nmode, oid, nid in entries:
+        if new is not None:
+            got = fetch_at(new, head, nmode, nid, hstore)
+            if got is None:
+                raise Lookup("%s: no %s at %s" % (label, shown(new), head[:12]))
+            hfiles[new] = got
+        if old is not None:
+            got = fetch_at(old, mb, omode, oid, bstore)
+            if got is None:
+                raise Lookup("%s: no %s at %s" % (label, shown(old), mb[:12]))
+            bfiles[old] = got
+    return pair(Tree(hfiles, fetch_from(hstore), blobok, named=named_for(hfiles, hstore, head)),
+                Tree(bfiles, fetch_from(bstore), blobok, named=named_for(bfiles, bstore, mb)))
 
 
 def md5_of(path):
@@ -434,9 +548,12 @@ class Tree:
     only when needed, and checked against its id. A twin holding the same id
     shares the bytes."""
 
-    def __init__(self, files, fetch, check):
+    def __init__(self, files, fetch, check, named=None):
+        """named(name): fetch a file the change does not name, by name
+        and this tree's ref, into files (and its bytes, for fetch); False
+        when the tree holds no such file, True when it does already."""
         self.files, self._fetch, self._check = files, fetch, check
-        self.data, self.twin = {}, None
+        self.data, self.twin, self.named = {}, None, named
 
     def same(self, name):
         t = self.twin
@@ -1095,8 +1212,8 @@ def analyze(f, src, base, target_exists, tmp, lfs):
     added = [n for n in changed if n not in base.files]
     removed = [n for n in changed if n not in src.files]
     f.info.append(
-        "files: %d changed, %d added, %d removed (source %d, target %d)"
-        % (len(changed) - len(added) - len(removed), len(added), len(removed), len(src.files), len(base.files))
+        "files: %d changed, %d added, %d removed"
+        % (len(changed) - len(added) - len(removed), len(added), len(removed))
     )
     for n in changed:
         b = n.rsplit("/", 1)[-1]
@@ -1288,6 +1405,8 @@ def scan(f, src, base, tmp, specs):
                 continue
             needed.append(n)
             for t in (src, base):
+                if n not in t.files and t.named is not None:
+                    t.named(n)
                 if n in t.files and n not in t.data:
                     if t.real(n) is not None:
                         more = True
@@ -1573,42 +1692,36 @@ def derive_obs(rid, tmp):
 def derive_gitea(owner, repo, num, tmp):
     label = "%s/%s#%s" % (owner, repo, num)
     f = Facts("gitea", label, label)
-    pr = gitea("/repos/%s/%s/pulls/%s" % (owner, repo, num))
+    show = geectl(["pull-request", "show", "gitea:%s/%s#%s" % (owner, repo, num)])
+    full, ok = "", False
     try:
-        head, base_, ref = pr["head"]["sha"], pr["base"]["sha"], pr["base"]["ref"]
-        mb, f.creator = pr["merge_base"], pr["user"]["login"]
-        full = pr["base"]["repo"]["full_name"]
-        ok = pr["number"] == int(num) and all(isinstance(x, str) and GIT_ID.fullmatch(x) for x in (head, base_, mb))
+        head, base_ = show["source"]["commit"], show["target"]["commit"]
+        ref, mb = show["target"]["branch"], show["merge_base"]
+        f.creator = show["author"]
+        full = show["target"]["repository"]
+        ok = show["reference"] == "gitea:%s/%s#%s" % (owner, repo, num)
+        ok = ok and all(isinstance(x, str) and GIT_ID.fullmatch(x) for x in (head, base_, mb))
         ok = ok and len({len(head), len(base_), len(mb)}) == 1  # one repository, one hash
         ok = ok and isinstance(f.creator, str) and LOGIN.fullmatch(f.creator) and isinstance(full, str)
         ok = ok and isinstance(ref, str) and bool(ref) and not CTRL.search(ref)
-    except (KeyError, TypeError):
+    except (KeyError, TypeError, AttributeError):
         ok = False
     if not ok or full.lower() != ("%s/%s" % (owner, repo)).lower():
         raise Lookup("%s: a malformed answer for the PR" % label)
-    title = pr.get("title") if isinstance(pr.get("title"), str) else ""
-    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+    title = show.get("title") if isinstance(show.get("title"), str) else ""
+    body = show.get("description") if isinstance(show.get("description"), str) else ""
     f.desc = "title: %s\ndescription: %s" % (_sanitize.sanitize(title), _sanitize.sanitize(body or "(none)"))
     f.info.insert(0, "%s by %s: head %s, base %s (%s), merge base %s" % (label, f.creator, head[:12], clean(ref), base_[:12], mb[:12]))
-    hfiles, bfiles = gitea_tree(owner, repo, head), gitea_tree(owner, repo, mb)
-
-    def fetch(n, ident):
-        j = gitea("/repos/%s/%s/git/blobs/%s" % (owner, repo, ident))
-        if not isinstance(j, dict) or j.get("encoding") != "base64" or not isinstance(j.get("content"), str):
-            raise Lookup("the blob %s of %s: a malformed answer" % (ident[:12], label))
-        try:
-            return base64.b64decode(j["content"])
-        except (binascii.Error, ValueError):
-            raise Lookup("the blob %s of %s: no base64" % (ident[:12], label))
-
-    blobok = lambda b, ident: git_blob(b, ident) == ident  # noqa: E731
-    src, base = pair(Tree(hfiles, fetch, blobok), Tree(bfiles, fetch, blobok))
-    hmap = {n: s for n, (s, _, _) in hfiles.items()}
+    diff = geectl(["pull-request", "diff", "gitea:%s/%s#%s" % (owner, repo, num)])
+    if not isinstance(diff, dict) or not isinstance(diff.get("diff"), str):
+        raise Lookup("%s: a malformed answer for the diff" % label)
+    src, base = gitea_trees(owner, repo, num, head, mb, parse_pr_diff(diff["diff"], label))
+    hmap = {n: s for n, (s, _, _) in src.files.items()}
     f.key = digest({
         "kind": "gitea", "id": label, "creator": f.creator, "head": head, "base": base_, "base_ref": ref,
         "merge_base": mb,
-        "files": {n: [s, m] for n, (s, _, m) in hfiles.items()},
-        "base_files": {n: [s, m] for n, (s, _, m) in bfiles.items()},
+        "files": {n: [s, m] for n, (s, _, m) in src.files.items()},
+        "base_files": {n: [s, m] for n, (s, _, m) in base.files.items()},
     })
     analyze(f, src, base, True, tmp, lfs=True)
     build_pr(f, owner, repo, num, head)
@@ -1858,11 +1971,13 @@ def final(kind, path):
             return ""
         return "request %s %s" % (rid, clean(name))
     label = "%s/%s#%s" % ident[1:]
-    pr = gitea("/repos/%s/%s/pulls/%s" % ident[1:])
-    state = pr.get("state") if isinstance(pr, dict) else None
-    if state not in ("open", "closed") or pr.get("number") != int(ident[3]):
+    show = geectl(["pull-request", "show", "gitea:%s/%s#%s" % ident[1:]])
+    if not isinstance(show, dict) or show.get("reference") != "gitea:%s/%s#%s" % ident[1:]:
         raise Lookup("%s: no state of it" % label)
-    merged = pr.get("merged")
+    state = show.get("status")
+    if state not in ("open", "merged", "closed"):
+        raise Lookup("%s: no state of it" % label)
+    merged = show.get("merged") is True
     # a FIXABLE PR's hold reads the commit OBS synced, which this does not: it stays
     if state == "open" or fixable:
         return ""
