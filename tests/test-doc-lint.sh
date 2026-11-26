@@ -6,7 +6,7 @@
 #     references/ does not resolve through scripts/refsection.py (exit != 0)
 #   - a doc cites merging a PR (tea pr|pulls merge, git-obs pr merge,
 #     .../pulls/N/merge) on any repository, outside a "Wrong forms" section:
-#     agents never merge one, and check-osc.py sees only osc citations
+#     agents never merge one
 #   - a doc teaches a credential recipe outside a "Wrong forms" section: a read
 #     verb on an osc, tea, gh, netrc, cookie-jar or api-key file, a token piped
 #     out of `gh auth token`, a key on a command line, a concrete Authorization
@@ -199,12 +199,11 @@ printf 'geectl build buildinfo p k r a | grep %s<bdep%s | cut -d\" -f2\nthe set 
   && pass "bdep-grep pattern self-test" || fail "bdep-grep pattern self-test: the regex is broken"
 hits=$(grep -nE "$BDEP" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
 # The forward end-state (entry 1): accepting forwards by default, so the
-# old claims are forbidden in the geectl docs. osc-usage.md is excluded —
-# its claims are true for osc, and entry 23 deletes it.
+# old claims are forbidden in the geectl docs.
 FORWARD_PHRASES='no forward (option|flag)|does not forward|refuses? Factory as the target'
 printf 'Accepting does not forward.\nThere is no forward option.\ngeectl has no forward flag.\n`request file` refuses Factory as the target.\n' | grep -ciE "$FORWARD_PHRASES" | grep -qx 4 \
   && pass "forward-phrase pattern self-test" || fail "forward-phrase pattern self-test: the regex is broken"
-hits=$(grep -rniE "$FORWARD_PHRASES" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md | grep -v 'references/osc-usage.md')
+hits=$(grep -rniE "$FORWARD_PHRASES" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)
 [ -z "$hits" ] && pass "no doc states the stale forward end-state" \
   || { fail "a doc states the stale forward end-state (accepting forwards by default):"; printf '%s\n' "$hits" | sed "s|$ROOT/||; s/^/    /"; }
 [ -z "$hits" ] && pass "no doc greps buildinfo for '<bdep'" \

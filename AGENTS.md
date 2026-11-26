@@ -50,10 +50,7 @@ readable that way.
 - The docs cite exact invocations so an agent never spends a turn probing `--help`:
   `references/script-usage.md` holds every script's flags and exit codes, and
   `tests/repo/check-flags.py` checks it, and every flag cited elsewhere, against the
-  real `--help`. The same holds for osc: `references/osc-usage.md` has a line for every
-  osc subcommand the skill cites, and `tests/repo/check-osc.py` checks each citation's
-  subcommand and options against osc's own parser. Citing a new osc subcommand means
-  adding its line there.
+  real `--help`.
 - **A failed lookup must never read as good news.** This is the recurring bug class here:
   a watcher that reported success when its query failed, a status script that printed
   IN-SYNC when it could not read any version, a missing script whose "No such file" was

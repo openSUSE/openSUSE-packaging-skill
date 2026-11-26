@@ -40,10 +40,7 @@ jobs:
           # Use a release candidate while a version has no final release yet.
           allow-prereleases: true
       # The helpers and their tests are standard library only, and every suite is
-      # offline (network lookups are stubbed). The one install is osc itself:
-      # check-osc.py reads its argparse parser, pinned so the check is stable.
-      - name: Install osc
-        run: python3 -m pip install osc==1.27.3
+      # offline (network lookups are stubbed).
       # check-geectl.py runs against the released CLI from crates.io.
       # Bump the version to re-validate against a newer geectl.
       - name: Install Rust toolchain
@@ -62,7 +59,6 @@ jobs:
         run: |
           python3 tests/repo/check-skills.py
           python3 tests/repo/check-flags.py
-          python3 tests/repo/check-osc.py
           python3 tests/repo/check-geectl.py
 
   lint:

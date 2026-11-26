@@ -2816,7 +2816,7 @@ echo "--- the skill's own tools, and every suite, run unrefused and unasked"
 asks_ok() {   # asks_ok <file>: the rules its ask may name, where the ask is intended
   case $1 in
     # a mutation case runs its mutant through eval, which the guard cannot read
-    test-autoforward-gate.sh|test-check-flags.sh|test-check-geectl.sh|test-check-osc.sh|test-forward-check.sh) echo eval-dynamic ;;
+    test-autoforward-gate.sh|test-check-flags.sh|test-check-geectl.sh|test-forward-check.sh) echo eval-dynamic ;;
     # preflight.sh's gapi() runs `geectl "$@"` (one wrapper for the
     # 404-vs-other-failure distinction, ~10 call sites): the guard
     # cannot tell which geectl command $@ is, so its comment and
