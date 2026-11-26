@@ -78,14 +78,14 @@ Checked against `tea <cmd> --help` of tea 0.15.1. `<login>` is a name from `tea 
 | commit | `git commit` + `git push` |
 | edit the `.changes` | `geectl changelog generate` / `geectl changelog validate` |
 | local build | `geectl local-build build` |
-| branch | `geectl gitea repo-fork OWNER REPO --live` + `geectl branch branch-package --project PRJ --package PKG --live` |
+| branch | `geectl branch create --project PRJ --package PKG --live` (Gitea fork + OBS fork into a test project; the OBS-only form is `geectl branch branch-package --project PRJ --package PKG --live`) |
 | delete a package | `git rm <pkg>` (removes the submodule in a project repo) |
 
 ## Forking
 
 Two ways, and the difference matters:
 
-- **`geectl gitea repo-fork <owner> <pkg> --live`** (recommended) — creates the Gitea fork (`<youruser>/<pkg>`); pair it with **`geectl branch branch-package --project <devel-project> --package <pkg> --live`** for the OBS project branch (`home:<you>:branches:<devel-project>`). Use this when you want OBS to build your changes before/without a PR.
+- **`geectl branch create --project <devel-project> --package <pkg> --live`** (recommended) — branches a git-backed package in one step: the Gitea fork (`<youruser>/<pkg>`) plus the OBS fork into a test project (`home:<you>:branches:<devel-project>`) with the source project's repositories. Use this when you want OBS to build your changes before/without a PR. The two steps separately are `geectl gitea repo-fork <owner> <pkg> --live` + `geectl branch branch-package --project <devel-project> --package <pkg> --live` (the OBS-only branch, for when the Gitea fork already exists).
 - **`tea repos fork --login <login> --repo <owner>/<pkg>`** (or `git-obs -G src.opensuse.org repo fork <owner>/<pkg>`) — Gitea-only fork, **no** OBS build branch. Sufficient when you'll rely on a local `geectl local-build build` plus the post-PR autogits bot build (below). Lighter weight; no OBS home project left behind to clean up.
 
 ## Local build in a git checkout — the gotchas
@@ -107,6 +107,8 @@ geectl pull-request submit --base main --title "..." --body "..."
 # or use tea:  tea pulls create --login <login> --repo <devel-project>/<pkg> --head <youruser>:<branch> --base main
 # or the Gitea web UI.
 ```
+
+On PR opening, `geectl pull-request build-comment --project <test-project> --package <pkg> gitea:<owner>/<repo>#<N> --live` posts the build-link comment on the Gitea PR (the OBS build results for the test project and package, as a link plus a one-line per-instance summary) — posted once, on opening; there is no polling, no live update, and no edit. An OBS handle is refused (the build link belongs on the Gitea PR).
 
 The description follows the SR message rule: `references/request-text.md` "SR and PR messages".
 
