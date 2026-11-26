@@ -299,7 +299,7 @@ def pr_show(repo, num, errors=None):
     to `errors`). Callers read head from `source` (repository, branch,
     commit), base from `target.branch`, state from the unified `status`
     (open/merged/closed/...), reviews from `reviews` [{reviewer, state,
-    comment, when}]. No created_at, no merged_at, no merge_base."""
+    comment, when}]. No created_at, no merged_at; merge_base is carried on the payload."""
     return geectl(
         ["pull-request", "show", f"gitea:{repo}#{num}"], hard=False, errors=errors
     )
@@ -419,7 +419,10 @@ def older_builds(prj, pkg, ok, errors):
         return None, f"the {prj}/{pkg} srcmd5"
     origin = geectl(["remote", "link-target", prj, pkg], hard=False, errors=errors)
     if origin and (origin.get("target") or {}).get("project"):
-        return None, f"the {prj}/{pkg} expanded srcmd5 (linked package: no typed leaf reports it)"
+        return (
+            None,
+            f"the {prj}/{pkg} expanded srcmd5 (linked package: no typed leaf reports it)",
+        )
     older = []
     for label, path in ok.items():
         what = f"the {prj}/{path} job history"
@@ -427,8 +430,19 @@ def older_builds(prj, pkg, ok, errors):
         where, name = path.rsplit("/", 1)
         repo, arch = where.split("/")
         hist = geectl(
-            ["build", "job-history", prj, repo, arch, "--package", name, "--limit", "1"],
-            hard=False, errors=errors,
+            [
+                "build",
+                "job-history",
+                prj,
+                repo,
+                arch,
+                "--package",
+                name,
+                "--limit",
+                "1",
+            ],
+            hard=False,
+            errors=errors,
         )
         if hist is None:
             return None, what
@@ -493,7 +507,9 @@ def pr_build(repo, num, pr, cmts, errors):
     pkg = repo.split("/")[-1]
     info = geectl(
         ["remote", "cat", prj, pkg, SCMSYNC_INFO, "--format", "text"],
-        hard=False, errors=errors, text=True,
+        hard=False,
+        errors=errors,
+        text=True,
     )
     if info is None:
         v, short, why = failure(errors, f"{prj}/{pkg}/_scmsync.obsinfo")
@@ -516,7 +532,8 @@ def pr_build(repo, num, pr, cmts, errors):
     lines = [f"PR build: {prj} · built {built[:12]} · PR head {head[:12]}"]
     payload = geectl(
         ["build", "results", prj, "--package", pkg, "--multibuild"],
-        hard=False, errors=errors,
+        hard=False,
+        errors=errors,
     )
     got = build_results(payload, pkg) if payload is not None else None
     if got is None:
@@ -731,7 +748,8 @@ def sr_row(req, brief):
     if brief:
         row["src"] = (
             f"{act.get('source_project')}/{act.get('source_package')}"
-            if act.get("source_project") else "?"
+            if act.get("source_project")
+            else "?"
         )
         row["staging"] = stg
     else:
@@ -821,7 +839,8 @@ def _raw_files(prj, pkg, rev=None):
     if any(f.get("name") == "_link" for f in entries):
         text = geectl(
             ["remote", "cat", prj, pkg, "_link", "--format", "text"],
-            hard=False, text=True,
+            hard=False,
+            text=True,
         )
         if text is None:
             return LOOKUP_FAILED
@@ -945,9 +964,22 @@ def closed_since(user, days):
     if DEADLINE is not None and time.monotonic() >= DEADLINE:
         return since, SKIPPED
     payload = geectl(
-        ["request", "search", "--creator", user, "--type", "submit",
-         "--state", "accepted", "--state", "revoked", "--state", "superseded",
-         "--since", since],
+        [
+            "request",
+            "search",
+            "--creator",
+            user,
+            "--type",
+            "submit",
+            "--state",
+            "accepted",
+            "--state",
+            "revoked",
+            "--state",
+            "superseded",
+            "--since",
+            since,
+        ],
         hard=False,
     )
     if payload is None:
@@ -996,9 +1028,22 @@ def later_requests(prj, pkg, after):
     Returns [(id, state, creator)], or None when the lookup failed."""
 
     payload = geectl(
-        ["request", "search", "--target-project", prj, "--target-package", pkg,
-         "--type", "submit", "--state", "new", "--state", "review",
-         "--state", "accepted"],
+        [
+            "request",
+            "search",
+            "--target-project",
+            prj,
+            "--target-package",
+            pkg,
+            "--type",
+            "submit",
+            "--state",
+            "new",
+            "--state",
+            "review",
+            "--state",
+            "accepted",
+        ],
         hard=False,
     )
     if payload is None:
@@ -1019,7 +1064,9 @@ def decline_followups(row):
     act = acts[0] if acts else {}
     places = [(row["target"], row["pkg"])]
     if act.get("source_project") and not act.get("source_project").startswith("home:"):
-        places.append((act.get("source_project"), act.get("source_package") or row["pkg"]))
+        places.append(
+            (act.get("source_project"), act.get("source_package") or row["pkg"])
+        )
     return [(f"{p}/{k}", later_requests(p, k, row["num"])) for p, k in places]
 
 
@@ -1439,8 +1486,15 @@ def main():
             "open": ["new", "review", "declined"],
             "all": ["new", "review", "declined", "accepted", "revoked", "superseded"],
         }.get(a.state, [a.state])
-        cmd = ["request", "search", "--creator", user, "--type", "submit",
-               "--with-history"]
+        cmd = [
+            "request",
+            "search",
+            "--creator",
+            user,
+            "--type",
+            "submit",
+            "--with-history",
+        ]
         for st in states:
             cmd += ["--state", st]
         if a.target:
