@@ -37,6 +37,7 @@ while read -r tool; do
 done <<'EOF'
 opencode --version
 geectl --help
+geectl --version
 git-obs --help
 tea --version
 gh --version

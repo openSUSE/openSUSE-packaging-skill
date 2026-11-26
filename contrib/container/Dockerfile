@@ -5,13 +5,24 @@
 FROM opensuse/tumbleweed:latest AS src
 ADD skill.tar /src/
 
-# geectl is not shipped on OBS: build it from its git source in a builder stage
-# and copy only the binary into the final image; the toolchain stays out of it.
+# geectl is not shipped on OBS: download the pinned release tarball and
+# verify it against the release's SHA256SUMS; no toolchain in the image.
+# Pinned to 0.2.1; entry 2 owns the bump when the next release ships.
 FROM opensuse/tumbleweed:latest AS geectl
-RUN zypper -n in --no-recommends cargo gcc git \
+RUN zypper -n in --no-recommends curl tar \
     && zypper clean -a
-RUN cargo install --root /usr/local --locked \
-        --git https://github.com/scarabeusiv/geectl --rev b22368d
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64) asset=geectl-0.2.1-x86_64-unknown-linux-gnu.tar.gz ;; \
+      aarch64) asset=geectl-0.2.1-aarch64-unknown-linux-gnu.tar.gz ;; \
+      *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    cd /tmp; \
+    curl -fsSL -o SHA256SUMS https://github.com/scarabeusiv/geectl/releases/download/v0.2.1/SHA256SUMS; \
+    curl -fsSL -o "$asset" "https://github.com/scarabeusiv/geectl/releases/download/v0.2.1/$asset"; \
+    grep " $asset$" SHA256SUMS | sha256sum -c -; \
+    tar -xzf "$asset" -C /usr/local/bin geectl; \
+    rm -f SHA256SUMS "$asset"
 
 FROM opensuse/tumbleweed:latest
 
