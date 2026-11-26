@@ -2,7 +2,7 @@
 # test-target-gate.sh — proves scripts/target-gate.sh stamps only the exact tree
 # it built against the PR's own base, and refuses or reds on each condition it
 # exists for. Every case runs against a throwaway pool/foo clone under /var/tmp;
-# osc, git-obs, findmnt, uname, git-lfs and obs-build's queryrecipe are fakes
+# geectl, git-obs, findmnt, uname, git-lfs and obs-build's queryrecipe are fakes
 # on PATH that write the build roots, logs, obsinfo and results the script reads;
 # HOME holds no forge credential. Pushes over SSH land in a local bare repo.
 # Each negative case trips exactly one branch and asserts its message. Offline.
@@ -21,17 +21,18 @@ trap 'rm -rf "$work" ${tmpcase:+"$tmpcase"}' EXIT
 
 U=tester                      # the fake OBS and Gitea account
 GPRJ="home:$U:leapgate"
-ROOTS="$work/roots"
-export HOME="$work/home" TMPDIR="$work/tmp" BUILD_DIR="$work/obs-build" FAKE="$work/fake"
+CACHE="$work/cache"
+ROOTS="$CACHE/build-roots"
+export HOME="$work/home" TMPDIR="$work/tmp" BUILD_DIR="$work/obs-build" FAKE="$work/fake" FAKE_CACHE="$CACHE"
+# The OBS account comes from the environment, never from a config file.
+export GEECTL_OBS_USERNAME=tester
 # The home package's current source revision, and the one before it.
 export FAKE_SRCMD5=0123456789abcdef0123456789abcdef FAKE_OLDMD5=fedcba9876543210fedcba9876543210
 export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export PATH="$work/bin:$PATH"
-mkdir -p "$HOME/.config/osc" "$TMPDIR" "$BUILD_DIR" "$work/bin" "$FAKE" \
+mkdir -p "$HOME" "$TMPDIR" "$BUILD_DIR" "$work/bin" "$FAKE" \
   "$work/forge/$U"
-printf '[general]\nbuild-root = %s/%%(package)s-%%(repo)s-%%(arch)s\n[https://api.opensuse.org]\nuser = %s\n' \
-  "$ROOTS" "$U" > "$HOME/.config/osc/oscrc"
 git config --global init.defaultBranch main
 # Pushes to the forge land in a local bare repo; origin's URL still reads as pool/foo.
 git config --global url."file://$work/forge/".pushInsteadOf gitea@src.opensuse.org:
@@ -52,60 +53,149 @@ EOF
 chmod +x "$work/forge/$U/foo.git/hooks/pre-receive"
 
 # --- fakes --------------------------------------------------------------------
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-echo "osc $*" >> "$FAKE/calls"
+# Fake geectl for test-target-gate.sh: answers the leaves target-gate.sh
+# uses, with JSON payloads, and records every call in $FAKE/calls.
+# The meta documents are stored as XML (as the script writes them with
+# --from-file) and converted to the project/package-meta JSON on read;
+# a stored meta that is not XML is printed raw, so the script reports it
+# as unparseable instead of overwriting it.
+echo "geectl $*" >> "$FAKE/calls"
 sub=$1; shift
 case "$sub" in
-  whois) [ -z "${FAKE_WHOIS_FAIL:-}" ] || exit 1; echo 'tester: "T" <t@example.com>' ;;
-  meta)
-    kind=$1; shift
-    if [ "$1" = -F ]; then
-      [ "${FAKE_METAWRITE_FAIL:-}" != "$kind" ] || { echo "Server returned an error: HTTP Error 400: bad meta" >&2; exit 1; }
-      cp "$2" "$FAKE/meta-$kind-${3//:/_}${4:+-$4}"; exit 0
-    fi
-    case "$1" in
-      openSUSE:Backports:SLE-16.*)
-        [ -z "${FAKE_META_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 503"; exit 1; }
-        # As live: the 16.1 PR project builds fewer arches than Backports itself.
+  config)
+    [ "$1" = show ] || { echo "fake geectl: unexpected config $*" >&2; exit 99; }
+    printf '{"build_cache_dir": "%s"}\n' "$FAKE_CACHE" ;;
+  remote)
+    leaf=$1; shift
+    case "$leaf" in
+      whois)
+        [ -z "${FAKE_WHOIS_FAIL:-}" ] || exit 1
+        printf '{"login":"tester","email":"t@example.com","realname":"T","state":"confirmed"}\n' ;;
+      project-meta)
         case "$1" in
-          *16.0:PullRequest) arches=${FAKE_ARCHES:-i586 x86_64 aarch64 ppc64le s390x} ;;
-          *16.1:PullRequest) arches=${FAKE_ARCHES:-i586 x86_64 aarch64} ;;
-          *) arches="i586 x86_64 aarch64 ppc64le s390x" ;;
-        esac
-        printf '<project name="%s"><repository name="standard">' "$1"
-        for a in local $arches; do printf '<arch>%s</arch>' "$a"; done
-        printf '</repository></project>\n' ;;
-      *) [ "${FAKE_HOMEMETA_FAIL:-}" != "$kind" ] || { echo "Server returned an error: HTTP Error 503: Service Unavailable"; exit 1; }
-         f="$FAKE/meta-$kind-${1//:/_}${2:+-$2}"
-         [ -f "$f" ] && cat "$f" || { echo "Server returned an error: HTTP Error 404: Not Found"; exit 1; } ;;
-    esac ;;
-  buildconfig) [ -z "${FAKE_BUILDCONFIG_FAIL:-}" ] || { echo "HTTP Error 503" >&2; exit 1; }; echo 'Macros:' ;;
-  buildinfo)
-    arch=""; prev=""
-    for x in "$@"; do [ "$prev" = standard ] && arch=$x; prev=$x; done
-    case " ${FAKE_BI_FAIL:-} " in *" $arch "*) echo "Server returned an error: HTTP Error 502"; exit 1;; esac
-    case " ${FAKE_BI_ERROR:-} " in
-      *" $arch "*) printf '<buildinfo><arch>%s</arch><error>unresolvable: nothing provides bogus-devel</error></buildinfo>\n' "$arch" ;;
-      *) printf 'Using local file: foo.spec\n<buildinfo><arch>%s</arch></buildinfo>\n' "$arch" ;;
+          openSUSE:Backports:SLE-16.*)
+            [ -z "${FAKE_META_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 503"; exit 1; }
+            case "$1" in
+              *16.0:PullRequest) arches=${FAKE_ARCHES:-i586 x86_64 aarch64 ppc64le s390x} ;;
+              *16.1:PullRequest) arches=${FAKE_ARCHES:-i586 x86_64 aarch64} ;;
+              *) arches="i586 x86_64 aarch64 ppc64le s390x" ;;
+            esac
+            # As live: the 16.1 PR project builds fewer arches than Backports itself.
+            python3 -c 'import json,sys
+a=[x for x in sys.argv[1].split() if x]
+a=["local"]+a
+print(json.dumps({"name":sys.argv[2],"title":None,"description":None,"persons":[],"repositories":[{"name":"standard","arch":a,"paths":[]}]}))' "$arches" "$1" ;;
+          *)
+            [ "${FAKE_HOMEMETA_FAIL:-}" != prj ] || { echo "Server returned an error: HTTP Error 503: Service Unavailable"; exit 1; }
+            f="$FAKE/meta-prj-${1//:/_}"
+            [ -f "$f" ] || { echo "not_found: project $1 does not exist"; exit 3; }
+            python3 "$(dirname "$0")/meta2json.py" prj "$f" ;;
+        esac ;;
+      package-meta)
+        [ "${FAKE_HOMEMETA_FAIL:-}" != pkg ] || { echo "Server returned an error: HTTP Error 503: Service Unavailable"; exit 1; }
+        f="$FAKE/meta-pkg-${1//:/_}-$2"
+        [ -f "$f" ] || { echo "not_found: package $1/$2 does not exist"; exit 3; }
+        python3 "$(dirname "$0")/meta2json.py" pkg "$f" ;;
+      set-project-meta|set-package-meta)
+        kind=${leaf#set-}; kind=${kind%-meta}
+        # The stored names are prj/pkg, matching the read side and the
+        # test's $PRJMETA/$PKGMETA; FAKE_METAWRITE_FAIL uses them too.
+        [ "$kind" = project ] && kind=prj || kind=pkg
+        file=""; prj=""; pkg=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --from-file) file=$2; shift 2;; --live) shift;; *) [ -z "$prj" ] && prj=$1 || pkg=$1; shift;; esac
+        done
+        [ "${FAKE_METAWRITE_FAIL:-}" != "$kind" ] || { echo "Server returned an error: HTTP Error 400: bad meta" >&2; exit 1; }
+        cp "$file" "$FAKE/meta-$kind-${prj//:/_}${pkg:+-$pkg}"; exit 0 ;;
+      package-log)
+        limit=""; prj=""; pkg=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --limit) limit=$2; shift 2;; *) [ -z "$prj" ] && prj=$1 || pkg=$1; shift;; esac
+        done
+        [ -z "${FAKE_SRC_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
+        printf '{"project":"%s","package":"%s","entries":[{"rev":2,"vrev":2,"srcmd5":"%s","version":"1.0","time":1,"user":"tester","comment":null,"request_id":null}]}\n' "$prj" "$pkg" "$FAKE_SRCMD5" ;;
+      cat)
+        rev=""; prj=""; pkg=""; file=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --rev) rev=$2; shift 2;; *) [ -z "$prj" ] && prj=$1 || { [ -z "$pkg" ] && pkg=$1 || file=$1; }; shift;; esac
+        done
+        [ -n "${FAKE_OBSINFO_COMMIT:-}" ] || { echo "Server returned an error: HTTP Error 404: Not Found"; exit 1; }
+        printf 'mtime: 1\ncommit: %s\nurl: x\n' "$FAKE_OBSINFO_COMMIT" ;;
+      delete-package)
+        msg=""; prj=""; pkg=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --message) msg=$2; shift 2;; --live) shift;; *) [ -z "$prj" ] && prj=$1 || pkg=$1; shift;; esac
+        done
+        [ -n "$msg" ] || { echo "fake geectl: delete-package without --message" >&2; exit 99; }
+        [ -z "${FAKE_RDELETE_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 403: Forbidden" >&2; exit 1; }
+        rm -f "$FAKE/meta-pkg-${prj//:/_}-$pkg" ;;
+      *) echo "fake geectl: unexpected remote $leaf" >&2; exit 99 ;;
     esac ;;
   build)
-    root=""; prj=""; spec=""; prev=""
+    leaf=$1; shift
+    case "$leaf" in
+      buildconfig)
+        [ -z "${FAKE_BUILDCONFIG_FAIL:-}" ] || { echo "HTTP Error 503" >&2; exit 1; }
+        echo 'Macros:' ;;
+      buildinfo)
+        prj=""; pkg=""; repo=""; arch=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --project) prj=$2; shift 2;;
+            --package) pkg=$2; shift 2;;
+            --alternative-project) shift 2;;
+            *) [ -z "$repo" ] && repo=$1 || arch=$1; shift;;
+          esac
+        done
+        case " ${FAKE_BI_FAIL:-} " in *" $arch "*) echo "Server returned an error: HTTP Error 502"; exit 1;; esac
+        case " ${FAKE_BI_ERROR:-} " in
+          *" $arch "*) printf '{"project":"%s","package":"%s","repository":"%s","arch":"%s","error":"unresolvable: nothing provides bogus-devel","bdeps":[],"bdep_projects":[]}\n' "$prj" "$pkg" "$repo" "$arch" ;;
+          *) printf '{"project":"%s","package":"%s","repository":"%s","arch":"%s","error":null,"bdeps":[],"bdep_projects":[]}\n' "$prj" "$pkg" "$repo" "$arch" ;;
+        esac ;;
+      results)
+        repo=""; pkg=""; prj=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --repository) repo=$2; shift 2;; --package) pkg=$2; shift 2;; *) prj=$1; shift;; esac
+        done
+        [ -z "${FAKE_RESULTS_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
+        cat "$FAKE/results.json" ;;
+      job-history)
+        pkg=""; limit=""; prj=""; repo=""; arch=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --package) pkg=$2; shift 2;;
+            --limit) limit=$2; shift 2;;
+            *) [ -z "$prj" ] && prj=$1 || { [ -z "$repo" ] && repo=$1 || arch=$1; }; shift;;
+          esac
+        done
+        ap="$arch/$pkg"
+        case " ${FAKE_HIST_FAIL:-} " in *" $ap "*) echo "Server returned an error: HTTP Error 502"; exit 1;; esac
+        case " ${FAKE_HIST_EMPTY:-} " in *" $ap "*) printf '{"project":"%s","repository":"%s","arch":"%s","entries":[]}\n' "$prj" "$repo" "$arch"; exit 0;; esac
+        case " ${FAKE_HIST_GARBAGE:-} " in *" $ap "*) echo 'Server returned garbage'; exit 0;; esac
+        m=$FAKE_SRCMD5
+        case " ${FAKE_HIST_STALE:-} " in *" $ap "*) m=$FAKE_OLDMD5;; esac
+        printf '{"project":"%s","repository":"%s","arch":"%s","entries":[{"repository":"%s","arch":"%s","package":"%s","rev":"2","srcmd5":"%s","versrel":"1.0-0","bcnt":1,"time":1,"duration":1}]}\n' "$prj" "$repo" "$arch" "$repo" "$arch" "$pkg" "$m" ;;
+      *) echo "fake geectl: unexpected build $leaf" >&2; exit 99 ;;
+    esac ;;
+  local-build)
+    [ "$1" = build ] || { echo "fake geectl: unexpected local-build $*" >&2; exit 99; }
+    shift
+    root=""; prj=""; dir=""; prev=""
     for x in "$@"; do
       [ "$prev" = --root ] && root=$x
-      case "$x" in --alternative-project=*) prj=${x#*=};; *.spec) spec=$x;; esac
+      case "$x" in --alternative-project) prj=next;; --project) prj=next;; *) [ "$prj" = next ] && prj=$x; esac
+      case "$x" in *.spec) ;; *) [ -d "$x" ] && dir=$x;; esac
       prev=$x
     done
-    # osc failing before obs-build runs: an error line, the root untouched.
-    [ -z "${FAKE_OSC_ERROR:-}" ] || { printf 'Running build\n%s\n' "$FAKE_OSC_ERROR"; exit 1; }
+    # geectl failing before obs-build runs: an error line, the root untouched.
+    [ -z "${FAKE_BUILD_ERROR:-}" ] || { printf 'Running build\n%s\n' "$FAKE_BUILD_ERROR"; exit 1; }
     case "$prj" in *16.1) rel=160100;; *) rel=160000;; esac
     pkgid=${FAKE_RPMCONFIG:-rpm-config-SUSE-20250328-$rel.2.2 1743178964-noarch}
     v=finished; [ "${FAKE_BUILD:-}" = failed ] && v=failed
     readlink /proc/self/fd/0 > "$FAKE/build-stdin"
     if [ "${FAKE_VM:-}" = kvm ]; then
-      # A user's kvm build runs in $root/.mount inside $root/img, and --clean
-      # wipes only .mount: the chroot tree of an earlier build stays in the
-      # root, with the right base and an RPM requiring a user nothing provides.
       br=$root/.mount
       rm -rf "$br"; mkdir -p "$br/installed-pkg" "$root/installed-pkg" \
         "$root/home/abuild/rpmbuild/RPMS/aarch64" "$root/home/abuild/rpmbuild/SRPMS"
@@ -115,7 +205,6 @@ case "$sub" in
       ln -sfn home/abuild/rpmbuild "$root/.build.packages"
       : > "$root/img"; : > "$root/swap"
     else
-      # A chroot root: .build.packages links to the rpmbuild tree.
       br=$root
       rm -rf "$root"; mkdir -p "$root/installed-pkg" "$root/home/abuild/rpmbuild"
       echo "$pkgid" > "$root/installed-pkg/rpm-config-SUSE"
@@ -125,23 +214,18 @@ case "$sub" in
     if [ -z "${FAKE_NO_PACKAGES:-}" ]; then
       mkdir -p "$pk/RPMS/aarch64" "$pk/SRPMS"
       if [ "$v" = finished ]; then
-        # FAKE_NOSRC: a spec with NoSource writes a .nosrc.rpm.
         : > "$pk/SRPMS/foo-1.0-0.${FAKE_NOSRC:+no}src.rpm"
-        # FAKE_SRPM_ONLY: a test flavor, whose %files are all conditional.
         [ -n "${FAKE_SRPM_ONLY:-}" ] || : > "$pk/RPMS/aarch64/foo-1.0-0.aarch64.rpm"
       fi
-      # extractbuild gives each package the guest's mtime in whole seconds.
       [ "${FAKE_VM:-}" != kvm ] || find "$pk" -type f -exec touch -d "@$(date +%s)" {} +
-      # FAKE_STALE_RPM/SRPM: a root obs-build did not set up, with an earlier build's packages.
       [ -z "${FAKE_STALE_RPM:-}" ] || { : > "$pk/RPMS/aarch64/old-0.9-0.aarch64.rpm"; touch -d 2026-01-01 "$pk/RPMS/aarch64/old-0.9-0.aarch64.rpm"; }
       [ -z "${FAKE_STALE_SRPM:-}" ] || { : > "$pk/SRPMS/old-0.9-0.src.rpm"; touch -d 2026-01-01 "$pk/SRPMS/old-0.9-0.src.rpm"; }
     fi
+    spec=foo.spec
     { printf '[    0s] Using BUILD_ROOT=%s\n' "${FAKE_BUILD_ROOT:-$br}"
       [ "${FAKE_VM:-}" != kvm ] || printf '[    0s] Doing kvm build in %s/img\n' "$root"
       [ -n "${FAKE_NO_RECIPE:-}" ] || printf '[    1s] processing recipe %s/%s ...\n' "${FAKE_RECIPE_DIR:-$(pwd -P)}" "$spec"
       if [ "${FAKE_VM:-}" = kvm ]; then
-        # The guest's console: CRLF line ends, a NUL from its boot, and its own
-        # copy of the recipe.
         printf '[    5s] 2nd stage started in virtual machine\r\n[    5s] \000\r\n'
         printf '[    6s] processing recipe //.build-srcdir/%s ...\r\n' "${FAKE_GUEST_SPEC:-$spec}"
         [ -n "${FAKE_NO_CUMULATE:-}" ] || printf '[    7s] [3/40] cumulate %s\r\n' "${pkgid%% *}"
@@ -154,61 +238,76 @@ case "$sub" in
     if [ "${FAKE_VM:-}" != kvm ]; then
       cp "$FAKE/build-out" "$root/.build.log"
     elif [ "${FAKE_ROOTLOG:-}" = green ]; then
-      # Adversarial: obs-build recreates the log, but a GREEN one of this tree must not count.
       printf '[    0s] Using BUILD_ROOT=%s\n[    1s] processing recipe %s/%s ...\n[    6s] [3/40] cumulate rpm-config-SUSE-20250328-%s.2.2\n[   20s] fakehost finished "build %s" at Wed Sep 23 00:00:00 UTC 2026.\n' \
         "$root" "$(pwd -P)" "$spec" "$rel" "$spec" > "$root/.build.log"
     else
-      : > "$root/.build.log"     # as issue #71 found it
+      : > "$root/.build.log"
     fi
-    # osc's stdout carries the whole log, then the packages it found.
-    if [ -z "${FAKE_OSC_SILENT:-}" ]; then
+    # geectl's stdout carries the whole log, then the packages it found.
+    if [ -z "${FAKE_BUILD_SILENT:-}" ]; then
       cat "$FAKE/build-out"
       [ "$v" != finished ] || printf '\n%s/RPMS/aarch64/foo-1.0-0.aarch64.rpm\n' "$pk"
     fi
     [ -z "${FAKE_BUILD_TOUCH:-}" ] || : > "$FAKE_BUILD_TOUCH"
     [ -z "${FAKE_BUILD_COMMIT:-}" ] || { echo "- $FAKE_BUILD_COMMIT" >> foo.changes; git commit -qam "$FAKE_BUILD_COMMIT"; }
-    [ -z "${FAKE_OSC_RC:-}" ] || exit "$FAKE_OSC_RC"
+    [ -z "${FAKE_BUILD_RC:-}" ] || exit "$FAKE_BUILD_RC"
     [ "$v" = finished ] ;;
-  cat)
-    [ -n "${FAKE_OBSINFO_COMMIT:-}" ] || { echo "Server returned an error: HTTP Error 404: Not Found"; exit 1; }
-    printf 'mtime: 1\ncommit: %s\nurl: x\n' "$FAKE_OBSINFO_COMMIT" ;;
-  rdelete)
-    [ "$1" = -m ] && [ -n "$2" ] || { echo "fake osc: rdelete without -m" >&2; exit 99; }
-    [ -z "${FAKE_RDELETE_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 403: Forbidden" >&2; exit 1; }
-    rm -f "$FAKE/meta-pkg-${3//:/_}-$4" ;;
-  results)
-    [ -z "${FAKE_RESULTS_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
-    cat "$FAKE/results.xml" ;;
-  api)
-    case "$1" in
-      /source/*)
-        [ -z "${FAKE_SRC_FAIL:-}" ] || { echo "Server returned an error: HTTP Error 500"; exit 1; }
-        printf '<directory name="foo" rev="2" srcmd5="%s"><entry name="_scmsync.obsinfo"/></directory>\n' "$FAKE_SRCMD5" ;;
-      /build/*/_history|/build/*/_jobhistory\?package=*)
-        # FAKE_HIST_*="<arch>/<packid> ...": which builds are stale, empty or
-        # unreadable. FAKE_HIST_UNCHANGED: rebuilt from the current sources with
-        # an unchanged result, a new job that adds no _history entry.
-        case "$1" in
-          */_history) ap=${1#/build/*/*/}; ap=${ap%/_history}; kind=hist ;;
-          *) ap=${1#/build/*/*/}; ap=${ap%%/*}; p=${1##*package=}; ap="$ap/${p%%&*}"; kind=job ;;
-        esac
-        case " ${FAKE_HIST_FAIL:-} " in *" $ap "*) echo "Server returned an error: HTTP Error 502"; exit 1;; esac
-        case " ${FAKE_HIST_EMPTY:-} " in *" $ap "*) [ $kind = hist ] && echo '<buildhistory/>' || echo '<jobhistlist/>'; exit 0;; esac
-        case " ${FAKE_HIST_GARBAGE:-} " in *" $ap "*) echo 'Server returned garbage'; exit 0;; esac
-        a=$FAKE_OLDMD5 b=$FAKE_SRCMD5
-        case " ${FAKE_HIST_STALE:-} " in *" $ap "*) a=$FAKE_SRCMD5 b=$FAKE_OLDMD5;; esac
-        case " ${FAKE_HIST_UNCHANGED:-} " in *" $ap "*) [ $kind = hist ] && a=$FAKE_SRCMD5 b=$FAKE_OLDMD5;; esac
-        if [ $kind = hist ]; then
-          printf '<buildhistory>\n  <entry rev="1" srcmd5="%s" bcnt="1"/>\n  <entry rev="2" srcmd5="%s" bcnt="1"/>\n</buildhistory>\n' "$a" "$b"
-        else
-          printf '<jobhistlist>\n  <jobhist package="%s" rev="2" srcmd5="%s" bcnt="1" code="succeeded"/>\n</jobhistlist>\n' "${ap#*/}" "$b"
-        fi ;;
-      *) echo "fake osc: unexpected api path $1" >&2; exit 99 ;;
-    esac ;;
-  *) echo "fake osc: unexpected subcommand $sub" >&2; exit 99 ;;
+  *) echo "fake geectl: unexpected subcommand $sub" >&2; exit 99 ;;
 esac
 EOF
-# git-obs reads its own login; the fake answers as $U.
+chmod +x "$work/bin/geectl"
+cat > "$work/bin/meta2json.py" <<'EOF'
+#!/usr/bin/env python3
+"""Convert a stored OBS meta XML document to the project/package-meta
+JSON geectl prints, for the fake geectl in test-target-gate.sh.
+
+Usage: meta2json.py prj|pkg FILE
+A stored meta that is not XML is printed raw (so the script reports it
+as unparseable) and the exit code is 0.
+"""
+import json
+import sys
+import xml.etree.ElementTree as ET
+
+kind, path = sys.argv[1], sys.argv[2]
+try:
+    root = ET.parse(path).getroot()
+except Exception:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        sys.stdout.write(f.read())
+    sys.exit(0)
+
+if kind == "prj":
+    doc = {
+        "name": root.get("name"),
+        "title": root.findtext("title"),
+        "description": root.findtext("description"),
+        "persons": [
+            {"name": p.get("userid"), "role": p.get("role")}
+            for p in root.findall("person")
+        ],
+        "repositories": [
+            {
+                "name": x.get("name"),
+                "arch": [a.text for a in x.findall("arch") if a.text],
+                "paths": [
+                    {"project": p.get("project"), "repository": p.get("repository")}
+                    for p in x.findall("path")
+                ],
+            }
+            for x in root.findall("repository")
+        ],
+    }
+else:
+    doc = {
+        "name": root.get("name"),
+        "project": root.get("project"),
+        "title": root.findtext("title"),
+        "description": root.findtext("description"),
+        "scmsync": root.findtext("scmsync"),
+    }
+print(json.dumps(doc))
+EOF
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
 echo "git-obs $*" >> "$FAKE/calls"
@@ -344,8 +443,8 @@ case_ option-needs-value 2 "--branch needs a value" "bash $TG --build --branch"
 C=$(fresh green); S=$(stampf "$C"); T12=$(tree "$C" | cut -c1-12)
 case_ build-green 0 "VERDICT: GREEN — tree $T12 on leap-16.0: built aarch64, resolves i586 x86_64 ppc64le s390x" \
   "cd $C && bash $TG --build"
-check_ build-green-one-native-build "[ \"\$(calls '^osc build ')\" = 1 ] && grep -qF -- 'osc build --clean --trust-all-projects --root $ROOTS/foo-leap-16.0-aarch64 --alternative-project=openSUSE:Backports:SLE-16.0 standard aarch64 foo.spec' $FAKE/calls"
-check_ build-green-resolves-the-rest "[ \"\$(calls '^osc buildinfo --alternative-project openSUSE:Backports:SLE-16.0 standard')\" = 4 ] && ! grep -q 'buildinfo.* aarch64 ' $FAKE/calls"
+check_ build-green-one-native-build "[ \"\$(calls '^geectl local-build build ')\" = 1 ] && grep -qF -- 'geectl local-build build --clean --trust-all-projects --root $ROOTS/foo-leap-16.0-aarch64 --alternative-project=openSUSE:Backports:SLE-16.0 --project openSUSE:Backports:SLE-16.0 --repo standard --arch aarch64 --live' $FAKE/calls"
+check_ build-green-resolves-the-rest "[ \"\$(calls '^geectl build buildinfo')\" = 4 ] && ! grep -q 'buildinfo.* aarch64$' $FAKE/calls"
 check_ build-green-stamp "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d[\"verdict\"]==\"GREEN\" and d[\"mode\"]==\"local\" and d[\"base\"]==\"leap-16.0\" and d[\"root\"].endswith(\"/foo-leap-16.0-aarch64\") and d[\"arches\"]==[\"aarch64\",\"i586\",\"ppc64le\",\"s390x\",\"x86_64\"] and d[\"commit\"]==sys.argv[2]))' $S \$(git -C $C rev-parse HEAD)"
 case_ check-no-review 3 "VERDICT: NO REVIEW — tree $T12 on leap-16.0 built GREEN" "cd $C && bash $TG"
 R="$work/review"
@@ -407,7 +506,7 @@ chg "$C" "Fix the build on Leap 16.0"; (cd "$C" && git commit -qam reword)
 N12=$(tree "$C" | cut -c1-12)
 case_ carry-changes-only 0 "VERDICT: GREEN — tree $N12 on leap-16.0: only foo.changes differs from GREEN tree ${OLD:0:12}" \
   "cd $C && bash $TG --build"
-check_ carry-builds-nothing "[ \"\$(calls '^osc build')\" = 0 ] && [ \"\$(calls '^osc buildinfo')\" = 0 ]"
+check_ carry-builds-nothing "[ \"\$(calls '^geectl local-build build')\" = 0 ] && [ \"\$(calls '^geectl build buildinfo')\" = 0 ]"
 check_ carry-stamp "python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); d=json.load(open(sys.argv[2])); sys.exit(not (d[\"verdict\"]==\"GREEN\" and d[\"mode\"]==\"carried\" and d[\"from\"]==sys.argv[3] and d[\"arches\"]==o[\"arches\"] and \"review\" not in d and d[\"commit\"]==sys.argv[4]))' $S $(stampf "$C") $OLD \$(git -C $C rev-parse HEAD)"
 case_ carry-needs-review 3 "VERDICT: NO REVIEW — tree $N12 on leap-16.0 built GREEN (carried" "bash $TG $C"
 printf 'PASS tree %s\n' "$N12" > "$R.carried"
@@ -415,16 +514,16 @@ case_ carry-review-then-green 0 "VERDICT: GREEN — tree $N12 on leap-16.0: buil
   "cd $C && bash $TG --review $R.carried && bash $TG"
 # A tree already stamped is built: that is how a carried build is made real.
 case_ carry-rebuilt-for-real 0 "VERDICT: GREEN — tree $N12 on leap-16.0: built aarch64" "cd $C && bash $TG --build && bash $TG"
-check_ carry-rebuilt-is-local "[ \"\$(calls '^osc build ')\" = 1 ] && grep -q '\"mode\": \"local\"' $(stampf "$C")"
+check_ carry-rebuilt-is-local "[ \"\$(calls '^geectl local-build build ')\" = 1 ] && grep -q '\"mode\": \"local\"' $(stampf "$C")"
 chg "$C" "Fix the build on Leap 16.0, again" "Thu Sep 24 2026 - T <t@example.com>"; (cd "$C" && git commit -qam badhdr)
 case_ carry-lint-fails-builds 0 "foo.changes fails changes-lint — building" "cd $C && bash $TG --build"
-check_ carry-lint-fails-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+check_ carry-lint-fails-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
 chg "$C" "Fix the build on Leap 16.0, once more"; (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam spec)
 case_ carry-spec-changed-builds 0 "built aarch64" "cd $C && bash $TG --build"
-check_ carry-spec-changed-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+check_ carry-spec-changed-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
 (cd "$C" && git rm -q foo.changes && git commit -qm drop)
 case_ carry-dropped-changes-builds 0 "built aarch64" "cd $C && bash $TG --build"
-check_ carry-dropped-changes-built "[ \"\$(calls '^osc build ')\" = 1 ]"
+check_ carry-dropped-changes-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
 # Another base's GREEN is no evidence for this one.
 chg "$C" "Fix the build on Leap 16.1"; (cd "$C" && git add foo.changes && git commit -qm readd)
 case_ carry-other-base-builds 0 "on leap-16.1: built aarch64" "bash $TG $C --branch leap-16.1 --build"
@@ -435,20 +534,21 @@ case_ red-drops-stamp 1 "RED: build: build-summary rc=1" \
 check_ red-drops-stamp-file "[ ! -e $(stampf "$C") ]"
 
 C=$(fresh b161)
-case_ build-16.1-jobs 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.1" "bash $TG $C --branch leap-16.1 --build --jobs 8"
-check_ build-16.1-root-and-jobs "grep -qF -- '--root $ROOTS/foo-leap-16.1-aarch64 --alternative-project=openSUSE:Backports:SLE-16.1 --jobs 8 standard aarch64' $FAKE/calls"
+case_ build-16.1 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.1" "bash $TG $C --branch leap-16.1 --build"
+case_ jobs-refused 2 "--jobs is refused: geectl local-build build takes no --jobs flag" "bash $TG $C --branch leap-16.1 --build --jobs 8"
+check_ build-16.1-root "grep -qF -- '--root $ROOTS/foo-leap-16.1-aarch64 --alternative-project=openSUSE:Backports:SLE-16.1 --project openSUSE:Backports:SLE-16.1 --repo standard --arch aarch64 --live' $FAKE/calls"
 case_ build-16.1-stamped-for-16.1 3 "VERDICT: NO REVIEW — tree $(tree "$C" | cut -c1-12) on leap-16.1 built GREEN" "bash $TG $C --branch leap-16.1"
 # The arches are the PR project's: Backports:SLE-16.1 has ppc64le and s390x,
 # its :PullRequest project (where the bot builds) does not.
 case_ build-16.1-pr-arches-only 0 "built aarch64, resolves i586 x86_64; stamped" \
   "FAKE_BI_ERROR='ppc64le s390x' bash $TG $C --branch leap-16.1 --build"
-check_ build-16.1-reads-pr-project "grep -qx 'osc meta prj openSUSE:Backports:SLE-16.1:PullRequest' $FAKE/calls && ! grep -qx 'osc meta prj openSUSE:Backports:SLE-16.1' $FAKE/calls"
+check_ build-16.1-reads-pr-project "grep -qx 'geectl remote project-meta openSUSE:Backports:SLE-16.1:PullRequest' $FAKE/calls && ! grep -qx 'geectl remote project-meta openSUSE:Backports:SLE-16.1' $FAKE/calls"
 
 C=$(fresh mb)
 (cd "$C" && printf '<multibuild>\n  <flavor>test</flavor>\n</multibuild>\n' > _multibuild && git add _multibuild && git commit -qm mb)
 case_ multibuild-flavors 0 "flavor (none): excluded on every leap-16.0 arch, skipped" \
   "cd $C && FAKE_QR_EXCL='=do_not_build' bash $TG --build"
-check_ multibuild-builds-the-flavor-only "[ \"\$(calls '^osc build ')\" = 1 ] && [ \"\$(calls '^osc build .* -M test standard aarch64 foo.spec')\" = 1 ] && [ \"\$(calls '^osc buildinfo .* -M test standard')\" = 4 ]"
+check_ multibuild-builds-the-flavor-only "[ \"\$(calls '^geectl local-build build ')\" = 1 ] && [ \"\$(calls '^geectl local-build build .* --flavor test ')\" = 1 ] && [ \"\$(calls '^geectl build buildinfo .* --package foo:test ')\" = 4 ]"
 case_ blacklisted-flavor-arch 0 "flavor test: build aarch64, resolve i586 x86_64 ppc64le" \
   "cd $C && FAKE_QR_EXCL='=do_not_build' FAKE_QC_EXCL='s390x=foo:test' FAKE_QC_ONLY='i586=foo' FAKE_BI_ERROR=s390x bash $TG --build"
 # OBS matches the build flags on the flavor's own id and on its package's name.
@@ -461,9 +561,9 @@ C=$(fresh mbpkg)
 case_ multibuild-package-entry 0 "flavor test: build aarch64, resolve i586 x86_64 ppc64le s390x" \
   "cd $C && FAKE_QR_EXCL='=do_not_build' bash $TG --build"
 
-# --- build-type=kvm: osc builds in <root>/.mount inside the image <root>/img -----
+# --- build-type=kvm: geectl builds in <root>/.mount inside the image <root>/img -----
 # The fake leaves an earlier chroot build's tree in the root, the right base
-# included; the verdict comes from osc's own output and the RPMs the VM handed
+# included; the verdict comes from geectl's own output and the RPMs the VM handed
 # back, never from that tree or the root's .build.log.
 C=$(fresh kvm)
 case_ kvm-build-green 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.0: built aarch64, resolves i586 x86_64 ppc64le s390x" \
@@ -497,31 +597,31 @@ case_ factory-marker 1 "RED: base: root has rpm-config-SUSE-20250904-1.4" \
 case_ failed-build 1 "RED: build: build-summary rc=1 (VERDICT: FAILED)" "cd $C && FAKE_BUILD=failed bash $TG --build"
 case_ unresolvable-elsewhere 1 "RED: buildinfo s390x: unresolvable: nothing provides bogus-devel" \
   "cd $C && FAKE_BI_ERROR=s390x bash $TG --build"
-check_ unresolvable-skips-the-build "[ \"\$(calls '^osc build ')\" = 0 ]"
+check_ unresolvable-skips-the-build "[ \"\$(calls '^geectl local-build build ')\" = 0 ]"
 case_ build-dirties-tree 1 "RED: worktree: the build left it dirty (?? junk.o)" \
   "cd $C && FAKE_BUILD_TOUCH=junk.o bash $TG --build"
 case_ build-changes-tree 1 "RED: worktree: HEAD's tree changed during the build" \
   "cd $(fresh moved) && FAKE_BUILD_COMMIT=sneaky bash $TG --build"
 case_ buildinfo-lookup-failed 1 "RED: buildinfo x86_64: lookup failed: Server returned an error: HTTP Error 502" \
   "cd $(fresh bifail) && FAKE_BI_FAIL=x86_64 bash $TG --build"
-case_ osc-exit-nonzero 1 "RED: build: build-summary rc=0 (VERDICT: GREEN), osc build rc=1" \
-  "cd $(fresh oscrc) && FAKE_OSC_RC=1 bash $TG --build"
+case_ geectl-exit-nonzero 1 "RED: build: build-summary rc=0 (VERDICT: GREEN), geectl local-build build rc=1" \
+  "cd $(fresh buildrc) && FAKE_BUILD_RC=1 bash $TG --build"
 check_ red-leaves-no-stamp "[ ! -d $C/.git/target-gate ] || [ -z \"\$(ls $C/.git/target-gate)\" ]"
-case_ log-failed-osc-zero 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=0" \
-  "cd $(fresh logfail) && FAKE_BUILD=failed FAKE_OSC_RC=0 bash $TG --build"
+case_ log-failed-geectl-zero 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), geectl local-build build rc=0" \
+  "cd $(fresh logfail) && FAKE_BUILD=failed FAKE_BUILD_RC=0 bash $TG --build"
 C=$(fresh norecipe)
 case_ log-names-no-recipe 1 "RED: recipe: the log built no recipe, not $C/foo.spec" "cd $C && FAKE_NO_RECIPE=1 bash $TG --build"
 # Run through a symlink, siblings still come from the real scripts directory:
 # a build-summary.sh planted next to the link would read a failed log as green.
 mkdir -p "$work/link" && ln -s "$TG" "$work/link/target-gate.sh"
 printf '#!/bin/sh\necho "VERDICT: GREEN"\n' > "$work/link/build-summary.sh" && chmod +x "$work/link/build-summary.sh"
-case_ symlink-uses-real-siblings 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=0" \
-  "cd $(fresh symlink) && FAKE_BUILD=failed FAKE_OSC_RC=0 bash $work/link/target-gate.sh --build"
+case_ symlink-uses-real-siblings 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), geectl local-build build rc=0" \
+  "cd $(fresh symlink) && FAKE_BUILD=failed FAKE_BUILD_RC=0 bash $work/link/target-gate.sh --build"
 C=$(fresh kvmred); R0="$ROOTS/foo-leap-16.0-aarch64"
-case_ kvm-failed-build 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=1" \
+case_ kvm-failed-build 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), geectl local-build build rc=1" \
   "cd $C && FAKE_VM=kvm FAKE_BUILD=failed bash $TG --build"
-case_ kvm-osc-exit-nonzero 1 "RED: build: build-summary rc=0 (VERDICT: GREEN), osc build rc=1" \
-  "cd $C && FAKE_VM=kvm FAKE_OSC_RC=1 bash $TG --build"
+case_ kvm-geectl-exit-nonzero 1 "RED: build: build-summary rc=0 (VERDICT: GREEN), geectl local-build build rc=1" \
+  "cd $C && FAKE_VM=kvm FAKE_BUILD_RC=1 bash $TG --build"
 # The guest names its own copy of the recipe: that line is dropped, nothing else.
 case_ kvm-tesseract-replay 1 "RED: recipe: the log built /var/tmp/tess-fix/foo.spec, not $C/foo.spec" \
   "cd $C && FAKE_VM=kvm FAKE_RECIPE_DIR=/var/tmp/tess-fix bash $TG --build"
@@ -539,8 +639,8 @@ case_ kvm-wrong-base-marker 1 "RED: base: root has rpm-config-SUSE-20250328-1601
 # right base: neither stands in for what this build logged.
 case_ kvm-no-install-line 1 "RED: base: root has no rpm-config-SUSE, want release -160000.* for leap-16.0" \
   "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_NO_CUMULATE=1 bash $TG --build"
-case_ kvm-log-failed-osc-zero 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), osc build rc=0" \
-  "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_BUILD=failed FAKE_OSC_RC=0 bash $TG --build"
+case_ kvm-log-failed-geectl-zero 1 "RED: build: build-summary rc=1 (VERDICT: FAILED), geectl local-build build rc=0" \
+  "cd $C && FAKE_VM=kvm FAKE_ROOTLOG=green FAKE_BUILD=failed FAKE_BUILD_RC=0 bash $TG --build"
 # The user()/group() check runs on the RPMs the build made, in either mode.
 case_ kvm-unprovided-user 1 "RED: build: build-summary rc=1 (VERDICT: FAILED (not installable: nothing provides user(foo)))" \
   "cd $C && FAKE_VM=kvm FAKE_RPM_USER=foo bash $TG --build"
@@ -552,16 +652,16 @@ case_ kvm-stale-rpm 1 "RED: rpms: $R0/.mount/.build.packages holds files from be
   "cd $C && FAKE_VM=kvm FAKE_STALE_RPM=1 bash $TG --build"
 case_ kvm-stale-srpm 1 "RED: rpms: $R0/.mount/.build.packages holds files from before this build (old-0.9-0.src.rpm)" \
   "cd $C && FAKE_VM=kvm FAKE_STALE_SRPM=1 bash $TG --build"
-case_ log-built-elsewhere 1 "RED: build: the log built in /var/tmp/elsewhere, not $R0, osc build rc=0" \
+case_ log-built-elsewhere 1 "RED: build: the log built in /var/tmp/elsewhere, not $R0, geectl local-build build rc=0" \
   "cd $C && FAKE_BUILD_ROOT=/var/tmp/elsewhere bash $TG --build"
-# osc printed nothing, and the root holds a GREEN log: every check reds, so
+# geectl printed nothing, and the root holds a GREEN log: every check reds, so
 # this is no single-RED case_.
-out=$(cd "$C" && FAKE_OSC_SILENT=1 bash "$TG" --build 2>&1); rc=$?
-check_ osc-output-is-the-log "[ $rc = 1 ] && grep -qF 'RED: build: the log built in no build root, not $R0, osc build rc=0' <<<\"\$out\""
-# osc failed before the build: its error line is shown, sanitized.
+out=$(cd "$C" && FAKE_BUILD_SILENT=1 bash "$TG" --build 2>&1); rc=$?
+check_ geectl-output-is-the-log "[ $rc = 1 ] && grep -qF 'RED: build: the log built in no build root, not $R0, geectl local-build build rc=0' <<<\"\$out\""
+# geectl failed before the build: its error line is shown, sanitized.
 esc=$'\e' bel=$'\a'
-out=$(cd "$C" && FAKE_OSC_ERROR="Server returned an error: HTTP Error 502: ${esc}[31mBad Gateway" bash "$TG" --build 2>&1); rc=$?
-check_ osc-error-shown-sanitized "[ $rc = 1 ] && grep -qF 'Server returned an error: HTTP Error 502: Bad Gateway' <<<\"\$out\" && ! grep -qF \"\$esc\" <<<\"\$out\""
+out=$(cd "$C" && FAKE_BUILD_ERROR="Server returned an error: HTTP Error 502: ${esc}[31mBad Gateway" bash "$TG" --build 2>&1); rc=$?
+check_ geectl-error-shown-sanitized "[ $rc = 1 ] && grep -qF 'Server returned an error: HTTP Error 502: Bad Gateway' <<<\"\$out\" && ! grep -qF \"\$esc\" <<<\"\$out\""
 # So are the recipe and the rpm-config-SUSE the log names: an OSC 52 and an SGR.
 out=$(cd "$C" && FAKE_RECIPE_DIR="/var/tmp/x${esc}]52;c;aGk=${bel}" bash "$TG" --build 2>&1); rc=$?
 check_ recipe-shown-sanitized "[ $rc = 1 ] && grep -qF 'RED: recipe: the log built /var/tmp/x/foo.spec, not $C/foo.spec' <<<\"\$out\" && ! grep -qF -e \"\$esc\" -e \"\$bel\" <<<\"\$out\""
@@ -694,13 +794,15 @@ case_ multibuild-unreadable 2 "_multibuild is unreadable" "bash $TG $C --build"
 C=$(fresh remote); H=$(git -C "$C" rev-parse HEAD); BR="leapgate/leap-16.0-${H:0:12}"
 PKGMETA="$FAKE/meta-pkg-home_${U}_leapgate-foo"; PRJMETA="$FAKE/meta-prj-home_${U}_leapgate"
 results() {   # results "<arch>:<code> ..." [dirty arch] [repository]
-  { echo '<resultlist state="x">'
-    for ac in $1; do
-      d=""; [ "${ac%%:*}" = "${2:-}" ] && d=' dirty="true"'
-      printf '<result repository="%s" arch="%s" code="published" state="published"%s><status package="foo" code="%s"/></result>\n' \
-        "${3:-leap-16.0}" "${ac%%:*}" "$d" "${ac#*:}"
-    done
-    echo '</resultlist>'; } > "$FAKE/results.xml"
+  python3 - "$1" "${2:-}" "${3:-leap-16.0}" > "$FAKE/results.json" <<'PY'
+import json,sys
+repo=sys.argv[3]; dirty=sys.argv[2]
+res=[]
+for ac in sys.argv[1].split():
+    a,c=ac.split(":",1)
+    res.append({"project":"home:tester:leapgate","repository":repo,"arch":a,"code":"published","state":"published","dirty":a==dirty,"details":"","statuses":[{"package":"foo","code":c,"details":""}]})
+print(json.dumps({"state":"x","results":res}))
+PY
 }
 export FAKE_LFS='*'
 case_ remote-first-call 3 "pointed $GPRJ/foo at $BR#${H:0:12}" "bash $TG $C --remote"
@@ -711,7 +813,7 @@ check_ remote-lfs-before-ref "l=\$(grep -n '^git-lfs push' $FAKE/calls | cut -d:
 check_ remote-pkg-meta "grep -qF '<scmsync>https://src.opensuse.org/$U/foo?trackingbranch=$BR#$H</scmsync>' $PKGMETA && grep -qF '<disable repository=\"leap-16.1\" />' $PKGMETA"
 check_ remote-prj-meta "python3 -c 'import sys,xml.etree.ElementTree as E; r=E.parse(sys.argv[1]).getroot(); g={x.get(\"name\"):([(p.get(\"project\"),p.get(\"repository\")) for p in x.findall(\"path\")],[a.text for a in x.findall(\"arch\")]) for x in r.findall(\"repository\")}; a=[\"i586\",\"x86_64\",\"aarch64\"]; sys.exit(g!={\"leap-16.0\":([(\"openSUSE:Backports:SLE-16.0\",\"standard\")],a+[\"ppc64le\",\"s390x\"]),\"leap-16.1\":([(\"openSUSE:Backports:SLE-16.1\",\"standard\")],a)})' $PRJMETA"
 case_ remote-not-synced 3 "has no _scmsync.obsinfo yet" "bash $TG $C --remote"
-check_ remote-meta-not-rewritten "[ \"\$(calls '^osc meta .*-F')\" = 0 ]"
+check_ remote-meta-not-rewritten "[ \"\$(calls '^geectl remote set-.*-meta --from-file')\" = 0 ]"
 case_ remote-pr-meta-failed 2 "cannot read the openSUSE:Backports:SLE-16.0:PullRequest meta: Server returned an error: HTTP Error 503" \
   "FAKE_META_FAIL=1 bash $TG $C --remote"
 C2=$(fresh pushfail); (cd "$C2" && printf -- '- push\n' >> foo.changes && git commit -qam push)
@@ -746,7 +848,7 @@ case_ remote-commit-mismatch 3 "OBS synced 0123456789ab, HEAD is $H" \
   "FAKE_OBSINFO_COMMIT=0123456789ab bash $TG $C --remote"
 results "x86_64:succeeded aarch64:succeeded s390x:building"
 case_ remote-building 3 "still scheduling or building" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-check_ remote-pending-keeps-package "[ \"\$(calls '^osc rdelete')\" = 0 ] && [ -e $PKGMETA ]"
+check_ remote-pending-keeps-package "[ \"\$(calls '^geectl remote delete-package')\" = 0 ] && [ -e $PKGMETA ]"
 results "x86_64:succeeded aarch64:succeeded" aarch64
 case_ remote-dirty 3 "(dirty: aarch64)" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "x86_64:failed aarch64:succeeded s390x:excluded"
@@ -757,11 +859,11 @@ results "i586:excluded x86_64:excluded aarch64:excluded ppc64le:excluded s390x:e
 case_ remote-all-excluded 1 "excluded on every arch" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "x86_64:broken aarch64:succeeded"
 case_ remote-broken-arch 1 "VERDICT: RED — $GPRJ/foo on leap-16.0 failed" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-echo '<resultlist state="x"></resultlist>' > "$FAKE/results.xml"
+printf '{"state":"x","results":[]}\n' > "$FAKE/results.json"
 case_ remote-no-results 3 "no results for repository leap-16.0 yet" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-printf '<resultlist state="x"><result repository="leap-16.0" arch="aarch64" code="scheduling" state="scheduling"><status package="foo" code="succeeded"/></result></resultlist>\n' > "$FAKE/results.xml"
+printf '{"state":"x","results":[{"project":"%s","repository":"leap-16.0","arch":"aarch64","code":"scheduling","state":"scheduling","dirty":false,"details":"","statuses":[{"package":"foo","code":"succeeded","details":""}]}]}\n' "$GPRJ" > "$FAKE/results.json"
 case_ remote-scheduling 3 "still scheduling or building" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-echo 'Server returned garbage' > "$FAKE/results.xml"
+echo 'Server returned garbage' > "$FAKE/results.json"
 case_ remote-results-garbage 2 "unparseable $GPRJ/foo results" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 check_ remote-results-garbage-no-stamp "[ ! -e $(stampf "$C") ]"
 case_ remote-results-unreadable 2 "cannot read the $GPRJ/foo results" \
@@ -774,22 +876,22 @@ case_ remote-pr-arch-missing 3 "no result on ppc64le s390x yet" "FAKE_OBSINFO_CO
 results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
 case_ remote-stale-build 3 "source ${FAKE_SRCMD5:0:12} not built yet on aarch64/foo (built ${FAKE_OLDMD5:0:12})" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_STALE=aarch64/foo bash $TG $C --remote"
-check_ remote-obsinfo-read-at-that-source "grep -qxF 'osc api /source/$GPRJ/foo?expand=1' $FAKE/calls && grep -qxF 'osc cat -r $FAKE_SRCMD5 $GPRJ foo _scmsync.obsinfo' $FAKE/calls"
-check_ remote-reads-last-job "grep -qxF 'osc api /build/$GPRJ/leap-16.0/aarch64/_jobhistory?package=foo&limit=1' $FAKE/calls"
+check_ remote-obsinfo-read-at-that-source "grep -qxF 'geectl remote package-log --limit 1 $GPRJ foo' $FAKE/calls && grep -qxF 'geectl remote cat --rev $FAKE_SRCMD5 $GPRJ foo _scmsync.obsinfo' $FAKE/calls"
+check_ remote-reads-last-job "grep -qxF 'geectl build job-history --package foo --limit 1 $GPRJ leap-16.0 aarch64' $FAKE/calls"
 case_ remote-never-built 3 "not built yet on x86_64/foo (built nothing)" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_EMPTY=x86_64/foo bash $TG $C --remote"
 case_ remote-history-unreadable 2 "cannot read the $GPRJ/leap-16.0/ppc64le/foo job history: Server returned an error: HTTP Error 502" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_FAIL=ppc64le/foo bash $TG $C --remote"
 case_ remote-history-garbage 2 "unparseable $GPRJ/leap-16.0/i586/foo job history" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_GARBAGE=i586/foo bash $TG $C --remote"
-case_ remote-sources-unreadable 2 "cannot read the $GPRJ/foo sources: Server returned an error: HTTP Error 500" \
+case_ remote-sources-unreadable 2 "cannot read the $GPRJ/foo package log: Server returned an error: HTTP Error 500" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_SRC_FAIL=1 bash $TG $C --remote"
 # A flavor's build is its own.
-{ echo '<resultlist state="x">'
-  for a in i586 x86_64 aarch64 ppc64le s390x; do
-    printf '<result repository="leap-16.0" arch="%s" code="published" state="published"><status package="foo" code="succeeded"/><status package="foo:test" code="succeeded"/></result>\n' "$a"
-  done
-  echo '</resultlist>'; } > "$FAKE/results.xml"
+python3 - > "$FAKE/results.json" <<'PY'
+import json
+res=[{"project":"home:tester:leapgate","repository":"leap-16.0","arch":a,"code":"published","state":"published","dirty":False,"details":"","statuses":[{"package":"foo","code":"succeeded","details":""},{"package":"foo:test","code":"succeeded","details":""}]} for a in ["i586","x86_64","aarch64","ppc64le","s390x"]]
+print(json.dumps({"state":"x","results":res}))
+PY
 case_ remote-stale-flavor 3 "not built yet on aarch64/foo:test (built ${FAKE_OLDMD5:0:12})" \
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_STALE=aarch64/foo:test bash $TG $C --remote"
 check_ remote-stale-no-stamp "[ ! -e $(stampf "$C") ]"
@@ -800,14 +902,14 @@ case_ remote-unchanged-rebuild 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-
   "FAKE_OBSINFO_COMMIT=$H FAKE_HIST_UNCHANGED='i586/foo x86_64/foo aarch64/foo ppc64le/foo' bash $TG $C --remote"
 bash "$TG" "$C" --remote >/dev/null
 # The other base's repository is not this base's verdict.
-{ echo '<resultlist state="x">'
-  printf '<result repository="leap-16.1" arch="x86_64" code="published" state="published"><status package="foo" code="failed"/></result>\n'
-  for a in i586 x86_64 aarch64 ppc64le s390x; do
-    printf '<result repository="leap-16.0" arch="%s" code="published" state="published"><status package="foo" code="succeeded"/></result>\n' "$a"
-  done
-  echo '</resultlist>'; } > "$FAKE/results.xml"
+python3 - > "$FAKE/results.json" <<'PY'
+import json
+res=[{"project":"home:tester:leapgate","repository":"leap-16.1","arch":"x86_64","code":"published","state":"published","dirty":False,"details":"","statuses":[{"package":"foo","code":"failed","details":""}]}]
+res+=[{"project":"home:tester:leapgate","repository":"leap-16.0","arch":a,"code":"published","state":"published","dirty":False,"details":"","statuses":[{"package":"foo","code":"succeeded","details":""}]} for a in ["i586","x86_64","aarch64","ppc64le","s390x"]]
+print(json.dumps({"state":"x","results":res}))
+PY
 case_ remote-other-repo-ignored 0 "VERDICT: GREEN" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-check_ remote-green-deletes-package "grep -qx 'osc rdelete -m .* $GPRJ foo' $FAKE/calls && [ ! -e $PKGMETA ]"
+check_ remote-green-deletes-package "grep -qx 'geectl remote delete-package --message .* $GPRJ foo --live' $FAKE/calls && [ ! -e $PKGMETA ]"
 # The next run of the same tree builds it again, in a new package.
 case_ remote-green-rerun-repoints 3 "pointed $GPRJ/foo at $BR#${H:0:12}" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
 results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:succeeded s390x:excluded"
@@ -827,7 +929,7 @@ check_ remote-green-stamp "python3 -c 'import json,sys; d=json.load(open(sys.arg
 results "i586:succeeded x86_64:unresolvable aarch64:succeeded"
 bash "$TG" "$C" --remote >/dev/null
 case_ remote-red-drops-stamp 1 "VERDICT: RED" "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
-check_ remote-red-keeps-package "[ \"\$(calls '^osc rdelete')\" = 0 ] && [ -e $PKGMETA ]"
+check_ remote-red-keeps-package "[ \"\$(calls '^geectl remote delete-package')\" = 0 ] && [ -e $PKGMETA ]"
 check_ remote-red-drops-stamp-file "[ ! -e $(stampf "$C") ]"
 check_ remote-red-kept-branch "[ \"\$(git -C $work/forge/$U/foo.git rev-parse refs/heads/$BR)\" = $H ]"
 # A failing cleanup is a warning, not a verdict change: still GREEN, rc 0.
@@ -846,11 +948,11 @@ check_ remote-other-base-disables-16.0 "grep -qF '<disable repository=\"leap-16.
 results "i586:succeeded x86_64:succeeded aarch64:succeeded ppc64le:failed" "" leap-16.1
 case_ remote-16.1-pr-arches-only 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) built on $GPRJ/leap-16.1" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --branch leap-16.1 --remote"
-case_ remote-account-from-oscrc 3 "pointed $GPRJ/foo at" "FAKE_WHOIS_FAIL=1 bash $TG $(fresh remote2) --remote"
+case_ remote-account-from-env 3 "pointed $GPRJ/foo at" "FAKE_WHOIS_FAIL=1 bash $TG $(fresh remote2) --remote"
 # The git config comes along so that even a broken gate pushes to the fake forge only.
 mkdir -p "$work/home3" && cp "$HOME/.gitconfig" "$work/home3/"
 case_ remote-no-account 2 "cannot determine your OBS account" \
-  "FAKE_WHOIS_FAIL=1 HOME=$work/home3 bash $TG $(fresh remote3) --remote"
+  "FAKE_WHOIS_FAIL=1 GEECTL_OBS_USERNAME= HOME=$work/home3 bash $TG $(fresh remote3) --remote"
 (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam next)
 case_ remote-new-commit-repoints 3 "pointed $GPRJ/foo at leapgate/leap-16.0-$(git -C "$C" rev-parse HEAD | cut -c1-12)" \
   "FAKE_OBSINFO_COMMIT=$H bash $TG $C --remote"
@@ -861,7 +963,7 @@ bash "$TG" "$C5" --remote >/dev/null; FAKE_OBSINFO_COMMIT=$H5 bash "$TG" "$C5" -
 chg "$C5" "Fix the build on Leap 16.0"; (cd "$C5" && git commit -qam reword)
 case_ remote-carry-changes-only 0 "only foo.changes differs from GREEN tree $(git -C "$C5" rev-parse 'HEAD~1^{tree}' | cut -c1-12)" \
   "bash $TG $C5 --remote"
-check_ remote-carry-no-obs-no-push "! grep -qE '^(osc (meta|api|cat|results|rdelete)|git-lfs push|tea |git-obs .*fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
+check_ remote-carry-no-obs-no-push "! grep -qE '^(geectl (remote|build)|git-lfs push|tea |git-obs .*fork)' $FAKE/calls && [ -z \"\$(git -C $work/forge/$U/foo.git for-each-ref refs/heads/leapgate/leap-16.0-\$(git -C $C5 rev-parse HEAD | cut -c1-12))\" ]"
 unset FAKE_LFS
 
 # Static: git-obs and ssh hold the forge credentials; the gate reads none and passes none on.
