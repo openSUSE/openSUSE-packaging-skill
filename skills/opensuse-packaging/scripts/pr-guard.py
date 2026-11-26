@@ -153,7 +153,7 @@ Environment:
                       <pkg>.xml is Factory's _meta, src/<prj>/<pkg>.xml the
                       target's source listing, api/<path, /?&= as _> any other
                       GET ("@ERR" fails it); a missing file reads as a 404
-  PR_GUARD_OBS_USER   the OBS account the asks judge (default: osc whois)
+  PR_GUARD_OBS_USER   the OBS account the asks judge (default: geectl remote whois)
 
 A call that matches nothing guarded is allowed without a lookup. Once one
 matches, anything the guard cannot establish -- a remote, branch or repository

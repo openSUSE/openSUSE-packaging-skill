@@ -1811,9 +1811,13 @@ def osc_api_each(paths, ctx):
 
 
 def obs_user(ctx):
-    """The OBS account this session acts as: PR_GUARD_OBS_USER, else osc
-    whois, asked once per call and instance and kept in memory only (a file a
-    call can write could name someone else); "" when neither says."""
+    """The OBS account this session acts as: PR_GUARD_OBS_USER, else geectl
+    remote whois, asked once per call and instance and kept in memory only
+    (a file a call can write could name someone else); "" when neither says.
+    remote whois has no instance flag, so the plain call answers for the
+    default URL (entry 20 owns per-call selection); the cache stays keyed
+    per apiurl."""
+    import json
     import subprocess
     import time
 
@@ -1824,15 +1828,15 @@ def obs_user(ctx):
     if not user and left > 0:
         try:
             r = subprocess.run(
-                ["osc", *(["-A", ctx.apiurl] if ctx.apiurl else []), "whois"],
+                ["geectl", "remote", "whois"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=left,
             )
             if r.returncode == 0:
-                user = r.stdout.split(":", 1)[0].strip()
-        except (OSError, subprocess.TimeoutExpired):
+                user = json.loads(r.stdout).get("login", "") or ""
+        except (OSError, subprocess.TimeoutExpired, ValueError):
             pass
     ctx.users[ctx.apiurl] = user
     return user
@@ -1864,7 +1868,7 @@ def maintains(prj, pkg, ctx):
     whose _meta has <scmsync> is judged by its project git (git_maintained())."""
     user = obs_user(ctx)
     if not user:
-        return False, "the account is unknown (osc whois failed)"
+        return False, "the account is unknown (geectl remote whois failed)"
     obs_batch([f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"], ctx)
     metas = []
     for path in (f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"):
@@ -1907,7 +1911,7 @@ def eligible(prj, pkg, ctx):
     Reviewers of its workflow.config."""
     user = obs_user(ctx)
     if not user:
-        return False, "the account is unknown (osc whois failed)"
+        return False, "the account is unknown (geectl remote whois failed)"
     obs_batch(
         [
             f"/source/{prj}/{pkg}/_meta",
@@ -2087,7 +2091,7 @@ def others_request(rid, what, ctx):
         return
     user, creator = obs_user(ctx), req.get("creator") or "no one named"
     if not user:
-        why = "the account is unknown (osc whois failed)"
+        why = "the account is unknown (geectl remote whois failed)"
     elif creator != user:
         why = f"filed by {creator}"
     else:
@@ -2261,7 +2265,7 @@ def accept_one(rid, ctx, forced="", review=False):
         block("incoming-accept", f"cannot read request {rid}, nor who filed it")
     user = obs_user(ctx)
     if not user:
-        block("incoming-accept", f"request {rid}: the account is unknown (osc whois)")
+        block("incoming-accept", f"request {rid}: the account is unknown (geectl remote whois)")
     if req.get("creator") != user:
         foreign_accept(rid, req, forced, ctx)
         return
@@ -2753,7 +2757,7 @@ def git_obs_approve(rest, ctx, cwd):
         refuse("a pool PR is never an agent's to approve")
     user = obs_user(ctx)
     if not user:
-        refuse("the account is unknown (osc whois failed)")
+        refuse("the account is unknown (geectl remote whois failed)")
     ok, pr = gitea_get(f"repos/{owner}/{repo}/pulls/{n}", ctx)
     full = field(pr, "base", "repo", "full_name")
     if not ok or not isinstance(full, str) or full.lower() != f"{owner}/{repo}".lower():
@@ -3060,7 +3064,7 @@ def tea_item(owner, repo, n, ctx, text=None):
     always asks, after the maintainer check of Factory's devel project."""
     user = obs_user(ctx)
     if not user:
-        return "the account is unknown (osc whois failed)"
+        return "the account is unknown (geectl remote whois failed)"
     ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
     if not ok:
         return f"cannot read {item}"
@@ -3497,7 +3501,7 @@ def others_pr(owner, repo, n, ctx):
     PR is an issue too, which the issues endpoint returns with its author."""
     user = obs_user(ctx)
     if not user:
-        return "the account is unknown (osc whois failed)"
+        return "the account is unknown (geectl remote whois failed)"
     ok, item = gitea_get(f"repos/{owner}/{repo}/issues/{n}", ctx)
     if not ok:
         return f"cannot read {item}"

@@ -2409,12 +2409,16 @@ case_ seq-tar-x-dotdot-then-ci   2 gate-sequence "this call also runs tar"
 case_ seq-cp-project-then-sr     2 gate-sequence "this call also runs cp"
 case_ seq-cp-home-then-ci        0 - ""
 case_ seq-cp-other-co-then-ci    0 - ""
-# The account: osc whois, once per call and in memory only. A file a call can write is
+# The account: geectl remote whois, once per call and in memory only. A file a call can write is
 # no source for it: an earlier call could name someone else there.
 mkdir -p "$work/whois/bin" "$work/whois/home/.cache/opensuse-packaging"
-# shellcheck disable=SC2016  # the fake osc's own $1 and $*, expanded when it runs
-printf '#!/bin/bash\n[ "$1" = whois ] || exit 99\necho "osc $*" >> "%s/calls"\necho "tester: \\"Tester\\" <t@example.com>"\n' \
-  "$work/whois" > "$work/whois/bin/osc"; chmod +x "$work/whois/bin/osc"
+cat > "$work/whois/bin/geectl" <<'GEO'
+#!/bin/bash
+[ "$1" = remote ] && [ "$2" = whois ] || exit 99
+echo "geectl $*" >> "$(dirname "$0")/../calls"
+printf '%s\n' '{"login":"tester","email":"t@example.com","realname":"Tester","state":"confirmed"}'
+GEO
+chmod +x "$work/whois/bin/geectl"
 for f in pr-guard-user-da39a3ee5e6b4b0d pr-guard-user; do
   printf 'other\n' > "$work/whois/home/.cache/opensuse-packaging/$f"
 done
@@ -2429,7 +2433,7 @@ touch "$work/whois/mark"; sleep 1
 out="$(whois_ accept-two-own)"
 [ "$(grep -c whois "$work/whois/calls")" = 2 ] && grep -qF "ASK [accept-forward] accepting request 1390004" <<<"$out" \
   && [ -z "$(find "$work/whois/home" -newer "$work/whois/mark" 2>/dev/null)" ] \
-  && pass "osc whois runs once per call and nothing is written for the next one" \
+  && pass "geectl remote whois runs once per call and nothing is written for the next one" \
   || fail "whois: $(grep -c whois "$work/whois/calls") calls, written: $(find "$work/whois/home" -newer "$work/whois/mark")"
 # A python3 that cannot import osc's library: each lookup falls back to osc api.
 mkdir -p "$work/nolib/osc" "$work/nolib/bin"
@@ -2445,6 +2449,14 @@ case $1 in
 esac
 OSC
 chmod +x "$work/nolib/bin/osc"
+# A geectl that answers remote whois for the planted account (the osc api
+# case above stays: entry 10 owns the batch path it serves).
+cat > "$work/nolib/bin/geectl" <<'GEO'
+#!/bin/bash
+[ "$1" = remote ] && [ "$2" = whois ] || exit 99
+printf '%s\n' '{"login":"tester","email":"t@example.com","realname":"Tester","state":"confirmed"}'
+GEO
+chmod +x "$work/nolib/bin/geectl"
 out="$(ev sr-devel-target-live | env -u PR_GUARD_META_DIR FIX="$work/meta/api" PYTHONPATH="$work/nolib" \
   PATH="$work/nolib/bin:$PATH" python3 "$GUARD" 2>&1)"; got=$?
 [ "$got" = 0 ] && ! grep -qF BLOCKED <<<"$out" \
