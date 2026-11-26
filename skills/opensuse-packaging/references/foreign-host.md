@@ -27,10 +27,7 @@ service is satisfied by the `spec-cleaner-format_spec_file` package:
 need it — `geectl local-build build` runs the services in the container — and
 `geectl commit --noservice` skips the services a commit would run. The services are a local
 convenience, not part of the build — and the spec-cleaner pass in the core
-directive already covers the formatting the service would do. This is the same
-reason a mode-blind service run stays forbidden:
-`references/source-services.md` "Service modes decide what you run AND what
-you commit".
+directive already covers the formatting the service would do.
 
 ## Containers
 
