@@ -1534,6 +1534,9 @@ case_ geectl-commit-no-message       2 request-no-message "geectl commit without
 case_ geectl-request-no-message      2 request-no-message "geectl request file without --changes-entry and --description"
 case_ geectl-request-message         2 request-message "a geectl request file message with 167 characters of prose"
 case_ geectl-request-message-unknown 2 request-message-unknown "the geectl request file message (\$MSG)"
+# Accept without --comment is not a no-message refusal: --comment
+# defaults to "", so no editor opens; it asks like any accept.
+ask_ geectl-accept-own-no-comment accept-forward "accepting request 1390004"
 
 echo "--- a submit request goes to the devel project Factory's _meta names"
 case_ sr-target-swept            2 retired-osc "an osc command"

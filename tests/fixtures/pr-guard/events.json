@@ -12539,5 +12539,12 @@
       "command": "set -a; (( n = 1 )); declare -i k; a[$n]=1; ls /var/tmp"
     },
     "cwd": "@PLAIN@"
+  },
+  "geectl-accept-own-no-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request accept 1390004"
+    },
+    "cwd": "@PLAIN@"
   }
 }
