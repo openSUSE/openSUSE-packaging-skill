@@ -15,8 +15,8 @@ You run in the openSUSE packaging container. What differs from a workstation:
   it: pass no `-i` and no known-hosts option.
 - **Reports go under `reports/` in the work directory.** The user cannot open
   `/var/tmp` or `/tmp` of the container; `/var/tmp` survives a restart, `/tmp` does not.
-- **Sub-agents:** start an update with `osc-update-build`, a review with
-  `changes-review`, a submission with `osc-submit-watch`, the review of a
+- **Sub-agents:** start an update with `geectl-update-build`, a review with
+  `changes-review`, a submission with `geectl-submit-watch`, the review of a
   contributor's submission with `incoming-review`. The agent `general`
   cannot start a review.
 - **No accept, approval or decline of a contributor's submission here.** The

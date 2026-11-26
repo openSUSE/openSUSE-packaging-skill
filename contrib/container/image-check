@@ -38,7 +38,7 @@ done <<'EOF'
 opencode --version
 geectl --help
 geectl --version
-git-obs --help
+geectl gitea --help
 tea --version
 gh --version
 bugwarden --version

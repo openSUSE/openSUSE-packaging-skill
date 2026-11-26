@@ -23,7 +23,7 @@ the host lends it a terminal. A draft, like the rest of `contrib/`.
 - The skill as a git repository of root's, with the ref pr-guard pins: the guard lets
   only the pinned `target-gate.sh` and `pool-pr.sh` record a review or open a Leap pool
   PR, and without that the container could do neither.
-- geectl, git-obs, tea, gh, spec-cleaner, rpmlint, rpmcrab, rpmdevtools, git, ssh, jq, curl,
+- geectl, tea, gh, spec-cleaner, rpmlint, rpmcrab, rpmdevtools, git, ssh, jq, curl,
   wget and the source services `source_validator`, `download_files`, `obs_scm`, `tar`,
   `recompress`, `set_version`, `format_spec_file`, `node_modules`, `cargo_vendor`,
   `go_modules`, with the cargo and go those two call, and `obs_scm_bridge`, which the
