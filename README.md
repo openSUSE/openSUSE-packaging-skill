@@ -182,7 +182,7 @@ CI runs exactly these, so the two cannot drift:
 ```
 python3 -m pip install osc==1.27.3
 # geectl for check-geectl.py: install the released CLI from crates.io.
-cargo install geectl --version 0.2.1
+cargo install geectl --version 0.2.3
 (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
 python3 tests/test-update-checkers.py
 python3 tests/repo/check-skills.py

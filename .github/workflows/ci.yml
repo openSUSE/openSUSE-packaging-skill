@@ -51,7 +51,7 @@ jobs:
         with:
           toolchain: 1.99.1
       - name: Install geectl
-        run: cargo install geectl --version 0.2.1
+        run: cargo install geectl --version 0.2.3
       - name: Script suites
         # `|| rc=1` and NOT `|| break`: break returns 0, so the loop would report
         # success on a failing suite -- green forever, for no reason anyone sees.
