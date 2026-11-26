@@ -36,14 +36,15 @@ Usage:
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
     --user      OBS account (default: $GEECTL_OBS_USERNAME)
 
-The PR leg reads src.opensuse.org through `git-obs -G src.opensuse.org api`.
-git-obs reads its login itself (shared with tea by default); this script never
-reads it. -G picks the login named src.opensuse.org, or the only one for that
-host (`git-obs login add`), so a default login for another forge is never
-used. If that fails it warns and falls back to the OBS-only table, and the
-header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
-created, and PRs awaiting your review. `--no-prs` skips both. Every geectl /
-git-obs call times out after 60s and then counts as a failed lookup (a network
+The PR leg reads src.opensuse.org through `geectl pull-request search
+--backend gitea`: PRs you created (`--creator`) and PRs awaiting your review
+(`--reviewer`). Both take the forge login from `geectl gitea whoami` — the
+token owner, which may differ from the OBS --user — and the reviewer flag
+accepts no other login: the server filters review requests for the token
+owner only. If that fails it warns and falls back to the OBS-only table, and
+the header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
+created, and PRs awaiting your review. `--no-prs` skips both. Every geectl
+call times out after 60s and then counts as a failed lookup (a network
 failure for --pr), never as an empty answer.
 
 A new or review SR whose source changed after the revision it pins is STALE
@@ -83,7 +84,7 @@ sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
-# seconds per geectl / git-obs call: both have hung for good, and a harness
+# seconds per geectl call: geectl has hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first
 TIMEOUT = 60
 
@@ -236,35 +237,60 @@ def human_comment(req_id, state):
 
 # ---------- Gitea (src.opensuse.org) PR leg ----------
 # Single-PR reads go through `geectl pull-request show` / `pull-request
-# comments`. The list legs in fetch_prs still go through `git-obs api`:
-# git-obs keeps its own login, and no whoami leaf exists yet, so the
-# created / review-requested legs cannot be typed.
+# comments`; the list legs in fetch_prs go through `geectl pull-request
+# search --backend gitea`, with the forge login from `geectl gitea whoami`
+# (the token owner, which may differ from the OBS --user).
 
 
-def gitea_get(path, errors=None):
-    """`git-obs api <path>` — strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (no src.opensuse.org login,
-    network, HTTP error, bad JSON), with its text appended to `errors`, so
-    the caller can emit a FETCH FAILED row."""
-    # -G: the default login may belong to another forge
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
+_GITEA_LOGIN = None  # the token owner's login, once read
+_GITEA_LOGIN_KNOWN = False  # a failed whoami is cached too: one warning
+
+
+def gitea_login(errors=None):
+    """The src.opensuse.org login from `geectl gitea whoami`, cached: the
+    creator filter and the --reviewer flag both take the token owner's
+    login, never the OBS user. None on any failure (no Gitea token,
+    network, bad JSON), with its text appended to `errors`."""
+    global _GITEA_LOGIN, _GITEA_LOGIN_KNOWN
+    if _GITEA_LOGIN_KNOWN:
+        return _GITEA_LOGIN
+    _GITEA_LOGIN_KNOWN = True
+    r = run(["geectl", "gitea", "whoami"])
     if r.returncode != 0:
-        sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
+        sys.stderr.write(f"WARNING: geectl gitea whoami failed: {r.stderr.strip()}\n")
         if errors is not None:
             errors.append(r.stderr.strip())
         return None
-    out = r.stdout
-    if out.startswith("Response:"):
-        out = out.split("\n", 1)[1] if "\n" in out else ""
     try:
-        return json.loads(out)
-    except json.JSONDecodeError as e:
+        login = json.loads(r.stdout).get("login")
+    except (json.JSONDecodeError, AttributeError) as e:
         sys.stderr.write(
-            f"WARNING: git-obs api {path} returned unparsable output ({e})\n"
+            f"WARNING: geectl gitea whoami returned unparsable output ({e})\n"
         )
         if errors is not None:
             errors.append(f"unparsable output ({e})")
         return None
+    if not login:
+        sys.stderr.write("WARNING: geectl gitea whoami returned no login\n")
+        if errors is not None:
+            errors.append("no login")
+        return None
+    _GITEA_LOGIN = login
+    return login
+
+
+def pr_search(args, errors=None):
+    """`geectl pull-request search ...` — the typed list leg. Returns the
+    pull_requests list, or None on failure (text appended to `errors`)."""
+    payload = geectl(["pull-request", "search", *args], hard=False, errors=errors)
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        sys.stderr.write("ERROR: geectl pull-request search returned no object\n")
+        if errors is not None:
+            errors.append("no object")
+        return None
+    return payload.get("pull_requests", [])
 
 
 def pr_show(repo, num, errors=None):
@@ -281,7 +307,7 @@ def pr_show(repo, num, errors=None):
 
 def pr_comments(repo, num, errors=None):
     """`geectl pull-request comments gitea:<repo>#<num>` — the typed leaf for
-    a PR's issue comments. Returns them in the old git-obs shape
+    a PR's issue comments. Returns them in the issue-comments shape
     [{user: {login}, created_at, body}] — the leaf's ReviewComment
     [{author, created, body}] renamed — or None on failure (text appended
     to `errors`)."""
@@ -455,20 +481,15 @@ def pr_build(repo, num, pr, cmts, errors):
             found = PR_PROJECT.findall(c.get("body") or "")
             prj = found[-1] if found else prj
     if not prj:
-        # The show payload carries no created date; the list leg's pull
-        # payload still does.
+        # The show payload carries no created date, so the date reads '?'.
         since = (pr.get("created_at") or "?")[:10]
         return (
             "pending",
             "no PR build yet",
             [f"PENDING — no staging-bot build comment (PR opened {since})"],
         )
-    # Head is source.commit on the show payload, head.sha on the list leg's
-    # pull payload; both feed pr_build.
-    head = (
-        ((pr.get("source") or {}).get("commit") or "")
-        or ((pr.get("head") or {}).get("sha") or "")
-    ).lower()
+    # Head is source.commit on the show payload.
+    head = ((pr.get("source") or {}).get("commit") or "").lower()
     pkg = repo.split("/")[-1]
     info = geectl(
         ["remote", "cat", prj, pkg, SCMSYNC_INFO, "--format", "text"],
@@ -562,32 +583,50 @@ PR_PAGE = 50  # the limit= the PR leg asks for: a full page may have more
 
 
 def fetch_prs(state, brief, leg):
-    """One issues/search call for the user's PRs (leg='created') or PRs
+    """One pull-request search call for the user's PRs (leg='created') or PRs
     awaiting the user's review (leg='review-requested'); per-PR detail
     (base branch, mergeable, bot-build + human comments) only in full mode.
     Returns (rows, full) — full when the page came back at PR_PAGE, so more
-    may exist — or None on failure (caller falls back). Still on git-obs:
-    the search has no typed leaf, and the created leg needs the user's own
-    login (no whoami leaf) while the review-requested leg needs a reviewer
-    filter the search does not take."""
-    q_state = "open" if state == "open" else "all"
-    issues = gitea_get(
-        f"/repos/issues/search?type=pulls&{leg.replace('-', '_')}=true"
-        f"&state={q_state}&limit={PR_PAGE}"
-    )
-    if issues is None:
+    may exist — or None on failure (caller falls back). The login comes from
+    `geectl gitea whoami`: the creator filter and the --reviewer flag both
+    take the token owner's login, and the reviewer flag accepts no other."""
+    login = gitea_login()
+    if login is None:
+        sys.stderr.write(
+            f"WARNING: src.opensuse.org PR leg ({leg}) skipped "
+            f"— OBS-only view. Pass --no-prs to silence.\n"
+        )
+        return None
+    if state == "open":
+        states = ["open"]
+    elif state == "declined":
+        states = ["closed"]
+    elif state == "accepted":
+        states = ["merged"]
+    else:  # all
+        states = ["open", "merged", "closed"]
+    args = ["--backend", "gitea"]
+    if leg == "created":
+        args += ["--creator", login]
+    else:
+        args += ["--reviewer", login]
+    for st in states:
+        args += ["--state", st]
+    items = pr_search(args)
+    if items is None:
         sys.stderr.write(
             f"WARNING: src.opensuse.org PR leg ({leg}) skipped "
             f"— OBS-only view. Pass --no-prs to silence.\n"
         )
         return None
     rows = []
-    for it in issues:
-        repo = (it.get("repository") or {}).get("full_name", "?")
-        num = it.get("number")
-        prinfo = it.get("pull_request") or {}
-        merged = bool(prinfo.get("merged") or prinfo.get("merged_at"))
-        st = "merged" if merged else it.get("state", "?")  # open|closed|merged
+    for it in items:
+        ref = it.get("reference") or ""
+        m = re.fullmatch(r"gitea:([\w.+-]+/[\w.+-]+)#(\d+)", ref)
+        if not m:
+            continue
+        repo, num = m.group(1), int(m.group(2))
+        st = it.get("status", "?")  # open|merged|closed
         if state == "declined" and st != "closed":
             continue
         if state == "accepted" and st != "merged":
@@ -595,19 +634,19 @@ def fetch_prs(state, brief, leg):
         target, status, comment = repo, "—", "—"
         build_bad = False
         if not brief:
-            pr = gitea_get(f"/repos/{repo}/pulls/{num}")
+            pr = pr_show(repo, num)
             if pr is None:
                 status = "(detail fetch failed)"
             else:
-                base = (pr.get("base") or {}).get("ref", "?")
+                base = (pr.get("target") or {}).get("branch", "?")
                 target = f"{repo}:{base}"
                 bits = []
-                if merged:
+                if pr.get("merged"):
                     bits.append("merged")
                 elif pr.get("mergeable") is not None:
                     bits.append("mergeable" if pr["mergeable"] else "NOT mergeable")
                 errors = []
-                got = gitea_get(f"/repos/{repo}/issues/{num}/comments", errors)
+                got = pr_comments(repo, num, errors)
                 cmts = got or []
                 bot_line = next(
                     (
@@ -637,7 +676,7 @@ def fetch_prs(state, brief, leg):
             {
                 "kind": "PR",
                 "id": f"#{num}",
-                "num": int(num or 0),
+                "num": num,
                 "pkg": repo.split("/")[-1],
                 "target": target,
                 "state": st,
@@ -647,12 +686,10 @@ def fetch_prs(state, brief, leg):
                 # unreadable PR build all sort first
                 "bad": st == "closed" or leg == "review-requested" or build_bad,
                 "repo": repo,
-                "ncomments": it.get("comments") or 0,
-                "author": (it.get("user") or {}).get("login"),
-                "created": it.get("created_at"),
+                "author": it.get("author"),
             }
         )
-    return rows, len(issues) >= PR_PAGE
+    return rows, len(items) >= PR_PAGE
 
 
 # ---------- OBS request rows ----------
@@ -1023,26 +1060,25 @@ def login(x):
 
 
 def pr_others_comments(pr):
-    """What others said on one of your PRs since your last word there (its
-    opening, or your latest comment or review), bots aside. issues/search's
-    count includes reviews, which /issues/<n>/comments does not return, so
-    when it is short the show payload's reviews are read too. Returns (when,
-    who, text, kind) oldest first — kind "comment", "change request" or
-    "approval" — or None when a fetch failed. The show payload carries no
-    per-review inline count, so reviews carry no ", +N inline" bit."""
+    """What others said on one of your PRs since your last word there (your
+    latest comment or review), bots aside. The search carries no comment
+    count and no created date, so the show payload's reviews are always
+    read too: a review is not an issue comment, and only the show names
+    it. (No comment can predate the PR's opening, so dropping the opening
+    date as the floor changes nothing.) Returns (when, who, text, kind)
+    oldest first — kind "comment", "change request" or "approval" — or None
+    when a fetch failed. The show payload carries no per-review inline
+    count, so reviews carry no ", +N inline" bit."""
     num = pr["id"].lstrip("#")
     cmts = pr_comments(pr["repo"], int(num))
     if cmts is None:
         return None
-    reviews = []
-    if len(cmts) < (pr.get("ncomments") or 0):
-        show = pr_show(pr["repo"], int(num))
-        if show is None:
-            return None
-        reviews = show.get("reviews") or []
+    show = pr_show(pr["repo"], int(num))
+    if show is None:
+        return None
+    reviews = show.get("reviews") or []
     author = pr.get("author")
-    marks = [iso(pr.get("created"))]
-    marks += [iso(c.get("created_at")) for c in cmts if login(c) == author]
+    marks = [iso(c.get("created_at")) for c in cmts if login(c) == author]
     marks += [iso(r.get("when")) for r in reviews if r.get("reviewer") == author]
     marks = [m for m in marks if m is not None]
     last = max(marks) if marks else None
@@ -1196,9 +1232,10 @@ def summary(user, rows, prs, failed_legs, no_prs, days):
     asked = [p for p in prs if p.get("review")]
     items = []
     if prs_ok:
-        # issues/search says how many comments a PR has: read only those, and
-        # first, as they are few and --deadline cuts the end of the queue
-        items += [("PR", p) for p in mine if p.get("ncomments")]
+        # The search carries no comment count, so every own PR's comments
+        # are read, PRs first, as they are few and --deadline cuts the end
+        # of the queue
+        items += [("PR", p) for p in mine]
     items += [("SR", r) for r in open_srs]
     found = comments_for(
         items,

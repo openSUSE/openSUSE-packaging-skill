@@ -1,9 +1,10 @@
 #!/bin/bash
 # test-sr-status.sh — proves sr-status.py reads a pool PR's build from OBS, not
-# from the staging bot's last comment. Offline: fake `geectl` and `git-obs` on PATH
-# serve fixtures from a per-case tree; single-PR reads go through geectl
-# pull-request show/comments, the list legs still through git-obs (one case
-# plants a tea token to prove it is never read). The fixtures replay
+# from the staging bot's last comment. Offline: fake `geectl` on PATH serves
+# fixtures from a per-case tree; single-PR reads go through geectl
+# pull-request show/comments, the list legs through pull-request search with
+# the login from gitea whoami (one case plants a tea token to prove it is
+# never read). The fixtures replay
 # pool/tesseract-ocr #3 (built d09d8d0, head 760972c, pinned by a hand-made
 # products PR) and #4 (built at the head by the bot's branch). Every case
 # mutates one thing and expects the exit code plus the line that names it.
@@ -52,6 +53,8 @@ case "$*" in
   "request list-comments "*) f="comments-$3" ;;
   "pull-request show "*) f="show-$(printf %s "$3" | tr -c 'A-Za-z0-9._:-' '_')" ;;
   "pull-request comments "*) f="cmts-$(printf %s "$3" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "pull-request search "*) f="prsearch-$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')" ;;
+  "gitea whoami") f=whoami ;;
   "remote cat "*) f="cat-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')_$(printf %s "$5" | tr '/' '_')" ;;
   "remote package-log "*) f="log-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
   "remote link-target "*) f="link-$(printf %s "$3" | tr '/' '_')_$(printf %s "$4" | tr '/' '_')" ;;
@@ -68,13 +71,6 @@ esac
 [ -f "$FIX/$f" ] || { printf '{"error":{"code":"not_found","context":"no such thing"}}\n' >&2; exit 3; }
 exec serve "$FIX/$f"
 EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-# Only the src.opensuse.org login may answer: the default one can be another forge.
-[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-exec serve "$FIX/gitea$(printf %s "$5" | tr '?&=' '___')"
-EOF
 chmod +x "$work/bin/"*
 
 # ---------------------------------------------------------------- fixtures
@@ -84,7 +80,6 @@ B3=d09d8d0dc74bddd486a815af0e2d6362cade8312093acb9c6e6f094e39b92a82
 H4=ee3e97a3248f29f1e15cfbc120742a4fc259637f0e4f1ad695b230b219d5c40c
 P3=openSUSE:Backports:SLE-16.0:PullRequest:3356
 P4=openSUSE:Backports:SLE-16.1:PullRequest:3353
-G=$B/gitea/repos
 put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 # srch <query> <json> — the request-search fixture for the query as sr-status.py passes it
 srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
@@ -93,23 +88,19 @@ spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A
 # showpath/cmtspath <repo> <num> — the pull-request show/comments fixture path
 showpath() { printf '%s/show-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z0-9._:-' '_')"; }
 cmtspath() { printf '%s/cmts-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z0-9._:-' '_')"; }
+# prspath <query> — the pull-request search fixture path for that query
+prspath() { printf '%s/prsearch-%s' "$B" "$(printf %s "pull-request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 Q_OPEN="--creator tester --type submit --with-history --state new --state review --state declined"
 Q_ALL="--creator tester --type submit --with-history --state new --state review --state declined --state accepted --state revoked --state superseded"
 closed_q() { printf '%s' "--creator tester --type submit --state accepted --state revoked --state superseded --since $1"; }
 later_q() { printf '%s' "--target-project $1 --target-package $2 --type submit --state new --state review --state accepted"; }
 SINCE=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)).strftime("%Y-%m-%d"))')
 SINCE3=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).strftime("%Y-%m-%d"))')
-pr() { # <num> <head sha> <base> [merged] [state] — the pull-request show
-  # payload, plus the git-obs pulls fixture the list legs still read
+pr() { # <num> <head sha> <base> [merged] [state] — the pull-request show payload
   put "$(showpath pool/tesseract-ocr "$1")" "{\"reference\": \"gitea:pool/tesseract-ocr#$1\",
     \"title\": \"\", \"author\": \"a-packager\", \"status\": \"${5:-open}\", \"merged\": ${4:-false},
     \"source\": {\"repository\": \"a-packager/tesseract-ocr\", \"branch\": \"tess-$3\", \"commit\": \"$2\"},
     \"target\": {\"repository\": \"pool/tesseract-ocr\", \"branch\": \"$3\", \"commit\": null}, \"reviews\": []}"
-  put "$G/pool/tesseract-ocr/pulls/$1" "{\"number\": $1, \"state\": \"${5:-open}\",
-    \"merged\": ${4:-false}, \"created_at\": \"2026-09-23T15:50:00+02:00\",
-    \"head\": {\"ref\": \"tess-$3\", \"sha\": \"$2\",
-               \"repo\": {\"full_name\": \"a-packager/tesseract-ocr\"}},
-    \"base\": {\"ref\": \"$3\"}}"
 }
 results() { # <project> <x86_64 code> [aarch64 code] [x86_64 dirty] [i586 dirty]
   local dx=${4:-false} di=${5:-false}
@@ -167,9 +158,6 @@ S4=9b6e2f4a0d73c1e85f2a6b3d4c7e8f10
 OLD=31f0e7a9c2b4d6e8f0a1b3c5d7e9f1a2
 
 pr 3 $H3 leap-16.0
-put "$G/pool/tesseract-ocr/issues/3/comments" "[
- {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P3/tesseract-ocr)\"},
- {\"user\": {\"login\": \"a-reviewer\"}, \"body\": \"package fails to build\"}]"
 put "$(cmtspath pool/tesseract-ocr 3)" "{\"reference\": \"gitea:pool/tesseract-ocr#3\", \"comments\": [
  {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P3/tesseract-ocr)\"},
  {\"author\": \"a-reviewer\", \"body\": \"package fails to build\"}], \"count\": 2}"
@@ -179,9 +167,6 @@ built $P3 $S3
 pin $P3 3356 someone/PackageHub maintenance-update-1790172046
 
 pr 4 $H4 leap-16.1
-put "$G/pool/tesseract-ocr/issues/4/comments" "[
- {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"$BR/$P4/tesseract-ocr)\"},
- {\"user\": {\"login\": \"autogits_obs_staging_bot\"}, \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}]"
 put "$(cmtspath pool/tesseract-ocr 4)" "{\"reference\": \"gitea:pool/tesseract-ocr#4\", \"comments\": [
  {\"author\": \"autogits_obs_staging_bot\", \"body\": \"$BR/$P4/tesseract-ocr)\"},
  {\"author\": \"autogits_obs_staging_bot\", \"body\": \"Build successful, for more information go in https://build.opensuse.org/project/show/$P4.\"}], \"count\": 2}"
@@ -191,15 +176,16 @@ built $P4 $S4
 pin $P4 3353 products/PackageHub 'PR_tesseract-ocr#4'
 
 # The table leg: the two pool PRs plus a non-pool one whose badge still comes
-# from the bot comment. No SRs.
-S=$B/gitea/repos/issues
-put "$S/search_type_pulls_created_true_state_open_limit_50" '[
- {"number": 4, "state": "open", "repository": {"full_name": "pool/tesseract-ocr"}, "pull_request": {}},
- {"number": 2, "state": "open", "repository": {"full_name": "somegroup/example"}, "pull_request": {}},
- {"number": 3, "state": "open", "repository": {"full_name": "pool/tesseract-ocr"}, "pull_request": {}}]'
-put "$S/search_type_pulls_review_requested_true_state_open_limit_50" '[]'
-put "$G/somegroup/example/pulls/2" '{"number": 2, "state": "open", "mergeable": true, "base": {"ref": "main"}}'
-put "$G/somegroup/example/issues/2/comments" '[{"user": {"login": "autogits_obs_staging_bot"}, "body": "Build successful"}]'
+# from the bot comment. No SRs. The forge login is "me" (the Gitea login, from
+# gitea whoami), not the OBS user "tester".
+put "$B/whoami" '{"login": "me", "full_name": "Me", "email": "me@example.org"}'
+put "$(prspath "--backend gitea --creator me --state open")" '{"pull_requests": [
+ {"reference": "gitea:pool/tesseract-ocr#4", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},
+ {"reference": "gitea:somegroup/example#2", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},
+ {"reference": "gitea:pool/tesseract-ocr#3", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}}], "count": 3}'
+put "$(prspath "--backend gitea --reviewer me --state open")" '{"pull_requests": [], "count": 0}'
+put "$(showpath somegroup/example 2)" '{"reference": "gitea:somegroup/example#2", "title": "", "author": "me", "status": "open", "merged": false, "mergeable": true, "source": {"repository": "me/example", "branch": "x", "commit": "2222222222222222222222222222222222222222"}, "target": {"repository": "somegroup/example", "branch": "main", "commit": null}, "reviews": []}'
+put "$(cmtspath somegroup/example 2)" '{"reference": "gitea:somegroup/example#2", "comments": [{"author": "autogits_obs_staging_bot", "created": "2026-10-19T08:00:00Z", "body": "Build successful"}], "count": 1}'
 srch "$Q_OPEN" '{"requests": []}'
 srch "$(closed_q "$SINCE")" '{"requests": []}'
 
@@ -211,7 +197,7 @@ XENV=(); SHORT=()
 case_() {
   local name=$1 rc=$2 msg=$3 mut=$4 dir="$work/$1" out got; shift 4
   cp -a "$B" "$dir" && mkdir -p "$dir/home"
-  (B=$dir G=$dir/gitea/repos; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
+  (B=$dir; cd "$dir" && eval "$mut") || { fail "$name: mutation did not apply"; return; }
   out="$(cd "$dir" && FIX=$dir HOME=$dir/home GEECTL_OBS_USERNAME=tester PATH="$work/bin:$PATH" \
     env ${XENV[@]+"${XENV[@]}"} python3 ${SHORT[@]+"${SHORT[@]}"} "$SR" "$@" 2>&1)"; got=$?
   LAST=$out; CALLS=$(cat "$dir/calls" 2>/dev/null)
@@ -355,8 +341,8 @@ http-429|Server returned an error: HTTP Error 429: Too Many Requests
 EOF
 case_ network-geectl-5xx 6 "could not read pool/tesseract-ocr#4 (network failure)" \
   "put \$(showpath pool/tesseract-ocr 4) '@ERR *** Error: 503 Service Unavailable'" --pr 'pool/tesseract-ocr#4'
-# src.opensuse.org is read through geectl (single-PR reads) and git-obs (the
-# list legs), each keeping its own login: a tea token on disk is never loaded.
+# src.opensuse.org is read through geectl's typed leaves, which keep their own
+# login: a tea token on disk is never loaded.
 # yaml.py stands in for pyyaml (JSON is YAML) and leaves a mark when anything
 # parses the tea config; the proxy refuses on the loopback, so a direct fetch
 # would show as a warning too.
@@ -383,7 +369,7 @@ case_ bad-pr-spec 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/
 case_ pr-with-ids 2 "--pr takes OWNER/REPO#N and no request ids" ":" --pr 'pool/tesseract-ocr#4' 1234
 
 # ---------------------------------------------------------------- hung calls
-# geectl and git-obs have hung for good in the field. A call that does not answer
+# geectl has hung for good in the field. A call that does not answer
 # times out and is reported like any other failure, never as an empty result.
 cat > "$work/short.py" <<'EOF'
 import importlib.util
@@ -409,8 +395,8 @@ case_ no-user 2 "could not determine OBS user" ":"
 XENV=()
 # The table leg warns and goes on without the PRs, so its header must not
 # claim them.
-case_ hang-git-obs-pr-leg 0 "src.opensuse.org PRs UNKNOWN" \
-  "put \$G/issues/search_type_pulls_created_true_state_open_limit_50 @HANG"
+case_ hang-pr-search-leg 0 "src.opensuse.org PRs UNKNOWN" \
+  "put \$(prspath \"--backend gitea --creator me --state open\") @HANG"
 SHORT=()
 # A hung call must fail before the harness gives up on the whole tool call
 # (2 minutes by default), or the timeout is never seen.
@@ -418,7 +404,7 @@ python3 -c 'import importlib.util, sys
 spec = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m); sys.exit(0 if m.TIMEOUT < 120 else 1)' "$SR" \
   && pass "TIMEOUT is under the 2-minute tool limit" || fail "TIMEOUT is not under 120s"
-# A missing geectl or git-obs is a failed lookup, not a traceback: exit 1 would
+# A missing geectl is a failed lookup, not a traceback: exit 1 would
 # read as "red at the PR head".
 mkdir -p "$work/py-only" && ln -sf "$(command -v python3)" "$work/py-only/python3"
 out="$(PATH="$work/py-only" HOME="$work" python3 "$SR" --pr 'pool/tesseract-ocr#4' 2>&1)"; rc=$?
@@ -440,6 +426,14 @@ grep '| #3 |' <<<"$rows" | grep -qF '💬 a-reviewer: "package fails to build"' 
 case_ table-green-sorts-by-number 0 "PR build ✅ at head" "obsinfo $P3 $H3 && results $P3 succeeded"
 rows=$(grep '^| PR ' <<<"$LAST")
 [ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " #2 " ] && pass "table: nothing bad, rows by number" || fail "table: order: $rows"
+# The creator filter takes the forge login from gitea whoami, never the OBS user.
+case_ table-creator-is-gitea-login 0 "| PR | #4 | tesseract-ocr | pool/tesseract-ocr:leap-16.1 |" \
+  "put \$B/whoami '{\"login\": \"gitea-user\", \"full_name\": \"Gitea User\", \"email\": \"g@example.org\"}' &&
+   cp \$(prspath \"--backend gitea --creator me --state open\") \$(prspath \"--backend gitea --creator gitea-user --state open\") &&
+   cp \$(prspath \"--backend gitea --reviewer me --state open\") \$(prspath \"--backend gitea --reviewer gitea-user --state open\")"
+grep -qF "pull-request search --backend gitea --creator gitea-user --state open" <<<"$CALLS" \
+  && ! grep -qF "pull-request search --backend gitea --creator tester" <<<"$CALLS" \
+  && pass "table-creator-is-gitea-login: the search uses the whoami login, not --user" || fail "table-creator-is-gitea-login: $CALLS"
 case_ table-red-sorts-first 0 "PR build ❌ at head" "results $P4 failed"
 rows=$(grep '^| PR ' <<<"$LAST")
 [ "$(head -2 <<<"$rows" | cut -d'|' -f3 | tr -d '\n')" = " #3  #4 " ] && pass "table: red and stale rows first" || fail "table: order: $rows"
@@ -447,17 +441,17 @@ case_ table-unreadable-sorts-first 0 "PR build UNKNOWN (lookup failed)" \
   "obsinfo $P3 $H3 && results $P3 succeeded && rm \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo"
 rows=$(grep '^| PR ' <<<"$LAST")
 [ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " #4 " ] && pass "table: an unreadable build sorts first" || fail "table: order: $rows"
-case_ table-comments-unreadable 0 "PR build UNKNOWN (lookup failed)" "rm \$G/pool/tesseract-ocr/issues/3/comments"
-case_ table-pending-sorts-by-number 0 "no PR build yet" "put \$G/pool/tesseract-ocr/issues/3/comments '[]'"
+case_ table-comments-unreadable 0 "PR build UNKNOWN (lookup failed)" "rm \$(cmtspath pool/tesseract-ocr 3)"
+case_ table-pending-sorts-by-number 0 "no PR build yet" "put \$(cmtspath pool/tesseract-ocr 3) '{\"reference\": \"gitea:pool/tesseract-ocr#3\", \"comments\": [], \"count\": 0}'"
 rows=$(grep '^| PR ' <<<"$LAST")
 [ "$(head -1 <<<"$rows" | cut -d'|' -f3)" = " #2 " ] && pass "table: a pending build is not bad" || fail "table: order: $rows"
 # Only open pool PRs are read from OBS: a merged one's PR project is gone.
 case_ table-merged-not-read 0 "| PR | #4 | tesseract-ocr | pool/tesseract-ocr:leap-16.1 | ✅ merged |" \
   "pr 4 $H4 leap-16.1 true closed && rm \$B/cat-${P4}_tesseract-ocr__scmsync.obsinfo &&
    srch \"--creator tester --type submit --with-history --state accepted\" '{\"requests\": []}' &&
-   put \$G/issues/search_type_pulls_created_true_state_all_limit_50 '[
-    {\"number\": 4, \"state\": \"closed\", \"repository\": {\"full_name\": \"pool/tesseract-ocr\"}, \"pull_request\": {\"merged\": true}}]' &&
-   put \$G/issues/search_type_pulls_review_requested_true_state_all_limit_50 '[]'" --state accepted
+   put \$(prspath \"--backend gitea --creator me --state merged\") '{\"pull_requests\": [
+    {\"reference\": \"gitea:pool/tesseract-ocr#4\", \"title\": \"\", \"author\": \"me\", \"status\": \"merged\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}}], \"count\": 1}' &&
+   put \$(prspath \"--backend gitea --reviewer me --state merged\") '{\"pull_requests\": [], \"count\": 0}'" --state accepted
 row=$(grep '| #4 |' <<<"$LAST")
 [ -n "$row" ] && ! grep -qF "PR build" <<<"$row" && pass "table: a merged PR is not read from OBS" || fail "table: merged row: $row"
 
@@ -552,10 +546,10 @@ case_ limit-negative 2 "--limit takes 0 (no cap) or a positive number" ":" --lim
 # A PR leg that comes back at its page size may hold more: say so.
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 full_pr_page() { # <fixture tree>
-  { echo '['; for i in $(seq 1 49); do
-      printf '{"number": %s, "state": "open", "repository": {"full_name": "g/r"}},\n' "$i"; done
-    echo '{"number": 50, "state": "open", "repository": {"full_name": "g/r"}}]'
-  } > "$1/gitea/repos/issues/search_type_pulls_created_true_state_open_limit_50"
+  { echo '{"pull_requests": ['; for i in $(seq 1 49); do
+      printf '{"reference": "gitea:g/r#%s", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},\n' "$i"; done
+    echo '{"reference": "gitea:g/r#50", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}}], "count": 50}'
+  } > "$(B=$1 prspath "--backend gitea --creator me --state open")"
 }
 case_ pr-page-full 0 "the created PR leg returned 50, its page size: more may exist" "full_pr_page \$B" --brief
 case_ summary-pr-page-full 0 "the created PR leg returned 50, its page size: more may exist" "full_pr_page \$B" --summary
@@ -644,8 +638,8 @@ case_ summary-home-source 0 "openSUSE:Factory/owntone: #250 accepted by maint" \
   --summary --no-prs
 ! grep -q 'home:<user>' <<<"$LAST" && pass "summary-home-source: no lookup in a home project" || fail "summary-home-source: $LAST"
 case_ summary-prs 0 "src.opensuse.org PRs: 3 yours, 1 awaiting your review" \
-  "summary_fixtures \$B && put \$G/issues/search_type_pulls_review_requested_true_state_open_limit_50 \
-   '[{\"number\": 7, \"state\": \"open\", \"repository\": {\"full_name\": \"somegroup/example\"}}]'" --summary
+  "summary_fixtures \$B && put \$(prspath \"--backend gitea --reviewer me --state open\") \
+   '{\"pull_requests\": [{\"reference\": \"gitea:somegroup/example#7\", \"title\": \"\", \"author\": \"someone-else\", \"status\": \"open\", \"source\": {\"repository\": \"\", \"branch\": null, \"commit\": null}, \"target\": {\"repository\": \"\", \"branch\": null, \"commit\": null}}], \"count\": 1}'" --summary
 grep -qF "awaiting your review: somegroup/example#7" <<<"$LAST" && pass "summary-prs: names the PR awaiting you" || fail "summary-prs: $LAST"
 case_ summary-with-ids 2 "--summary takes no request ids" ":" --summary 100
 # The follow-up search is URL-quoted: a raw '+' arrives as a space, and
@@ -656,28 +650,21 @@ case_ summary-plus-in-name 0 "openSUSE:Factory/libsigc++2: #300 accepted by main
   --summary --no-prs
 grep -qF -- "--target-package libsigc++2" <<<"$CALLS" && ! grep -qF "libsigc%2B%2B2" <<<"$CALLS" && ! grep -qF "@id>" <<<"$CALLS" \
   && pass "summary-plus-in-name: the typed search carries the name verbatim" || fail "summary-plus-in-name: $CALLS"
-# Your PRs' comments are read too, only for PRs that have any: the newest by
-# someone else after your own last comment, bots (legaldb among them) aside.
-# The pool PRs' builds are not read here, and the summary says so.
+# Your PRs' comments are read too — the search carries no comment count, so
+# every own PR's comments are read, and PRs with nothing new still stay out:
+# the newest by someone else after your own last comment, bots (legaldb among
+# them) aside. The pool PRs' builds are not read here, and the summary says so.
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 pr_comments_fixtures() { # <fixture tree>
-  local G=$1/gitea/repos
-  printf '%s' '[
-   {"number": 4, "state": "open", "comments": 0, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "pool/tesseract-ocr"}},
-   {"number": 2, "state": "open", "comments": 3, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "somegroup/example"}},
-   {"number": 6, "state": "open", "comments": 2, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "other/handled"}},
-   {"number": 8, "state": "open", "comments": 1, "user": {"login": "me"}, "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": "other/broken"}}]' \
-    > "$G/issues/search_type_pulls_created_true_state_open_limit_50"
-  printf '%s' '[{"user": {"login": "a-maint"}, "body": "Please run geectl local-build service-run", "created_at": "2026-10-18T09:00:00Z"},
-   {"user": {"login": "legaldb"}, "body": "legal ok", "created_at": "2026-10-19T09:00:00Z"},
-   {"user": {"login": "autogits_obs_staging_bot"}, "body": "Build successful", "created_at": "2026-10-19T10:00:00Z"},
-   {"user": {"login": "packagehub-review"}, "body": "Review by packagehub-review represents a group of reviewers", "created_at": "2026-10-19T11:00:00Z"}]' \
-    > "$G/somegroup/example/issues/2/comments"
-  mkdir -p "$G/other/handled/issues/6" "$G/other/broken/issues/8"
-  printf '%s' '[{"user": {"login": "a-maint"}, "body": "why?", "created_at": "2026-10-11T09:00:00+00:00"},
-   {"user": {"login": "me"}, "body": "because", "created_at": "2026-10-12T09:00:00+00:00"}]' > "$G/other/handled/issues/6/comments"
-  echo @NET > "$G/other/broken/issues/8/comments"
-  # pr_others_comments reads comments through pull-request comments now
+  local B=$1
+  put "$(prspath "--backend gitea --creator me --state open")" '{"pull_requests": [
+   {"reference": "gitea:pool/tesseract-ocr#4", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},
+   {"reference": "gitea:somegroup/example#2", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},
+   {"reference": "gitea:other/handled#6", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}},
+   {"reference": "gitea:other/broken#8", "title": "", "author": "me", "status": "open", "source": {"repository": "", "branch": null, "commit": null}, "target": {"repository": "", "branch": null, "commit": null}}], "count": 4}'
+  # pr_others_comments reads comments through pull-request comments now,
+  # and the show payload's reviews always too, so every PR needs a show fixture
+  put "$(showpath other/handled 6)" '{"reference": "gitea:other/handled#6", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/handled", "branch": "x", "commit": "6666666666666666666666666666666666666666"}, "target": {"repository": "other/handled", "branch": "main", "commit": null}, "reviews": []}'
   put "$(cmtspath somegroup/example 2)" '{"reference": "gitea:somegroup/example#2", "comments": [
    {"author": "a-maint", "created": "2026-10-18T09:00:00Z", "body": "Please run geectl local-build service-run"},
    {"author": "legaldb", "created": "2026-10-19T09:00:00Z", "body": "legal ok"},
@@ -695,39 +682,31 @@ for want in "comments by others since your last action: 4 request(s) or PR(s), 2
             "PR builds not read: sr-status.py --pr pool/<pkg>#<n> for pool/tesseract-ocr#4"; do
   grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-comments: $want" || fail "summary-pr-comments: missing '$want'"
 done
-! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && ! grep -q 'pull-request comments gitea:pool/tesseract-ocr#4' <<<"$CALLS" \
-  && pass "summary-pr-comments: handled, bot and comment-less PRs stay out" || fail "summary-pr-comments: $LAST"
-# The count includes reviews, which the issue comments call does not return:
-# when it is short, the reviews are read too. A change request is to answer;
-# an approval ("merge ok", APPROVED) is listed apart. A failed reviews call
-# is UNKNOWN.
+! grep -qE 'other/handled|legal ok|Build successful|represents a group' <<<"$LAST" && grep -q 'pull-request comments gitea:pool/tesseract-ocr#4' <<<"$CALLS" \
+  && pass "summary-pr-comments: handled, bot and comment-less PRs stay out of the output" || fail "summary-pr-comments: $LAST"
+# Reviews are not issue comments, so the show payload's reviews are always
+# read too. A change request is to answer; an approval ("merge ok",
+# APPROVED) is listed apart. A failed reviews call is UNKNOWN.
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 pr_review_fixtures() { # <fixture tree>
-  local G=$1/gitea/repos
+  local B=$1
   pr_comments_fixtures "$1"
-  python3 - "$G/issues/search_type_pulls_created_true_state_open_limit_50" <<'EOF'
+  python3 - "$(prspath "--backend gitea --creator me --state open")" <<'EOF'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
-for n, repo, count in ((9, "other/reviewed", 3), (10, "other/approved", 1), (11, "other/merge-ok", 1), (12, "other/rv-broken", 2)):
-    d.append({"number": n, "state": "open", "comments": count, "user": {"login": "me"},
-              "created_at": "2026-10-10T08:00:00+02:00", "repository": {"full_name": repo}})
+for n, repo in ((9, "other/reviewed"), (10, "other/approved"), (11, "other/merge-ok"), (12, "other/rv-broken")):
+    d["pull_requests"].append({"reference": f"gitea:{repo}#{n}", "title": "", "author": "me", "status": "open",
+              "source": {"repository": "", "branch": None, "commit": None},
+              "target": {"repository": "", "branch": None, "commit": None}})
+    d["count"] += 1
 json.dump(d, open(p, "w"))
 EOF
-  mkdir -p "$G/other/reviewed/issues/9" "$G/other/reviewed/pulls/9" "$G/other/approved/issues/10" "$G/other/approved/pulls/10" \
-    "$G/other/merge-ok/issues/11" "$G/other/rv-broken/issues/12" "$G/other/rv-broken/pulls/12"
-  echo '[{"user": {"login": "autogits_obs_staging_bot"}, "body": "Build failed", "created_at": "2026-10-19T08:00:00Z"}]' > "$G/other/reviewed/issues/9/comments"
-  echo '[{"user": {"login": "mcepl"}, "state": "REQUEST_CHANGES", "body": "FTBFS", "comments_count": 2, "submitted_at": "2026-10-19T09:00:00Z"},
-   {"user": {"login": "me"}, "state": "COMMENT", "body": "", "comments_count": 0, "submitted_at": "2026-10-12T09:00:00Z"}]' > "$G/other/reviewed/pulls/9/reviews"
-  echo '[]' > "$G/other/approved/issues/10/comments"
-  echo '[{"user": {"login": "oertel"}, "state": "APPROVED", "body": "", "comments_count": 0, "submitted_at": "2026-10-19T09:00:00Z"}]' > "$G/other/approved/pulls/10/reviews"
-  echo '[{"user": {"login": "maint"}, "body": "merge ok", "created_at": "2026-10-19T09:00:00Z"}]' > "$G/other/merge-ok/issues/11/comments"
-  echo '[]' > "$G/other/rv-broken/issues/12/comments"
-  echo @NET > "$G/other/rv-broken/pulls/12/reviews"
-  # pr_others_comments reads reviews from the show payload now
+  # pr_others_comments reads reviews from the show payload now, always
   put "$(showpath other/reviewed 9)" '{"reference": "gitea:other/reviewed#9", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/reviewed", "branch": "x", "commit": "1111111111111111111111111111111111111111"}, "target": {"repository": "other/reviewed", "branch": "main", "commit": null}, "reviews": [{"reviewer": "mcepl", "state": "changes_requested", "comment": "FTBFS", "when": "2026-10-19T09:00:00Z"}, {"reviewer": "me", "state": "commented", "comment": "", "when": "2026-10-12T09:00:00Z"}]}'
   put "$(showpath other/approved 10)" '{"reference": "gitea:other/approved#10", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/approved", "branch": "x", "commit": "1111111111111111111111111111111111111111"}, "target": {"repository": "other/approved", "branch": "main", "commit": null}, "reviews": [{"reviewer": "oertel", "state": "approved", "comment": "", "when": "2026-10-19T09:00:00Z"}]}'
+  put "$(showpath other/merge-ok 11)" '{"reference": "gitea:other/merge-ok#11", "title": "", "author": "me", "status": "open", "merged": false, "source": {"repository": "me/merge-ok", "branch": "x", "commit": "1111111111111111111111111111111111111111"}, "target": {"repository": "other/merge-ok", "branch": "main", "commit": null}, "reviews": []}'
   echo @NET > "$(showpath other/rv-broken 12)"
-  # ...and the comments fixtures those show reads are gated on
+  # ...and the comments fixtures for those PRs
   put "$(cmtspath other/reviewed 9)" '{"reference": "gitea:other/reviewed#9", "comments": [{"author": "autogits_obs_staging_bot", "created": "2026-10-19T08:00:00Z", "body": "Build failed"}], "count": 1}'
   put "$(cmtspath other/approved 10)" '{"reference": "gitea:other/approved#10", "comments": [], "count": 0}'
   put "$(cmtspath other/merge-ok 11)" '{"reference": "gitea:other/merge-ok#11", "comments": [{"author": "maint", "created": "2026-10-19T09:00:00Z", "body": "merge ok"}], "count": 1}'
@@ -740,11 +719,11 @@ for want in "comments by others since your last action: 5 request(s) or PR(s), 3
             "PR other/rv-broken#12 UNKNOWN (comment fetch failed)"; do
   grep -qF -- "$want" <<<"$LAST" && pass "summary-pr-reviews: $want" || fail "summary-pr-reviews: missing '$want'"
 done
-! grep -qE 'PR other/(approved|merge-ok)#1[01] (oertel|maint)' <<<"$LAST" && ! grep -q 'pull-request show gitea:somegroup/example#2' <<<"$CALLS" \
-  && pass "summary-pr-reviews: approvals are not questions; no reviews call when the count is met" || fail "summary-pr-reviews: $LAST"
+! grep -qE 'PR other/(approved|merge-ok)#1[01] (oertel|maint)' <<<"$LAST" && grep -q 'pull-request show gitea:somegroup/example#2' <<<"$CALLS" \
+  && pass "summary-pr-reviews: approvals are not questions; the show payload's reviews are read" || fail "summary-pr-reviews: $LAST"
 # Under --deadline the PRs come first (few, and the end of the queue is what
 # gets cut): the skipped list keeps that order.
-case_ summary-deadline-prs-first 0 "not fetched (--deadline reached; raise it, or ask by id): PR somegroup/example#2, PR other/handled#6" \
+case_ summary-deadline-prs-first 0 "not fetched (--deadline reached; raise it, or ask by id): PR pool/tesseract-ocr#4, PR somegroup/example#2, PR other/handled#6, PR other/broken#8" \
   "summary_fixtures \$B && pr_comments_fixtures \$B" --summary --deadline 0
 # The table past the deadline: a decline still shows its reason (no call
 # needed), the rest say they were not fetched — never the bare sentinel.
