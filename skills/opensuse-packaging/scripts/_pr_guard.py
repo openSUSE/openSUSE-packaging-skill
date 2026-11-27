@@ -3108,6 +3108,17 @@ def reviewer_dynamic(name, argv, run, lit, ctx):
     words = lit if lit and len(lit) == len(argv) else argv
     if not what and run and re.search(r"[$`]", words[len(argv) - len(run)]):
         what = f"the command word {shown(run[0])}"
+    if not what and run:
+        # A wrapper held in a variable (flock, env, sudo, ...) is a command
+        # word held in a variable too, even though unwrap stripped it to
+        # reach the command it runs: the first word of the call that is not
+        # an assignment, among the words unwrap stripped.
+        for w in words[: len(argv) - len(run)]:
+            if ASSIGN.match(w):
+                continue
+            if re.search(r"[$`]", w):
+                what = f"the command word {shown(w)}"
+            break
     if not what and name in ("source", "."):
         what = name
     if what:
@@ -3669,6 +3680,14 @@ def gitea_get(path, ctx, raw=False):
     try:
         if stub:
             f = os.path.join(stub, path.replace("/", "_"))
+            if not os.path.exists(f):
+                # Gitea matches owner and repo names in any case; the stub
+                # answers the spelling the fixture was written under.
+                want = os.path.basename(f).lower()
+                for name in os.listdir(stub):
+                    if name.lower() == want:
+                        f = os.path.join(stub, name)
+                        break
             text = open(f, encoding="utf-8").read() if os.path.exists(f) else None
             if text is not None and text.strip() == "@ERR":
                 raise OSError("failed")

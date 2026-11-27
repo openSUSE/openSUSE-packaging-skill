@@ -43,6 +43,11 @@ jobs:
       # offline (network lookups are stubbed).
       # check-geectl.py runs against the released CLI from crates.io.
       # Bump the version to re-validate against a newer geectl.
+      # contrib/container/skill-container is the one exception: it reads the
+      # tea config with ruamel.yaml, as its Dockerfile already installs
+      # (python3-ruamel.yaml), so CI installs it too.
+      - name: Install ruamel.yaml
+        run: pip install ruamel.yaml
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:

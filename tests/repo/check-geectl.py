@@ -303,6 +303,10 @@ class GeectlCli:
         flags.update(
             f"-{c}" for c in re.findall(r"^  -([a-zA-Z]),", options, flags=re.M)
         )
+        # A long flag on a short+long line ("  -k, --keep-rpms"): the
+        # six-space match above misses it, and the valued match below only
+        # records it as valued, not as existing.
+        flags.update(re.findall(r"^  -[a-zA-Z], (--[\w-]+)", options, flags=re.M))
         # A flag takes a value when a <VALUE> follows its name on its
         # Options line; the rest are booleans. --format is the only valued
         # global option.

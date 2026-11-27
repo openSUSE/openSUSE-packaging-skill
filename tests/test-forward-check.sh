@@ -84,6 +84,13 @@ elif args[:2] == ["remote", "project-meta"]:
     answer(os.path.join(fix, "meta", f"{args[2]}_project"), None)
 elif args[:2] == ["remote", "list-packages"]:
     answer(os.path.join(fix, "ls"), '{"project": "openSUSE:Factory", "packages": []}')
+elif args[:2] == ["gitea", "raw-file"]:
+    # geectl gitea raw-file OWNER REPO PATH [--ref REF]: the project git's
+    # files, from $FIX/gitea/repos_<OWNER>_<REPO>_raw_<PATH, / as _>.
+    # autoforward-gate.sh reads _maintainership.json through this leaf now,
+    # not through git-obs.
+    path = args[4].replace("/", "_")
+    answer(os.path.join(fix, "gitea", "repos_%s_%s_raw_%s" % (args[2], args[3], path)), None)
 else:
     sys.exit(f"fake geectl: unexpected {args}")
 EOF

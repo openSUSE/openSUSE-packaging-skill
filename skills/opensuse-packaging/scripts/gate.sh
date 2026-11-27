@@ -1866,7 +1866,7 @@ pkg=$(basename "$(pwd -P)"); gpkg=$(git config --get geectl.package 2>/dev/null 
 # git-backed one (a package OBS syncs from git, geectl.backend "git") keys its
 # tree on the files OBS lists, and takes no geectl commit: a change goes by git
 # PR, and the stamp is for the forward.
-own=""; gitwc=""; backend=""
+own=""; gitwc=""; backend=""; scm=""
 own=$(git config --get geectl.project 2>/dev/null || true)
 [ -z "$own" ] || gitwc=1
 [ -z "$own" ] || backend=$(git config --get geectl.backend 2>/dev/null || true)
@@ -2074,7 +2074,7 @@ else
     timeout 120 python3 -I "$HERE/_parse_scan.py" scan . "$pb" "$log/parse-factory.json" > "$log/parse-added.txt" 2>&1; src=$?
     n=$(grep -v '^incomplete: ' "$log/parse-added.txt" | grep -c '^[^ ]')
     case $src in
-      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; the parse itself runs in the sandbox)" ;;
+      0) echo "OK: no new parse-time construct found against $pf (a text heuristic; $sbxsay)" ;;
       1|4) cat "$log/parse-added.txt"
          [ "$n" = 0 ] || echo "note: $n construct(s) of parse-time code $pf lacks verbatim, or whose file or macro changed: information for the review, never red; read them as text"
          ! grep -q '^incomplete: ' "$log/parse-added.txt" \
@@ -2436,8 +2436,15 @@ if [ -e "${changes[0]}" ]; then
       echo "UNKNOWN: cannot list $tlabel" >> "$log/changes-entry.txt"; rc=2
     fi
   elif [ "${against#git:}" != "$against" ]; then
-    tlabel=${against#git:}; tlist=$against
-    for ch in "${changes[@]}"; do git show "$tlabel:./$ch" > "$tbase/$ch" 2>/dev/null || rm -f "$tbase/$ch"; done
+    tlist=$against; ref=${against#git:}
+    # A geectl working copy compares against its base revision, the root
+    # commit: that is the committed copy, not a branch the user named.
+    if [ "$ref" = "$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n 1)" ]; then
+      tlabel="the committed copy"
+    else
+      tlabel=$ref
+    fi
+    for ch in "${changes[@]}"; do git show "$ref:./$ch" > "$tbase/$ch" 2>/dev/null || rm -f "$tbase/$ch"; done
   else
     echo "note: no target or base ref to compare the files with" >> "$log/changes-entry.txt"
   fi

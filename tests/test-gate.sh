@@ -573,7 +573,9 @@ co() { # <dir> <own project> <link project or -> <base file dir>: a geectl worki
   # copy of foo whose committed files are the base's, plus one new entry and a 1.0 spec.
   rm -rf "$1"; mkdir -p "$1"
   ( cd "$1" && g init -q -b main && git config geectl.project "$2" && git config geectl.package foo \
-    && cp "$4/foo.changes" "$4/foo.spec" . && git add foo.changes foo.spec && g commit -qm base ) \
+    && cp "$4/foo.changes" "$4/foo.spec" . && git add foo.changes foo.spec && g commit -qm base \
+    && git remote add origin . && git update-ref refs/remotes/origin/main HEAD \
+    && git branch -q -u origin/main ) \
     || fail "co $1: git fixture"
   mkdir -p "$O/link-target"
   if [ "$3" = - ]; then printf '{"project": "%s", "package": "foo", "target": null}\n' "$2" > "$O/link-target/$(printf '%s_foo' "$2" | tr -c 'A-Za-z0-9' '_').json"
@@ -660,7 +662,7 @@ printf 'Name: bar\nVersion: 1\nPatch0: bar-old.patch\n' | put devel:example/bar 
 g="$work/gz"; rm -rf "$g"; mkdir -p "$g"
 ( cd "$g" && git init -q -b factory && git config user.email t@example.com && git config user.name T \
   && printf 'Name: gz\nPatch0: gz-a.patch\nPatch1: gz-b.patch\n' > gz.spec && echo a > gz-a.patch && echo b > gz-b.patch \
-  && git add -A && git commit -qm base && git checkout -qb fork && echo a2 > gz-a.patch && git commit -qam edit \
+  && git add -A && g commit -qm base && git checkout -qb fork && echo a2 > gz-a.patch && g commit -qam edit \
   && git branch -q pushed && git branch -q -u pushed ) || fail "git fixture"
 gt() { # <name> <rc> <expected line> [gate args]: patch-tags of the git checkout
   local n=$1 r=$2 m=$3; shift 3; out="$(OBS=$O HOME="$work/home" PATH="$work/obin:$PATH" bash "$GATE" "$g" "$@" 2>&1)"
@@ -966,7 +968,7 @@ gwc="$work/t-ob-gw"; rm -rf "$gwc"; mkdir -p "$gwc"
 cp "$work/t-ob/foo.changes" "$work/t-ob/foo.spec" "$gwc/"
 ( cd "$gwc" && git init -q . && git config user.email t@example.com && git config user.name t \
   && git config geectl.project "$P" && git config geectl.package foo \
-  && git add foo.changes foo.spec && git commit -qm base ) || fail "geectl working copy fixture"
+  && git add foo.changes foo.spec && g commit -qm base ) || fail "geectl working copy fixture"
 : > "$work/ob/fail-list"
 out="$(OB="$work/ob" HOME="$work/home" PATH="$work/obbin:$PATH" bash "$GATE" "$gwc" --obs-build 2>&1)"; rc=$?
 [ "$rc" = 1 ] && grep -qF "UNKNOWN" <<<"$out" && [ "$(sv "$SO" build.kind)" = obs ] \
@@ -1323,7 +1325,7 @@ if [ -x /usr/lib/obs/service/source_validator ] && [ -x /usr/lib/obs/service/dow
   e "Mon Jan  5" "Build with the system zlib" | put devel:example/qux qux.changes; echo devel:example/qux > "$O/devel/qux"
   rm -rf "$work/t-ne"; mkdir -p "$work/t-ne"
   ( cd "$work/t-ne" && g init -q -b main && git config geectl.project 'home:<you>:branches:devel:example' && git config geectl.package qux \
-    && cp "$O/devel:example/qux/"* . && git add -A && git commit -qm base ) || fail "t-ne git fixture"
+    && cp "$O/devel:example/qux/"* . && git add -A && g commit -qm base ) || fail "t-ne git fixture"
   mkdir -p "$O/link-target"
   printf '{"project": "home:<you>:branches:devel:example", "package": "qux", "target": {"project": "devel:example", "package": "qux"}}\n' \
     > "$O/link-target/$(printf '%s_qux' 'home:<you>:branches:devel:example' | tr -c 'A-Za-z0-9' '_').json"
@@ -1394,16 +1396,16 @@ open(os.path.join(gm, "gitea", "repos_example__ObsPrj_raw__maintainership.json")
 PY
 GUARD="$HERE/../skills/opensuse-packaging/scripts/pr-guard.py"
 # The command rides as a shell string (data to the guard), not a python
-# list: ["osc", "sr"] is the one spelling the retired-osc rule reads.
+# list: the geectl request file spelling gate_submit reads.
 fwd() { python3 -I -c 'import json, sys
 print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' \
-  "$work" "osc sr devel:example scmpkg openSUSE:Factory -m 'Update scmpkg to 1.0'" \
+  "$work" "geectl request file --source-project devel:example --source-package scmpkg --target-project openSUSE:Factory --description 'Update scmpkg to 1.0' --changes-entry 'Update scmpkg to 1.0' --live" \
   | HOME="$work/home" PR_GUARD_META_DIR="$GM" PR_GUARD_GITEA_DIR="$GM/gitea" PR_GUARD_OBS_USER=tester python3 "$GUARD" 2>&1; }
 out=$(fwd); rc=$?
 [ "$rc" = 0 ] && [ -z "$out" ] && pass "scmsync forward over the stamped files: pr-guard lets it through" \
   || { fail "scmsync forward: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 mv "$SC" "$SC.off"; out=$(fwd)
-grep -qF "ASK [gate-stamp] osc sr of devel:example/scmpkg" <<<"$out" && pass "scmsync forward without the stamp: [gate-stamp] asks" \
+grep -qF "ASK [gate-stamp] geectl request file of devel:example/scmpkg" <<<"$out" && pass "scmsync forward without the stamp: [gate-stamp] asks" \
   || { fail "scmsync forward unstamped"; printf '%s\n' "$out" | sed 's/^/    /'; }
 mv "$SC.off" "$SC"
 # What the checkout holds but OBS does not list, or holds otherwise, leaves no tree.
@@ -1982,7 +1984,7 @@ mkdir -p "$O/devel:example/baz"; cp "$O/openSUSE:Factory/baz/baz.spec" "$O/openS
 echo stripped > "$O/devel:example/baz/vendor.tar"; echo devel:example/baz > "$O/devel/baz"
 rm -rf "$work/t-ce-baz"; mkdir -p "$work/t-ce-baz"
 ( cd "$work/t-ce-baz" && g init -q -b main && git config geectl.project devel:example && git config geectl.package baz \
-  && cp "$O/devel:example/baz/"* . && git add -A && git commit -qm base ) || fail "t-ce-baz git fixture"
+  && cp "$O/devel:example/baz/"* . && git add -A && g commit -qm base ) || fail "t-ce-baz git fixture"
 ce committed-vs-factory 1 "RED: vendor.tar changed vs openSUSE:Factory/baz, and no .changes has a top entry it lacks" "$work/t-ce-baz"
 grep -qF "OK: no file differs from the committed copy" <<<"$out" && pass "changes-entry committed-vs-factory: nothing to commit" \
   || fail "changes-entry committed-vs-factory: the committed copy differs"
@@ -1996,7 +1998,7 @@ mkdir -p "$O/devel:example/same"; cp "$O/openSUSE:Factory/same/"* "$O/devel:exam
 same_co() { # <dir> <project> <link project or ->: a checkout of same, a comment added to its spec
   rm -rf "$1"; mkdir -p "$1"
   ( cd "$1" && g init -q -b main && git config geectl.project "$2" && git config geectl.package same \
-    && cp "$O/devel:example/same/"* . && git add -A && git commit -qm base ) || fail "same_co $1: git fixture"
+    && cp "$O/devel:example/same/"* . && git add -A && g commit -qm base ) || fail "same_co $1: git fixture"
   mkdir -p "$O/link-target"
   if [ "$3" = - ]; then printf '{"project": "%s", "package": "same", "target": null}\n' "$2" > "$O/link-target/$(printf '%s_same' "$2" | tr -c 'A-Za-z0-9' '_').json"
   else printf '{"project": "%s", "package": "same", "target": {"project": "%s", "package": "same"}}\n' "$2" "$3" > "$O/link-target/$(printf '%s_same' "$2" | tr -c 'A-Za-z0-9' '_').json"; fi

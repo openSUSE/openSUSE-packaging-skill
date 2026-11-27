@@ -910,7 +910,7 @@ for k in "${!todo[@]}"; do
   # geectl local-build build --clean on a root with a bind-mounted /dev wipes the host's /dev.
   m=$(mounted "$root"); [ $? -ne 2 ] || refuse "findmnt failed — cannot rule out mounts under $root"
   [ -z "$m" ] || refuse "mounted under $root: $(paste -sd' ' <<<"$m") — unmount before building there"
-  cmd=(geectl local-build build --clean --trust-all-projects --root "$root" --alternative-project "$prj" --project "$prj" --repo standard --arch "$native" --live)
+  cmd=(geectl local-build build --clean --trust-all-projects --root "$root" --alternative-project="$prj" --project "$prj" --repo standard --arch "$native" --live)
   [ -z "$f" ] || cmd+=(--flavor "$f")
   cmd+=("$rdir")
   # geectl's output is the build log: a VM build (build-type=kvm) puts no

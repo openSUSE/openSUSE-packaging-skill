@@ -54,7 +54,7 @@ FOREIGN = {
     "changes-guard.sh": {"--format"},
     "forward-check.py": {"--supersede"},
     "gpg-verify.sh": {"--keyring", "--verify"},
-    "incoming-requests.py": {"--incoming"},
+    "incoming-requests.py": {"--backend", "--reviewer"},
     "my-requests.sh": {"--brief", "--creator", "--no-prs"},
     "pr-guard.py": {"--changes-entry", "--description"},
     "scm-snapshot.sh": {"--mode", "--outdir"},

@@ -368,7 +368,15 @@ def build_verdict(t, notes):
             raise Lookup(out_of_scope(who))
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
 
-    src = listing(t)
+    # OBS refuses the source listing while the package's source service
+    # runs: that one failure is pending, so the wait goes on. Any other
+    # lookup saying the same words (build results, job history) stays no
+    # answer -- those are raised as Lookup, not ServiceRunning, and the
+    # top-level handler turns them into UNKNOWN.
+    try:
+        src = listing(t)
+    except ServiceRunning:
+        return 1, f"PENDING — {who}: the source service is still running"
     t.srcmd5 = src.get("srcmd5")
     t.linked = src.get("linked", False)
     t.link_bound = src.get("bound")
@@ -430,7 +438,10 @@ def build_verdict(t, notes):
                 f"cannot tell whether the {label} job built the current sources"
             )
     if pending and all(state == "scheduled" for state, _, _ in pending):
-        now, since = time.time(), last_commit(t)
+        try:
+            now, since = time.time(), last_commit(t)
+        except ServiceRunning:
+            return 1, f"PENDING — {who}: the source service is still running"
         if now - since >= STUCK:
             for where in dict.fromkeys(waits):
                 since = max(since, last_job_end(t, *where))

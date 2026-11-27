@@ -118,6 +118,7 @@ Call geectl exactly as below: don't guess a form and don't run `geectl <cmd> --h
 - `geectl gitea commit-statuses OWNER REPO SHA` — list a commit's statuses: the CI states reported for that commit.
 - `geectl gitea repo-get OWNER REPO` — show a repository: owner, default branch, privacy, clone URLs, and the token owner's permissions.
 - `geectl gitea branch-list OWNER REPO` — list the branches of a repository.
+- `geectl gitea whoami` — the token owner: the login, full name, and email the configured Gitea token belongs to.
 - `geectl gitea cleanup-forks --live` — list obsolete Gitea forks and their OBS home test projects, and delete them. A project is deleted only when its description marker names a fork that no longer exists on Gitea; dry-run is the default.
 - `geectl remote owners PRJ PKG` — owners of a package (project/package scope); bugowners included, not the maintainer set.
 - `geectl remote owners-for-binary BINARY` — owners of the source package shipping that binary.

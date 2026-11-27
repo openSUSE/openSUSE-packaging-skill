@@ -520,7 +520,7 @@ case_ carry-rebuilt-for-real 0 "VERDICT: GREEN — tree $N12 on leap-16.0: built
 check_ carry-rebuilt-is-local "[ \"\$(calls '^geectl local-build build ')\" = 1 ] && grep -q '\"mode\": \"local\"' $(stampf "$C")"
 chg "$C" "Fix the build on Leap 16.0, again" "Thu Sep 24 2026 - T <t@example.com>"; (cd "$C" && git commit -qam badhdr)
 case_ carry-validate-fails-builds 0 "foo.changes fails changelog validate — building" "cd $C && VALIDATE_FAIL=1 bash $TG --build"
-check_ carry-validate-fails-built "[ \"\\$(calls '^geectl local-build build ')\" = 1 ]"
+check_ carry-validate-fails-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
 chg "$C" "Fix the build on Leap 16.0, once more"; (cd "$C" && sed -i 's/^Release: 0/Release: 1/' foo.spec && git commit -qam spec)
 case_ carry-spec-changed-builds 0 "built aarch64" "cd $C && bash $TG --build"
 check_ carry-spec-changed-built "[ \"\$(calls '^geectl local-build build ')\" = 1 ]"
@@ -538,8 +538,10 @@ check_ red-drops-stamp-file "[ ! -e $(stampf "$C") ]"
 
 C=$(fresh b161)
 case_ build-16.1 0 "VERDICT: GREEN — tree $(tree "$C" | cut -c1-12) on leap-16.1" "bash $TG $C --branch leap-16.1 --build"
-case_ jobs-refused 2 "--jobs is refused: geectl local-build build takes no --jobs flag" "bash $TG $C --branch leap-16.1 --build --jobs 8"
+# The check reads the calls of the build just run: a case_ in between would
+# reset the log, so it sits here, before jobs-refused.
 check_ build-16.1-root "grep -qF -- '--root $ROOTS/foo-leap-16.1-aarch64 --alternative-project=openSUSE:Backports:SLE-16.1 --project openSUSE:Backports:SLE-16.1 --repo standard --arch aarch64 --live' $FAKE/calls"
+case_ jobs-refused 2 "--jobs is refused: geectl local-build build takes no --jobs flag" "bash $TG $C --branch leap-16.1 --build --jobs 8"
 case_ build-16.1-stamped-for-16.1 3 "VERDICT: NO REVIEW — tree $(tree "$C" | cut -c1-12) on leap-16.1 built GREEN" "bash $TG $C --branch leap-16.1"
 # The arches are the PR project's: Backports:SLE-16.1 has ppc64le and s390x,
 # its :PullRequest project (where the bot builds) does not.
