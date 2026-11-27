@@ -63,6 +63,13 @@ resolve() {
 		die "no opencode client at an absolute path: $opencode"
 	opencode=$found
 }
+# The api.opensuse.org login, read once and dropped from the environment
+# before any command runs: only `secrets` reads it, and no child of this
+# launcher (the startup realpath included) may carry the password.
+obs_user=${GEECTL_OBS_USERNAME:-}
+obs_password=${GEECTL_OBS_PASSWORD:-}
+obs_password_file=${GEECTL_OBS_PASSWORD_FILE:-}
+unset GEECTL_OBS_USERNAME GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 # The launcher's own file, whatever invoked it as.
 self=$(realpath -- "${BASH_SOURCE[0]}")
 # Stops when commands or libraries are looked up in the work directory $1: by
@@ -202,9 +209,9 @@ plain() {
 # GEECTL_OBS_PASSWORD_FILE, never from a file of its own. Prints the user
 # name, then the password, one per line.
 geectl_login() {
-	local user=${GEECTL_OBS_USERNAME:-} password=${GEECTL_OBS_PASSWORD:-}
-	if [ -z "$password" ] && [ -n "${GEECTL_OBS_PASSWORD_FILE:-}" ]; then
-		password=$(cat -- "$GEECTL_OBS_PASSWORD_FILE") ||
+	local user=$obs_user password=$obs_password
+	if [ -z "$password" ] && [ -n "$obs_password_file" ]; then
+		password=$(cat -- "$obs_password_file") ||
 			die "cannot read GEECTL_OBS_PASSWORD_FILE"
 	fi
 	[ -n "$user" ] && [ -n "$password" ] ||
@@ -279,9 +286,6 @@ cmd_secrets() {
 	resolve
 	# All of them are complete before any replaces the secret of an earlier run.
 	geectl=$(geectl_login)
-	# The password is in $geectl now; drop it from the environment so no
-	# child of this launcher (and no fake in the test) can read it.
-	unset GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 	tea=$(tea_login)
 	github=$(gh_login)
 	model=$(PATH=$userpath OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" auth export "$model_auth")
@@ -1169,9 +1173,6 @@ cmd_import() {
 }
 cmd=${1-}
 [ $# -eq 0 ] || shift
-# Only `secrets` reads the login; every other command must not carry the
-# password to its children.
-[ "$cmd" = secrets ] || unset GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 case $cmd in
 secrets) cmd_secrets "$@" ;;
 ssh-key) cmd_ssh_key "$@" ;;

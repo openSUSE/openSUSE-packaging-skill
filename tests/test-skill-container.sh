@@ -774,13 +774,16 @@ out="$(sc install obs --workdir "$open/mid/ws" 2>&1)"; rc=$?
 # Root owns what lies above: where the directories above belong to neither
 # root nor the caller, as an unmapped owner shows in a user namespace, the
 # closed one counts for nothing.
-if unshare --user --map-user="$(id -u)" true 2> /dev/null; then
+# Root maps to the caller in the namespace, so the directories above are
+# the caller's own and no other owner shows: the case needs a caller
+# who is not root.
+if [ "$(id -u)" != 0 ] && unshare --user --map-user="$(id -u)" true 2> /dev/null; then
   out="$(unshare --user --map-user="$(id -u)" "${scenv[@]}" HOME="$work/home" bash "$SC" install obs --workdir "$open/mid/ws" 2>&1)"; rc=$?
   [ "$rc" != 0 ] && grep -qF "closed to other users" <<<"$out" && ! grep -q '^run ' "$FIX/podman-calls" \
     && pass "install refuses a work directory below one that neither root nor the caller owns" \
     || fail "install below a directory of another owner: rc=$rc $out"
 else
-  echo "SKIP: a directory of another owner (no user namespaces here)"
+  echo "SKIP: a directory of another owner (no user namespaces here, or root)"
 fi
 # A closed directory does not help below one that others write: they can put
 # another in its place. A sticky one keeps it. The same holds for a graph,

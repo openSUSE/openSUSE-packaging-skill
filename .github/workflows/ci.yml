@@ -45,9 +45,12 @@ jobs:
       # Bump the version to re-validate against a newer geectl.
       # contrib/container/skill-container is the one exception: it reads the
       # tea config with ruamel.yaml, as its Dockerfile already installs
-      # (python3-ruamel.yaml), so CI installs it too.
+      # (python3-ruamel.yaml), so CI installs it too. The launcher resets
+      # PATH to the system directories, so it is the system python3 that
+      # needs it: a pip install lands in the setup-python site-packages,
+      # which that python never sees.
       - name: Install ruamel.yaml
-        run: pip install ruamel.yaml
+        run: sudo apt-get update && sudo apt-get install -y python3-ruamel.yaml
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
