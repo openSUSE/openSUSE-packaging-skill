@@ -349,7 +349,15 @@ esac
 EOF
 # The real commands of the launcher, each behind the same check.
 for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir sort; do
-  printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $(command -v "$f") \"\$@\"" > "$tools/bin/$f"
+  # python3 comes from the system directories, as the launcher uses it in
+  # production: the caller's PATH may hold another python3 first (setup-python
+  # in CI), which has no ruamel.yaml, and the launcher never sees it.
+  if [ "$f" = python3 ]; then
+    real=$(PATH=/usr/local/bin:/usr/bin:/bin command -v python3)
+  else
+    real=$(command -v "$f")
+  fi
+  printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $real \"\$@\"" > "$tools/bin/$f"
 done
 # The launcher's pauses are recorded; with $FIX/sleep-fast they take no time.
 printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' 'printf "%s\n" "$*" >> "$FIX/sleep-calls"' \
