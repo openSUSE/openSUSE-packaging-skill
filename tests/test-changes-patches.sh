@@ -154,18 +154,18 @@ done
   printf -- '-------------------------------------------------------------------\nFri Sep 18 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n'
   cat "$oscfix/d2/foo.changes"
 } > "$oscfix/d2/foo.changes.new" && mv "$oscfix/d2/foo.changes.new" "$oscfix/d2/foo.changes"
-GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 >$oscfix/d1.out 2>&1; rc=$?
-[ "$rc" = 0 ] && grep -qF 'OK: no patch added or removed vs openSUSE:Factory/foo' $oscfix/d1.out \
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 >"$oscfix/d1.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -qF 'OK: no patch added or removed vs openSUSE:Factory/foo' "$oscfix/d1.out" \
   && pass "osc checkout: one new entry vs the committed copy passes" \
-  || { fail "osc checkout d1: rc=$rc"; sed 's/^/    /' $oscfix/d1.out; }
-GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d2" --entries 1 >$oscfix/d2.out 2>&1; rc=$?
-[ "$rc" = 1 ] && grep -qF 'foo.changes: 2 new entries vs the committed copy' $oscfix/d2.out \
+  || { fail "osc checkout d1: rc=$rc"; sed 's/^/    /' "$oscfix/d1.out"; }
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d2" --entries 1 >"$oscfix/d2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -qF 'foo.changes: 2 new entries vs the committed copy' "$oscfix/d2.out" \
   && pass "osc checkout: two new entries vs the committed copy are a finding" \
-  || { fail "osc checkout d2: rc=$rc"; sed 's/^/    /' $oscfix/d2.out; }
-GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 --target openSUSE:Factory >$oscfix/d1t.out 2>&1; rc=$?
-[ "$rc" = 1 ] && grep -qF 'foo.changes: 3 new entries vs openSUSE:Factory/foo' $oscfix/d1t.out \
+  || { fail "osc checkout d2: rc=$rc"; sed 's/^/    /' "$oscfix/d2.out"; }
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 --target openSUSE:Factory >"$oscfix/d1t.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -qF 'foo.changes: 3 new entries vs openSUSE:Factory/foo' "$oscfix/d1t.out" \
   && pass "osc checkout: --target Factory counts three new entries" \
-  || { fail "osc checkout d1 --target: rc=$rc"; sed 's/^/    /' $oscfix/d1t.out; }
+  || { fail "osc checkout d1 --target: rc=$rc"; sed 's/^/    /' "$oscfix/d1t.out"; }
 
 # usage errors never look clean
 "$SCRIPT" --entries 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"

@@ -53,9 +53,12 @@ put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 # srch <query> <json> — the request-search fixture for the query as preflight.sh passes it
 srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 # spath <query> — that fixture's path under $B (the case's copy in a mutation)
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 Q_PRS="--backend gitea --repo example/foo --state open"
 # prs <query> <json> — the pull-request-search fixture for the query as preflight.sh passes it
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 prs() { printf '%s\n' "$2" > "$B/prs-$(printf %s "pull-request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 Q_IN="--target-project devel:example --target-package foo --type submit --state new --state review"
 Q_OUT="--target-project openSUSE:Factory --target-package foo --type submit --state new --state review --source-project devel:example"
@@ -80,18 +83,30 @@ srch "$Q_DEC" '{"requests": [{"id": 1375013, "creator": "tester", "state": {"nam
 srch "$Q_SWEEP" '{"requests": []}'
 
 # inq/outg/sweep take the requests array and write that search fixture
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 inq() { srch "$Q_IN" "{\"requests\": [$1]}"; }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 outg() { srch "$Q_OUT" "{\"requests\": [$1]}"; }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 sweep() { srch "$Q_SWEEP" "{\"requests\": [$1]}"; }
 Q_OUT_NEW="--target-project openSUSE:Factory --target-package python-brand-new --type submit --state new --state review"
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 outg_new() { srch "$Q_OUT_NEW" "{\"requests\": [$1]}"; }
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_OTHER_TGT='{"id": 2000001, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_DIRECT='{"id": 2000002, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_DEDUP_IN='{"id": 2000003, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_DEDUP_SWEEP='{"id": 2000004, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_NONSUBMIT_1='{"id": 2000005, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "set_bugowner", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_NONSUBMIT_2='{"id": 2000007, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "add_role", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_MIXED='{"id": 2000006, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Leap:16.0", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_NEWPKG='{"id": 2000020, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "python-brand-new", "target_project": "openSUSE:Factory", "target_package": "python-brand-new"}], "reviews": []}'
 
 # case_ <name> <expected rc> <expected message> <mutation> [preflight args after foo]
@@ -193,7 +208,6 @@ calls="$(cat "$dir/calls")"
 # through `geectl pull-request search`. A failed or unreadable read is
 # CHECK-FAILED, never "open PRs: none".
 SCM="put \$B/meta-devel:example_project '{\"name\": \"devel:example\", \"persons\": [], \"groups\": [], \"scmsync\": \"https://src.opensuse.org/example/_ObsPrj\"}'"
-PULLS='prs-pull-request_search_--backend_gitea_--repo_example_foo_--state_open' '
 # A PR's head: the one it has now, and an older one a review may have been of.
 HEAD1=1111111111111111111111111111111111111111; HEAD0=0000000000000000000000000000000000000000
 SRC="\"source\": {\"repository\": \"tester/foo\", \"branch\": \"update-foo\", \"commit\": \"$HEAD1\"}"
@@ -243,11 +257,17 @@ STAMPS="home/$(cat "$HERE/fixtures/gate/state-dir")/incoming"
 # shellcheck disable=SC2031,SC2317  # called by case_'s mutations, where B is the case's copy
 stamp() { mkdir -p "$B/$STAMPS/$1" && printf '%s\n' "$3" > "$B/$STAMPS/$1/$2.json"; }
 MAINT="put \$B/meta-devel:example_foo '{\"name\": \"foo\", \"project\": \"devel:example\", \"persons\": [{\"name\": \"tester\", \"role\": \"maintainer\"}], \"groups\": []}'"
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_C='{"id": 2000010, "creator": "someone-else", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_OWN='{"id": 2000011, "creator": "tester", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_FWD='{"id": 2000012, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:example", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_NOCREATOR='{"id": 2000010, "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR_2ACT='{"id": 2000013, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "set_bugowner", "target_project": "devel:example", "target_package": "foo"}, {"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2016  # a case mutation is single-quoted to be eval'd in its tree
 CONTRIB='inq "$SR_C"' 
 case_ incoming-only 5 "VERDICT: INCOMING" "$MAINT && $CONTRIB" 1.2
 grep -qF "sr#2000010 by someone-else: not reviewed" <<<"$LAST" && pass "incoming-only: the item and its creator" || fail "incoming-only: $LAST"
@@ -275,6 +295,7 @@ case_ incoming-not-mine 3 "VERDICT: STOP - already in flight: SR 2000010" "$CONT
 A_DEV='{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}'
 A_TGT='{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "openSUSE:Factory", "target_package": "foo"}'
 for order in "$A_DEV,$A_TGT" "$A_TGT,$A_DEV"; do
+  # shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
   sr="{\"requests\": [{\"id\": 2000014, \"creator\": \"someone-else\", \"state\": {\"name\": \"new\", \"when\": \"2026-09-22T10:00:00\"}, \"actions\": [$order], \"reviews\": []}]}"
   case_ "incoming-and-target-$([ "$order" = "$A_DEV,$A_TGT" ] && echo devel-first || echo target-first)" 3 \
     "VERDICT: STOP - already in flight: SR 2000014 [new] devel:other/foo -> openSUSE:Factory by someone-else" \

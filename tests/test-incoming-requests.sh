@@ -39,9 +39,13 @@ chmod +x "$work/bin/"*
 B="$work/base"
 put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 REQ100='{"id": 100, "creator": "someone-else", "state": {"name": "new", "when": "2026-09-20T10:00:00"}, "description": "update foo", "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 SR101='{"id": 101, "creator": "tester", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "description": "my update", "actions": [{"type": "submit", "source_project": "devel:other", "source_package": "foo", "target_project": "devel:example", "target_package": "foo"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 REQ104='{"id": 104, "creator": "x", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "a", "source_package": "newpkg", "target_project": "devel:example", "target_package": "newpkg"}], "reviews": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 REQ105='{"id": 105, "creator": "x", "state": {"name": "review", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "submit", "source_project": "a", "source_package": "bar", "target_project": "devel:example", "target_package": "bar"}], "reviews": [{"state": "new", "by_user": "tester"}]}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 REQ106='{"id": 106, "creator": "x", "state": {"name": "new", "when": "2026-09-22T10:00:00"}, "actions": [{"type": "add_role", "target_project": "devel:example", "person": {"name": "x", "role": "maintainer"}}], "reviews": []}'
 # putreqs <req-json>... — write the request-search fixture from request dicts.
 putreqs() { local out='{"requests": [' sep=""; for r in "$@"; do out+="$sep$r"; sep=", "; done; put "$B/geectl/requests" "$out]}"; }

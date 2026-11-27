@@ -53,25 +53,43 @@ gitea() {
 }
 FOO_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
 FOO_FACTORY='{"name": "foo", "project": "openSUSE:Factory", "devel": {"project": "devel:a", "package": "foo"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 FACTORY_FOO='{"name": "foo", "project": "openSUSE:Factory", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 FACTORY_DEVEL_B='{"name": "foo", "project": "openSUSE:Factory", "devel": {"project": "devel:b", "package": "foo"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 FACTORY_NODEVEL='{"name": "foo", "project": "openSUSE:Factory", "persons": [], "groups": []}'
 PROJ_META='{"name": "devel:a", "persons": [{"name": "boss", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 PROJ_TESTER='{"name": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 PROJ_REVIEWER='{"name": "devel:a", "persons": [{"name": "boss", "role": "maintainer"}], "groups": [{"name": "qa", "role": "reviewer"}]}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 NOMAINT='{"name": "foo", "project": "devel:a", "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 REVIEWER_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}, {"name": "rev", "role": "reviewer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 OTHER_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "other", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 LINK_HERE='{"project": "devel:b", "package": "foo", "target": {"project": "devel:a"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 LINK_ELSEWHERE='{"project": "devel:b", "package": "foo", "target": {"project": "openSUSE:Factory"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 LINK_OTHER='{"project": "devel:b", "package": "foo", "target": {"project": "devel:a", "package": "bar"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 LINK_DEVELXA='{"project": "devel:b", "package": "foo", "target": {"project": "develxa"}}'
 GIT_PROJ='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 GIT_PROJ_QA='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git", "persons": [], "groups": [{"name": "qa", "role": "reviewer"}]}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 GIT_PROJ_OTHER='{"name": "devel:g", "scmsync": "https://example.org/gorg/_ObsPrj.git", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 GIT_PROJ_REF='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git#devel", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 BAR_META='{"name": "bar", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 BAR_FACTORY_A='{"name": "bar", "project": "openSUSE:Factory", "devel": {"project": "devel:a", "package": "bar"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 BAR_FACTORY_C='{"name": "bar", "project": "openSUSE:Factory", "devel": {"project": "devel:c", "package": "bar"}, "persons": [], "groups": []}'
 meta 'remote package-meta devel:a foo' "$FOO_META"
 meta 'remote project-meta devel:a' "$PROJ_META"

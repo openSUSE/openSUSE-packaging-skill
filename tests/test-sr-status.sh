@@ -84,6 +84,7 @@ put() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 # srch <query> <json> — the request-search fixture for the query as sr-status.py passes it
 srch() { printf '%s\n' "$2" > "$B/search-$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 # spath <query> — that fixture's path under $B (the case's copy in a mutation)
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 spath() { printf '%s/search-%s' "$B" "$(printf %s "request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 # showpath/cmtspath <repo> <num> — the pull-request show/comments fixture path
 showpath() { printf '%s/show-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z0-9._:-' '_')"; }
@@ -91,8 +92,10 @@ cmtspath() { printf '%s/cmts-%s' "$B" "$(printf %s "gitea:$1#$2" | tr -c 'A-Za-z
 # prspath <query> — the pull-request search fixture path for that query
 prspath() { printf '%s/prsearch-%s' "$B" "$(printf %s "pull-request search $1" | tr -c 'A-Za-z0-9._:-' '_')"; }
 Q_OPEN="--creator tester --type submit --with-history --state new --state review --state declined"
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
 Q_ALL="--creator tester --type submit --with-history --state new --state review --state declined --state accepted --state revoked --state superseded"
 closed_q() { printf '%s' "--creator tester --type submit --state accepted --state revoked --state superseded --since $1"; }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 later_q() { printf '%s' "--target-project $1 --target-package $2 --type submit --state new --state review --state accepted"; }
 SINCE=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)).strftime("%Y-%m-%d"))')
 SINCE3=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).strftime("%Y-%m-%d"))')
@@ -523,9 +526,12 @@ case_ id-with-sr-prefix 0 "| SR | 100 | foo | openSUSE:Factory | ❌ declined |"
 # sort, and to say only "N shown": "40 open" was reported while 166 were, and a
 # declined one fell off. --brief has no cap; the table keeps every decline and
 # says what it cut.
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 spath_for() { # <tree> <query>: that search fixture's path under <tree>
   printf '%s/search-%s' "$1" "$(printf %s "request search $2" | tr -c 'A-Za-z0-9._:-' '_')"; }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 closed_fix() { spath "$(closed_q "$SINCE")"; }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 later() { # <prj> <pkg> <json>: the later-requests search fixture for that target
   printf '%s\n' "$3" > "$(spath "$(later_q "$1" "$2")")"; }
 # shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
@@ -573,7 +579,7 @@ cmt() { # <who> <when> <text>
 comments() { # <fixture tree> <id> <who> <when> <text> [<who> <when> <text> ...]
   local B=$1 id=$2; shift 2
   { printf '{\"id\": %s, \"comments\": [' "$id"; local first=1
-    while [ $# -ge 3 ]; do [ $first = 1 ] || printf ', '; first=0; cmt "$1" "$2" "$3"; shift 3; done
+    while [ $# -ge 3 ]; do [ "$first" = 1 ] || printf ', '; first=0; cmt "$1" "$2" "$3"; shift 3; done
     printf ']}'; } > "$B/comments-$id"
 }
 # XML carries no raw ESC, so OBS never sends one; C1 CSI, bidi and zero-width it can.
@@ -764,14 +770,17 @@ rreq() { # <id> <package> <source project> <rev> [state] [target]
 _lst() { # <fixture tree> <prj> <pkg> <rev> <srcmd5> <suffix> <name md5 ...>
   local B=$1 prj=$2 pkg=$3 rev=$4 src=$5 suf=$6; shift 6
   local files=""; while [ $# -ge 2 ]; do [ -n "$files" ] && files="$files, "; files="$files{\"name\": \"$1\", \"size\": 1, \"mtime\": 1, \"md5\": \"$2\"}"; shift 2; done
-  local k=$(printf %s "$prj" | tr '/' '_')_$(printf %s "$pkg" | tr '/' '_')$suf
+  local k
+  k=$(printf %s "$prj" | tr '/' '_')_$(printf %s "$pkg" | tr '/' '_')$suf
   local revj="$rev"; case $rev in *[!0-9]*) revj="\"$rev\"";; esac
   put "$B/list-$k" "{\"project\": \"$prj\", \"package\": \"$pkg\", \"files\": [$files]}"
   put "$B/log-$k" "{\"project\": \"$prj\", \"package\": \"$pkg\", \"entries\": [{\"rev\": $revj, \"srcmd5\": \"$src\", \"time\": \"2026-10-20T10:00:00\", \"user\": \"tester\", \"comment\": \"\"}]}"
 }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 lst() { # <fixture tree> <prj> <pkg> <rev> <srcmd5> <name md5 ...>
   _lst "$1" "$2" "$3" "$4" "$5" "" "${@:6}"
 }
+# shellcheck disable=SC2317,SC2329  # called from case mutations, through eval
 lstrev() { # <fixture tree> <prj> <pkg> <rev> <srcmd5> <name md5 ...>
   _lst "$1" "$2" "$3" "$4" "$5" "_rev_$4" "${@:6}"
 }

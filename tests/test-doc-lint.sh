@@ -201,6 +201,7 @@ hits=$(grep -nE "$BDEP" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/
 # The forward end-state (entry 1): accepting forwards by default, so the
 # old claims are forbidden in the geectl docs.
 FORWARD_PHRASES='no forward (option|flag)|does not forward|refuses? Factory as the target'
+# shellcheck disable=SC2016  # the backticks are literal markdown in the probe text
 printf 'Accepting does not forward.\nThere is no forward option.\ngeectl has no forward flag.\n`request file` refuses Factory as the target.\n' | grep -ciE "$FORWARD_PHRASES" | grep -qx 4 \
   && pass "forward-phrase pattern self-test" || fail "forward-phrase pattern self-test: the regex is broken"
 hits=$(grep -rniE "$FORWARD_PHRASES" "$ROOT/SKILL.md" "$ROOT"/agents/*.md "$ROOT"/references/*.md)

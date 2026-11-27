@@ -891,8 +891,8 @@ for k in "${!todo[@]}"; do
     # A multibuild flavor is addressed as pkg:flavor, the same form the
     # build-log leaf's --multibuild appends to the package.
     bpkg="$pkg${f:+:$f}"
-    out=$(geectl build buildinfo --project "$prj" --package "$bpkg" --alternative-project "$prj" standard "$a" 2>&1 </dev/null)
-    if [ $? -ne 0 ]; then
+    if ! out=$(geectl build buildinfo --project "$prj" --package "$bpkg" --alternative-project "$prj" standard "$a" 2>&1 </dev/null)
+    then
       red "buildinfo $a$fs: lookup failed: $(tail -1 <<<"$out")"
     else
       err=$(py buildinfo <<<"$out"); brc=$?
