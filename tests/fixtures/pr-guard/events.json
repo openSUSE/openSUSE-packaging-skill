@@ -9582,6 +9582,27 @@
       "command": "osc sr devel:tools obsnofac openSUSE:Factory -m 'Update obsnofac to 1.1: fixes.'"
     }
   },
+  "sr-obs-nofac-factory-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsnofac --target-project openSUSE:Factory --target-package obsnofac --description 'Update obsnofac to 1.1' --changes-entry 'Update obsnofac to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-obs-nofac-devel-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsnofac --target-project devel:tools --target-package obsnofac --description 'Update obsnofac to 1.1' --changes-entry 'Update obsnofac to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-obs-added-factory-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsadded --target-project openSUSE:Factory --target-package obsadded --description 'Update obsadded to 1.1' --changes-entry 'Update obsadded to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
   "sr-obs-pre-factory": {
     "tool_name": "Bash",
     "tool_input": {

@@ -75,9 +75,11 @@
 #                the tree the last GREEN run printed (a scmsync checkout's or a
 #                geectl working copy's git rev-parse HEAD^{tree} too); needs that GREEN run
 #   --obs-build  record OBS's build of the committed tree instead (gate 1 in
-#                OBS-ONLY mode): OBS's expanded files are the stamped tree, every
-#                repo/arch/flavor succeeded from them (each log's srcmd5), and
-#                build-summary.sh reads each log GREEN; --rpms DIR also records
+#                OBS-ONLY mode): OBS's expanded files are the stamped tree, one
+#                judged repo/arch/flavor succeeded from them (its log's srcmd5),
+#                and build-summary.sh reads its log GREEN; the still-building
+#                remainder is a note, never pending, and so is a log of older
+#                sources; --rpms DIR also records
 #                the shipped-binary check of OBS's RPMs. A red build drops the
 #                tree's recorded build. Judged: the Tumbleweed and Leap 16 repos
 #                (openSUSE_Factory*, openSUSE_Tumbleweed, an openSUSE:Factory
@@ -133,8 +135,8 @@
 #       tree; --obs-build: a red build, OBS holds other files, or a lookup failed),
 #       2 = usage, or DIR is not a package checkout (no *.spec, no geectl working copy),
 #       3 = --review, --obs-build: no GREEN gate run of the current tree,
-#       4 = --obs-build: still building, or built from older sources: wait
-#       (obs-wait.py), then rerun.
+#       4 = --obs-build: nothing green yet — still building, or built from
+#       older sources: wait (obs-wait.py), then rerun.
 set -uo pipefail
 unset GATE_SANDBOX   # set below, only when a sandbox starts
 # Only the absolute entries of PATH: in the checkout an empty, . or relative one
@@ -883,8 +885,6 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         return red(", ".join(bad))
     if odd:
         return unknown("states the gate cannot judge: " + ", ".join(odd[:6]))
-    if waiting:
-        return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
     os.makedirs(outdir, exist_ok=True)
     # factory: a Tumbleweed build succeeded; added: a green repo only --repos brought in
     reds, older, done, others, added, factory = [], [], [], set(), set(), False
@@ -954,10 +954,16 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
         print("note: PRE-EXISTING, red in %s too (reported, not red): %s" % (origin[0], ", ".join(pre)))
     if reds:
         return red("build-summary.sh: %s (summaries: %s)" % ("; ".join(reds), outdir))
-    if older:
-        return pending("built from older sources: " + ", ".join(older[:6]))
     if not done:
+        if older:
+            return pending("built from older sources: " + ", ".join(older[:6]))
+        if waiting:
+            return pending(", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else ""))
         return unknown("no judged build succeeded, only reds %s has too" % origin[0])
+    if waiting:
+        print("note: still building: %s" % (", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else "")))
+    if older:
+        print("note: built from older sources: %s" % (", ".join(older[:6]) + (" +%d more" % (len(older) - 6) if len(older) > 6 else "")))
     if rpms:
         p = subprocess.run([scan, d, "--rpms", rpms], capture_output=True, text=True, cwd=d)
         with open(os.path.join(outdir, "source-binaries.txt"), "w", encoding="utf-8") as fh:
@@ -979,8 +985,10 @@ def obsbuild(path, d, prj, pkg, tmp, outdir, summary, scan, rpms="", repos="", a
     shown = ", ".join(done[:6]) + (" +%d more" % (len(done) - 6) if len(done) > 6 else "")
     rp = ", and the RPMs of %s checked" % rpms if rpms else ""
     pe = "; PRE-EXISTING: %s" % ", ".join(pre) if pre else ""
-    print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s%s (summaries: %s)"
-          % (t[:12], (srcmd5 or built_srcmd5 or "?")[:12], shown, rp, pe, outdir))
+    wb = "; still building: %s" % (", ".join(waiting[:6]) + (" +%d more" % (len(waiting) - 6) if len(waiting) > 6 else "")) if waiting else ""
+    ob = "; built from older sources: %s" % (", ".join(older[:6]) + (" +%d more" % (len(older) - 6) if len(older) > 6 else "")) if older else ""
+    print("VERDICT: GREEN — OBS build of tree %s recorded: sources %s, %s%s%s%s%s (summaries: %s)"
+          % (t[:12], (srcmd5 or built_srcmd5 or "?")[:12], shown, rp, pe, wb, ob, outdir))
     return 0
 
 

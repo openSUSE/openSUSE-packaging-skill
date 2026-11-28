@@ -955,11 +955,11 @@ TO=$(obstamp); ob
 ! grep -qE '^## (rpmspec|prep)|%prep' <<<"$out" && pass "--obs-build: no spec parse and no %prep run" \
   || { fail "--obs-build ran the parse or %prep"; grep -E '^## (rpmspec|prep)|%prep' <<<"$out" | sed 's/^/    /'; }
 results building; ob
-[ "$rc" = 4 ] && grep -qF "PENDING" <<<"$out" && grep -qF "openSUSE_Tumbleweed/aarch64" <<<"$out" \
-  && pass "--obs-build: an arch still building is pending (rc=4)" || { fail "--obs-build building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "VERDICT: GREEN" <<<"$out" && grep -qF "still building: openSUSE_Tumbleweed/aarch64 building" <<<"$out" \
+  && pass "--obs-build: an arch still building is a note beside one green build (rc=0)" || { fail "--obs-build building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 results succeeded; blog aarch64 fedcba9876543210fedcba9876543210 finished; ob
-[ "$rc" = 4 ] && grep -qF "built from older sources" <<<"$out" \
-  && pass "--obs-build: a log of older sources is pending (rc=4)" || { fail "--obs-build older log: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "built from older sources: openSUSE_Tumbleweed/aarch64 on fedcba987654" <<<"$out" \
+  && pass "--obs-build: a log of older sources is a note beside one green build (rc=0)" || { fail "--obs-build older log: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 listing 00000000000000000000000000000000; blog aarch64 "$SRC" finished; ob
 [ "$rc" = 1 ] && grep -qF "OBS holds other files than tree ${TO:0:12}" <<<"$out" && grep -qF "foo.spec" <<<"$out" \
   && pass "--obs-build: OBS holding other files than the stamped tree is red" \
@@ -1010,8 +1010,8 @@ results succeeded; mv "$work/ob/log-openSUSE_Tumbleweed-aarch64-foo" "$work/ob/a
   || { fail "--obs-build log lookup failed: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 mv "$work/ob/away.log" "$work/ob/log-openSUSE_Tumbleweed-aarch64-foo"
 rx "$(st_ x86_64 ' dirty="true"' foo succeeded)$(st_ aarch64 '' foo succeeded)"; ob
-[ "$rc" = 4 ] && grep -qF "openSUSE_Tumbleweed/x86_64 dirty" <<<"$out" \
-  && pass "--obs-build: a dirty repository is pending (rc=4)" || { fail "--obs-build dirty: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "VERDICT: GREEN" <<<"$out" && grep -qF "still building: openSUSE_Tumbleweed/x86_64 dirty" <<<"$out" \
+  && pass "--obs-build: a dirty repository is a note beside one green build (rc=0)" || { fail "--obs-build dirty: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(st_ aarch64 '' bar failed)$(st_ aarch64 '' foobar broken)"; ob
 [ "$rc" = 0 ] && pass "--obs-build: other packages' rows are not this package's" \
   || { fail "--obs-build other packages' rows: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -1045,14 +1045,14 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo failed)$(lp 15.7 succeede
   && pass "--obs-build: Factory red is red, whatever 15.7 does" || { fail "--obs-build Factory red: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 blog aarch64 "$SRC" finished
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo building)$(lp 15.7 failed)"; ob
-[ "$rc" = 4 ] && grep -qF "openSUSE_Tumbleweed/aarch64 building" <<<"$out" \
-  && pass "--obs-build: Factory still building is pending (rc=4) with 15.7 done" || { fail "--obs-build Factory building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "VERDICT: GREEN" <<<"$out" && grep -qF "still building: openSUSE_Tumbleweed/aarch64 building" <<<"$out" \
+  && pass "--obs-build: Factory still building is a note beside one green build (rc=0)" || { fail "--obs-build Factory building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 15.7 building)"; ob
 [ "$rc" = 0 ] && grep -qF "15.7/x86_64 building" <<<"$out" \
   && pass "--obs-build: a 15.7 repo still building is a note, not pending" || { fail "--obs-build 15.7 building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 building)"; ob
-[ "$rc" = 4 ] && grep -qF "16.1/x86_64 building" <<<"$out" \
-  && pass "--obs-build: Leap 16.1 still building is pending (rc=4)" || { fail "--obs-build 16.1 building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "VERDICT: GREEN" <<<"$out" && grep -qF "still building: 16.1/x86_64 building" <<<"$out" \
+  && pass "--obs-build: Leap 16.1 still building is a note beside one green build (rc=0)" || { fail "--obs-build 16.1 building: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(lp 16.1 failed)"; ob
 [ "$rc" = 1 ] && grep -qF "VERDICT: RED" <<<"$out" && grep -qF "16.1/x86_64" <<<"$out" \
   && pass "--obs-build: a red 16.1 with no link origin to compare is red" || { fail "--obs-build 16.1 red: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -1061,7 +1061,7 @@ st = json.load(open(sys.argv[1])); st["target"] = sys.argv[2]; json.dump(st, ope
 stt openSUSE:Factory; ob
 [ "$rc" = 0 ] && grep -qF "note: not judged" <<<"$out" && grep -qF "16.1/x86_64 failed" <<<"$out" && [ "$(sv "$SO" build.others)" = "[]" ] \
   && pass "--obs-build: a gate run targeting openSUSE:Factory judges no Leap 16 repo" || { fail "--obs-build Factory target: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo building)"; ob --repos '15\.7' --arches s390x
+rx "$(st_ x86_64 '' foo building)$(st_ aarch64 '' foo building)"; ob --repos '15\.7' --arches s390x
 [ "$rc" = 4 ] && grep -qF "wait with obs-wait.py build $P foo --target openSUSE:Factory --repos '15\.7' --arches s390x, then rerun" <<<"$out" \
   && pass "--obs-build: the PENDING hint waits on the gate's own scope" || { fail "--obs-build pending hint scope: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 stt devel:example/foo
@@ -1099,8 +1099,8 @@ rx "$(st_ x86_64 '' foo succeeded)$(st_ aarch64 '' foo succeeded)$(zs building)"
   && pass "--obs-build --arches s390x: a repo the link origin disables is not judged, not pending" \
   || { fail "--obs-build disabled in the origin: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 orx "$(st_ x86_64 '' foo succeeded)$(zs succeeded)"; ob --arches s390x
-[ "$rc" = 4 ] && grep -qF "openSUSE_Factory_zSystems/s390x building" <<<"$out" \
-  && pass "--obs-build --arches s390x: an arch the origin builds is pending while it builds" || { fail "--obs-build --arches pending: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+[ "$rc" = 0 ] && grep -qF "VERDICT: GREEN" <<<"$out" && grep -qF "still building: openSUSE_Factory_zSystems/s390x building" <<<"$out" \
+  && pass "--obs-build --arches s390x: an arch the origin builds is a note beside one green build (rc=0)" || { fail "--obs-build --arches pending: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 ob
 [ "$rc" = 0 ] && grep -qF "openSUSE_Factory_zSystems/s390x building" <<<"$out" \
   && pass "--obs-build: s390x is a note unless --arches names it" || { fail "--obs-build s390x note: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }

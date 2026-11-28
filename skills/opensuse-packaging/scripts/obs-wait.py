@@ -29,27 +29,25 @@ A call takes about --timeout plus that last geectl check; --timeout 0 asks geect
 once. Prints one VERDICT line. Read-only; geectl authenticates from its
 configured credentials, no credential file is read.
 
-A build whose only unfinished repos/arches are "scheduled", with the rest
-green from the current sources, is QUEUED-STUCK once 30 minutes have passed
-since both the last commit and the last build job that ended in each such
-repo/arch (a package scheduled because its dependency just built is not
-stuck): those arches wait for a worker, which no wait shortens. Report it and
-come back later; it is not green, and every judged repo/arch must be green
-before an update is filed.
+A build with nothing green yet whose only unfinished repos/arches are
+"scheduled" is QUEUED-STUCK once 30 minutes have passed since both the last
+commit and the last build job that ended in each such repo/arch (a package
+scheduled because its dependency just built is not stuck): those arches wait
+for a worker, which no wait shortens. Report it and come back later; it is
+not green.
 
-In the default scope, a build whose only unfinished repos/arches are
-"blocked", with the link origin blocked at the same repo/arch too and the rest
-green from the current sources, is BLOCKED-UPSTREAM: a dependency rebuild
-outside this change holds both. Report it and come back later; it is not
-green either.
+In the default scope, a build with nothing green yet whose only unfinished
+repos/arches are "blocked", with the link origin blocked at the same repo/arch
+too, is BLOCKED-UPSTREAM: a dependency rebuild outside this change holds both.
+Report it and come back later; it is not green either.
 
 Exit:
-  0 = green on every applicable repo/arch from the current sources; request accepted
-  1 = still pending at --timeout, a source service still running included: repeat the same call
-  2 = settled failure: failed/unresolvable/broken/unknown code, or nothing to build (with --all, --repo or --arch); request declined/revoked/superseded/deleted
+  0 = one judged build green from the current sources, the still-building remainder and any red the link origin has too named; request accepted
+  1 = still pending at --timeout, nothing green yet, a source service still running included: repeat the same call
+  2 = settled failure: a NEW failed/unresolvable/broken/unknown code in the default scope, any red with --all, --repo or --arch, or nothing to build (with --all, --repo or --arch); request declined/revoked/superseded/deleted
   3 = no answer: usage, a geectl lookup failed, was empty or did not parse, or no repo/arch in scope
-  4 = QUEUED-STUCK: only scheduled arches left, 30+ min after the last commit and their repo's last finished job, the rest green; not green, check back later
-  5 = BLOCKED-UPSTREAM: only blocked arches left, blocked in the link origin too, the rest green; not green, check back later
+  4 = QUEUED-STUCK: nothing green yet, only scheduled arches left, 30+ min after the last commit and their repo's last finished job; not green, check back later
+  5 = BLOCKED-UPSTREAM: nothing green yet, only blocked arches left, blocked in the link origin too; not green, check back later
 """
 
 import argparse
@@ -87,6 +85,11 @@ SERVICE = "the source service is still running"
 
 GREEN = {"succeeded"}
 RED = {"unresolvable", "broken"}
+PRE = {
+    "failed",
+    "unresolvable",
+    "broken",
+}  # gate.sh REDS: a red the link origin has too is PRE-EXISTING, not this change's failure
 SKIP = {"disabled", "excluded"}
 PENDING = {"scheduled", "building", "blocked", "finished", "signing", "dispatching"}
 
@@ -342,14 +345,17 @@ def build_verdict(t, notes):
             kept.append(row)
         rows = kept
 
-    red, failed, pending, ok, waits = [], [], [], [], []
+    red, failed, pending, ok, waits, pre = [], [], [], [], [], []
     for res, name, label, code, dirty, s in rows:
         if dirty:
             pending.append(("dirty", label, ""))
         elif code in SKIP:
             continue
         elif code in RED:
-            red.append((code, label, clip(s.get("details"), 80)))
+            if there.get(label) in PRE:
+                pre.append((code, label, clip(s.get("details"), 80)))
+            else:
+                red.append((code, label, clip(s.get("details"), 80)))
         elif code == "failed":
             failed.append((res, name, label))
         elif code in GREEN:
@@ -361,9 +367,13 @@ def build_verdict(t, notes):
         else:
             # Never pending: a code nobody knows must not hold the wait open.
             red.append((f"unknown code {code!r}", label, ""))
+    # The PRE-EXISTING note here names RED-code pres only: failed-code pres
+    # are classified by the loop below, so they wait for the second return.
     if red:
-        return 2, f"FAILED — {who}: {summary(red)}"
-    if not (failed or pending or ok):
+        return 2, f"FAILED — {who}: {summary(red)}" + (
+            f"; PRE-EXISTING: {summary(pre)}" if pre else ""
+        )
+    if not (failed or pending or ok or pre):
         if t.scoped:
             raise Lookup(out_of_scope(who))
         return 2, f"FAILED — {who}: nothing to build, all excluded or disabled"
@@ -385,7 +395,10 @@ def build_verdict(t, notes):
     for res, name, label in failed:
         job = last_job(t, res.get("repository"), res.get("arch"), name)
         if job is None:
-            red.append(("failed", label, ""))
+            if there.get(label) in PRE:
+                pre.append(("failed", label, ""))
+            else:
+                red.append(("failed", label, ""))
             continue
         cur = job_built_current(t, job)
         if cur is False:
@@ -404,19 +417,16 @@ def build_verdict(t, notes):
                 f"cannot tell whether the {label} job built the current sources"
             )
         else:
-            red.append(("failed", label, ""))
+            if there.get(label) in PRE:
+                pre.append(("failed", label, ""))
+            else:
+                red.append(("failed", label, ""))
+    pre_note = f"; PRE-EXISTING: {summary(pre)}" if pre else ""
     if red:
-        return 2, f"FAILED — {who}: {summary(red)}"
-    # only scheduled arches left, the rest succeeded: maybe queued-stuck, once
-    # the succeeded ones are known to be of the current sources
-    queued = bool(ok) and all(state == "scheduled" for state, _, _ in pending)
-    # blocked here and in the link origin too: what holds it is not this change
-    held = bool(ok) and all(
-        state == "blocked" and there.get(label) == "blocked"
-        for state, label, _ in pending
-    )
-    if pending and not (queued or held):
-        return 1, f"PENDING — {who}: {summary(pending)}"
+        return 2, f"FAILED — {who}: {summary(red)}{pre_note}"
+    # One judged build green from the current sources is the evidence: the
+    # still-building remainder is named, not waited on.
+    current = []
     for res, name, label in ok:
         job = last_job(t, res.get("repository"), res.get("arch"), name)
         if job is None:
@@ -437,6 +447,18 @@ def build_verdict(t, notes):
             raise Lookup(
                 f"cannot tell whether the {label} job built the current sources"
             )
+        else:
+            current.append((res, name, label))
+    if current:
+        green = summary([("succeeded", x[2], "") for x in current], 8)
+        still = [p for p in pending if p[0] != older]
+        old = [p for p in pending if p[0] == older]
+        rest = f"; still building: {summary(still)}" if still else ""
+        rest += f"; {summary(old)}" if old else ""
+        rest += pre_note
+        return 0, f"GREEN — {who}: {green}{rest}"
+    # Nothing green from the current sources: queued-stuck and
+    # blocked-upstream return at once, as before; otherwise still pending.
     if pending and all(state == "scheduled" for state, _, _ in pending):
         try:
             now, since = time.time(), last_commit(t)
@@ -448,22 +470,25 @@ def build_verdict(t, notes):
                 if now - since < STUCK:
                     break
         if now - since >= STUCK:
-            green = summary([("succeeded", x[2], "") for x in ok], 8)
             return 4, (
                 f"QUEUED-STUCK — {who}: {summary(pending)} for {int((now - since) // 60)} "
-                f"min with no commit or finished job there, {green}; not green: report "
+                f"min with no commit or finished job there{pre_note}; not green: report "
                 "it and check back later"
             )
-    if held and pending and all(state == "blocked" for state, _, _ in pending):
-        green = summary([("succeeded", x[2], "") for x in ok], 8)
+    if pending and all(
+        state == "blocked" and there.get(label) == "blocked"
+        for state, label, _ in pending
+    ):
         return 5, (
-            f"BLOCKED-UPSTREAM — {who}: {summary(pending)}, blocked in {upstream[0]} "
-            f"too, {green}; not green: a dependency rebuild outside this change, "
+            f"BLOCKED-UPSTREAM — {who}: {summary(pending)}{pre_note}, blocked in {upstream[0]} "
+            "too; not green: a dependency rebuild outside this change, "
             "report it and check back later"
         )
     if pending:
-        return 1, f"PENDING — {who}: {summary(pending)}"
-    return 0, f"GREEN — {who}: " + summary([("succeeded", x[2], "") for x in ok], 8)
+        return 1, f"PENDING — {who}: {summary(pending)}{pre_note}"
+    # Nothing green, nothing building, only reds the link origin has too:
+    # no green evidence yet, and none of it is this change's failure.
+    return 1, f"PENDING — {who}: PRE-EXISTING: {summary(pre)}"
 
 
 def build_event(t, key, p):

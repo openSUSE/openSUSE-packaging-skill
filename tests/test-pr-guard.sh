@@ -239,6 +239,8 @@ for prj, pkg in pairs("obs_sle"):
 for prj, pkg in pairs("obs_nofac"):
     stamp(prj, pkg, listing(prj, pkg), obs=["16.0"], added=[], factory=False,
           pre=["openSUSE_Tumbleweed/x86_64 failed", "openSUSE_Tumbleweed/aarch64 failed"])
+for prj, pkg in pairs("obs_added"):
+    stamp(prj, pkg, listing(prj, pkg), obs=["15.7"], added=["15.7"], factory=False)
 for prj, pkg in pairs("obs_pre"):
     stamp(prj, pkg, listing(prj, pkg), obs=[], pre=["16.1/x86_64 failed", "16.1/aarch64 unresolvable"])
 for prj, pkg in pairs("stale"):
@@ -2201,8 +2203,13 @@ case_ sr-obs-default-slfo 2 retired-osc "an osc command"
 case_ sr-obs-default-step 2 retired-osc "an osc command"
 # A version alone is not enough: 16.0 of a non-Leap product is no Leap 16 target.
 case_ sr-obs-default-sles16 2 retired-osc "an osc command"
-# No Tumbleweed build succeeded (both arches PRE-EXISTING), so Factory is not covered.
+# No Tumbleweed build succeeded (both arches PRE-EXISTING): under the one-green bar the
+# Leap 16 build covers Factory and devel, so a geectl filing goes through unasked.
 case_ sr-obs-nofac-factory 2 retired-osc "an osc command"
+case_ sr-obs-nofac-factory-geectl 0 - ""
+case_ sr-obs-nofac-devel-geectl 0 - ""
+# A green only --repos added for another product is no Factory evidence: the filing asks.
+ask_ sr-obs-added-factory-geectl build-evidence "its OBS build judged no repo of openSUSE:Factory"
 case_ sr-obs-sle-other 2 retired-osc "an osc command"
 # No written target: osc picks the link or devel target, which a Factory-judged build covers.
 case_ sr-obs-bare               2 retired-osc "an osc command"

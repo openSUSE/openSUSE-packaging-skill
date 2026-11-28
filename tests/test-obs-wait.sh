@@ -240,7 +240,14 @@ new stale-red; res results x86_64=failed; src source $CUR; job jobhist $OLD
 run stale-red build $P $K --timeout 0
 expect "failed from older sources is pending, not a failure" 1 "built from older sources: standard/x86_64 (failed on bbbbbbbbbbbb)"
 
-new timeout; res results x86_64=scheduled; src source $CUR
+new green-older-ok; res results x86_64=succeeded aarch64=succeeded; src source $CUR; job jobhist $CUR; job jobhist.standard.aarch64.foo $OLD
+run green-older-ok build $P $K --timeout 0
+expect "one green arch files it; an older green arch is named as older sources, not still building" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; built from older sources: standard/aarch64 (succeeded on bbbbbbbbbbbb)"
+new green-older-failed; res results x86_64=succeeded aarch64=failed; src source $CUR; job jobhist $CUR; job jobhist.standard.aarch64.foo $OLD
+run green-older-failed build $P $K --timeout 0
+expect "one green arch files it; an older failed arch is named as older sources, not still building" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; built from older sources: standard/aarch64 (failed on bbbbbbbbbbbb)"
+
+new timeout; res results x86_64=scheduled; src source $CUR; ended repojobs 120
 run timeout build $P $K --timeout 3
 expect "still building at the timeout: exit 1" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64 — not settled after 3s"
 [ "$(calls "build results")" = 2 ] && pass "  ...asked geectl again at the timeout" || fail "  $(calls "build results") checks"
@@ -314,39 +321,49 @@ run svc-jobhist build $P $K --timeout 0
 expect "  ...from the job history too" 3 "VERDICT: UNKNOWN — geectl build job-history failed"
 
 # An arch that only waits for a worker: no wait shortens it. Reported as
-# QUEUED-STUCK (exit 4, not green) once the rest is green from the current
-# sources and neither a commit nor a finished job in that repo/arch came in
-# the last 30 minutes, instead of 127 sleeps.
+# QUEUED-STUCK (exit 4, not green) only with nothing green yet, once neither
+# a commit nor a finished job in that repo/arch came in the last 30 minutes,
+# instead of 127 sleeps.
 new queued; res results x86_64=succeeded aarch64=scheduled i586=scheduled; src source $CUR 3600; job jobhist $CUR; ended repojobs 3600
 run queued build $P $K --timeout 20
-expect "only scheduled arches left, an hour with no commit or job: QUEUED-STUCK" 4 \
-  "VERDICT: QUEUED-STUCK — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64, standard/i586 for 60 min with no commit or finished job there, succeeded: standard/x86_64; not green"
+expect "one green arch files it; the scheduled rest is a note" 0 \
+  "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64, standard/i586"
 [ "$ms" -lt 5000 ] && pass "  ...at once, without waiting out the timeout (${ms}ms)" || fail "  waited ${ms}ms"
 # Blocked on a dependency for an hour, scheduled since it built two minutes ago.
 new queued-after-dep; res results x86_64=succeeded aarch64=scheduled; src source $CUR 3600; job jobhist $CUR; ended repojobs 120
 run queued-after-dep build $P $K --timeout 0
-expect "scheduled right after a dependency built is pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64"
+expect "one green arch files it; scheduled right after a dependency built is a note" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64"
 new queued-no-jobs; res results x86_64=succeeded aarch64=scheduled; src source $CUR 3600; job jobhist $CUR
 echo '{"entries": []}' > "$FIX/repojobs"
 run queued-no-jobs build $P $K --timeout 0
-expect "no job ever ended there: the commit's age decides" 4 "QUEUED-STUCK"
+expect "one green arch files it; no job ever ended on the scheduled arch" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64"
 new queued-jobs-err; res results x86_64=succeeded aarch64=scheduled; src source $CUR 3600; job jobhist $CUR
 echo '@ERR HTTP Error 502: gateway' > "$FIX/repojobs"
 run queued-jobs-err build $P $K --timeout 0
-expect "an unreadable repo job history is no answer" 3 "VERDICT: UNKNOWN"
+expect "an unreadable job history on a still-building arch does not block green" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64"
 new queued-fresh; res results x86_64=succeeded aarch64=scheduled; src source $CUR 600; job jobhist $CUR
 run queued-fresh build $P $K --timeout 0
-expect "scheduled ten minutes after the commit is still pending" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/aarch64"
+expect "one green arch files it; scheduled ten minutes after the commit is a note" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64"
 new queued-building; res results x86_64=succeeded aarch64=scheduled i586=building; src source $CUR 3600; job jobhist $CUR
 run queued-building build $P $K --timeout 0
-expect "an arch still building is pending, not stuck" 1 "PENDING"
-new queued-none-green; res results x86_64=scheduled aarch64=scheduled; src source $CUR 3600
+expect "one green arch files it; an arch still building is a note" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: standard/x86_64; still building: scheduled: standard/aarch64; building: standard/i586"
+new queued-none-green; res results x86_64=scheduled aarch64=scheduled; src source $CUR 3600; echo '{"entries": []}' > "$FIX/repojobs"
 run queued-none-green build $P $K --timeout 0
-expect "nothing green yet is pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64, standard/aarch64"
+expect "nothing green yet, all scheduled an hour: QUEUED-STUCK" 4 "VERDICT: QUEUED-STUCK — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64, standard/aarch64 for 60 min with no commit or finished job there; not green"
+new queued-fresh-none-green; res results x86_64=scheduled aarch64=scheduled; src source $CUR 600
+run queued-fresh-none-green build $P $K --timeout 0
+expect "nothing green yet, all scheduled, commit ten minutes ago: pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64, standard/aarch64"
+new queued-recent-job; res results x86_64=scheduled aarch64=scheduled; src source $CUR 3600; ended repojobs 120
+run queued-recent-job build $P $K --timeout 0
+expect "nothing green yet, all scheduled, but a job ended two minutes ago: pending, not stuck" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: scheduled: standard/x86_64, standard/aarch64"
+new queued-jobs-err-none-green; res results x86_64=scheduled aarch64=scheduled; src source $CUR 3600
+echo '@ERR HTTP Error 502: gateway' > "$FIX/repojobs"
+run queued-jobs-err-none-green build $P $K --timeout 0
+expect "nothing green yet, an unreadable repo job history is no answer" 3 "VERDICT: UNKNOWN"
 new queued-old-green; res results x86_64=succeeded aarch64=scheduled; src source $CUR 3600; job jobhist $OLD
 run queued-old-green build $P $K --timeout 0
 expect "a green arch of older sources keeps it pending" 1 "built from older sources: standard/x86_64 (succeeded on bbbbbbbbbbbb)"
-new queued-no-history; res results x86_64=succeeded aarch64=scheduled; src source $CUR; job jobhist $CUR
+new queued-no-history; res results x86_64=scheduled aarch64=scheduled; src source $CUR
 printf '{"entries": [{"srcmd5": "%s"}]}\n' "$CUR" > "$FIX/source"
 run queued-no-history build $P $K --timeout 0
 expect "no commit time is no answer, never stuck or pending" 3 "VERDICT: UNKNOWN — no commit time in the $P/$K package log"
@@ -387,7 +404,7 @@ has "$out" "(not judged: building: $TW/i586; failed: 15.7/x86_64)" && pass "  ..
 run scope-default build $P $K --timeout 0 --all
 expect "--all waits on every repo/arch" 2 "failed: 15.7/x86_64"
 run scope-default build $P $K --timeout 0 --arches i586
-expect "--arches i586 adds i586" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: building: $TW/i586"
+expect "--arches i586 adds i586, still building beside green ones" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64, $TW/aarch64, 16.1/aarch64; still building: building: $TW/i586"
 run scope-default build $P $K --timeout 0 --repos '^15\.7$'
 expect "--repos adds 15.7" 2 "failed: 15.7/x86_64"
 run scope-default build $P $K --timeout 0 --all --repos x
@@ -418,7 +435,7 @@ grep -q "^geectl build results devel:origin --package $K --multibuild$" "$FIX/ca
   || fail "  origin not asked: $(grep '^geectl build results' "$FIX/calls")"
 rres origin $TW/x86_64=succeeded openSUSE_Factory_zSystems/s390x=succeeded
 run origin-off build $P $K --timeout 0 --arches s390x
-expect "one the origin builds is waited on" 1 "PENDING — $P/$K sources (linked): building: openSUSE_Factory_zSystems/s390x"
+expect "one the origin builds is a note beside green ones" 0 "VERDICT: GREEN — $P/$K sources (linked): succeeded: $TW/x86_64, $TW/aarch64; still building: building: openSUSE_Factory_zSystems/s390x"
 echo "@ERR Server returned an error: HTTP Error 500: boom-origin" > "$FIX/origin"
 run origin-off build $P $K --timeout 0 --arches s390x
 expect "a failed origin lookup is no answer" 3 "boom-origin"
@@ -431,22 +448,52 @@ new blocked-up; lsrc $CUR; job jobhist $CUR
 rres results $TW/x86_64=succeeded $TW/aarch64=blocked
 rres origin $TW/x86_64=succeeded $TW/aarch64=blocked
 run blocked-up build $P $K --timeout 20
-expect "blocked here and in the origin, the rest green: BLOCKED-UPSTREAM" 5 \
-  "VERDICT: BLOCKED-UPSTREAM — $P/$K sources (linked): blocked: $TW/aarch64, blocked in devel:origin too, succeeded: $TW/x86_64; not green"
+expect "one green arch files it; blocked in the origin too is a note" 0 \
+  "VERDICT: GREEN — $P/$K sources (linked): succeeded: $TW/x86_64; still building: blocked: $TW/aarch64"
 [ "$ms" -lt 5000 ] && pass "  ...at once (${ms}ms)" || fail "  waited ${ms}ms"
 rres origin $TW/x86_64=succeeded $TW/aarch64=succeeded
 run blocked-up build $P $K --timeout 0
-expect "blocked here but built in the origin is pending" 1 "PENDING — $P/$K sources (linked): blocked: $TW/aarch64"
+expect "one green arch files it; blocked but built in the origin is a note" 0 "VERDICT: GREEN — $P/$K sources (linked): succeeded: $TW/x86_64; still building: blocked: $TW/aarch64"
 new blocked-nolink; src source $CUR; job jobhist $CUR
 rres results $TW/x86_64=succeeded $TW/aarch64=blocked
 run blocked-nolink build $P $K --timeout 0
-expect "blocked with no link origin is pending" 1 "PENDING"
+expect "one green arch files it; blocked with no link origin is a note" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64; still building: blocked: $TW/aarch64"
+new blocked-none-green; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=blocked $TW/aarch64=blocked
+rres origin $TW/x86_64=blocked $TW/aarch64=blocked
+run blocked-none-green build $P $K --timeout 0
+expect "all blocked, the origin blocked too, nothing green: BLOCKED-UPSTREAM" 5 "VERDICT: BLOCKED-UPSTREAM — $P/$K sources (linked): blocked: $TW/x86_64, $TW/aarch64, blocked in devel:origin too; not green"
+new blocked-origin-green; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=blocked $TW/aarch64=blocked
+rres origin $TW/x86_64=succeeded $TW/aarch64=blocked
+run blocked-origin-green build $P $K --timeout 0
+expect "all blocked, the origin green at one arch, nothing green: pending, not upstream-blocked" 1 "PENDING — $P/$K sources (linked): blocked: $TW/x86_64, $TW/aarch64"
 # An exclusion follows the spec, which the change may edit: a red there still counts.
 new origin-excluded; lsrc $CUR; job jobhist $CUR
 rres results $TW/x86_64=succeeded $TW/aarch64=failed
 rres origin $TW/x86_64=succeeded $TW/aarch64=excluded
 run origin-excluded build $P $K --timeout 0
 expect "a red where the origin excludes the arch is a settled failure, not skipped" 2 "failed: $TW/aarch64"
+new pre-existing-failed; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=failed
+rres origin $TW/x86_64=succeeded $TW/aarch64=failed
+run pre-existing-failed build $P $K --timeout 0
+expect "a red the link origin has too is PRE-EXISTING, not a failure" 0 "VERDICT: GREEN — $P/$K sources (linked): succeeded: $TW/x86_64; PRE-EXISTING: failed: $TW/aarch64"
+new pre-existing-unresolvable; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=unresolvable
+rres origin $TW/x86_64=succeeded $TW/aarch64=unresolvable
+run pre-existing-unresolvable build $P $K --timeout 0
+expect "an unresolvable the link origin has too is PRE-EXISTING, not a failure" 0 "VERDICT: GREEN — $P/$K sources (linked): succeeded: $TW/x86_64; PRE-EXISTING: unresolvable: $TW/aarch64"
+new pre-existing-none-green; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=failed $TW/aarch64=failed
+rres origin $TW/x86_64=failed $TW/aarch64=failed
+run pre-existing-none-green build $P $K --timeout 0
+expect "only reds the origin has too, nothing green: pending, never a failure" 1 "PENDING — $P/$K sources (linked): PRE-EXISTING: failed: $TW/x86_64, $TW/aarch64"
+new pre-existing-new-red; lsrc $CUR; job jobhist $CUR
+rres results $TW/x86_64=succeeded $TW/aarch64=failed
+rres origin $TW/x86_64=succeeded $TW/aarch64=succeeded
+run pre-existing-new-red build $P $K --timeout 0
+expect "a red the origin does not have is still a settled failure" 2 "VERDICT: FAILED — $P/$K sources (linked): failed: $TW/aarch64"
 # A broken link does not expand: its reds are still a settled failure, not no answer.
 new broken-link; lsrc $CUR; echo "@ERR Server returned an error: HTTP Error 400: conflict in file foo.spec" > "$FIX/link"
 rres results $TW/x86_64=broken $TW/aarch64=broken
@@ -464,7 +511,7 @@ rres results $TW/x86_64=succeeded $TW/aarch64=succeeded 16.1/x86_64=building
 run target-factory build $P $K --timeout 0 --target openSUSE:Factory
 expect "--target openSUSE:Factory leaves Leap 16 out" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64, $TW/aarch64 (not judged: building: 16.1/x86_64)"
 run target-factory build $P $K --timeout 0 --target devel:tools
-expect "--target a devel project waits on Leap 16" 1 "PENDING — $P/$K sources aaaaaaaaaaaa: building: 16.1/x86_64"
+expect "--target a devel project still files it on one green build" 0 "VERDICT: GREEN — $P/$K sources aaaaaaaaaaaa: succeeded: $TW/x86_64, $TW/aarch64; still building: building: 16.1/x86_64"
 # Nothing left in scope (an s390x-only package, or all off in the origin) is no answer, as the gate's UNKNOWN.
 new s390x-only; src source $CUR; job jobhist $CUR
 rres results $TW/x86_64=excluded $TW/aarch64=excluded openSUSE_Factory_zSystems/s390x=succeeded

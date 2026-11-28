@@ -4816,6 +4816,7 @@ def gate_writers(ctx):
 
 PRODUCT = Rx(r"^(openSUSE:(Leap|Backports|Step)|SUSE:)")
 LEAP16 = Rx(r"^openSUSE:(Leap:16\.|Backports:SLE-16\.)")
+LEAP16_REPO = Rx(r"^(openSUSE_Leap_)?16\.\d+$")
 VERSION = Rx(r"\d+(\.\d+)+")
 SLE_SP = Rx(r"SLE-(\d+)-SP(\d+)")
 
@@ -4823,8 +4824,8 @@ SLE_SP = Rx(r"SLE-(\d+)-SP(\d+)")
 def covers(build, dst, target):
     """Whether a GREEN build covers a request to dst: a local log, or an OBS
     stamp from before gate.sh judged repos, covers any; an OBS build covers
-    Factory and the gate's target (its devel project) when a
-    Factory/Tumbleweed build of it succeeded, a Leap 16 target through a
+    Factory and the gate's target (its devel project) when a Factory/Tumbleweed
+    build of it succeeded, or a Leap 16 build did, a Leap 16 target through a
     green repo naming its version, any other target only through a green
     repo --repos added (before gate.sh recorded those: any green non-Factory
     repo) naming dst's version (SLE-15-SP7: 15_SP7, 15-SP7 or 15.7); a
@@ -4832,14 +4833,19 @@ def covers(build, dst, target):
     if build.get("kind") != "obs" or not isinstance(build.get("repos"), list):
         return True
     target = (target or "").split("/")[0]
+    others = build.get("others") if isinstance(build.get("others"), list) else []
     if (
         dst is None
         or dst == "openSUSE:Factory"
         or dst.startswith("openSUSE:Factory:")
         or (dst == target and not PRODUCT.search(dst))
     ):
-        return build.get("factory") is True
-    others = build.get("others") if isinstance(build.get("others"), list) else []
+        # A Factory/Tumbleweed green, or a Leap 16 green: the gate's judged
+        # products. A green only --repos added for another product is not
+        # Factory evidence.
+        return build.get("factory") is True or any(
+            LEAP16_REPO.fullmatch(r) for r in others
+        )
     added = build.get("added") if isinstance(build.get("added"), list) else others
     sp, ver = SLE_SP.search(dst), VERSION.search(dst)
     if sp:
