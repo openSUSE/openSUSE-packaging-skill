@@ -57,11 +57,8 @@ out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" 2>
   && pass "stacked entries: no OK: line on a red run" || { fail "stacked entries: OK: printed on a red run"; printf '%s\n' "$out" | sed 's/^/    /'; }
 out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" --entries 2 2>&1)"; rc=$?
 [ "$rc" = 0 ] && pass "stacked entries: --entries 2 allows two" || { fail "stacked entries --entries 2: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-# An scmsync package carries BOTH .osc and .git, and the osc side cannot see the
-# change: it keeps no _files, so the listing comes back as git HEAD (the
-# unmodified side) and `osc status` says nothing in a git checkout. Taking the
-# osc branch therefore reports "no patch added or removed" over a real added
-# patch. This builds that exact shape offline and asserts the finding fires.
+# An scmsync package carries BOTH .osc and .git; the target is the git ref, and
+# the added patch is found over it — the git branch, not an OBS listing.
 scm="$(mktemp -d)"; prj="$(mktemp -d)"
 trap 'rm -rf "$scm" "$prj"' EXIT
 (
@@ -81,48 +78,98 @@ else
   printf '%s\n' "$out" | sed 's/^/    /'
 fi
 
-# An osc project checkout has .osc/_project but no _package (gate.sh run from
-# the project directory): a usage failure that says where to go, no traceback.
+# A directory that is neither a git checkout nor given --base: a usage failure
+# that says where to go, no traceback. (A bare .osc project dir is not a
+# package checkout: it has a _project but no _package.)
 mkdir -p "$prj/.osc" && printf 'devel:example\n' > "$prj/.osc/_project"
 out="$("$SCRIPT" "$prj" 2>&1)"; rc=$?
-if [ "$rc" = 2 ] && grep -q 'osc project checkout — cd into the package directory' <<<"$out" && ! grep -q Traceback <<<"$out"; then
-  pass "osc project checkout: exit 2 with a pointer, no traceback"
+if [ "$rc" = 2 ] && grep -q 'project checkout — cd into the package directory' <<<"$out" && ! grep -q Traceback <<<"$out"; then
+  pass "bare .osc project dir: exit 2 with a pointer, no traceback"
 else
-  fail "osc project checkout: expected rc=2 and a pointer, got rc=$rc"
+  fail "neither git nor --base: expected rc=2 and a pointer, got rc=$rc"
   printf '%s\n' "$out" | sed 's/^/    /'
 fi
 
-# A non-link osc checkout of a package not in Factory: factory-auto skips the patch
-# rule, but the entries still count against the committed copy -- two stacked on it
-# are a finding, one is not. A stub osc answers the Factory lookup with a 404.
+# A geectl working copy compares against the git ref: two entries stacked on
+# the ref are a finding, one is not. A missing --base dir is a new package.
 dev="$(mktemp -d)"; trap 'rm -rf "$scm" "$prj" "$dev"' EXIT
-mkdir -p "$dev/bin" "$dev/p/.osc/sources"
-cat > "$dev/bin/osc" <<'EOF'
-#!/bin/bash
-case "$1" in
-  api) echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1;;
-  status) exit 0;;
-esac
-exit 99
-EOF
-chmod +x "$dev/bin/osc"
-printf 'p\n' > "$dev/p/.osc/_package"; printf 'devel:example\n' > "$dev/p/.osc/_project"
-printf '<directory name="p"><entry name="p.changes"/><entry name="p.spec"/></directory>\n' > "$dev/p/.osc/_files"
+(
+  cd "$dev" || exit 1
+  git init -q . && git config user.email t@example.com && git config user.name t
+  printf -- '-------------------------------------------------------------------\nMon Jan  1 00:00:00 UTC 2024 - you@example.com\n\n- change 1\n\n' > p.changes
+  printf 'Name: p\n' > p.spec
+  git add p.changes p.spec && git commit -qm base
+) || fail "could not build the git fixture"
 entry() { printf -- '-------------------------------------------------------------------\nMon Jan  %s 00:00:00 UTC 2024 - you@example.com\n\n- change %s\n\n' "$1" "$1"; }
-entry 1 > "$dev/p/.osc/sources/p.changes"; printf 'Name: p\n' > "$dev/p/p.spec"
-{ entry 3; entry 2; entry 1; } > "$dev/p/p.changes"
-out="$(PATH="$dev/bin:$PATH" "$SCRIPT" "$dev/p" 2>&1)"; rc=$?
-[ "$rc" = 1 ] && grep -qF 'p.changes: 2 new entries vs the committed copy' <<<"$out" \
-  && pass "not in Factory: two entries stacked on the committed copy are a finding" \
-  || { fail "not in Factory, two stacked entries: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
-{ entry 2; entry 1; } > "$dev/p/p.changes"
-out="$(PATH="$dev/bin:$PATH" "$SCRIPT" "$dev/p" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && grep -qF 'does not exist — new package' <<<"$out" \
-  && pass "not in Factory: one new entry passes as a new package" \
-  || { fail "not in Factory, one entry: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+{ entry 3; entry 2; entry 1; } > "$dev/p.changes"
+git -C "$dev" add p.changes
+out="$("$SCRIPT" "$dev" --git-base HEAD 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'p.changes: 2 new entries vs HEAD' <<<"$out" \
+  && pass "git ref: two entries stacked on the ref are a finding" \
+  || { fail "git ref, two stacked entries: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+{ entry 2; entry 1; } > "$dev/p.changes"
+out="$("$SCRIPT" "$dev" --git-base HEAD 2>&1)"; rc=$?
+[ "$rc" = 0 ] && pass "git ref: one new entry passes" \
+  || { fail "git ref, one entry: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+out="$("$SCRIPT" "$dev" --base "$dev/no-such-target" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -qF 'no target snapshot at' <<<"$out" \
+  && pass "missing --base dir passes as a new package" \
+  || { fail "missing --base dir: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
+
+# An osc checkout compares against its committed copy (no --target) or the
+# SR target (--target): the committed copy lives in .osc/sources, the target's
+# files come from geectl list-files + remote cat.
+oscfix="$(mktemp -d)"; trap 'rm -rf "$scm" "$prj" "$dev" "$oscfix"' EXIT
+mkdir -p "$oscfix/bin" "$oscfix/factory" "$oscfix/d1/.osc/sources" "$oscfix/d2/.osc/sources"
+cat > "$oscfix/bin/geectl" <<'GEOF'
+#!/bin/bash
+case "$*" in
+  "remote link-target devel:example foo") echo '{"project": "devel:example", "package": "foo", "target": null}' ;;
+  "remote list-files openSUSE:Factory foo") echo '{"project": "openSUSE:Factory", "package": "foo", "files": [{"name": "foo.changes", "size": 1, "mtime": 1, "md5": "c1"}, {"name": "foo.spec", "size": 1, "mtime": 1, "md5": "s1"}]}' ;;
+  "remote cat openSUSE:Factory foo foo.changes --format text") cat "$GEO_FACTORY/foo.changes" ;;
+  *) echo "fake geectl: unexpected $*" >&2; exit 99 ;;
+esac
+GEOF
+chmod +x "$oscfix/bin/geectl"
+{
+  printf -- '-------------------------------------------------------------------\nMon Jan  5 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Initial package\n\n'
+} > "$oscfix/factory/foo.changes"
+for dd in d1 d2; do
+  printf 'foo\n' > "$oscfix/$dd/.osc/_package"
+  printf 'devel:example\n' > "$oscfix/$dd/.osc/_project"
+  printf '<directory name="foo" rev="3"><entry name="foo.changes"/><entry name="foo.spec"/></directory>\n' > "$oscfix/$dd/.osc/_files"
+  printf 'Name: foo\nVersion: 1.3\n' > "$oscfix/$dd/foo.spec"
+  cp "$oscfix/$dd/foo.spec" "$oscfix/$dd/.osc/sources/foo.spec"
+  {
+    printf -- '-------------------------------------------------------------------\nWed Sep 16 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the man page\n\n'
+    printf -- '-------------------------------------------------------------------\nTue Sep 15 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Drop the obsolete Obsoletes\n\n'
+    cat "$oscfix/factory/foo.changes"
+  } > "$oscfix/$dd/.osc/sources/foo.changes"
+  {
+    printf -- '-------------------------------------------------------------------\nThu Sep 17 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Build with the system zlib\n\n'
+    cat "$oscfix/$dd/.osc/sources/foo.changes"
+  } > "$oscfix/$dd/foo.changes"
+done
+{
+  printf -- '-------------------------------------------------------------------\nFri Sep 18 10:00:00 UTC 2026 - Jane Packager <jane@example.com>\n\n- Fix the build\n\n'
+  cat "$oscfix/d2/foo.changes"
+} > "$oscfix/d2/foo.changes.new" && mv "$oscfix/d2/foo.changes.new" "$oscfix/d2/foo.changes"
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 >"$oscfix/d1.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -qF 'OK: no patch added or removed vs openSUSE:Factory/foo' "$oscfix/d1.out" \
+  && pass "osc checkout: one new entry vs the committed copy passes" \
+  || { fail "osc checkout d1: rc=$rc"; sed 's/^/    /' "$oscfix/d1.out"; }
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d2" --entries 1 >"$oscfix/d2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -qF 'foo.changes: 2 new entries vs the committed copy' "$oscfix/d2.out" \
+  && pass "osc checkout: two new entries vs the committed copy are a finding" \
+  || { fail "osc checkout d2: rc=$rc"; sed 's/^/    /' "$oscfix/d2.out"; }
+GEO_FACTORY="$oscfix/factory" PATH="$oscfix/bin:$PATH" "$SCRIPT" "$oscfix/d1" --entries 1 --target openSUSE:Factory >"$oscfix/d1t.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -qF 'foo.changes: 3 new entries vs openSUSE:Factory/foo' "$oscfix/d1t.out" \
+  && pass "osc checkout: --target Factory counts three new entries" \
+  || { fail "osc checkout d1 --target: rc=$rc"; sed 's/^/    /' "$oscfix/d1t.out"; }
 
 # usage errors never look clean
-"$SCRIPT" --target 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"
+"$SCRIPT" --entries 2>/dev/null; [ $? -eq 2 ] && pass "missing option value exits 2" || fail "missing option value did not exit 2"
+"$SCRIPT" --target 2>/dev/null; [ $? -eq 2 ] && pass "missing --target value exits 2" || fail "missing --target value did not exit 2"
 out="$("$SCRIPT" "$FIX/stacked-entries/new" --base "$FIX/stacked-entries/old" --entries 0 2>&1)"; rc=$?
 [ "$rc" = 2 ] && grep -qF -- "--entries takes a positive integer" <<<"$out" \
   && pass "--entries 0 is a usage error that says so" || fail "--entries 0: rc=$rc $out"

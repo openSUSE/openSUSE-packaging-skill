@@ -10,7 +10,7 @@
 # stand-in for their matchers: they must catch the refuse probes and leave real
 # packaging work alone. One shared list of commands goes through the globs, the
 # Gemini CLI rules and the Kimi hook alike, and every glob, every Gemini CLI
-# alternative and every Kimi rule, path and osc walk must be the only one to refuse
+# alternative and every Kimi rule, path and geectl walk must be the only one to refuse
 # some probe, so deleting any of them fails the suite. The Gemini CLI regexes,
 # which nothing here can run, go through a port of its loader: the ReDoS rule, the
 # '"command":"' prefix, the probes, and 64 kB of pathological input, which each rule
@@ -58,20 +58,21 @@ def fixture(name):
 
 
 # The shared set, the tools' secret printers, and the paths every read tool denies.
-PATHS = [".config/osc", "oscrc", ".config/tea", "gh/hosts.yml", ".netrc", ".git-credentials",
+PATHS = [".config/geectl", ".config/tea", "gh/hosts.yml", ".netrc", ".git-credentials",
          "git/credentials"]
-READ_PATHS = PATHS + [".local/state/osc", ".config/mcp-bugzilla"]
+READ_PATHS = PATHS + [".config/mcp-bugzilla"]
 COMMANDS = ["gh auth token", "gh auth status", "gh auth git-credential",
             "-H*uthorization", "--header*uthorization", "--apikey", "--apisecret", "://*:*@",
             "login list", "gitcredentials-helper", "login helper", "logins helper",
             "login git-credential", "logins git-credential", "tea login e", "tea logins e",
-            "--dump-", "--http-d", "--http-f", "http_debug", "http_full_debug", "HTTP_DEBUG",
-            "HTTP_FULL_DEBUG", "osc -H", "osc token", "osc config * pass",
-            "osc *api*/person/*/token", "credential fill", "secret-tool lookup", "secret-tool search",
-            "git-credential-* get", "git credential-* get", ".config/gh/", "-*H *uthorization",
-            "osc *--dump-", "osc -*H"]
-EXTRAS = ["api.opensuse.org", "build.opensuse.org", "src.opensuse.org/api", "--nodevelproject",
-          "sudo", "pr merge", "osc/cookiejar", "mcp-bugzilla",
+            "geectl *remote create-token*",
+            "GEECTL_OBS_", "GEECTL_GITEA_",
+            "geectl request file *--target-project*openSUSE:Factory*",
+            "geectl request refile *--target-project*openSUSE:Factory*",
+            "credential fill", "secret-tool lookup", "secret-tool search",
+            "git-credential-* get", "git credential-* get", ".config/gh/", "-*H *uthorization"]
+EXTRAS = ["api.opensuse.org", "build.opensuse.org", "src.opensuse.org/api",
+          "sudo", "pr merge", "openSUSE:Factory", "mcp-bugzilla",
           "GIT_ASKPASS=", "SSH_ASKPASS=", "core.askPass"]
 GLOBS = fixture("glob-probes.json")
 SHARED = fixture("shared-probes.json")
@@ -437,7 +438,7 @@ check(all(r.startswith(("read_file(/home/USER/", "command(")) for r in deny),
 # Codex: prefix rules with a placeholder home, and a permission profile whose globs
 # rg expands before every command (an error there fails the command: no /tmp glob).
 rules = open(os.path.join(H, "codex/opensuse-packaging.rules"), encoding="utf-8").read()
-covers([rules], PATHS + [".local/state/osc/cookiejar", ".config/mcp-bugzilla"], "prefix", "codex")
+covers([rules], PATHS + [".config/geectl/config.toml", ".config/mcp-bugzilla"], "prefix", "codex")
 check('HOME = "/home/USER"' in rules and '"~/' not in rules, "codex: rules use the /home/USER placeholder")
 
 
@@ -464,10 +465,13 @@ if tomllib is not None:
           + (f" -- {globs}" if globs else ""))
     req = load("codex/requirements.toml")["permissions"]["filesystem"]["deny_read"]
     check(all(p.startswith("/home/USER/") for p in req), "codex: requirements deny_read is absolute")
-if shutil.which("codex"):
+# Resolve codex once: the child runs with the bare PATH (/usr/bin:/bin),
+# where a codex outside it would be unfindable by name.
+codex = shutil.which("codex")
+if codex:
     for want, *argv in fixture("codex-probes.json")["cases"]:
         r = subprocess.run(
-            ["codex", "execpolicy", "check", "--resolve-host-executables",
+            [codex, "execpolicy", "check", "--resolve-host-executables",
              "--rules", os.path.join(H, "codex/opensuse-packaging.rules"), *argv],
             env=bare_env(fake, CODEX_HOME=os.path.join(fake, ".codex")),
             capture_output=True, text=True)
@@ -484,7 +488,7 @@ hook = os.path.join(H, "kimi/opensuse-packaging.py")
 kimi_home = os.path.join(fake, ".kimi-code")
 with open(os.path.join(kimi_home, "session_index.jsonl"), "w", encoding="utf-8") as fh:
     fh.write(json.dumps({"sessionId": "acp-1", "workDir": fake + "/.config"}) + "\n")
-    fh.write(json.dumps({"sessionId": "acp-2", "workDir": fake + "/.config/osc"}) + "\n")
+    fh.write(json.dumps({"sessionId": "acp-2", "workDir": fake + "/.config/geectl"}) + "\n")
     fh.write('{"sessionId": "acp-1", "workDir": "/va')  # cut short by a concurrent write
 
 
@@ -513,7 +517,7 @@ for want, name in ((2, "refuse"), (0, "allow")):
         what = ev["tool_input"].get("command") or json.dumps(ev["tool_input"])
         check(r.returncode == want, f"kimi hook: {name}s {ev['tool_name']} {what}"
               + ("" if r.returncode == want else f" (exit {r.returncode})"))
-# Deleting any of the hook's rules, any credential path, or its osc walk must let some
+# Deleting any of the hook's rules, any credential path, or its geectl walk must let some
 # probe through. A child imports the hook and asks refused() with each one removed.
 mutate = """
 import importlib.util, json, re, sys
@@ -521,7 +525,7 @@ spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
 hook = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hook)
 probes = json.loads(sys.argv[2])
-rules, paths, walk = list(hook.RULES), list(hook.PATHS), hook.osc_calls
+rules, paths, walk = list(hook.RULES), list(hook.PATHS), hook.geectl_calls
 def refused():
     return [c for c in probes if hook.refused(c)]
 base = refused()
@@ -536,9 +540,9 @@ for i in range(len(paths)):
     if refused() == base:
         idle.append("path " + paths[i][:60])
 hook.PATH_RE = re.compile("|".join(paths), re.IGNORECASE)
-hook.osc_calls = lambda segment: iter(())
+hook.geectl_calls = lambda segment: iter(())
 if refused() == base:
-    idle.append("the osc walk")
+    idle.append("the geectl walk")
 print(json.dumps({"base": len(base), "idle": idle}))
 """
 strings = [e for e in events["refuse"] if isinstance(e, str)]
@@ -547,7 +551,7 @@ try:
                                     text=True, timeout=120, env=bare_env(fake)).stdout)
 except (subprocess.TimeoutExpired, ValueError):
     out = {"base": 0, "idle": ["the check did not run"]}
-check(not out["idle"], f"kimi hook: every rule, path and the osc walk is the only one to refuse some probe"
+check(not out["idle"], f"kimi hook: every rule, path and the geectl walk is the only one to refuse some probe"
       + (f" -- not {out['idle']}" if out["idle"] else ""))
 r = run_hook("not json")
 check(r.returncode == 2, "kimi hook: input that is not JSON fails closed")
@@ -558,10 +562,10 @@ check("Denied by opensuse-packaging hook" in r.stderr, "kimi hook: a refusal say
 # parts in segments of their own, and the shapes that once backtracked.
 worst = {"parts": ";".join(fixture("slow-units.json")["kimi_parts"]) + ";a" * 28000,
          "separators": ";" * 65000, "one-char segments": "a;" * 32500,
-         "osc sr tea pr": "osc sr tea pr " * 4600, "-H and spaces": "-H" + " " * 64000 + "x",
-         "git-credential-": "git-credential-" * 4300, "osc global options": "osc -A " * 9200,
-         "first parts everywhere": "osc;tea;git obs;curl;echo sudo;" * 2500 + ";".join(fixture("slow-units.json")["kimi_parts"]),
-         "over the cap": "osc sr tea pr " * 5000}
+         "geectl request file tea pr": "geectl request file tea pr " * 4600, "-H and spaces": "-H" + " " * 64000 + "x",
+         "git-credential-": "git-credential-" * 4300, "geectl global options": "geectl --format json " * 3000,
+         "first parts everywhere": "geectl;tea;git obs;curl;echo sudo;" * 2500 + ";".join(fixture("slow-units.json")["kimi_parts"]),
+         "over the cap": "geectl request file tea pr " * 5000}
 for name, text in worst.items():
     want = 2 if len(text) > 64 * 1024 else 0
     start = time.monotonic()

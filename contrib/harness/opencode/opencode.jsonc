@@ -9,10 +9,9 @@
     // Absolute or ~ directory globs, checked when a tool (read, grep, glob, and
     // cat/cp/mv/cd in bash) reaches outside the project directory.
     "external_directory": {
-      "~/.config/osc/*": "deny",
+      "~/.config/geectl/*": "deny",
       "~/.config/tea/*": "deny",
       "~/.config/gh/*": "deny",
-      "~/.local/state/osc/*": "deny",
       "~/.config/mcp-bugzilla/*": "deny"
     },
     // Matched against each simple command's source text, unexpanded.
@@ -48,11 +47,10 @@
       "*src.opensuse.org*/pulls/*/merge*": "deny",
       "*repos/pool/*/pulls/*/merge*": "deny",
 
-      // Tool discipline (references/osc-usage.md "Tool discipline"): the
-      // credentials stay inside osc/tea/git-obs, nothing prints them, and OBS
+      // Tool discipline (references/geectl-usage.md "Tool discipline"): the
+      // credentials stay inside geectl/tea/git-obs, nothing prints them, and OBS
       // and the Gitea API are reached only through them.
-      "*.config/osc*": "deny",
-      "*oscrc*": "deny",
+      "*.config/geectl*": "deny",
       "*.config/tea*": "deny",
       "*gh/hosts.yml*": "deny",
       "*.config/gh/*": "deny",
@@ -82,28 +80,15 @@
       "*logins git-credential*": "deny",
       "tea login e*": "deny",
       "tea logins e*": "deny",
-      "osc *--dump-*": "deny",
-      "*--http-d*": "deny",
-      "*--http-f*": "deny",
-      "*http_debug*": "deny",
-      "*http_full_debug*": "deny",
-      "*HTTP_DEBUG*": "deny",
-      "*HTTP_FULL_DEBUG*": "deny",
-      "osc -H*": "deny",
-      "osc * -H*": "deny",
-      "osc -*H *": "deny",
-      "osc -*H": "deny",
-      "osc token*": "deny",
-      "osc config * pass*": "deny",
-      "osc *api*/person/*/token*": "deny",
+      "geectl *remote create-token*": "deny",
+      "*GEECTL_OBS_*": "deny",
+      "*GEECTL_GITEA_*": "deny",
       "*credential fill*": "deny",
       "*secret-tool lookup*": "deny",
       "*secret-tool search*": "deny",
       "*git credential-* get*": "deny",
       "*git-credential-* get": "deny",
       "*git-credential-* get *": "deny",
-      "*osc/cookiejar*": "deny",
-      "*.local/state/osc*": "deny",
       "*.config/mcp-bugzilla*": "deny",
       "*GIT_ASKPASS=*": "deny",
       "*SSH_ASKPASS=*": "deny",
@@ -114,15 +99,11 @@
       "curl *src.opensuse.org/api*": "deny",
 
       // A Factory request comes from the registered devel project.
-      "osc sr *--nodevelproject*": "deny",
-      "osc submitreq *--nodevelproject*": "deny",
-      "osc submitrequest *--nodevelproject*": "deny",
-      "osc submitpac *--nodevelproject*": "deny",
-      "osc creq *--nodevelproject*": "deny",
-      "osc createrequest *--nodevelproject*": "deny",
+      "geectl request file *--target-project*openSUSE:Factory*": "deny",
+      "geectl request refile *--target-project*openSUSE:Factory*": "deny",
 
-      // An agent never runs sudo: osc runs its own, and build roots are entered with
-      // osc chroot and removed with osc wipe.
+      // An agent never runs sudo: build roots are entered with geectl local-build
+      // chroot and removed with geectl local-build wipe.
       "sudo *": "deny"
     },
     // The read tool matches the path relative to the git worktree
@@ -134,14 +115,12 @@
       "*.env": "deny",
       "*.env.*": "deny",
       "*.env.example": "allow",
-      "*.config/osc/*": "deny",
-      "*oscrc*": "deny",
+      "*.config/geectl/*": "deny",
       "*.config/tea/*": "deny",
       "*.config/gh/hosts.yml": "deny",
       "*.netrc": "deny",
       "*.git-credentials": "deny",
       "*.config/git/credentials": "deny",
-      "*.local/state/osc/*": "deny",
       "*.config/mcp-bugzilla/*": "deny"
     }
   }

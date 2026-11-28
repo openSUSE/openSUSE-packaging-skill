@@ -1096,6 +1096,13 @@
     },
     "cwd": "@CLONE@"
   },
+  "osc-sr-factory-plain": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "osc sr devel:a foo openSUSE:Factory -m 'Update foo to 1.1: fixes.'"
+    },
+    "cwd": "@OSC@/devel/x"
+  },
   "push-pool-in-python": {
     "tool_name": "Bash",
     "tool_input": {
@@ -8452,10 +8459,24 @@
     },
     "cwd": "@PLAIN@"
   },
+  "geectl-accept-others-maintained": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request accept --comment ok 1390007"
+    },
+    "cwd": "@PLAIN@"
+  },
   "accept-two-own": {
     "tool_name": "Bash",
     "tool_input": {
       "command": "osc rq accept -m ok 1390001 1390004"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-accept-own": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request accept --comment ok 1390004"
     },
     "cwd": "@PLAIN@"
   },
@@ -9560,6 +9581,27 @@
     "tool_input": {
       "command": "osc sr devel:tools obsnofac openSUSE:Factory -m 'Update obsnofac to 1.1: fixes.'"
     }
+  },
+  "sr-obs-nofac-factory-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsnofac --target-project openSUSE:Factory --target-package obsnofac --description 'Update obsnofac to 1.1' --changes-entry 'Update obsnofac to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-obs-nofac-devel-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsnofac --target-project devel:tools --target-package obsnofac --description 'Update obsnofac to 1.1' --changes-entry 'Update obsnofac to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "sr-obs-added-factory-geectl": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:spark --source-package obsadded --target-project openSUSE:Factory --target-package obsadded --description 'Update obsadded to 1.1' --changes-entry 'Update obsadded to 1.1' --live"
+    },
+    "cwd": "@PLAIN@"
   },
   "sr-obs-pre-factory": {
     "tool_name": "Bash",
@@ -11856,6 +11898,160 @@
     },
     "cwd": "@PLAIN@"
   },
+  "geectl-backports": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:branches:devel:tools --source-package tesseract-ocr --target-project openSUSE:Backports:SLE-16.0 --target-package tesseract-ocr --description 'Update to 5.5.3' --changes-entry 'Update to 5.5.3' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-backports-refile": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request refile --source-project home:tester:branches:devel:tools --source-package tesseract-ocr --target-project openSUSE:Backports:SLE-16.0 --target-package tesseract-ocr --description 'Update to 5.5.3' --changes-entry 'Update to 5.5.3' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-maintenance-write": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote set-project-meta openSUSE:Maintenance:12345 --title 'Maintenance update' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-maintenance-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote set-project-meta $PRJ --title 'x' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-maintenance-commit": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl commit -m 'backport fix'"
+    },
+    "cwd": "@OSC@/maint/mypkg"
+  },
+  "geectl-request-no-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:branches:devel:tools --source-package tesseract-ocr --target-project devel:tools --target-package tesseract-ocr --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-commit-no-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl commit"
+    },
+    "cwd": "@OSC@/spark/libpqxx"
+  },
+  "geectl-request-message": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:branches:devel:tools --source-package tesseract-ocr --target-project devel:tools --target-package tesseract-ocr --description 'Update to 5.5.3: fixes CVE-2026-73067 (boo#1275623) and eight traineddata parser crashes; rebased one patch, dropped two merged upstream...............................' --changes-entry 'Update to 5.5.3' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-request-message-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request file --source-project home:tester:branches:devel:tools --source-package tesseract-ocr --target-project devel:tools --target-package tesseract-ocr --description \"$MSG\" --changes-entry 'Update to 5.5.3' --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-rdelete-pending": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote delete-package --force devel:tools tesseract-ocr"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-rdelete-project-recursive": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote delete-project --recursive home:tester:old"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-rdelete-unknown": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote delete-package --force devel:tools $PKG"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-secret-create-token": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl remote create-token"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-rebuild-package": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl build rebuild-package devel:tools tesseract-ocr standard x86_64 --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-restart-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl build restart-build devel:tools tesseract-ocr standard x86_64 --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-abort-build": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl build abort-build devel:tools tesseract-ocr standard x86_64 --live"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-raw-maintainership": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/raw/_maintainership.json?ref=devel"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-raw-spec": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/raw/tesseract-ocr.spec?ref=leap-16.0"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-trees": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/git/trees/abc123?recursive=true&per_page=1000"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-blob": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/git/blobs/def456"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-comments": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/issues/3/comments"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "gitobs-api-pulls": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git-obs -G src.opensuse.org -q api /repos/pool/tesseract-ocr/pulls/3"
+    },
+    "cwd": "@PLAIN@"
+  },
   "comment-tea-file-stamped": {
     "tool_name": "Bash",
     "tool_input": {
@@ -12362,6 +12558,13 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "set -a; (( n = 1 )); declare -i k; a[$n]=1; ls /var/tmp"
+    },
+    "cwd": "@PLAIN@"
+  },
+  "geectl-accept-own-no-comment": {
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "geectl request accept 1390004"
     },
     "cwd": "@PLAIN@"
   }

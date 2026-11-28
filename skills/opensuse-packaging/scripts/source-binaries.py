@@ -8,7 +8,7 @@ tarball), and nothing is extracted.
   source-binaries.py [DIR] [--rpms RPMDIR] [--all] [--no-cache]
   DIR         package checkout (default .)
   --rpms RPMDIR  also read the built RPMs in RPMDIR and its subdirectories
-              (osc getbinaries -d, or a build root's RPMS): a payload file
+              (the RPMs fetched from an OBS build, or a build root's RPMS): a payload file
               that is, or carries verbatim, a prebuilt binary from the sources
               is SHIPPED, red whatever its exception says, firmware alone
               excepted; one that carries the code of a bootstrap's static

@@ -1,22 +1,22 @@
 #!/bin/bash
-# Wait for ONE local `osc build` (--no-summary: any long local job) running in
+# Wait for ONE local `geectl local-build build` (--no-summary: any long local job) running in
 # the background, in one bounded call, then hand over to build-summary.sh for
 # the verdict -- in place of a `sleep N; tail LOG` loop, each round of which
 # re-reads the whole session.
 # Start the build as a process group of its own, the skill's recipe:
-#   set +m; setsid -w osc build ... </dev/null >LOG 2>&1 &   # $! is the group id
+#   set +m; setsid -w geectl local-build build --live ... </dev/null >LOG 2>&1 &   # $! is the group id
 # set +m: under job control (Claude Code's shell has it on) the job already
 # leads a group, setsid forks and $! names only the waiting setsid, so
 # `kill -- -$!` would leave the build running; -w still backs up the wait.
-# osc waits for its build, so the group lives until the build ends.
+# geectl waits for its build, so the group lives until the build ends.
 # Repeat `build-wait.sh $! LOG` until it stops exiting 4;
 # give the tool call a 10-minute timeout, or a --max below the one it has.
-# Any other local job (osc service mr, a vendor or cargo run) is waited on the
+# Any other local job (a geectl local-build service-run, a vendor or cargo run) is waited on the
 # same way with --no-summary, started by the same recipe or as a plain `&`.
 #
 # Usage: build-wait.sh [--max SEC] [--no-summary] PGID LOG
 #   --max SEC     wait at most SEC seconds (default 540); 0 checks once
-#   --no-summary  not an osc build: PGID may be the job's pid, and once it is
+#   --no-summary  not a geectl local build: PGID may be the job's pid, and once it is
 #                 gone LOG's last line is printed (exit 0) instead of a build
 #                 verdict -- the job's outcome is in LOG
 #   LOG           the file the build writes; build-summary.sh reads its verdict

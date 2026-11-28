@@ -1,8 +1,8 @@
 #!/bin/bash
 # test-skill-container.sh — contrib/container/skill-container offline: a fake
 # `podman` keeps secrets as files, records every call and stands in for the
-# client's container; a fake `opencode` answers `secrets` alone; osc and tea
-# read made-up configs with two logins each. The launcher's own commands come
+# client's container; a fake `opencode` answers `secrets` alone; geectl reads
+# its login from the environment, tea from a made-up config. The launcher's own commands come
 # from $tools/bin, where each real one is wrapped to check what it is given,
 # the caller's opencode from $tools/userbin on the caller's PATH, whose first
 # directory holds commands that must never run. Exit 0 = all assertions hold.
@@ -25,7 +25,7 @@ N=opensuse-packaging
 
 mkdir -p "$tools/bin" "$tools/userbin" "$tools/evilbin" "$FIX/secrets" "$FIX/store/volumes" "$work/home/.config" \
   "$work/ws/bin" "$work/a,b" "$work/a:b" \
-  "$work/planted/ruamel" "$work/planted/osc" "$work/config/tea" "$work/config/mcp-bugzilla" "$work/run/sub"
+  "$work/planted/ruamel" "$work/config/tea" "$work/config/mcp-bugzilla" "$work/run/sub"
 ln -s home "$work/homelink"
 ln -s "$work/ws/bin" "$tools/wslink"
 # A link the agent could repoint: it lies in the work directory and leads out of it.
@@ -349,7 +349,15 @@ esac
 EOF
 # The real commands of the launcher, each behind the same check.
 for f in python3 jq realpath head base64 tr id mkdir seq sleep cat ls cp cmp mktemp rm ln ssh-keygen git rmdir sort; do
-  printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $(command -v "$f") \"\$@\"" > "$tools/bin/$f"
+  # python3 comes from the system directories, as the launcher uses it in
+  # production: the caller's PATH may hold another python3 first (setup-python
+  # in CI), which has no ruamel.yaml, and the launcher never sees it.
+  if [ "$f" = python3 ]; then
+    real=$(PATH=/usr/local/bin:/usr/bin:/bin command -v python3)
+  else
+    real=$(command -v "$f")
+  fi
+  printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' "exec $real \"\$@\"" > "$tools/bin/$f"
 done
 # The launcher's pauses are recorded; with $FIX/sleep-fast they take no time.
 printf '%s\n' '#!/bin/bash' '. "$FIX/envcheck"' 'printf "%s\n" "$*" >> "$FIX/sleep-calls"' \
@@ -372,24 +380,10 @@ done
 mkdir -p "$work/ws/usr/bin"
 cp "$work/ws/podman" "$work/ws/usr/bin/env"
 # What an agent could leave in a work directory for the launcher to import.
-for m in ruamel/__init__ osc/__init__ sitecustomize; do
+for m in ruamel/__init__ sitecustomize; do
   printf 'import os\nopen(os.environ["FIX"] + "/planted-ran", "w").close()\n' > "$work/planted/$m.py"
 done
 
-cat > "$work/osc.conf" <<'EOF'
-[general]
-apiurl = https://api.opensuse.org
-
-[https://api.opensuse.org]
-user = packager
-pass = OBS-SECRET-1
-realname = Pat Packager
-email = pat@example.org
-
-[https://api.example.com]
-user = other
-pass = OTHER-SECRET-2
-EOF
 tea_config() {
   cat > "$work/config/tea/config.yml" <<EOF
 logins:
@@ -458,7 +452,7 @@ approval() {
 # its commands among the checked ones alone: one it takes from elsewhere fails.
 ownpath="$tools/bin"
 callerpath="$tools/evilbin:$tools/userbin:$PATH"
-scenv=(env -u OPENCODE -u OPENCODE_PASSWORD XDG_CONFIG_HOME="$work/config" XDG_RUNTIME_DIR="$work/run" OSC_CONFIG="$work/osc.conf"
+scenv=(env -u OPENCODE -u OPENCODE_PASSWORD XDG_CONFIG_HOME="$work/config" XDG_RUNTIME_DIR="$work/run" GEECTL_OBS_USERNAME=packager GEECTL_OBS_PASSWORD=OBS-SECRET-1
   "SKILL_CONTAINER_NAME=$N" "SKILL_CONTAINER_PATH=$ownpath" PATH="$callerpath")
 sc() { "${scenv[@]}" HOME="${SC_HOME:-$work/home}" bash "$SC" "$@"; }
 # A command on a terminal of its own, whose output a pipe reads: attach wants one.
@@ -490,7 +484,7 @@ pwfiles() {
 }
 # The files that hold a made-up login and are not the fixtures: those the
 # launcher left, in the temporary directories or beside what it reads.
-fixtures=("$work/osc.conf" "$work/osc-broken.conf" "$work/config/tea/config.yml" "$work/config/mcp-bugzilla/api-key"
+fixtures=("$work/config/tea/config.yml" "$work/config/mcp-bugzilla/api-key"
   "$work/planted/key" "$work/mem-key/memory.json" "$work/mem-mixed/memory.json" "$tools/userbin/opencode")
 leakfiles() {
   {
@@ -577,8 +571,8 @@ out="$(GH_CONFIG_DIR="$FIX/ghalt" sc secrets --model-auth prov 2>&1)"; rc=$?
   || fail "secrets with GH_CONFIG_DIR: rc=$rc $(leaks <<<"$out" | wc -l) $(secret github | sed 's/token:.*/token: …/')"
 
 out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
-[ "$rc" = 0 ] && [ "$out" = "$(printf '%s\n' $N-osc $N-tea $N-github $N-model $N-bugzilla $N-ssh)" ] \
-  && pass "secrets prints the six names only" || fail "secrets: rc=$rc $out"
+[ "$rc" = 0 ] && [ "$out" = "$(printf '%s\n' $N-geectl-obs-username $N-geectl-obs-password $N-tea $N-github $N-model $N-bugzilla $N-ssh)" ] \
+  && pass "secrets prints the seven names only" || fail "secrets: rc=$rc $out"
 # The SSH key: made by the first run, with no file of it left behind.
 key1="$(secret ssh)"
 grep -q 'BEGIN OPENSSH PRIVATE KEY' <<<"$key1" && [ -z "$(find "$work/run" -name 'tmp.*')" ] \
@@ -621,15 +615,9 @@ out="$(GH_CONFIG_DIR="$FIX/ghalt" sc secrets --model-auth prov --ssh-key "$work/
 [ -z "$(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")" ] && pass "no secret on a command line" \
   || fail "a secret on a command line: $(leaks "$FIX/podman-calls" "$FIX/opencode-calls" "$FIX/gh-calls")"
 
-got="$(OSC_CONFIG="$FIX/secrets/$N-osc" python3 -c '
-from osc import conf
-conf.get_config()
-hosts = conf.config["api_host_options"]
-h = hosts["https://api.opensuse.org"]
-print(len(hosts), h.username, h.password, h.realname, h.email)' 2>&1)"
-[ "$got" = "1 packager OBS-SECRET-1 Pat Packager pat@example.org" ] \
-  && ! secret osc | grep -q 'OTHER\|example\.com' \
-  && pass "osc reads its secret: the one login" || fail "the osc secret: $got"
+[ "$(secret geectl-obs-username)" = packager ] \
+  && [ "$(secret geectl-obs-password)" = OBS-SECRET-1 ] \
+  && pass "geectl reads its secret: the one login" || fail "the geectl secret"
 secret tea | grep -qF TEA-SECRET-4 && ! secret tea | grep -q 'TEA-OTHER\|example\.com\|preferences' \
   && secret tea | grep -q 'default: true' && pass "the tea secret holds the one login, as default" \
   || fail "the tea secret: $(secret tea | sed 's/token:.*/token: …/')"
@@ -646,7 +634,7 @@ secret model | grep -qF MODEL-SECRET-6 && [ "$(secret bugzilla)" = BZ-SECRET-5 ]
   || fail "a server password without a container"
 
 # A later run that fails must not have stored its first secret already.
-sed -i 's/OBS-SECRET-1/OBS-SECRET-7/' "$work/osc.conf"
+scenv+=(GEECTL_OBS_PASSWORD=OBS-SECRET-7)
 before="$(stored)"
 tea_config src.example.org
 out="$(sc secrets --model-auth prov 2>&1)"; rc=$?
@@ -694,12 +682,12 @@ out="$(sc secrets --model-auth none 2>&1)"; rc=$?
 out="$(sc secrets --model-auth broken 2>&1)"; rc=$?
 [ "$rc" != 0 ] && grep -qF "exported no credential" <<<"$out" && [ -z "$(leaks <<<"$out")" ] && [ "$(stored)" = "$before" ] \
   && pass "an export that is no JSON: nothing replaced, nothing quoted" || fail "export that is no JSON: rc=$rc $out"
-# osc's own message for a line it cannot read quotes the line.
-printf '%s\n' "[general]" "apiurl = https://api.opensuse.org" "[https://api.opensuse.org]" "user = packager" \
-  "pass OBS-SECRET-1" > "$work/osc-broken.conf"
-out="$("${scenv[@]}" OSC_CONFIG="$work/osc-broken.conf" HOME="$work/home" bash "$SC" secrets --model-auth prov 2>&1)"; rc=$?
-[ "$rc" != 0 ] && grep -qF "no usable" <<<"$out" && [ -z "$(leaks <<<"$out")" ] && [ "$(stored)" = "$before" ] \
-  && pass "a broken osc config: no line of it is quoted" || fail "broken osc config: rc=$rc $out"
+# A password file that is a directory cannot be read: the error names
+# the file, not its contents.
+mkdir "$work/pw-dir"
+out="$("${scenv[@]}" GEECTL_OBS_PASSWORD= GEECTL_OBS_PASSWORD_FILE="$work/pw-dir" HOME="$work/home" bash "$SC" secrets --model-auth prov 2>&1)"; rc=$?
+[ "$rc" != 0 ] && grep -qF "cannot read GEECTL_OBS_PASSWORD_FILE" <<<"$out" && [ -z "$(leaks <<<"$out")" ] && [ "$(stored)" = "$before" ] \
+  && pass "a broken password file: nothing replaced, nothing quoted" || fail "broken password file: rc=$rc $out"
 : > "$work/empty-key"; mkdir "$work/key-dir"
 for key in "$work/no-key" "$work/empty-key" "$work/key-dir"; do
   out="$(sc secrets --model-auth prov --bugzilla-key "$key" 2>&1)"; rc=$?
@@ -794,13 +782,16 @@ out="$(sc install obs --workdir "$open/mid/ws" 2>&1)"; rc=$?
 # Root owns what lies above: where the directories above belong to neither
 # root nor the caller, as an unmapped owner shows in a user namespace, the
 # closed one counts for nothing.
-if unshare --user --map-user="$(id -u)" true 2> /dev/null; then
+# Root maps to the caller in the namespace, so the directories above are
+# the caller's own and no other owner shows: the case needs a caller
+# who is not root.
+if [ "$(id -u)" != 0 ] && unshare --user --map-user="$(id -u)" true 2> /dev/null; then
   out="$(unshare --user --map-user="$(id -u)" "${scenv[@]}" HOME="$work/home" bash "$SC" install obs --workdir "$open/mid/ws" 2>&1)"; rc=$?
   [ "$rc" != 0 ] && grep -qF "closed to other users" <<<"$out" && ! grep -q '^run ' "$FIX/podman-calls" \
     && pass "install refuses a work directory below one that neither root nor the caller owns" \
     || fail "install below a directory of another owner: rc=$rc $out"
 else
-  echo "SKIP: a directory of another owner (no user namespaces here)"
+  echo "SKIP: a directory of another owner (no user namespaces here, or root)"
 fi
 # A closed directory does not help below one that others write: they can put
 # another in its place. A sticky one keeps it. The same holds for a graph,
@@ -1081,7 +1072,8 @@ pw="$(secret obs-server-password)"
 missed=0
 for line in "UserNS=keep-id" "ReadOnly=true" "DropCapability=all" "NoNewPrivileges=true" "Pull=never" \
   "Secret=opensuse-packaging-%i-server-password,type=env,target=OPENCODE_PASSWORD" \
-  "Secret=opensuse-packaging-osc,target=/home/agent/.config/osc/oscrc,uid=%U,gid=%G,mode=0600" \
+  "Secret=opensuse-packaging-geectl-obs-username,type=env,target=GEECTL_OBS_USERNAME" \
+  "Secret=opensuse-packaging-geectl-obs-password,type=env,target=GEECTL_OBS_PASSWORD" \
   "Secret=opensuse-packaging-tea,target=/home/agent/.config/tea/config.yml,uid=%U,gid=%G,mode=0400" \
   "Secret=opensuse-packaging-github,target=/home/agent/.config/gh/hosts.yml,uid=%U,gid=%G,mode=0400" \
   "Secret=opensuse-packaging-bugzilla,target=/home/agent/.config/mcp-bugzilla/api-key,uid=%U,gid=%G,mode=0400" \
@@ -2046,7 +2038,7 @@ out="$(sc run obs hello 2>&1)"; rc=$?
   && pass "run without a container says so" || fail "run without a container: rc=$rc $out"
 out="$(sc down obs 2>&1)"; rc=$?
 [ "$rc" = 0 ] && [ "$(tail -1 "$FIX/systemctl-calls")" = "stop $N-agent@obs.service" ] \
-  && [ -n "$(secret osc)" ] && pass "down stops the unit and keeps the secrets" \
+  && [ -n "$(secret geectl-obs-username)" ] && pass "down stops the unit and keeps the secrets" \
   || fail "down: rc=$rc $out"
 # install mounts the work directory where the sessions expect it, which need
 # not be its path on the host.

@@ -4,22 +4,25 @@
 # Output: one "<project>\t<package>" line per package, home:/branches/Maintenance excluded.
 #
 # TWO SOURCES, and they are DISJOINT — you need both:
-#   obs  /search/package?match=person[...]  — maintainers in the OBS package _meta
-#   git  osc maintainer -U <user>           — maintainers in the package's git
-#                                             _maintainership.json (scmsync packages)
+#   obs  search-packages-by-person — maintainers in the OBS package _meta
+#   git  the package's git _maintainership.json (scmsync packages)
 # A package hosted in git (src.opensuse.org) has a _meta that is a bare
 # <scmsync> stub with NO <person> elements, so the classic search sees nothing;
-# conversely `osc maintainer -U` returns ONLY git-defined entries. Measured on a
+# conversely a git-index read returns ONLY git-defined entries. Measured on a
 # real account: 268 obs + 263 git, overlap ZERO. >1100 OBS projects are already
 # scmsync (devel:languages:perl, :nodejs, :erlang, Java:packages, GNOME:Factory,
 # devel:openSUSE:Factory, …), so an obs-only query silently under-reports and
 # the gap grows with every project that migrates.
 #
+# The git leg has no typed leaf yet: no geectl read covers the git
+# _maintainership.json index, so this script is obs-only until one lands and
+# says so on stderr. --source git on its own exits 2.
+#
 # Usage: my-packages.sh [--project PRJ] [--user OBSUSER] [--source obs|git|both]
 #                       [--all-projects] [--show-source]
 #   --project PRJ   only packages in PRJ
-#   --user OBSUSER  OBS account (default: `osc whois`). NB the OBS account often
-#                   differs from $USER / the email local-part.
+#   --user OBSUSER  OBS account (default: $GEECTL_OBS_USERNAME). NB the OBS
+#                   account often differs from $USER / the email local-part.
 #   --source        which backend to ask (default: both)
 #   --all-projects  keep derivative product projects (openSUSE:Backports:*,
 #                   openSUSE:Leap:*, SUSE:SLFO:*, SUSE:ALP:*). They are dropped
@@ -28,9 +31,9 @@
 #                   already have. The count dropped is always reported on stderr.
 #   --show-source   prefix each line with "obs" or "git"
 #
-# An auth/network failure exits non-zero with osc's stderr — it must never look
+# An auth/network failure exits non-zero with geectl's stderr — it must never look
 # like "maintains no packages"; a genuinely empty result says so on stderr.
-# A failure of EITHER backend is fatal for the same reason: a half-answer that
+# A failure of the obs backend is fatal for the same reason: a half-answer that
 # looks complete is worse than an error.
 # Exit: 0 = listed (an empty result is noted on stderr), 2 = usage or a
 #       backend query failed.
@@ -50,49 +53,83 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$source_sel" in obs|git|both) ;; *) echo "--source must be obs, git or both" >&2; exit 2;; esac
-[ -n "$user" ] || user="$(osc whois | sed 's/:.*//')"
+[ -n "$user" ] || user="${GEECTL_OBS_USERNAME:-}"
+[ -n "$user" ] || { echo "ERROR: no OBS account: pass --user, or set GEECTL_OBS_USERNAME" >&2; exit 2; }
 
 obs_out="" ; git_out="" ; git_projects=""
 
 # ---- source 1: OBS package _meta ------------------------------------------
-# role=maintainer (NOT bugowner). Capture first: an osc failure (auth, network)
-# must surface, not be eaten by a pipeline.
+# role=maintainer (NOT bugowner). Capture first: a geectl failure (auth,
+# network) must surface, not be eaten by a pipeline.
+# search-packages-by-person matches any role the meta names, so entries that
+# carry no role are verified one by one against their package meta (the
+# package's own persons, not project-inherited ones).
 if [ "$source_sel" != git ]; then
-  if ! resp="$(osc api "/search/package?match=person[@userid='$user' and @role='maintainer']" 2>&1)"; then
-    echo "ERROR: osc api search failed for user '$user':" >&2
+  if ! resp="$(geectl remote search-packages-by-person "$user" 2>&1)"; then
+    echo "ERROR: geectl remote search-packages-by-person failed for user '$user':" >&2
     echo "$resp" >&2
     exit 2
   fi
-  # Parse with xml.etree — a grep of 'name=... project=...' depends on OBS's
-  # attribute order and would silently break on a reorder.
-  obs_out="$(printf '%s' "$resp" | python3 -I -c '
-import sys, xml.etree.ElementTree as ET
+  # Parse with json — the payload shape is the person-search one
+  # ({login, packages: [{name, project, ...}]}); accept a bare list or
+  # "project/package" strings too. Emits "PRJ<TAB>PKG<TAB>ROLE" where ROLE is
+  # "maintainer" when the entry says so, empty when it carries no role.
+  if ! candidates="$(printf '%s' "$resp" | python3 -I -c '
+import sys, json
 try:
-    root = ET.fromstring(sys.stdin.read() or "<collection/>")
-except ET.ParseError as e:
-    sys.stderr.write(f"ERROR: unparseable search response: {e}\n"); sys.exit(2)
-for p in root.findall("package"):
-    prj, name = p.get("project", ""), p.get("name", "")
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError as e:
+    sys.stderr.write(f"ERROR: unparseable person search response: {e}\n"); sys.exit(2)
+if isinstance(payload, dict):
+    entries = payload.get("packages", [])
+elif isinstance(payload, list):
+    entries = payload
+else:
+    sys.stderr.write("ERROR: unexpected person search response shape\n"); sys.exit(2)
+for e in entries:
+    if isinstance(e, str):
+        if "/" in e:
+            prj, name = e.split("/", 1)
+            print(f"{prj}\t{name}\t")
+        continue
+    prj, name = e.get("project", ""), e.get("name", "")
     if not prj or not name:
         continue
-    print(f"obs\t{prj}\t{name}")
-')"
+    print(prj + "\t" + name + "\t" + e.get("role", ""))
+')"; then
+    echo "ERROR: the person search answer for '$user' did not parse" >&2
+    exit 2
+  fi
+  obs_out="$(while IFS=$'\t' read -r prj pkg role; do
+    [ -n "$prj" ] || continue
+    if [ "$role" = maintainer ]; then
+      printf 'obs\t%s\t%s\n' "$prj" "$pkg"
+    elif [ -z "$role" ]; then
+      # No role on the entry: the package meta decides (its own persons).
+      if meta="$(geectl remote package-meta "$prj" "$pkg" 2>/dev/null)" && \
+         python3 -I -c '
+import sys, json
+meta = json.load(sys.stdin)
+user = sys.argv[1]
+sys.exit(0 if any(p.get("name") == user and p.get("role") == "maintainer"
+                  for p in meta.get("persons", [])) else 1)
+' "$user" <<<"$meta"; then
+        printf 'obs\t%s\t%s\n' "$prj" "$pkg"
+      fi
+    fi
+  done <<<"$candidates")"
 fi
 
 # ---- source 2: git _maintainership.json ------------------------------------
-# `osc maintainer -U` prints one line per entry, tagged by where it is defined:
-#   "Defined in git package: <project>/<package>"
-#   "Defined in git project: <project>"          (project-level -> not our scope,
-#                                                 reported on stderr as a note)
-if [ "$source_sel" != obs ]; then
-  if ! gresp="$(osc maintainer -U "$user" 2>&1)"; then
-    echo "ERROR: 'osc maintainer -U $user' failed (needs osc >= 1.15):" >&2
-    echo "$gresp" >&2
-    exit 2
-  fi
-  git_out="$(printf '%s\n' "$gresp" \
-    | sed -n 's|^Defined in git package: \([^/]*\)/\(.*\)$|git\t\1\t\2|p')" || true
-  git_projects="$(printf '%s\n' "$gresp" | sed -n 's|^Defined in git project: ||p')" || true
+# No typed leaf reads the git index yet, so the git leg is UNKNOWN, never
+# silently empty: --source git alone fails, --source both lists obs only and
+# says the git leg is missing.
+if [ "$source_sel" = git ]; then
+  echo "ERROR: no typed leaf reads the git _maintainership.json index yet — the git leg is unavailable" >&2
+  exit 2
+fi
+if [ "$source_sel" = both ]; then
+  echo "note: git-defined maintainerships are NOT listed (no typed leaf reads the git _maintainership.json index yet); this is obs-only and under-reports git-maintained packages" >&2
 fi
 
 merged="$(printf '%s\n%s\n' "$obs_out" "$git_out" | grep -v '^$' || true)"

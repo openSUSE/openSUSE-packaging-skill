@@ -1,8 +1,8 @@
 #!/bin/bash
-# test-cone-status.sh — cone-status.sh offline: a fake `osc` on PATH serves the
-# project's _meta, its _result and each package's last commit from a per-case
-# fixture tree (a missing file is a 404). Each case expects the exit code and
-# the line that names the verdict. Exit 0 = all assertions hold.
+# test-cone-status.sh — cone-status.sh offline: a fake `geectl` on PATH serves
+# the project's meta, its build results and each package's last commit from a
+# per-case fixture tree (a missing file is a 404). Each case expects the exit
+# code and the line that names the verdict. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 # shellcheck disable=SC2016  # a case's setup is single-quoted to be eval'd in its tree
@@ -15,40 +15,51 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-[ "$1" = api ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
-f="$FIX/$(printf %s "$2" | tr '/?&=' '____')"
-[ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
+case "$1 $2" in
+  "remote project-meta") f="$FIX/project-meta" ;;
+  "build results") f="$FIX/results" ;;
+  "build job-history") f="$FIX/job-history" ;;
+  "remote package-log") f="$FIX/package-log-$4" ;;
+  *) echo "fake geectl: unexpected $*" >&2; exit 99 ;;
+esac
+[ -f "$f" ] || { echo '{"error":{"code":"not_found","context":"404 Not Found"}}' >&2; exit 3; }
 cat "$f"
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 
 P=devel:cone
 # result <case dir> <pkg>=<code> ...: the x86_64 result of standard
 # shellcheck disable=SC2317,SC2329  # called from case setups, through eval
 result() {
-  local d=$1 spec; shift
-  { echo "<resultlist><result project=\"$P\" repository=\"standard\" arch=\"x86_64\" code=\"x\" state=\"x\">"
-    for spec in "$@"; do echo "  <status package=\"${spec%%=*}\" code=\"${spec#*=}\"/>"; done
-    echo '</result></resultlist>'; } > "$d/_build_${P}__result_repository_standard_arch_x86_64"
+  local d=$1 spec first=1; shift
+  {
+    printf '%s' '{"state":"x","results":[{"project":"devel:cone","repository":"standard","arch":"x86_64","code":"x","state":"x","dirty":false,"details":"","statuses":['
+    for spec in "$@"; do
+      [ $first = 1 ] || printf ','
+      first=0
+      printf '{"package":"%s","code":"%s","details":""}' "${spec%%=*}" "${spec#*=}"
+    done
+    printf ']}]}'
+  } > "$d/results"
 }
 # commit <case dir> <pkg> <seconds ago>: the package's last commit
 # shellcheck disable=SC2317,SC2329  # called from case setups, through eval
 commit() {
-  printf '<revisionlist><revision rev="3"><time>%s</time></revision></revisionlist>\n' \
-    "$(( $(date +%s) - $3 ))" > "$1/_source_${P}_$2__history_limit_1"
+  printf '{"project":"devel:cone","package":"%s","range":"1:3","entries":[{"rev":3,"vrev":"1","srcmd5":"00000000000000000000000000000000","version":"1.0-1","time":%s,"user":"tester","comment":"","request_id":null}]}' \
+    "$2" "$(( $(date +%s) - $3 ))" > "$1/package-log-$2"
 }
 # ended <case dir> <seconds ago>: the repo/arch's newest build job ended then
 # shellcheck disable=SC2317,SC2329  # called from case setups, through eval
 ended() {
-  printf '<jobhistlist><jobhist package="dep" endtime="%s"/></jobhistlist>\n' \
-    "$(( $(date +%s) - $2 ))" > "$1/_build_${P}_standard_x86_64__jobhistory_limit_1"
+  printf '{"project":"devel:cone","repository":"standard","arch":"x86_64","entries":[{"repository":"standard","arch":"x86_64","package":"dep","rev":"3","srcmd5":"00000000000000000000000000000000","versrel":"1.0-1","bcnt":"1","readytime":%s,"starttime":%s,"endtime":%s,"code":"succeeded","uri":"","workerid":"","hostarch":"x86_64","reason":"","verifymd5":""}]}' \
+    "$(( $(date +%s) - $2 ))" "$(( $(date +%s) - $2 ))" "$(( $(date +%s) - $2 ))" > "$1/job-history"
 }
 # case_ <name> <rc> <expected line> <setup: result/commit calls on $d>
 case_() {
   local name=$1 rc=$2 msg=$3 out got; d="$work/$1"; mkdir -p "$d"
-  echo "<project name=\"$P\"><repository name=\"standard\"/></project>" > "$d/_source_${P}__meta"
+  printf '%s' '{"name":"devel:cone","title":"","description":"","url":"","scmsync":null,"devel":null,"persons":[],"groups":[],"repositories":[{"name":"standard","arch":["x86_64"],"paths":[{"project":"devel:cone","repository":"standard"}]}]}' > "$d/project-meta"
   eval "$4"
   out="$(FIX=$d PATH="$work/bin:$PATH" bash "$CS" "$P" 2>&1)"; got=$?
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
@@ -69,13 +80,13 @@ case_ queued-after-dep 1 "summary: 1 ok / 0 failed / 1 in-flight" \
 case_ queued-flavor 4 "QUEUED-STUCK: 1 scheduled" \
   'result "$d" a=succeeded b:test=scheduled; commit "$d" b 3600; ended "$d" 3600'
 case_ queued-no-jobs 4 "QUEUED-STUCK: 1 scheduled" \
-  'result "$d" a=succeeded b=scheduled; commit "$d" b 3600; echo "<jobhistlist/>" > "$d/_build_${P}_standard_x86_64__jobhistory_limit_1"'
+  'result "$d" a=succeeded b=scheduled; commit "$d" b 3600; printf "%s" "{\"entries\":[]}" > "$d/job-history"'
 case_ queued-jobs-unreadable 1 "NOTE: a last-commit or job time could not be read — treated as in flight" \
   'result "$d" a=succeeded b=scheduled; commit "$d" b 3600'
 case_ queued-fresh 1 "summary: 1 ok / 0 failed / 2 in-flight" \
   'result "$d" a=succeeded b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 600; ended "$d" 3600'
 case_ queued-unreadable 1 "NOTE: a last-commit or job time could not be read — treated as in flight" \
-  'result "$d" a=succeeded b=scheduled; ended "$d" 3600; echo "<revisionlist/>" > "$d/_source_${P}_b__history_limit_1"'
+  'result "$d" a=succeeded b=scheduled; ended "$d" 3600'
 case_ queued-none-green 1 "summary: 0 ok / 0 failed / 2 in-flight" \
   'result "$d" b=scheduled c=scheduled; commit "$d" b 3600; commit "$d" c 3600; ended "$d" 3600'
 case_ queued-with-failure 1 "summary: 1 ok / 1 failed / 1 in-flight" \

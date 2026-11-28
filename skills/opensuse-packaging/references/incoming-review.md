@@ -19,8 +19,9 @@ maintainers are never acted on.
    update. It reads the submission as text, takes its build evidence from what OBS already
    built, and records its verdict with `scripts/incoming-review.sh --record`. It never parses
    or builds the submission: pr-guard refuses it `rpmspec`, `rpm` with a spec, `rpmlint`,
-   `rpmbuild`, `osc build`, `osc service` (`run`, `runall`, `localrun`, `disabledrun`),
-   `osc co` or `osc up` with `-s`, `gate.sh` and `target-gate.sh`. A contributor's spec is parsed only by `gate.sh`, in its sandbox, in the
+   `rpmbuild`, `geectl local-build build`, `geectl local-build service-run`
+   (`--mode run`, `--mode localrun`, `--mode disabledrun`; runall has no mode),
+   `geectl checkout` or `geectl update`, `gate.sh` and `target-gate.sh`. A contributor's spec is parsed only by `gate.sh`, in its sandbox, in the
    update that follows the user's go on the accept.
 3. **By verdict:** "PASS", "FIXABLE" and "BLOCK" below. Each starts by posting the recorded
    comment ("Posting the comment, accepting, declining").
@@ -110,12 +111,12 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 ## PASS
 
 1. Post the comment.
-2. Accept on the user's explicit go: `osc rq accept -m MSG ID`, which pr-guard asks the user
+2. Accept on the user's explicit go: `geectl request accept --comment MSG ID --live`, which pr-guard asks the user
    about with the review in front of them; or approve a devel PR ("Devel PRs on
    src.opensuse.org").
 3. Forward through the normal gate: `scripts/autoforward-gate.sh` ELIGIBLE, then
    `scripts/forward-check.py <devel-project> <package>` DUE, then the agent files the Factory
-   request (`references/submit-watch.md` "Filing an SR"). Accepting does not forward by itself.
+   request (`references/submit-watch.md` "Filing an SR") — only when the accept did not forward it (a refused forward, or `--no-forward`). The accept forwards by default.
 
 ## FIXABLE
 
@@ -137,14 +138,14 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
    refusal of a change that reads sound (a changed `_service`, a new source host), recommend
    the user's own review instead.
 3. Decline only on the user's explicit go, the comment posted first:
-   `osc rq decline -m MSG ID` with a one-line plain reason that points at it; on a devel PR,
+   `geectl request decline --comment MSG ID --live` with a one-line plain reason that points at it; on a devel PR,
    request changes with `git-obs -G src.opensuse.org pr review decline -m MSG <owner>/<repo>#<N>`.
 4. Continue the update.
 
 ## Devel PRs on src.opensuse.org
 
 - A devel PR lands when the user approves it as maintainer and the bot merges it
-  (`references/git-workflow.md` "Submitting changes — PR, not `osc sr` (except to Factory)").
+  (`references/git-workflow.md` "Submitting changes — PR, not `geectl request file`").
 - Approve on the user's go, one PR pinned to the head the verdict was recorded at:
   `git-obs -G src.opensuse.org pr review approve --commit <head-sha> <owner>/<repo>#<N>`,
   never with `--reviewer`. A head that moved needs a new review.
@@ -155,9 +156,9 @@ that is no stamp, removes nothing (exit 5). `--show` and `--record` prune first.
 
 - The caller posts the recorded comment — the stamp's `comment` field — unchanged and
   unattended. pr-guard passes a comment on someone else's item when its text's sha256 equals
-  the stamp's, and checks nothing else; any other text asks. Write it with
-  `jq -r .comment <stamp> > FILE` in one call, then in the next, on a request,
-  `osc comment create -c "$(cat FILE)" request <id>`, or on a devel PR, as the only command,
+  the stamp's, and checks nothing else; any other text asks. On a request:
+  `jq -r .comment <stamp> > FILE` in one call, then in the next
+  `geectl request add-comment --body "$(cat FILE)" <id> --live`. On a devel PR, as the only command,
   `tea comment --login src.opensuse.org --repo <owner>/<repo> <N> "$(cat FILE)"`. Mechanics:
   `references/request-text.md` "Comments: reading them, posting an approved one".
 - An accept or approve without a PASS or FIXABLE stamp of what the item holds now is refused

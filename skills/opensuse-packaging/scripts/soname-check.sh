@@ -32,7 +32,7 @@
 #
 # Usage: soname-check.sh <file.rpm> [file.rpm ...]
 #        soname-check.sh --build-root <dir>   # audit that root's built RPMs
-#        soname-check.sh                      # the newest root under oscrc's build-root
+#        soname-check.sh                      # the newest root under the local-build cache
 # A root's built RPMs: .build.packages/RPMS of the build root its log names
 # (<root>/.mount for build-type=kvm), else of <root>/.mount beside <root>/img,
 # else of <root>; a --build-root dir that is no build root is searched whole.
@@ -42,7 +42,7 @@ usage() { awk 'NR>1 { if (!/^#/) exit; print }' "$0"; }
 case "${1:-}" in -h|--help) usage; exit 0;; esac
 
 # A VM build's --clean wipes only .mount, so a chroot tree in the root is stale,
-# and an oscrc build-device leaves no img in the root: the log knows.
+# and a build-device leaves no img in the root: the log knows.
 rpmdir_of() {
   local b
   b=$(sed -n '/Using BUILD_ROOT=/{s/.*Using BUILD_ROOT=//p;q;}' "$1/.build.log" 2>/dev/null)
@@ -63,13 +63,13 @@ if [ "${1:-}" = "--build-root" ]; then
 elif [ $# -gt 0 ]; then
   rpms=("$@")
 else
-  # The build-root base from oscrc, as build-summary.sh reads it.
-  base=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
-         | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
-  : "${base:=/var/tmp/build-root/%(repo)s-%(arch)s}"
-  # strip trailing path components that are templated (%(package)s etc.)
-  while case "$base" in */*) [[ "${base##*/}" == *'%('* ]];; *) false;; esac; do base=${base%/*}; done
-  : "${base:=/var/tmp/build-root}"
+  # The local-build cache's build-roots, as build-summary.sh reads it:
+  # <cache>/build-roots/<project>/<package>/<repo>-<arch>[-<flavor>]/,
+  # each root carrying a .geectl-build-root marker.
+  base=$(geectl config show 2>/dev/null | python3 -I -c \
+    'import json,sys; print(json.load(sys.stdin).get("build_cache_dir") or "")')
+  : "${base:=${XDG_CACHE_HOME:-$HOME/.cache}/geectl}"
+  base="$base/build-roots"
   newest() {
     local r d
     for r in "$@"; do
@@ -77,7 +77,7 @@ else
       [ -d "$d" ] && printf '%s\n' "$d"
     done | xargs -r -d '\n' ls -dt 2>/dev/null | head -1
   }
-  root="$(newest "$base"/*/)"
+  root="$(newest "$base"/*/*/*/)"
   [ -n "$root" ] || root="$(newest "$base")"
   [ -n "$root" ] || { echo "no build root found; pass RPMs explicitly" >&2; exit 2; }
   mapfile -t rpms < <(find "$root" -name '*.rpm' ! -name '*debuginfo*' \

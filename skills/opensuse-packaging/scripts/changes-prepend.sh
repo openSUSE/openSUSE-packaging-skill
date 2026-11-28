@@ -8,8 +8,9 @@
 #
 # Usage: changes-prepend.sh <name>.changes [--author 'Full Name <email>']
 #   The bullet body comes on STDIN (already wrapped at 67 cols, '-'/'*' bullets).
-#   --author falls back to $CHANGES_AUTHOR, then to what a bare `osc vc` writes
-#   (vc-identity.sh) — always the full 'Name <email>' form, never a bare email,
+#   --author falls back to $CHANGES_AUTHOR, then to what a bare `geectl
+#   changelog generate` writes (`geectl changelog identity`) — always the full
+#   'Name <email>' form, never a bare email,
 #   and never git's identity: the packaging address is often NOT the git commit
 #   address (sr#1385844 shipped the git one). With none of the three available
 #   the script exits 2 rather than guessing.
@@ -47,16 +48,15 @@ done
 # Resolve the author without baking a person into the script.
 #   1. --author
 #   2. $CHANGES_AUTHOR
-#   3. what a bare `osc vc` writes (vc-identity.sh)
+#   3. what a bare `geectl changelog generate` writes (`geectl changelog identity`)
 # Never git config: the packaging identity in a .changes entry is frequently NOT
-# the git commit identity, and gate.sh's changes-lint refuses an entry whose
-# name or address differs from osc vc's.
+# the git commit identity (sr#1385844 shipped the git one).
 if [ -z "$author" ]; then
   if [ -n "${CHANGES_AUTHOR:-}" ]; then
     author="$CHANGES_AUTHOR"
-  elif ! author=$("$(dirname "$0")/vc-identity.sh"); then
-    echo "no --author given, CHANGES_AUTHOR unset, and vc-identity.sh could not tell" >&2
-    echo "what osc vc writes; pass --author 'Full Name <email>'" >&2
+  elif ! author=$(geectl changelog identity --format text 2>/dev/null); then
+    echo "no --author given, CHANGES_AUTHOR unset, and geectl changelog identity could not tell" >&2
+    echo "what geectl changelog generate writes; pass --author 'Full Name <email>'" >&2
     exit 2
   fi
 fi

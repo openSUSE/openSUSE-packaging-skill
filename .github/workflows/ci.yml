@@ -40,10 +40,23 @@ jobs:
           # Use a release candidate while a version has no final release yet.
           allow-prereleases: true
       # The helpers and their tests are standard library only, and every suite is
-      # offline (network lookups are stubbed). The one install is osc itself:
-      # check-osc.py reads its argparse parser, pinned so the check is stable.
-      - name: Install osc
-        run: python3 -m pip install osc==1.27.3
+      # offline (network lookups are stubbed).
+      # check-geectl.py runs against the released CLI from crates.io.
+      # Bump the version to re-validate against a newer geectl.
+      # contrib/container/skill-container is the one exception: it reads the
+      # tea config with ruamel.yaml, as its Dockerfile already installs
+      # (python3-ruamel.yaml), so CI installs it too. The launcher resets
+      # PATH to the system directories, so it is the system python3 that
+      # needs it: a pip install lands in the setup-python site-packages,
+      # which that python never sees.
+      - name: Install ruamel.yaml
+        run: sudo apt-get update && sudo apt-get install -y python3-ruamel.yaml
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+      - name: Install geectl
+        run: cargo install geectl --version 0.2.3
       - name: Script suites
         # `|| rc=1` and NOT `|| break`: break returns 0, so the loop would report
         # success on a failing suite -- green forever, for no reason anyone sees.
@@ -54,7 +67,7 @@ jobs:
         run: |
           python3 tests/repo/check-skills.py
           python3 tests/repo/check-flags.py
-          python3 tests/repo/check-osc.py
+          python3 tests/repo/check-geectl.py
 
   lint:
     runs-on: ubuntu-latest

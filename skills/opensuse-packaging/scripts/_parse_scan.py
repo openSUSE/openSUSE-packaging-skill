@@ -82,6 +82,7 @@ import hashlib
 import os
 import re
 import sys
+import json
 import xml.etree.ElementTree as ET
 
 RUNS = ("lua", "expand", "load", "include")
@@ -581,10 +582,28 @@ def md5(path):
 
 
 def listed(path):
-    """name -> md5 of each entry of an OBS directory listing; {} without one."""
+    """name -> md5 of each entry of a directory listing; {} without one. The
+    listing is a `remote list-files` JSON payload, or an OBS directory XML."""
     try:
-        root = ET.parse(path).getroot()
+        with open(path, "rb") as fh:
+            raw = fh.read(1 << 20)
     except FileNotFoundError:
+        return {}
+    if raw.lstrip().startswith(b"{"):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return {}
+        if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+            return {}
+        return {
+            e.get("name"): e.get("md5")
+            for e in payload["files"]
+            if isinstance(e, dict) and e.get("name")
+        }
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
         return {}
     return {e.get("name"): e.get("md5") for e in root.findall("entry")}
 

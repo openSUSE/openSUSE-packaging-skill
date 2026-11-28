@@ -50,12 +50,16 @@ EXIT_ITEM = re.compile(r"(?:^|[;,·])\s*(\d+)(?=\s|=|$)")
 EXIT_LINE = re.compile(r"^exit (\d+)\b")
 # Flags of OTHER commands a script's --help quotes, not its own.
 FOREIGN = {
+    "build-summary.sh": {"--live"},
+    "changes-guard.sh": {"--format"},
+    "forward-check.py": {"--supersede"},
     "gpg-verify.sh": {"--keyring", "--verify"},
-    "incoming-requests.py": {"--incoming"},
-    "my-requests.sh": {"--brief", "--no-prs"},
-    "scm-snapshot.sh": {"--outdir"},
+    "incoming-requests.py": {"--backend", "--reviewer"},
+    "my-requests.sh": {"--brief", "--creator", "--no-prs"},
+    "pr-guard.py": {"--changes-entry", "--description"},
+    "scm-snapshot.sh": {"--mode", "--outdir"},
     "soname-check.sh": {"--provides"},
-    "watch-submissions.sh": {"--diff"},
+    "watch-submissions.sh": {"--reviewer"},
 }
 # `-o, --output` (argparse) or `-o|--output` (bash, synopsis).
 # argparse before 3.13 repeats the metavar: `-o OUTPUT, --output OUTPUT`.

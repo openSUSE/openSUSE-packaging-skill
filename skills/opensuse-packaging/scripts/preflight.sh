@@ -1,6 +1,6 @@
 #!/bin/bash
 # Block-2 pre-flight (HARD RULE): is this update already done or in flight?
-# Run BEFORE any osc branch / spec edit / build. Mechanizes the check from
+# Run BEFORE any geectl branch / spec edit / build. Mechanizes the check from
 # references/update-build.md "Pre-flight" — born from the python-ruff/uv case
 # (SRs 1362328/1362488 discovered only AFTER two heavy Rust builds were wasted).
 #
@@ -9,8 +9,8 @@
 #   2. incoming SRs (someone's home:...:branches -> devel staging the bump)
 #   3. outgoing devel -> Factory SRs (the one that lands the update)
 #   4. for a git/scmsync devel project: open PRs on the devel Gitea repo
-#      (MANDATORY — an in-flight update there is a PR, not an SR; an osc-only
-#      check gives a false PROCEED), read with `git-obs -G src.opensuse.org`;
+#      (MANDATORY — an in-flight update there is a PR, not an SR; a geectl-only
+#      check gives a false PROCEED), read with `geectl pull-request search`;
 #      a failed or unreadable answer is CHECK-FAILED, never "none"
 #   5. a `reviewer` role (package or project _meta) held by someone OTHER than
 #      you -> prints a REVIEWER ROLE notice. That person asked to see changes
@@ -47,7 +47,7 @@
 #                     the devel-vs-Factory version delta drives the verdict);
 #                     anything not version-shaped (a project name) is a usage error
 #   --target-project  default openSUSE:Factory
-#   --user            OBS account (default: `osc whois`)
+#   --user            OBS account (default: $GEECTL_OBS_USERNAME)
 #   --from            the project you are about to branch (or already branched):
 #                     STOP unless it is the devel project, or the devel package
 #                     is a _link to it. A copy elsewhere carries its own .changes
@@ -63,7 +63,9 @@
 #   5  VERDICT: INCOMING — a contributor's SR or devel PR on your package waits
 #      for review (check 7); your own request in flight still wins (3)
 #   4  VERDICT: FORWARD  — stranded devel update: devel is ahead but no Factory
-#      SR was ever filed (openmopac/pspg case); prints the exact osc sr command
+#      SR was ever filed (openmopac/pspg case); for openSUSE:Factory it reports
+#      the update as ready to forward (geectl cannot file that forward yet),
+#      for another target it prints the exact geectl request file command
 #   2  a check FAILED (network/auth) — a failed check must NEVER print PROCEED
 set -uo pipefail
 case "${1:-}" in
@@ -88,14 +90,10 @@ done
 if [ -n "$targetver" ] && { [[ ! $targetver =~ ^[A-Za-z0-9._+~^]+$ ]] || [[ ! $targetver =~ [0-9] ]]; }; then
   echo "preflight.sh: '$targetver' is not a version (the target project goes in --target-project)" >&2; exit 2
 fi
-# Query strings decode + as a space, so the package name enters every
-# request query percent-encoded (libsigc++3 read as "libsigc  3" printed
-# "none" with sr#1386760 open); URL paths keep the literal name.
-epkg="${pkg//+/%2B}"
-[ -n "$user" ] || user="$(timeout 30 osc whois 2>/dev/null | sed 's/:.*//')" || true
+[ -n "$user" ] || user="${GEECTL_OBS_USERNAME:-}"
 
 fail() { echo "CHECK FAILED: $*" >&2; echo "VERDICT: CHECK-FAILED (fix and re-run — this is NOT a PROCEED)"; exit 2; }
-# captured stderr of osc / git-obs: mktemp under $TMPDIR, not a guessable /tmp name
+# captured stderr of geectl: mktemp under $TMPDIR, not a guessable /tmp name
 errf="$(mktemp)" || fail "mktemp failed"; trap 'rm -f "$errf"' EXIT
 
 # Third-party text (foreign .changes entries, PR titles, spec fields) is
@@ -115,26 +113,31 @@ sanitize() {
   fi
 }
 
-# osc wrapper distinguishing 404 (fact) from other failures (fatal).
-# Sets: O_OUT (stdout), O_404 (0/1). Returns 0 on success or 404, 1 otherwise.
-oapi() {
+# geectl wrapper distinguishing 404 (fact) from other failures (fatal).
+# Sets: G_OUT (stdout), G_404 (0/1). Returns 0 on success or 404, 1 otherwise.
+gapi() {
   local err rc
-  O_OUT="$(timeout 30 osc api "$1" 2>"$errf")"; rc=$?
+  G_OUT="$(timeout 30 geectl "$@" 2>"$errf")"; rc=$?
   err="$(cat "$errf" 2>/dev/null || true)"
-  O_404=0
+  G_404=0
   if [ $rc -ne 0 ]; then
-    if printf '%s' "$err" | grep -q "404"; then O_404=1; O_OUT=""; return 0; fi
+    if [ $rc -eq 3 ] || printf '%s' "$err" | grep -q "not_found"; then G_404=1; G_OUT=""; return 0; fi
     echo "$err" >&2; return 1
   fi
   return 0
 }
 
+# The JSON payload in G_OUT, or "" on a 404: a missing package is a fact,
+# not a failure.
+jout() { if [ "$G_404" = 1 ]; then printf ''; else printf '%s' "$G_OUT"; fi; }
+
 # ---- 1. resolve the devel project (devel-of.sh logic inline) ----------------
-devel="$(timeout 30 osc develproject "$target" "$pkg" 2>/dev/null | head -1 | cut -d/ -f1)" || devel=""
+devel="$(timeout 30 geectl remote devel-project "$pkg" --target-project "$target" 2>/dev/null \
+  | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("devel_project") or "")' 2>/dev/null)" || devel=""
 newpkg=0
 if [ -z "$devel" ]; then
-  oapi "/source/$target/$pkg/_meta" || fail "could not probe $target/$pkg/_meta"
-  if [ "$O_404" = 1 ]; then
+  gapi remote package-meta "$target" "$pkg" || fail "could not probe $target/$pkg meta"
+  if [ "$G_404" = 1 ]; then
     # Absent by this spelling only? devel-of.sh checks the others (case, -/_/.,
     # python3dist()'s): python-authlib was filed while Factory had python-Authlib.
     near="$(timeout 120 "$SDIR/devel-of.sh" "$pkg" "$target" 2>"$errf")"; nrc=$?
@@ -145,8 +148,8 @@ if [ -z "$devel" ]; then
     esac
     echo "package:        $pkg — NOT in $target (new package)"
     newpkg=1
-  elif printf '%s' "$O_OUT" | grep -q '<devel '; then
-    fail "osc develproject failed, but $target/$pkg/_meta names a devel project"
+  elif [ -n "$(jout | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("devel") or "")')" ]; then
+    fail "geectl remote devel-project failed, but $target/$pkg meta names a devel project"
   else
     echo "package:        $pkg — in $target but no devel project set"
   fi
@@ -159,12 +162,12 @@ if [ -n "$from" ]; then
   elif [ "$from" = "$devel" ]; then
     echo "branch source:  $from (the devel project)"
   else
-    oapi "/source/$devel/$pkg/_link" || fail "could not read $devel/$pkg/_link"
-    lp="$(printf '%s' "$O_OUT" | grep -oE '<link [^>]*project="[^"]*"' | sed 's/.*project="//; s/"$//' | head -1)"
-    if [ "$O_404" = 0 ] && [ "$lp" = "$from" ]; then
+    gapi remote link-target "$devel" "$pkg" || fail "could not read $devel/$pkg link target"
+    lp="$(jout | python3 -I -c 'import json,sys; t=json.load(sys.stdin).get("target") or {}; print(t.get("project") or "")')"
+    if [ "$G_404" = 0 ] && [ "$lp" = "$from" ]; then
       echo "branch source:  $from ($devel/$pkg links to it)"
     else
-      echo "VERDICT: STOP - wrong branch source: $pkg is developed in $devel, not $from; its history is not $devel's — branch $devel/$pkg (osc branch $devel $pkg)"
+      echo "VERDICT: STOP - wrong branch source: $pkg is developed in $devel, not $from; its history is not $devel's — branch $devel/$pkg (geectl branch branch-package --project $devel --package $pkg --live)"
       exit 3
     fi
   fi
@@ -173,69 +176,81 @@ fi
 # ---- 2. versions: devel spec + top .changes header, target-project spec -----
 develver=""
 if [ -n "$devel" ]; then
-  oapi "/source/$devel/$pkg/$pkg.spec" || fail "could not read $devel/$pkg/$pkg.spec"
-  if [ "$O_404" = 1 ]; then
+  gapi remote cat --format text "$devel" "$pkg" "$pkg.spec" || fail "could not read $devel/$pkg/$pkg.spec"
+  if [ "$G_404" = 1 ]; then
     echo "devel spec:     (no $pkg.spec — link/multi-spec package? verify by hand)"
   else
-    develver="$(sanitize "$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
+    develver="$(sanitize "$(printf '%s\n' "$G_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
     echo "devel Version:  ${develver:-?}"
   fi
-  oapi "/source/$devel/$pkg/$pkg.changes" || fail "could not read $devel/$pkg/$pkg.changes"
+  gapi remote cat --format text "$devel" "$pkg" "$pkg.changes" || fail "could not read $devel/$pkg/$pkg.changes"
   # foreign-authored prose block -> sanitized AND delimited
-  [ "$O_404" = 0 ] && { echo "devel .changes top entry:"; printf '%s\n' "$O_OUT" | sed -n '1,4p' | python3 "$SDIR/_sanitize.py" --delimit | sed 's/^/    /'; }
+  [ "$G_404" = 0 ] && { echo "devel .changes top entry:"; printf '%s\n' "$G_OUT" | sed -n '1,4p' | python3 "$SDIR/_sanitize.py" --delimit | sed 's/^/    /'; }
   # A reviewer role held by someone else means SUBMIT, never commit directly:
   # that person asked to see changes before they land, and a direct commit
   # bypasses the gate even where maintainer rights would allow it.
   reviewers=""
-  for meta in "/source/$devel/$pkg/_meta" "/source/$devel/_meta"; do
-    oapi "$meta" || continue
-    [ "$O_404" = 0 ] || continue
-    reviewers="$reviewers$(printf '%s\n' "$O_OUT" \
-      | grep -oE '<(person|group) [^>]*role="reviewer"[^>]*/?>' \
-      | grep -oE '(userid|groupid)="[^"]*"' | cut -d'"' -f2)
+  for meta in "package-meta $devel $pkg" "project-meta $devel"; do
+    # shellcheck disable=SC2086
+    gapi remote $meta || continue
+    [ "$G_404" = 0 ] || continue
+    reviewers="$reviewers$(jout | python3 -I -c '
+import json, sys
+meta = json.load(sys.stdin)
+print(" ".join(
+    p.get("name") or ""
+    for kind in ("persons", "groups")
+    for p in meta.get(kind) or []
+    if isinstance(p, dict) and p.get("role") == "reviewer" and p.get("name")
+))')
 "
   done
   reviewers="$(printf '%s\n' "$reviewers" | grep -vx "${user:-__none__}" | grep -v '^$' | sort -u | tr '\n' ' ')"
   if [ -n "$reviewers" ]; then
     echo "REVIEWER ROLE:  $reviewers— do NOT commit to $devel directly."
-    echo "                Branch, then: osc sr <branch-prj> $pkg $devel"
+    echo "                Branch, then: geectl request file --source-project <branch-prj> --source-package $pkg --target-project $devel --target-package $pkg --description \"<short message>\" --changes-entry \"<short message>\" --live"
     echo "                and leave the accept to them (see references/submit-watch.md)."
   fi
 fi
 targetprjver=""
 if [ "$newpkg" = 0 ]; then
-  oapi "/source/$target/$pkg/$pkg.spec" || fail "could not read $target/$pkg/$pkg.spec"
-  [ "$O_404" = 0 ] && targetprjver="$(sanitize "$(printf '%s\n' "$O_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
+  gapi remote cat --format text "$target" "$pkg" "$pkg.spec" || fail "could not read $target/$pkg/$pkg.spec"
+  [ "$G_404" = 0 ] && targetprjver="$(sanitize "$(printf '%s\n' "$G_OUT" | grep -m1 -iE '^Version:' | awk '{print $2}')")"
   echo "$target Version: ${targetprjver:-?}"
 fi
 
 # ---- 3+4. SRs in flight, both directions ------------------------------------
-parse_srs() { # stdin: request collection XML; args: source project, target project, target package ("": any)
+parse_srs() { # stdin: `request search` JSON; args: source project, target project, target package ("": any)
   python3 -I -c '
-import sys, xml.etree.ElementTree as ET
+import sys, json
 sp_f, tp_f, tk_f = (sys.argv[1:] + ["", "", ""])[:3]
 raw = sys.stdin.read()
 if not raw.strip():
-    sys.exit(2)  # OBS answers an empty <collection/>, never nothing
+    sys.exit(2)  # geectl answers an empty collection, never nothing
 try:
-    root = ET.fromstring(raw)
-except ET.ParseError:
+    payload = json.loads(raw)
+except ValueError:
+    sys.exit(2)
+if not isinstance(payload, dict) or not isinstance(payload.get("requests"), list):
     sys.exit(2)
 seen = set()
-for r in root.findall("request"):
-    st = r.find("state")
-    sname = st.get("name") if st is not None else "?"
+for r in payload["requests"]:
+    if not isinstance(r, dict):
+        sys.exit(2)
+    st = r.get("state") or {}
+    sname = st.get("name") or "?"
     rid, who = r.get("id"), r.get("creator") or ""
     # Every action: the submit of a multi-action request may be its second.
-    for a in r.findall("action"):
+    for a in r.get("actions") or []:
+        if not isinstance(a, dict):
+            sys.exit(2)
         # Only a submit moves code: a set_bugowner/add_role/delete request is
         # not an update in flight, whatever the query returned.
         if a.get("type") != "submit": continue
-        s, t = a.find("source"), a.find("target")
-        sp = s.get("project") if s is not None else "?"
-        spkg = s.get("package") if s is not None else "?"
-        tprj = t.get("project") if t is not None else "?"
-        tpkg = (t.get("package") if t is not None else None) or spkg
+        sp = a.get("source_project") or "?"
+        spkg = a.get("source_package") or "?"
+        tprj = a.get("target_project") or "?"
+        tpkg = a.get("target_package") or spkg
         if sp_f and sp != sp_f or tp_f and tprj != tp_f or tk_f and tpkg != tk_f: continue
         if len(who.split()) != 1: sys.exit(2)  # whose it is decides STOP or INCOMING
         line = f"SR {rid} [{sname}] {sp}/{spkg} -> {tprj} by {who}"
@@ -244,27 +259,35 @@ for r in root.findall("request"):
             print(line)
 ' "$@"
 }
-# The last oapi answer as a request collection: a 404 is an answer, none.
-coll() { if [ "$O_404" = 1 ]; then printf '<collection/>'; else printf '%s' "$O_OUT"; fi; }
+# The last gapi answer as a request collection: a search never 404s, so a
+# missing package is an empty collection, never nothing.
+coll() { if [ "$G_404" = 1 ]; then printf '{"requests":[]}'; else printf '%s' "$G_OUT"; fi; }
 
 incoming=""
 if [ -n "$devel" ]; then
-  oapi "/request?view=collection&types=submit&states=new,review&project=$devel&package=$epkg" \
+  gapi request search --target-project "$devel" --target-package "$pkg" \
+      --type submit --state new --state review \
     || fail "could not query incoming SRs for $devel/$pkg"
   incoming="$(coll | parse_srs "" "$devel" "$pkg")" || fail "unparseable SR collection (incoming)"
 fi
-oapi "/request?view=collection&types=submit&states=new,review&project=$target&package=$epkg" \
+out_args=(request search --target-project "$target" --target-package "$pkg" \
+    --type submit --state new --state review)
+[ -n "$devel" ] && out_args+=(--source-project "$devel")
+gapi "${out_args[@]}" \
   || fail "could not query $target SRs for $pkg"
 outgoing="$(coll | parse_srs "${devel:-}" "$target" "$pkg")" || fail "unparseable SR collection (outgoing)"
 
-# A DECLINED request is terminal but NOT gone: `osc sr` still lists it as
-# "already open" and prompts to supersede it (y/n/c), which an unattended run
-# cannot answer. Querying only new,review reports "outgoing SRs: none" and the
+# A DECLINED request is terminal but NOT gone: filing still lists it as
+# "already open" and a refile supersedes it, which an unattended run cannot
+# answer. Querying only new,review reports "outgoing SRs: none" and the
 # submit then fails at the end of the work (picsart-gen-ai 2026-09-04, stale
-# declined 1375013). The prompt covers every open request from the same source,
-# anyone's, and --yes answers it for all of them: supersede only your own, by
-# id with -s; someone else's is theirs to revoke.
-oapi "/request?view=collection&types=submit&states=declined&project=$target&package=$epkg" \
+# declined 1375013). A refile supersedes every open request from the same
+# source, anyone's: supersede only your own, by id with --supersede;
+# someone else's is theirs to revoke.
+dec_args=(request search --target-project "$target" --target-package "$pkg" \
+    --type submit --state declined)
+[ -n "$devel" ] && dec_args+=(--source-project "$devel")
+gapi "${dec_args[@]}" \
   || fail "could not query declined $target SRs for $pkg"
 declined="$(coll | parse_srs "${devel:-}" "$target" "$pkg")" || fail "unparseable SR collection (declined)"
 
@@ -274,13 +297,19 @@ declined="$(coll | parse_srs "${devel:-}" "$target" "$pkg")" || fail "unparseabl
                    || echo "outgoing SRs:   none"
 own=""
 if [ -n "$declined" ]; then
-  echo "DECLINED $target SR(s) - not in flight, but \`osc sr\` lists them as open and prompts to supersede them:"
+  echo "DECLINED $target SR(s) - not in flight, but filing still lists them as open and a refile supersedes them:"
   printf '%s\n' "$declined" | sed 's/^/    /'
   if [ -z "$user" ]; then
-    echo "    -> could not tell which are yours (\`osc whois\` failed): pass --user"
+    echo "    -> could not tell which are yours (no user set): pass --user"
   else
     own="$(printf '%s\n' "$declined" | awk -v u="$user" '$NF == u {print $2}' | sort -n | tail -1)"
-    [ -n "$own" ] && echo "    -> $own is yours: file with osc sr ... -s $own  (never --yes: it supersedes every open request from this source)"
+    if [ -n "$own" ]; then
+      if [ "$target" = "openSUSE:Factory" ]; then
+        echo "    -> $own is yours: a refile would supersede it, but geectl cannot file a request targeting $target yet, so it stays listed as open"
+      else
+        echo "    -> $own is yours: refile with geectl request refile ... --supersede $own --live (never file a second request beside it: a refile supersedes every open request for the package from the same user)"
+      fi
+    fi
     printf '%s\n' "$declined" | awk -v u="$user" '$NF != u {print "    -> " $2 " is by " $NF ", not yours to supersede: ask them to revoke it, or leave it"}'
   fi
 fi
@@ -288,34 +317,41 @@ fi
 # ---- 5. Gitea leg (MANDATORY for scmsync devel projects) ---------------------
 prs="" ; prs_by=""
 if [ -n "$devel" ]; then
-  oapi "/source/$devel/_meta" || fail "could not read $devel/_meta"
-  scm="$(printf '%s' "$O_OUT" | grep -oE '<scmsync>[^<]+' | sed 's/<scmsync>//' | head -1)" || scm=""
+  gapi remote project-meta "$devel" || fail "could not read $devel meta"
+  scm="$(jout | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("scmsync") or "")')" || scm=""
   if [ -n "$scm" ]; then
     org="$(printf '%s' "$scm" | sed -E 's#https?://src\.opensuse\.org/##; s#[/?].*##')"
     echo "scmsync:        $scm (git devel project — checking Gitea PRs on $org/$pkg)"
-    # -G: without it git-obs takes its default login, which may be another forge
-    resp="$(timeout 30 git-obs -G src.opensuse.org -q api "/repos/$org/$pkg/pulls?state=open" 2>"$errf")"; grc=$?
-    err="$(grep -vx 'Response:' "$errf" 2>/dev/null || true)"
-    [ "$grc" = 124 ] && err="git-obs timed out after 30s"
-    [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-git-obs exit $grc}"
+    resp="$(timeout 30 geectl pull-request search --backend gitea --repo "$org/$pkg" --state open 2>"$errf")"; grc=$?
+    err="$(cat "$errf" 2>/dev/null || true)"
+    [ "$grc" = 124 ] && err="geectl timed out after 30s"
+    [ "$grc" = 0 ] || fail "could not query open PRs on $org/$pkg: ${err:-geectl exit $grc}"
     # "<author>\t<line>\t<head sha>" per PR; a PR without a number, an author
-    # or a head is no list (the head says whether a review is still of it)
+    # or a head is no list (the head says whether a review is still of it).
+    # The search payload carries no URL: the PR lives at
+    # https://src.opensuse.org/<org>/<pkg>/pulls/<num>, the forge this leg
+    # already names.
     prs_by="$(printf '%s' "$resp" | python3 -I -c '
 import re, sys, json
 raw = sys.stdin.read()
-if raw.startswith("Response:"): raw = raw.split("\n", 1)[1] if "\n" in raw else ""
 try: d = json.loads(raw)
 except Exception: sys.exit(2)
 if not isinstance(d, list): sys.exit(2)
 for p in d:
-    num = p.get("number"); base = (p.get("base") or {}).get("ref")
-    who = (p.get("user") or {}).get("login"); head = (p.get("head") or {}).get("sha")
-    if type(num) is not int or not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
+    m = re.fullmatch(r"gitea:([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*)#([0-9]+)", p.get("reference") or "")
+    if not m: sys.exit(2)
+    org, repo, num = m.group(1), m.group(2), m.group(3)
+    base = (p.get("target") or {}).get("branch")
+    who = p.get("author"); head = (p.get("source") or {}).get("commit")
+    if not isinstance(who, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", who):
         sys.exit(2)
     if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
         sys.exit(2)
+    if not isinstance(base, str) or not base:
+        sys.exit(2)
     # one line each: a newline in a title could forge another PR
-    title, url = (" ".join(str(x).split()) for x in (p.get("title"), p.get("html_url")))
+    title = " ".join(str(p.get("title")).split())
+    url = f"https://src.opensuse.org/{org}/{repo}/pulls/{num}"
     print(f"{who}\tPR #{num} -> {base}: {title} ({url}) by {who}\t{head}")
 ')" || fail "unparseable PR list for $org/$pkg"
     # PR titles are foreign-authored; sanitize AFTER the rc-gated capture above
@@ -334,7 +370,7 @@ fi
 # action target sees every open submit request for it, from anyone. The
 # match is submit-only, and parse_srs drops a non-submit action a second
 # time: a set_bugowner request (sr#1383747, for runc) is not in flight.
-oapi "/search/request?match=action%5B@type=%27submit%27%20and%20target/@package=%27$epkg%27%5D%20and%20(state/@name=%27new%27%20or%20state/@name=%27review%27)" \
+gapi request search --target-package "$pkg" --type submit --state new --state review \
   || fail "could not query other SRs targeting $pkg"
 sweep="$(coll | parse_srs "" "" "$pkg")" || fail "unparseable SR collection (sweep)"
 sweep_blocking="" ; sweep_other=""
@@ -365,7 +401,7 @@ done <<< "$sweep"
 # script must not name (pr-guard refuses its writes when it does).
 own_in="" ; foreign_in="" ; own_prs="" ; foreign_prs="" ; contrib=""
 if [ -n "$incoming$prs_by" ]; then
-  [ -n "$user" ] || fail "could not tell whose requests are open (osc whois failed): pass --user"
+  [ -n "$user" ] || fail "could not tell whose requests are open (no user set): pass --user"
   own_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF == u')"
   foreign_in="$(printf '%s\n' "$incoming" | awk -v u="$user" 'NF && $NF != u')"
   own_prs="$(printf '%s\n' "$prs_by" | awk -F'\t' -v u="$user" 'NF && $1 == u { print $2 }')"
@@ -447,10 +483,22 @@ if [ "$ahead" = 2 ]; then
   exit 3
 fi
 if [ "$ahead" = 1 ]; then
+  if [ "$target" = "openSUSE:Factory" ]; then
+    # geectl cannot file a request targeting openSUSE:Factory (request file
+    # takes a devel project as its target), so a Factory forward prints no
+    # filing command: report the update as ready to forward and stop.
+    echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}): the forward needs a devel→Factory request, which geectl cannot file yet — report the update as ready to forward and stop"
+    exit 4
+  fi
   # -s and -m keep it from prompting; only someone else's declined SR still can
   stuck=""; [ -z "$own" ] && [ -n "$declined" ] \
-    && stuck=" — declined $(printf '%s\n' "$declined" | awk '{print $2}' | tr '\n' ' ' | sed 's/ $//') still makes osc sr prompt (see above)"
-  echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}), run: osc sr $devel $pkg $target${own:+ -s $own} -m \"<short message>\"$stuck"
+    && stuck=" — declined $(printf '%s\n' "$declined" | awk '{print $2}' | tr '\n' ' ' | sed 's/ $//') still makes a filing prompt (see above)"
+  if [ -n "$own" ]; then
+    cmd="geectl request refile --source-project $devel --source-package $pkg --target-project $target --target-package $pkg --description \"<short message>\" --changes-entry \"<short message>\" --supersede $own --live"
+  else
+    cmd="geectl request file --source-project $devel --source-package $pkg --target-project $target --target-package $pkg --description \"<short message>\" --changes-entry \"<short message>\" --live"
+  fi
+  echo "VERDICT: FORWARD - stranded devel update (devel already has ${targetver:-a newer version than $target}), run: $cmd$stuck"
   exit 4
 fi
 if [ "$newpkg" = 1 ]; then

@@ -21,7 +21,7 @@ metadata, other distributions' spec files. Its security properties follow from t
   the policy; `scripts/_sanitize.py` is the mechanism, stripping terminal escapes and
   Unicode-smuggling characters so that what a human sees and what the model receives are
   the same characters.
-- **No credentials are read or transmitted by the skill.** `osc`, `tea` and the forge CLIs
+- **No credentials are read or transmitted by the skill.** `geectl`, `tea` and the forge CLIs
   read their own configuration. Nothing here needs to open a credential file, and nothing
   should put a token into a message, a changelog, a URL or a log line.
 
@@ -47,7 +47,7 @@ A report is a vulnerability if it breaks one of those promises:
 - **The hostile test fixtures** under `tests/fixtures/`. They exist to be malformed:
   forged delimiters, control characters, odd encodings. That is what they are for, and
   `.gitattributes` keeps git from normalising them.
-- Vulnerabilities in `osc`, OBS, Gitea, or any tool the skill invokes — report those to
+- Vulnerabilities in `geectl`, OBS, Gitea, or any tool the skill invokes — report those to
   their own projects.
 - Advice you disagree with. That is an issue or a pull request, not a security report.
 

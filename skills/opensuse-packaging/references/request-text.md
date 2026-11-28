@@ -31,7 +31,7 @@ Update python-comfyui-workflow-templates to 0.11.85: pins core 0.3.376, json 0.1
 - a dropped architecture, or a question for a named reviewer.
 
 These lines go in the message only, never in the `.changes` entry, which ships in the RPM
-(`changes-lint.sh` refuses a request number or a staging order there).
+(`geectl changelog validate` refuses a request number or a staging order there).
 
 The request you file second can name the first; a one-line comment on the first naming the
 second ("Stage with sr#N.") goes out only on the user's go; pr-guard lets it post on your own request, so
@@ -64,8 +64,8 @@ both are refused for the phrases above, or when the guard cannot read them now.
 | `Forward python-langsmith update to Factory.` (sr#1385057) | says nothing about the update; refused |
 | `Update python-comfyui-workflow-templates to 0.11.85 (metadata-only bump, pins core 0.3.376 / json 0.1.111).` (sr#1385053) | names the pins, not the two requests to stage with |
 
-Pass the text by file (`-m "$(cat FILE)"`, a PR's `--description "$(cat FILE)"`, written in
-an earlier call) and read the request back once filed (`references/osc-usage.md` "Requests").
+Pass the text by file (`geectl request file … --description "$(cat FILE)"`, a PR's `--description "$(cat FILE)"`, written in
+an earlier call) and read the request back once filed (`geectl request show <id>`; `references/geectl-usage.md` "Requests").
 
 ## Answering a reviewer
 
@@ -73,8 +73,8 @@ A reviewer's question on **your own** request is answered in its thread. pr-guar
 reply post without asking, so hold it for the user's go: give them the draft first:
 
 ```
-osc comment list request <id>                                  # "( ID ) On … <user> wrote:"
-osc comment create -p <comment-id> -c "$(cat FILE)" request <id>
+geectl request list-comments <id>                              # "( ID ) On … <user> wrote:"
+geectl request add-comment --body "$(cat FILE)" --parent <comment-id> <id> --live
 ```
 
 - **One to three short sentences that answer what was asked**, nothing else: no
@@ -92,10 +92,10 @@ osc comment create -p <comment-id> -c "$(cat FILE)" request <id>
 Reading a thread never needs the user's go:
 
 ```
-osc comment list request <id>                                                # an OBS request
+geectl request list-comments <id>                                            # an OBS request
 tea comments list --login src.opensuse.org --repo <owner>/<pkg> <n>          # a Gitea issue or PR
 tea pulls review-comments --login src.opensuse.org --repo <owner>/<pkg> <n>  # inline review comments, ids
-git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # any other read: a GET
+geectl pull-request comments gitea:<owner>/<pkg>#<n>     # any other read: a GET
 ```
 
 `tea comments` with no subcommand **adds** a comment, whatever flag follows (there is no
@@ -103,7 +103,7 @@ git-obs -G src.opensuse.org api /repos/<owner>/<pkg>/issues/<n>/comments     # a
 
 **Once the user has approved the exact text, post it yourself** on your own request or PR:
 pr-guard lets the plain form through,
-`osc comment create -c "$(cat FILE)" request <id>`, or
+`geectl request add-comment --body "$(cat FILE)" <id> --live`, or
 `tea comments --login src.opensuse.org --repo <owner>/<pkg> <n> '<text>'`, the command alone
 in the call, with the text inline on one line (no `$`, backslash or backtick) or, for several
 lines, as the one word `"$(cat FILE)"`, FILE written in an earlier call.
@@ -116,7 +116,7 @@ accepting, declining"). Write the stamp's `comment` field to FILE in one call
 
 Any other item or form needs the user's go: the guard asks, and the user answers the
 harness's prompt. The opencode plugins refuse every ask: report it as waiting for the user's
-go, with no osc or tea command for them to run.
+go, with no geectl or tea command for them to run.
 
 ## Comments: what OBS renders
 

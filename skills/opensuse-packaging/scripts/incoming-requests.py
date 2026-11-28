@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Incoming OBS submit requests + src.opensuse.org PRs needing YOUR PERSONAL
 action — excludes anything gated only on a group/team you belong to (unlike
-`osc request list --incoming -U` or the Gitea inbox, both full of group/team
+the incoming list or the Gitea inbox, both full of group/team
 items you can't act on alone).
 
 Your own requests and PRs (you are the creator or author) are not listed.
@@ -15,30 +15,32 @@ Buckets:
      where pr-guard's accept check is stricter.
   B. SR state=review, pending review by_user==you OR by_project/by_package you
      maintain. by_group reviews SKIPPED even if you're a member.
-  C. Gitea PR, state=open, you're in `requested_reviewers` by exact login.
-     Team-only reviewers (`requested_reviewers_teams`, not you individually)
-     SKIPPED — re-verified per PR since the API's `review_requested` filter
-     doesn't reliably distinguish personal from team-membership matches.
+  C. Gitea PR, state=open, with a pending review asked of you personally
+     (`pull-request show` reviews, state `asked`, naming your login).
+     Team-only asks (`@team`, not you individually) SKIPPED — re-verified
+     per PR, since the search answer carries no requested-reviewer info.
 
-Maintainership (A/B) = OBS `_meta` person search UNION `osc maintainer -U
-<user>` (the latter catches git/scmsync packages the OBS index can't see —
-`references/git-workflow.md` "Maintainership lives in git"). One global
-`/search/request` call regardless of package count (expect a multi-hundred-KB
-response). Bucket C: one issues/search + one PR-detail call per candidate.
+Maintainership (A/B) = OBS person search, verified per target against the
+package and project meta (the person search matches any role, so a bugowner
+alone does not count). Git/scmsync packages the OBS index can't see are NOT
+covered: no typed leaf reads the git `_maintainership.json` index
+(`references/git-workflow.md` "Maintainership lives in git"), and the script
+says so on stderr. One global `request search` call regardless of package
+count. Bucket C: one pull-request search + one pull-request show per candidate.
 Descriptions and titles are third-party text, printed through _sanitize.py.
 
-Gitea (bucket C) is read through `git-obs -G src.opensuse.org api`. git-obs
-reads its login itself (shared with tea by default); this script never reads
-it. -G picks the login named src.opensuse.org, or the only one for that host
-(`git-obs login add`), so a default login for another forge is never used. A
-failure skips bucket C with a stderr warning; A/B still report, and the output
-says the src.opensuse.org PRs are UNKNOWN. `--no-prs` skips bucket C outright.
-Every osc / git-obs call times out after 60s and then counts as a failed
+Gitea (bucket C) is read through `geectl pull-request search --backend
+gitea --reviewer <login>` and `geectl pull-request show`: the login comes
+from `geectl gitea whoami` (the token owner), which may differ from the OBS
+--user, and the reviewer flag accepts no other login. A failure skips bucket
+C with a stderr warning; A/B still report, and the output says the
+src.opensuse.org PRs are UNKNOWN. `--no-prs` skips bucket C outright.
+Every geectl call times out after 60s and then counts as a failed
 query, never as an empty answer.
 
 Usage: incoming-requests.py [--user OBSUSER] [--format ascii|table|plain]
                              [--verbose] [--no-prs]
-  --user     OBS account (default: `osc whois`)
+  --user     OBS account (default: $GEECTL_OBS_USERNAME)
   --format   ascii (bordered table, default) | table (markdown) | plain (tsv)
   --verbose  print scanned/skipped counts and why each skip happened
   --no-prs   skip bucket C
@@ -48,17 +50,17 @@ OBS query/parse failure (never read as "nothing pending"). Gitea leg fails soft.
 """
 
 import os
+import re
 import sys
 import argparse
 import subprocess
 import json
-import xml.etree.ElementTree as ET
 
 sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
-# seconds per osc / git-obs call: both have hung for good, and a harness
+# seconds per geectl call: geectl has hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first
 TIMEOUT = 60
 
@@ -77,89 +79,127 @@ def run(cmd):
         return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
 
 
-def osc_api(path):
-    r = run(["osc", "api", path])
+def geectl_json(args, what):
+    """The parsed JSON payload of a geectl read; exit 2 on any failure,
+    never an empty answer."""
+    r = run(["geectl"] + args)
     if r.returncode != 0:
         sys.stderr.write(
-            f"ERROR: osc api {path} failed (rc={r.returncode}): {r.stderr.strip()}\n"
+            f"ERROR: geectl {' '.join(args)} failed (rc={r.returncode}): {r.stderr.strip()}\n"
         )
         sys.exit(2)
-    return r.stdout or ""
-
-
-def parse_xml(text, what):
     try:
-        return ET.fromstring(text or "<collection/>")
-    except ET.ParseError as e:
+        return json.loads(r.stdout)
+    except ValueError as e:
         sys.stderr.write(f"ERROR: unparseable {what}: {e}\n")
         sys.exit(2)
 
 
-def whois_user():
-    r = run(["osc", "whois"])
-    if r.returncode != 0 or ":" not in r.stdout:
+def gitea_json(args):
+    """The parsed JSON payload of a soft geectl read for bucket C; None on
+    any failure (no Gitea token, network, bad JSON), with a WARNING, so the
+    caller can skip bucket C cleanly."""
+    r = run(["geectl"] + args)
+    if r.returncode != 0:
         sys.stderr.write(
-            f"ERROR: `osc whois` failed ({r.stderr.strip()}); pass --user explicitly\n"
+            f"WARNING: geectl {' '.join(args)} failed: {r.stderr.strip()}\n"
+        )
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(
+            f"WARNING: geectl {' '.join(args)} returned unparsable output ({e})\n"
+        )
+        return None
+
+
+def gitea_login():
+    """The src.opensuse.org login from `geectl gitea whoami` (the token
+    owner): the --reviewer flag accepts no other login, and it may differ
+    from the OBS --user. None on failure."""
+    payload = gitea_json(["gitea", "whoami"])
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("login") or None
+
+
+def whois_user():
+    user = os.environ.get("GEECTL_OBS_USERNAME", "").strip()
+    if not user:
+        sys.stderr.write(
+            "ERROR: no user (set GEECTL_OBS_USERNAME or pass --user explicitly)\n"
         )
         sys.exit(2)
-    return r.stdout.split(":", 1)[0].strip()
+    return user
+
+
+def _maintainers(meta):
+    """{login} holding an explicit person role="maintainer" in a meta payload."""
+    return {
+        p.get("name")
+        for p in (meta or {}).get("persons") or []
+        if isinstance(p, dict) and p.get("role") == "maintainer"
+    } - {None}
 
 
 def my_direct_targets(user):
     """Returns (projects: set[str], packages: set[(project, package)]) where
-    `user` holds an explicit person role="maintainer", from both the OBS
-    _meta index and git _maintainership.json."""
-    projects, packages = set(), set()
-
-    root = parse_xml(
-        osc_api(
-            f"/search/project?match=person[@userid='{user}' and @role='maintainer']"
-        ),
-        "project search response",
+    `user` holds an explicit person role="maintainer". The person search
+    matches any role, so every hit is verified against the package and
+    project meta (a project role inherits to its packages). Git-defined
+    maintainerships are not covered: no typed leaf reads the git
+    `_maintainership.json` index."""
+    sys.stderr.write(
+        "WARNING: git-defined maintainerships are not covered (no typed leaf "
+        "reads the git _maintainership.json index); git/scmsync packages are "
+        "missing from this list\n"
     )
-    for p in root.findall("project"):
-        name = p.get("name")
-        if name:
+    projects, packages = set(), set()
+    proj_cache = {}
+
+    def project_maintains(prj):
+        if prj not in proj_cache:
+            meta = geectl_json(["remote", "project-meta", prj], "project meta")
+            proj_cache[prj] = _maintainers(meta) if isinstance(meta, dict) else set()
+        return user in proj_cache[prj]
+
+    payload = geectl_json(
+        ["remote", "search-projects-by-person", user], "project search response"
+    )
+    for p in (payload or {}).get("projects") or []:
+        name = p.get("name") if isinstance(p, dict) else None
+        if name and project_maintains(name):
             projects.add(name)
 
-    root = parse_xml(
-        osc_api(
-            f"/search/package?match=person[@userid='{user}' and @role='maintainer']"
-        ),
-        "package search response",
+    payload = geectl_json(
+        ["remote", "search-packages-by-person", user], "package search response"
     )
-    for p in root.findall("package"):
-        prj, name = p.get("project"), p.get("name")
-        if prj and name:
+    hits = (payload or {}).get("packages") or []
+    for p in hits:
+        if isinstance(p, dict):
+            prj, name = p.get("project"), p.get("name")
+        elif isinstance(p, str) and "/" in p:
+            prj, name = p.split("/", 1)
+        else:
+            continue
+        if not prj or not name:
+            continue
+        meta = geectl_json(["remote", "package-meta", prj, name], "package meta")
+        if isinstance(meta, dict) and (
+            user in _maintainers(meta) or project_maintains(prj)
+        ):
             packages.add((prj, name))
-
-    r = run(["osc", "maintainer", "-U", user])
-    if r.returncode != 0:
-        sys.stderr.write(
-            f"ERROR: 'osc maintainer -U {user}' failed (needs osc >= 1.15): "
-            f"{r.stderr.strip()}\n"
-        )
-        sys.exit(2)
-    for line in r.stdout.splitlines():
-        if line.startswith("Defined in git project: "):
-            projects.add(line[len("Defined in git project: ") :].strip())
-        elif line.startswith("Defined in git package: "):
-            rest = line[len("Defined in git package: ") :].strip()
-            if "/" in rest:
-                prj, pkg = rest.split("/", 1)
-                packages.add((prj.strip(), pkg.strip()))
 
     return projects, packages
 
 
-def targets_of(req_el):
-    """All (project, package_or_None) pairs named by any action's <target>."""
+def targets_of(req):
+    """All (project, package_or_None) pairs named by any action's target."""
     out = []
-    for action in req_el.findall("action"):
-        t = action.find("target")
-        if t is None:
-            continue
-        out.append((t.get("project"), t.get("package")))
+    for a in req.get("actions") or []:
+        if isinstance(a, dict):
+            out.append((a.get("target_project"), a.get("target_package")))
     return out
 
 
@@ -185,23 +225,27 @@ def fetch_incoming_srs(user, verbose):
             f"{len(my_packages)} directly-maintained package(s) for '{user}'\n"
         )
 
-    root = parse_xml(
-        osc_api("/search/request?match=(state/@name='new'+or+state/@name='review')"),
+    payload = geectl_json(
+        ["request", "search", "--state", "new", "--state", "review"],
         "request search response",
     )
+    if not isinstance(payload, dict) or not isinstance(payload.get("requests"), list):
+        sys.stderr.write("ERROR: unparseable request search response\n")
+        sys.exit(2)
 
     scanned = 0
     group_gated_skipped = 0
     own_skipped = 0
     rows = []
 
-    for req in root.findall("request"):
+    for req in payload["requests"]:
+        if not isinstance(req, dict):
+            continue
         scanned += 1
-        rid = req.get("id")
-        state_el = req.find("state")
-        state = state_el.get("name") if state_el is not None else "?"
-        created = state_el.get("when") if state_el is not None else "?"
-        desc = first_line(_sanitize.sanitize(req.findtext("description")))
+        rid = str(req.get("id"))
+        state = (req.get("state") or {}).get("name") or "?"
+        created = (req.get("state") or {}).get("when") or "?"
+        desc = first_line(_sanitize.sanitize(req.get("description")))
         if req.get("creator") == user:
             own_skipped += 1
             continue
@@ -214,14 +258,18 @@ def fetch_incoming_srs(user, verbose):
         if not matched_target:
             continue
 
-        action_el = req.find("action")
-        action_type = action_el.get("type") if action_el is not None else "?"
+        acts = [a for a in req.get("actions") or [] if isinstance(a, dict)]
+        action_type = acts[0].get("type") if acts else "?"
         project, package = matched_target
 
         if state == "new":
             why = "no reviewer assigned yet -- yours to accept/decline"
         else:  # state == "review"
-            reviews = [r for r in req.findall("review") if r.get("state") == "new"]
+            reviews = [
+                r
+                for r in req.get("reviews") or []
+                if isinstance(r, dict) and r.get("state") == "new"
+            ]
             personal = any(r.get("by_user") == user for r in reviews)
             project_pkg = any(
                 (r.get("by_project") and r.get("by_project") in my_projects)
@@ -265,57 +313,63 @@ def fetch_incoming_srs(user, verbose):
 
 
 # ---------- Gitea (src.opensuse.org) PR leg -- bucket C ----------
-# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
-
-
-def gitea_get(path):
-    """`git-obs api <path>` -- strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (no src.opensuse.org login,
-    network, HTTP error, bad JSON) so the caller can skip bucket C cleanly."""
-    # -G: the default login may belong to another forge
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
-    if r.returncode != 0:
-        sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
-        return None
-    out = r.stdout
-    if out.startswith("Response:"):
-        out = out.split("\n", 1)[1] if "\n" in out else ""
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError as e:
-        sys.stderr.write(
-            f"WARNING: git-obs api {path} returned unparsable output ({e})\n"
-        )
-        return None
+# Read through geectl's typed leaves: the token stays in geectl's config,
+# no token is read here.
 
 
 def fetch_review_prs(user, verbose):
-    """Bucket C: open src.opensuse.org PRs where `user` is an individually
-    requested reviewer. Returns a list of row dicts, or None if the leg is
-    unavailable entirely (no login/network -- caller falls back to OBS-only)."""
-    issues = gitea_get(
-        "/repos/issues/search?type=pulls&review_requested=true&state=open&limit=50"
-    )
-    if issues is None:
+    """Bucket C: open src.opensuse.org PRs where the token owner is an
+    individually requested reviewer. Returns a list of row dicts, or None
+    if the leg is unavailable entirely (no login/network -- caller falls
+    back to OBS-only). The reviewer flag takes the token owner's login
+    from `gitea whoami` (the OBS user may differ); the search answer
+    carries no requested-reviewer info, so each candidate is re-verified
+    through `pull-request show`: a pending `asked` review naming the login
+    personally counts, a team-only ask (`@team`) does not."""
+    login = gitea_login()
+    if login is None:
         sys.stderr.write(
             "WARNING: src.opensuse.org PR leg skipped (no usable "
             "login/network) -- OBS-only view. Pass --no-prs to silence.\n"
         )
         return None
+    payload = gitea_json(
+        [
+            "pull-request",
+            "search",
+            "--backend",
+            "gitea",
+            "--reviewer",
+            login,
+            "--state",
+            "open",
+        ]
+    )
+    if not isinstance(payload, dict):
+        sys.stderr.write(
+            "WARNING: src.opensuse.org PR leg skipped (no usable "
+            "login/network) -- OBS-only view. Pass --no-prs to silence.\n"
+        )
+        return None
+    issues = payload.get("pull_requests", [])
 
     rows = []
     team_gated_skipped = 0
     own_skipped = 0
     for it in issues:
-        repo = (it.get("repository") or {}).get("full_name", "?")
-        num = it.get("number")
+        ref = it.get("reference") or ""
+        m = re.fullmatch(r"gitea:([\w.+-]+/[\w.+-]+)#(\d+)", ref)
+        if not m:
+            continue
+        repo, num = m.group(1), int(m.group(2))
         title = first_line(_sanitize.sanitize(it.get("title", "")))
-        created = it.get("created_at", "?")
-        if (it.get("user") or {}).get("login") == user:
+        # Neither the search nor the show carries a created date.
+        created = "?"
+        if (it.get("author") or "") == login:
             own_skipped += 1
             continue
 
-        pr = gitea_get(f"/repos/{repo}/pulls/{num}")
+        pr = gitea_json(["pull-request", "show", f"gitea:{repo}#{num}"])
         if pr is None:
             rows.append(
                 {
@@ -332,14 +386,17 @@ def fetch_review_prs(user, verbose):
             )
             continue
 
-        if (pr.get("user") or {}).get("login") == user:
+        if (pr.get("author") or "") == login:
             own_skipped += 1
             continue
-        reviewers = {
-            (r.get("login") or "") for r in (pr.get("requested_reviewers") or [])
-        }
-        teams = pr.get("requested_reviewers_teams") or []
-        if user not in reviewers:
+        asked = [r for r in (pr.get("reviews") or []) if r.get("state") == "asked"]
+        personal = any(r.get("reviewer") == login for r in asked)
+        teams = [
+            r.get("reviewer", "")[1:]
+            for r in asked
+            if (r.get("reviewer") or "").startswith("@")
+        ]
+        if not personal:
             # only reachable via a team you belong to (or a stale search-index
             # hit) -- same exclusion as an OBS by_group review
             team_gated_skipped += 1

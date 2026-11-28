@@ -1,10 +1,10 @@
 #!/bin/bash
 # Per-package build-status table for a whole project (a dependency cone in a
 # home: project), in ONE call — so an unattended/remote-build run can gate on
-# "is the whole branch green yet?" without hand-rolling an
-# `osc results | parse the bare code row` pipeline each time.
+# "is the whole branch green yet?" without hand-rolling a
+# `geectl build results | parse the bare code row` pipeline each time.
 #
-# Reads the _result API (all packages at once), prints a code->package table,
+# Reads the build results (all packages at once), prints a code->package table,
 # and — crucially — distinguishes a SETTLED failure from a stale `failed` while
 # a rebuild is still pending (the result carries dirty="true", or some package is
 # still scheduled/building). It only trusts failures once nothing is in flight.
@@ -15,7 +15,7 @@
 #   2  a settled failure (failed/broken/unresolvable/UNKNOWN code) with nothing
 #      in flight — an unrecognized status code counts as settled-failure, NOT
 #      pending, so a stuck package can't keep the loop spinning forever
-#   3  no answer: usage error, or the _meta/_result lookup failed or did not parse
+#   3  no answer: usage error, or the project-meta/results lookup failed or did not parse
 #   4  QUEUED-STUCK: the only packages left are "scheduled", the rest succeeded,
 #      and 30+ min have passed since each one's last commit and since the
 #      last build job in the repo/arch ended (a package scheduled because its
@@ -24,7 +24,7 @@
 #      package must be green before anything is filed
 #
 # Usage: cone-status.sh <project> [repo] [arch]
-#   repo default: first <repository> in the project _meta;  arch default: x86_64
+#   repo default: first <repository> in the project meta;  arch default: x86_64
 #   (arch defaults to x86_64 because OBS builds it on every project — unlike
 #   aarch64; contrast build-summary.sh's local standard-aarch64 default, which is
 #   THIS host's build root. Don't "fix" the mismatch.)
@@ -36,36 +36,40 @@ esac
 prj="$1"; repo="${2:-}"; arch="${3:-x86_64}"
 
 if [ -z "$repo" ]; then
-  repo="$(osc api "/source/$prj/_meta" 2>/dev/null | python3 -I -c '
-import sys, xml.etree.ElementTree as ET
+  repo="$(geectl remote project-meta "$prj" 2>/dev/null | python3 -I -c '
+import sys, json
 try:
-    root = ET.fromstring(sys.stdin.read() or "<project/>")
-except ET.ParseError:
+    meta = json.load(sys.stdin)
+except json.JSONDecodeError:
     sys.exit()
-r = root.find("repository")
-if r is not None: print(r.get("name",""))
+repos = meta.get("repositories", [])
+if repos: print(repos[0].get("name", ""))
 ')"
-  [ -n "$repo" ] || { echo "no repository in $prj/_meta — pass one explicitly" >&2; exit 3; }
+  [ -n "$repo" ] || { echo "no repository in $prj meta — pass one explicitly" >&2; exit 3; }
 fi
 
-res="$(osc api "/build/$prj/_result?repository=$repo&arch=$arch" 2>/dev/null)"
+res="$(geectl build results "$prj" --repository "$repo" --arch "$arch" 2>/dev/null)"
 [ -n "$res" ] || { echo "no build result for $prj $repo/$arch" >&2; exit 3; }
 
-# Parse with xml.etree (attribute-order-independent), classify, print, and
+# Parse the JSON results (attribute-order-independent), classify, print, and
 # encode the verdict in the exit code.
 printf '%s' "$res" | PRJ="$prj" REPO="$repo" ARCH="$arch" python3 -I -c '
-import sys, os, subprocess, time, xml.etree.ElementTree as ET
+import sys, os, subprocess, time, json
 from concurrent.futures import ThreadPoolExecutor
 try:
-    root = ET.fromstring(sys.stdin.read())
-except ET.ParseError as e:
-    sys.stderr.write(f"unparseable _result: {e}\n"); sys.exit(3)
-result = root.find("result")
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError as e:
+    sys.stderr.write(f"unparseable build results: {e}\n"); sys.exit(3)
+results = payload.get("results", [])
+result = next((r for r in results
+               if r.get("repository") == os.environ["REPO"]
+               and r.get("arch") == os.environ["ARCH"]), None)
 if result is None:
-    sys.stderr.write("no <result> element\n"); sys.exit(3)
-dirty = result.get("dirty") == "true"
+    sys.stderr.write("no result for the requested repository/arch\n"); sys.exit(3)
+dirty = result.get("dirty") is True
 overall = result.get("state") or result.get("code") or "?"
-rows = [(s.get("code",""), s.get("package","")) for s in result.findall("status")]
+rows = [(s.get("code", ""), s.get("package", ""))
+        for s in result.get("statuses", [])]
 if not rows:
     sys.stderr.write("no package statuses parsed\n"); sys.exit(3)
 
@@ -100,29 +104,42 @@ print(f"summary: {green} ok / {failed} failed / {pending} in-flight  (of {total}
 for code, pkg in unknown:
     print(f"NOTE: unknown code {code!r} for {pkg}/{repo}/{arch} — counted as settled failure")
 
-def when(path, find, attr=None):
-    """An epoch time from an osc api answer: the text at find, or its attr
-    (0 when the list is empty); None when it cannot be read."""
+def geectl_json(cmd):
+    """A geectl JSON read, or None when it fails or does not parse."""
     try:
-        out = subprocess.run(["osc", "api", path], capture_output=True, text=True,
+        out = subprocess.run(["geectl"] + cmd, capture_output=True, text=True,
                              timeout=30).stdout
-        hits = ET.fromstring(out).findall(find)
-        if attr:
-            return int(hits[-1].get(attr) or 0) if hits else 0
-        return int(hits[-1].text)
-    except (subprocess.TimeoutExpired, OSError, ET.ParseError, TypeError, ValueError, IndexError):
+        return json.loads(out)
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
         return None
+
+def last_job_endtime():
+    payload = geectl_json(["build", "job-history", prj, repo, arch, "--limit", "1"])
+    if not payload:
+        return None
+    entries = payload.get("entries", [])
+    if not entries:
+        return 0
+    return int(entries[0].get("endtime") or 0)
+
+def last_commit(pkg):
+    payload = geectl_json(["remote", "package-log", prj, pkg, "--limit", "1"])
+    if not payload:
+        return None
+    entries = payload.get("entries", [])
+    if not entries:
+        return 0
+    return int(entries[0].get("time") or 0)
 
 queued = [pkg for code, pkg in rows if code == "scheduled"]
 if pending and not dirty and not failed and green and len(queued) == pending:
     # a dependency that just built is why a package turns from blocked to
     # scheduled: the newest finished job in the repo/arch counts like a commit
-    times = [when(f"/build/{prj}/{repo}/{arch}/_jobhistory?limit=1", "jobhist", "endtime")]
+    times = [last_job_endtime()]
     if times[0] is not None and time.time() - times[0] >= 30 * 60:
-        names = sorted({pkg.split(":")[0] for pkg in queued})   # a flavor has no _history
+        names = sorted({pkg.split(":")[0] for pkg in queued})   # a flavor has no package log
         with ThreadPoolExecutor(max_workers=8) as ex:            # one call per package
-            times += ex.map(lambda p: when(f"/source/{prj}/{p}/_history?limit=1",
-                                           "revision/time"), names)
+            times += ex.map(last_commit, names)
     if None in times:
         print("NOTE: a last-commit or job time could not be read — treated as in flight")
     elif time.time() - max(times) >= 30 * 60:

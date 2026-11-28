@@ -12,18 +12,14 @@ HOME = "/home/USER"
 
 CRED_FILES = [
     HOME + "/.config/gh/hosts.yml",
-    HOME + "/.config/osc/oscrc",
-    HOME + "/.oscrc",
+    HOME + "/.config/geectl/config.toml",
     HOME + "/.config/tea/config.yml",
     HOME + "/.netrc",
     HOME + "/.git-credentials",
     HOME + "/.config/git/credentials",
-    HOME + "/.local/state/osc/cookiejar",
     HOME + "/.config/mcp-bugzilla/api-key",
 ]
-# osc takes an option by any unambiguous prefix.
-HTTP_DEBUG = [s[:n] for s in ["--http-debug", "--http-full-debug"] for n in range(8, len(s) + 1)]
-DUMP_FULL = ["--dump-full"[:n] for n in range(7, 12)]
+# geectl takes no option by any unambiguous prefix: a rule names the flag exactly.
 READERS = ["cat", "less", "more", "head", "tail", "bat", "nl", "tac", "strings",
            "xxd", "od", "hexdump", "base64", "cp", "scp", "rsync", "vi", "vim", "view", "nano"]
 
@@ -48,12 +44,8 @@ prefix_rule(pattern = ["git", "obs", "login", ["list", "gitcredentials-helper"]]
             justification = "prints the Gitea tokens")
 prefix_rule(pattern = ["tea", ["login", "logins"], ["helper", "git-credential", "edit", "e"]],
             decision = "forbidden", justification = "prints the Gitea token")
-prefix_rule(pattern = ["osc", "config", DUMP_FULL], decision = "forbidden",
-            justification = "prints the osc credentials")
-prefix_rule(pattern = ["osc", ["-H", "-qH", "-vH", "-Hq", "-Hv", "-qvH", "-vqH"] + HTTP_DEBUG], decision = "forbidden",
-            justification = "prints request headers, the OBS credentials among them")
-prefix_rule(pattern = ["osc", "token"], decision = "forbidden",
-            justification = "lists or creates OBS tokens with their secrets")
+prefix_rule(pattern = ["geectl", "remote", "create-token"], decision = "forbidden",
+            justification = "prints the token's secret; the maintainer runs it, an agent never does")
 prefix_rule(pattern = ["git", "credential", "fill"], decision = "forbidden",
             justification = "prints a stored git credential")
 prefix_rule(pattern = ["secret-tool", ["lookup", "search"]], decision = "forbidden",
@@ -62,18 +54,18 @@ prefix_rule(pattern = [["git-credential-libsecret", "git-credential-store", "git
                         "git-credential-oauth", "git-credential-keepassxc"], "get"],
             decision = "forbidden", justification = "prints a stored git credential")
 prefix_rule(
-    pattern = ["osc", ["sr", "submitreq", "submitrequest", "submitpac", "creq", "createrequest"], "--nodevelproject"],
+    pattern = ["geectl", "request", ["file", "refile"], "--target-project", "openSUSE:Factory"],
     decision = "forbidden",
     justification = "a Factory request comes from the registered devel project",
-    match = [["osc", "sr", "--nodevelproject"]],
-    not_match = [["osc", "sr", "-m", "x"]],
+    match = [["geectl", "request", "file", "--target-project", "openSUSE:Factory"]],
+    not_match = [["geectl", "request", "file", "--target-project", "home:<user>:branches:x"]],
 )
 prefix_rule(
     pattern = ["sudo"],
     decision = "forbidden",
-    justification = "osc runs its own sudo: build roots are entered with osc chroot and removed with osc wipe",
+    justification = "build roots are entered with geectl local-build chroot and removed with geectl local-build wipe",
     match = [["sudo", "chroot", "/var/tmp/build-root"], ["sudo", "umount", "/var/tmp/build-root/x/proc"]],
-    not_match = [["osc", "chroot"]],
+    not_match = [["geectl", "local-build", "chroot"]],
 )
 prefix_rule(
     pattern = ["tea", ["pr", "pulls", "pull"], ["merge", "m"]],

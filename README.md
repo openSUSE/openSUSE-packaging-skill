@@ -10,9 +10,9 @@ read as ordinary instruction documents.
 
 | Skill | Use it for |
 |---|---|
-| `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `osc`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
+| `opensuse-packaging` | Updating, building, cleaning, reviewing and submitting an RPM package via `geectl`/OBS or the git workflow on src.opensuse.org; checking whether packages are out of date; triaging a build failure, a decline, or a package's bugs. |
 
-Requirements: `bash`, `python3` (3.11+, standard library only), `osc`, `curl`. Individual
+Requirements: `bash`, `python3` (3.11+, standard library only), `geectl`, `curl`. Individual
 helpers use `tea` or `gh` where the task needs them; the agent runs `rpmcrab` over built
 packages itself.
 
@@ -25,7 +25,7 @@ skills/opensuse-packaging/   the skill — this directory is the unit of distrib
                              see SKILL.md's block pointers for what to load when;
                              references/untrusted-content.md is the cross-cutting
                              prompt-injection policy every block inherits
-  scripts/                   reusable osc / Repology / bugzilla / Gitea / distro helpers —
+  scripts/                   reusable geectl / Repology / bugzilla / Gitea / distro helpers —
                              one line each in SKILL.md "Bundled scripts"; the full
                              catalog (flags, exit codes, the trap each one encodes)
                              is scripts/README.md
@@ -53,7 +53,7 @@ plain text — no other file depends on it.
 
 Canonical repository: https://github.com/openSUSE/openSUSE-packaging-skill
 
-Requirements: `bash`, `python3`, `osc` and `curl`. The helper scripts use only the Python
+Requirements: `bash`, `python3`, `geectl` and `curl`. The helper scripts use only the Python
 standard library.
 
 With a skill installer:
@@ -128,9 +128,9 @@ longer exists, so the agent silently stops being available. Repoint each one at
 `skills/opensuse-packaging/agents/`:
 
 ```
-ln -sfn "$PWD/skills/opensuse-packaging/agents/triage.md"         ~/.claude/agents/osc-triage.md
-ln -sfn "$PWD/skills/opensuse-packaging/agents/update-build.md"   ~/.claude/agents/osc-update-build.md
-ln -sfn "$PWD/skills/opensuse-packaging/agents/submit-watch.md"   ~/.claude/agents/osc-submit-watch.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/triage.md"         ~/.claude/agents/geectl-triage.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/update-build.md"   ~/.claude/agents/geectl-update-build.md
+ln -sfn "$PWD/skills/opensuse-packaging/agents/submit-watch.md"   ~/.claude/agents/geectl-submit-watch.md
 ln -sfn "$PWD/skills/opensuse-packaging/agents/changes-review.md" ~/.claude/agents/changes-review.md
 ln -sfn "$PWD/skills/opensuse-packaging/agents/incoming-review.md" ~/.claude/agents/incoming-review.md
 ```
@@ -180,12 +180,13 @@ to review, not a change to take.
 CI runs exactly these, so the two cannot drift:
 
 ```
-python3 -m pip install osc==1.27.3
+# geectl for check-geectl.py: install the released CLI from crates.io.
+cargo install geectl --version 0.2.3
 (rc=0; for t in tests/test-*.sh; do bash "$t" || rc=1; done; exit $rc)
 python3 tests/test-update-checkers.py
 python3 tests/repo/check-skills.py
 python3 tests/repo/check-flags.py
-python3 tests/repo/check-osc.py
+python3 tests/repo/check-geectl.py
 ruff check . && ruff format --check .
 shellcheck tests/test-*.sh
 shellcheck skills/opensuse-packaging/scripts/{leap-sync,pool-pr,target-gate}.sh
@@ -194,8 +195,10 @@ QUILT_TESTS=require bash tests/test-quilt-scripts.sh   # in a Tumbleweed contain
 
 The suites are offline — network lookups are stubbed and the subprocess cases run with
 every source disabled or behind a dead proxy — and need only the Python standard library,
-plus osc itself for `check-osc.py`, which validates every `osc` citation against osc's
-own parser (pinned in CI; bump the pin to re-validate against a newer osc).
+plus a geectl
+binary for `check-geectl.py`, which validates every `geectl` citation against geectl's
+own `--help` (installed from crates.io in CI; bump the version to re-validate
+against a newer geectl).
 
 Before making any check blocking, break the thing it guards and watch it go red. A check
 that has never failed is not yet a check: the obvious runner loop here, `... || break`,

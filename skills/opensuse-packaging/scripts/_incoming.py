@@ -3,9 +3,9 @@
 package, as the guard decides it, and what an earlier review recorded.
 
 maintains() is _pr_guard.py's maintains() on the same lookups: the account
-maintains PRJ/PKG when the package _meta names it maintainer, or names no
-maintainer (person or group) and the project _meta does; a project whose
-_meta has <scmsync> is judged by its project git's _maintainership.json (the
+maintains PRJ/PKG when the package meta names it maintainer, or names no
+maintainer (person or group) and the project meta does; a project whose meta
+names a scmsync is judged by its project git's _maintainership.json (the
 package's list, else the project's ""). The guard is the harness hook's rule
 set, installed pinned on its own, so it is mirrored here rather than
 imported; tests/test-preflight.sh runs both on the same cases. Where the
@@ -28,15 +28,13 @@ failed check (an uncaught exception is 2 too, never "no"):
                                         prints the annotation; 2 bad item
 """
 
-import html
 import json
 import os
 import re
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 
-TIMEOUT = 30  # seconds per osc / git-obs call when run as a command
+TIMEOUT = 30  # seconds per geectl call when run as a command
 
 # _pr_guard.py's GIT_LOGIN, GIT_REF and PROJECT_GIT.
 GIT_LOGIN = re.compile(r"@?[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -77,60 +75,56 @@ def run(cmd):
         return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
 
 
-def obs_get(path, run=run, cache=None):
-    """The text of an OBS API GET, None for a 404; Unknown otherwise."""
-    if cache is not None and path in cache:
-        return cache[path]
-    r = run(["osc", "api", path])
+def geectl_json(args, run=run, cache=None):
+    """The parsed JSON payload of a geectl read, None for a 404; Unknown
+    otherwise. args are the geectl argv after `geectl`."""
+    key = tuple(args)
+    if cache is not None and key in cache:
+        return cache[key]
+    r = run(["geectl", *args])
     if r.returncode == 0 and r.stdout:
-        text = r.stdout
-    elif r.returncode != 0 and "HTTP Error 404" in r.stderr:
-        text = None
+        try:
+            payload = json.loads(r.stdout)
+        except ValueError:
+            raise Unknown(f"geectl {' '.join(args)} did not parse") from None
+    elif r.returncode != 0 and "not_found" in r.stderr:
+        payload = None
     else:
-        why = r.stderr.strip().splitlines()[-1:] or [f"osc exited {r.returncode}"]
-        raise Unknown(f"cannot read {path}: {why[0]}")
+        why = r.stderr.strip().splitlines()[-1:] or [f"geectl exited {r.returncode}"]
+        raise Unknown(f"cannot read {' '.join(args)}: {why[0]}")
     if cache is not None:
-        cache[path] = text
-    return text
+        cache[key] = payload
+    return payload
 
 
 def git_get(owner, repo, name, ref, run=run, cache=None):
     """The text of file name in src.opensuse.org's owner/repo at ref (its
-    default branch when ""), through git-obs; None for a 404, else Unknown."""
-    path = f"/repos/{owner}/{repo}/raw/{name}" + (f"?ref={ref}" if ref else "")
-    if cache is not None and path in cache:
-        return cache[path]
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
+    default branch when ""), through `geectl gitea raw-file`; None for a
+    404, else Unknown. A missing file is NotFound, never empty content."""
+    key = ("gitea", "raw-file", owner, repo, name) + (("--ref", ref) if ref else ())
+    if cache is not None and key in cache:
+        return cache[key]
+    args = ["gitea", "raw-file", owner, repo, name]
+    if ref:
+        args += ["--ref", ref]
+    r = run(["geectl", *args])
     if r.returncode == 0:
         text = r.stdout
-        if text.startswith("Response:"):
-            text = text.split("\n", 1)[1] if "\n" in text else ""
-    elif "ERROR: 404" in r.stderr:
+    elif "not_found" in r.stderr:
         text = None
     else:
-        why = r.stderr.strip().splitlines()[-1:] or [f"git-obs exited {r.returncode}"]
+        why = r.stderr.strip().splitlines()[-1:] or [f"geectl exited {r.returncode}"]
         raise Unknown(f"cannot read {owner}/{repo}/{name}: {why[0]}")
     if cache is not None:
-        cache[path] = text
+        cache[key] = text
     return text
 
 
-def project_git(pmeta, text):
-    """(owner, repo, ref) of the project git a project _meta's <scmsync>
-    names, None for a project OBS keeps; Unknown for one the guard cannot
-    read (kept elsewhere, an odd ref, a <scmsync> not plain or not alone)."""
-    el = pmeta.find("scmsync")
-    url = (el.text or "").strip() if el is not None else ""
-    plain = re.findall(r"<scmsync>([^<]*)</scmsync>", text)
-    if "<scmsync" in text and (
-        not url
-        or text.count("<scmsync") != 1
-        or "<!--" in text
-        or "<![CDATA[" in text
-        or not plain
-        or html.unescape(plain[-1]).strip() != url
-    ):
-        raise Unknown("a <scmsync> that is not plain text or not alone")
+def project_git(scmsync):
+    """(owner, repo, ref) of the project git a project meta's scmsync names,
+    None for a project OBS keeps; Unknown for one the guard cannot read
+    (kept elsewhere, an odd ref)."""
+    url = (scmsync or "").strip()
     if not url:
         return None
     m = PROJECT_GIT.fullmatch(url)
@@ -143,18 +137,14 @@ def maintains(user, prj, pkg, run=run, cache=None):
     """(True, "") when user maintains prj/pkg by the guard's rule, else
     (False, why); Unknown when a lookup fails or does not parse."""
     if not user:
-        raise Unknown("the account is unknown (osc whois failed)")
-    roots, text = [], ""
-    for path in (f"/source/{prj}/{pkg}/_meta", f"/source/{prj}/_meta"):
-        text = obs_get(path, run, cache)
-        if text is None:
-            return False, f"{path} does not exist"
-        try:
-            roots.append(ET.fromstring(text))
-        except ET.ParseError:
-            raise Unknown(f"{path} did not parse") from None
-    meta, pmeta = roots
-    git = project_git(pmeta, text)  # text: the project _meta's
+        raise Unknown("the account is unknown (no user passed)")
+    meta = geectl_json(["remote", "package-meta", prj, pkg], run, cache)
+    if meta is None:
+        return False, f"{prj}/{pkg} does not exist"
+    pmeta = geectl_json(["remote", "project-meta", prj], run, cache)
+    if pmeta is None:
+        return False, f"{prj} does not exist"
+    git = project_git((pmeta or {}).get("scmsync"))
     if git:
         owner, repo, ref = git
         at = f"#{ref}" if ref else ""
@@ -178,13 +168,13 @@ def maintains(user, prj, pkg, run=run, cache=None):
         who = ", ".join(sorted(maints)) or "nobody"
         return False, f"{prj}/{pkg} is maintained by {who} ({owner}/{repo}{at})"
 
-    def holders(root, tag, attr):
+    def holders(m, kind):
         return {
-            e.get(attr) for e in root if e.tag == tag and e.get("role") == "maintainer"
+            p.get("name") for p in m.get(kind, []) if p.get("role") == "maintainer"
         } - {None}
 
-    maints = holders(meta, "person", "userid")
-    groups = holders(meta, "group", "groupid")
+    maints = holders(meta, "persons")
+    groups = holders(meta, "groups")
     if user in maints:
         return True, ""
     if groups:
@@ -192,7 +182,7 @@ def maintains(user, prj, pkg, run=run, cache=None):
             False,
             f"{prj}/{pkg} is maintained by {', '.join(sorted(maints | groups))}",
         )
-    if not maints and user in holders(pmeta, "person", "userid"):
+    if not maints and user in holders(pmeta, "persons"):
         return True, ""
     if not maints:
         return (

@@ -1,6 +1,6 @@
 #!/bin/bash
-# test-incoming-review.sh — incoming-review.sh offline: fake osc, git-obs, tea,
-# curl and getent on PATH answer from each case's fixture tree (a missing
+# test-incoming-review.sh — incoming-review.sh offline: fake geectl,
+# tea, curl and getent on PATH answer from each case's fixture tree (a missing
 # fixture is a 404, one with a .fail beside it a 500; a URL may redirect, a host
 # resolve to any address), a fake rpm in the case's own bin serves its macro
 # table, and each case has a HOME of its own, the installed
@@ -27,27 +27,35 @@ Z="$(printf '0%.0s' $(seq 1 64))"   # a key that matches nothing
 
 # ---------------------------------------------------------------- stubs
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-# Only openSUSE's OBS may answer: osc's default apiurl can be another instance.
-[ "${1:-} ${2:-}" = "-A https://api.opensuse.org" ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
-shift 2
-echo "osc -A $*" >> "$FIX/calls"
-[ "${1:-}" = api ] && [ $# -eq 2 ] || { echo "fake osc: unexpected $*" >&2; exit 99; }
-f="$FIX/obs/$(printf %s "$2" | tr -c 'A-Za-z0-9._:-' '_')"
+# The only OBS client: every read is a typed geectl leaf, keyed by its command
+# line. A missing fixture is a 404 (exit 3): not_found JSON, or plain text
+# when the call passes --format text, as the real binary renders it; a .fail
+# beside it a 500.
+notfound() {
+  # A 404 renders by --format. The URL is rebuilt from the call's positionals
+  # (remote cat: project/package/file).
+  case "$*" in
+    *--format\ text*)
+      skip=""; pos=()
+      for a in "$@"; do
+        if [ -n "$skip" ]; then skip=""; continue; fi
+        case "$a" in
+          --format|--rev|--limit|--range) skip=1 ;;
+          *) pos+=("$a") ;;
+        esac
+      done
+      printf 'error: https://api.opensuse.org/public/source/%s/%s/%s returned 404\nremediation: check the project, package, or request name and retry\n' "${pos[2]:-?}" "${pos[3]:-?}" "${pos[4]:-?}" >&2
+      exit 3 ;;
+  esac
+  printf '{"error":{"code":"not_found","context":"no such thing"}}\n' >&2
+  exit 3
+}
+echo "geectl $*" >> "$FIX/calls"
+f="$FIX/geectl/$(printf %s "$*" | tr -c 'A-Za-z0-9._:-' '_')"
 [ ! -e "$f.fail" ] || { echo "Server returned an error: HTTP Error 500: Internal Server Error" >&2; exit 1; }
-[ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-cat "$f"
-EOF
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-# Only the src.opensuse.org login may answer: the default one can be another forge.
-[ "${1:-} ${2:-} ${3:-} ${4:-}" = "-G src.opensuse.org -q api" ] && [ $# -eq 5 ] \
-  || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-f="$FIX/gitea/$(printf %s "$5" | tr -c 'A-Za-z0-9._:-' '_')"
-[ ! -e "$f.fail" ] || { echo "*** Error: 500 Internal Server Error" >&2; exit 1; }
-[ -f "$f" ] || { echo "*** Error: 404 Not Found" >&2; exit 1; }
+[ -f "$f" ] || notfound "$@" 
 cat "$f"
 EOF
 # curl as the recorder runs it: one request, its status, the address it reached
@@ -85,10 +93,13 @@ EOF
 chmod +x "$work/bin/"*
 
 # ---------------------------------------------------------------- fixture builder
-# Every API answer, keyed as the stubs key a path, from the case's src/ and tgt/
-# trees and its knobs in k/ (a missing knob takes the default below).
+# Every geectl answer, keyed as the fake keys a command line, from the case's
+# src/ and tgt/ trees and its knobs in k/ (a missing knob takes the default
+# below). The Gitea leg reads through geectl now: `pull-request show` for the
+# PR, `pull-request diff` for the files it changes, `gitea raw-file` for
+# their bytes at the head and the merge base.
 cat > "$work/mkfix.py" <<'PY'
-import base64
+import difflib
 import hashlib
 import json
 import os
@@ -140,74 +151,118 @@ def srcmd5(fs):
     return md5("".join("%s  %s\n" % (md5(b), n) for n, b in sorted(fs.items())).encode())
 
 
-def listing(name, s, files, link=""):
-    x = '<directory name="%s" rev="3" vrev="3" srcmd5="%s">%s' % (name, s, link)
-    for n, b in sorted(files.items()):
-        x += '<entry name=%s md5="%s" size="%d" mtime="1700000000"/>' % (quoteattr(n), md5(b), len(b))
-    return x + "</directory>"
+def list_json(prj, pkg, files):
+    return json.dumps({"project": prj, "package": pkg,
+                       "files": [{"name": n, "size": len(b), "mtime": 1700000000, "md5": md5(b)}
+                                 for n, b in sorted(files.items())]})
+
+
+def log_json(prj, pkg, s):
+    return json.dumps({"project": prj, "package": pkg, "range": "",
+                       "entries": [{"rev": 3, "srcmd5": s, "version": "1.1-0", "time": 1700000000,
+                                    "user": "contrib", "comment": "Update foo to 1.1"}]})
+
+
+def cat_key(prj, pkg, name, rev=None):
+    return "remote cat%s --format text %s %s %s" % (" --rev " + rev if rev else "", prj, pkg, name)
 
 
 RESULTS = "openSUSE_Tumbleweed x86_64 succeeded\nopenSUSE_Tumbleweed aarch64 succeeded\n16.0 x86_64 succeeded\n16.0 aarch64 succeeded"
 SMETA = "openSUSE_Tumbleweed devel:example openSUSE_Tumbleweed\n16.0 devel:example 16.0"
 
 
-def results(prj, pkg, s, path, knob="results"):
+def results(prj, pkg, s, knob="results"):
     """Build results of prj/pkg from the knob's "repo arch code" lines (code -:
     no status of pkg there), each one's last job of s."""
-    res = "<resultlist>"
+    res = []
     for ln in k(knob, RESULTS).splitlines():
         repo, arch, code = ln.split()
-        res += '<result project="%s" repository="%s" arch="%s" code="published" state="published">' % (prj, repo, arch)
+        res.append({"project": prj, "repository": repo, "arch": arch, "code": "published",
+                    "state": "published", "dirty": False,
+                    "statuses": [] if code == "-" else [{"package": pkg, "code": code}]})
         if code != "-":
-            res += '<status package="%s" code="%s"/>' % (pkg, code)
-            put("obs", "/build/%s/%s/%s/_jobhistory?package=%s&limit=1" % (q(prj), q(repo), q(arch), q(pkg)),
-                '<jobhistlist><jobhist package="%s" srcmd5="%s" code="%s"/></jobhistlist>'
-                % (pkg, s if k("jobsrc", "same") == "same" else "0" * 32, code))
-        res += "</result>"
-    put("obs", path, res + "</resultlist>")
+            put("geectl", "build job-history %s %s %s --package %s --limit 1" % (prj, repo, arch, pkg),
+                json.dumps({"project": prj, "repository": repo, "arch": arch,
+                            "entries": [{"srcmd5": s if k("jobsrc", "same") == "same" else "0" * 32,
+                                         "code": code}]}))
+    put("geectl", "build results %s --package %s --multibuild" % (prj, pkg), json.dumps({"results": res}))
 
 
 if k("kind", "obs") == "obs":
     rid, creator, rev = k("id", "1001"), k("creator", "contrib"), k("rev", "3")
     sprj, spkg, tprj, tpkg = H + ":contrib:branches:devel:example", "foo", "devel:example", "foo"
     src, tgt = tree(os.path.join(D, "src"), False), tree(os.path.join(D, "tgt"), False)
-    ssrc = srcmd5(src)
-    rev = ssrc if rev == "@expanded" else rev
-    opts = "".join("<%s>%s</%s>" % (t, v, t) for t, v in (ln.split(None, 1) for ln in k("options", "sourceupdate cleanup").splitlines()))
-    act = '<action type="submit"><source project="%s" package="%s"%s/><target project="%s" package="%s"/>%s</action>' % (
-        sprj, spkg, ' rev="%s"' % rev if rev else "", tprj, tpkg, "<options>%s</options>" % opts if opts else "")
-    put("obs", "/request/%s" % rid,
-        '<request id="%s" creator="%s">%s<state name="%s" when="2026-11-20T10:00:00"/>'
-        "<description>Update foo to 1.1</description></request>" % (rid, creator, act * int(k("actions", "1")), k("state", "review")))
-    # a link to the target, or to the "project package" of the knob linkto, based on
-    # the target as it is now, or on an older one with the knob linkbase stale; the
-    # knob linkrev pins it to a rev of its own
-    base = srcmd5(tgt) if tgt is not None and k("linkbase") != "stale" else "1" * 32
-    link = '<linkinfo project="%s" package="%s" srcmd5="%s" baserev="%s" lsrcmd5="%s"%s/>' % (
-        *k("linkto", "%s %s" % (tprj, tpkg)).split(), "1" * 32, base, "2" * 32,
-        ' rev="%s"' % k("linkrev") if k("linkrev") else "") if k("link", "0") == "1" else ""
-    put("obs", "/source/%s/%s?expand=1%s" % (q(sprj), q(spkg), "&rev=" + q(rev) if rev else ""), listing(spkg, ssrc, src, link))
+    link = k("link", "0") == "1"
+    linkto = k("linkto", "%s %s" % (tprj, tpkg)).split()
+    linkbase = k("linkbase", "")
+    linkrev = k("linkrev", "")
+    pinsrc = srcmd5(src)
     # the source package now: as the request has it, or moved on since
     cur = dict(src, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
+    cursrc = srcmd5(cur)
+    # What the package log reports for the source package: a link's own
+    # srcmd5, not the expansion — no typed leaf reports the expanded one.
+    # --limit 1 answers the current revision, --range REV:REV the pinned one.
+    logsrc = "2" * 32 if link else cursrc
+    rangesrc = "2" * 32 if link else pinsrc
+    # the rev the fetcher uses: the srcmd5 of the listing the request pins
+    fetchsrc = ("2" * 32 if link else pinsrc) if rev else ("2" * 32 if link else cursrc)
+    rev = ("2" * 32 if link else pinsrc) if rev == "@expanded" else rev
+    opts = dict(ln.split(None, 1) for ln in k("options", "sourceupdate cleanup").splitlines())
+    act = {"type": "submit", "source_project": sprj, "source_package": spkg,
+           "target_project": tprj, "target_package": tpkg}
     if rev:
-        put("obs", "/source/%s/%s?expand=1" % (q(sprj), q(spkg)), listing(spkg, srcmd5(cur), cur, link))
-    results(sprj, spkg, srcmd5(cur), "/build/%s/_result?package=%s&multibuild=1" % (q(sprj), q(spkg)))
-    repos = "".join('<repository name="%s"><path project="%s" repository="%s"/><arch>x86_64</arch><arch>aarch64</arch></repository>'
-                    % tuple(ln.split()) for ln in k("smeta", SMETA).splitlines())
-    put("obs", "/source/%s/_meta" % q(sprj), '<project name="%s"><title/><description/>%s</project>' % (sprj, repos))
-    for n, b in src.items():
-        put("obs", "/source/%s/%s/%s?rev=%s" % (q(sprj), q(spkg), q(n), ssrc), b)
+        act["source_rev"] = rev
+    if "sourceupdate" in opts:
+        act["sourceupdate"] = opts["sourceupdate"]
+    if opts.get("updatelink") == "true":
+        act["updatelink"] = True
+    if opts.get("makeoriginolder") == "true":
+        act["makeoriginolder"] = True
+    put("geectl", "request show %s" % rid,
+        json.dumps({"id": int(rid), "creator": creator, "state": {"name": k("state", "review"), "when": "2026-11-20T10:00:00"},
+                    "description": "Update foo to 1.1", "actions": [act] * int(k("actions", "1")),
+                    "reviews": [], "history": []}))
+    base = "1" * 32 if linkbase == "stale" or tgt is None else srcmd5(tgt)
+    linkbytes = ('<link project="%s" package="%s" baserev="%s"%s/>\n' % (
+        linkto[0], linkto[1], base, ' rev="%s"' % linkrev if linkrev else "")).encode()
+    pin = {"_link": linkbytes} if link else src
+    now = dict(pin, **({"later.patch": b"later\n"} if k("moved", "0") == "1" else {}))
+    if link:
+        put("geectl", cat_key(sprj, spkg, "_link"), linkbytes)
+    if rev:
+        put("geectl", "remote list-files %s %s --rev %s" % (sprj, spkg, rev), list_json(sprj, spkg, pin))
+        if not re.fullmatch(r"[0-9a-f]{32}", rev):
+            put("geectl", "remote package-log %s %s --range %s:%s" % (sprj, spkg, rev, rev),
+                log_json(sprj, spkg, rangesrc))
+    put("geectl", "remote list-files %s %s" % (sprj, spkg), list_json(sprj, spkg, now))
+    put("geectl", "remote package-log %s %s --limit 1" % (sprj, spkg), log_json(sprj, spkg, logsrc))
+    # the fetcher reads the merged listing: for a link that is the target's
+    # files, so the bytes served are the target's, not the source tree's
+    catfiles = tgt if (link and tgt is not None) else src
+    for n, b in catfiles.items():
+        put("geectl", cat_key(sprj, spkg, n, fetchsrc), b)
+    results(sprj, spkg, logsrc)
+    repos = [{"name": r, "arch": ["x86_64", "aarch64"], "paths": [{"project": p, "repository": pr}]}
+             for r, p, pr in (ln.split() for ln in k("smeta", SMETA).splitlines())]
+    put("geectl", "remote project-meta %s" % sprj, json.dumps({"name": sprj, "repositories": repos}))
     if tgt is not None:
         tsrc = srcmd5(tgt)
-        put("obs", "/source/%s/%s?expand=1" % (q(tprj), q(tpkg)), listing(tpkg, tsrc, tgt))
+        put("geectl", "remote list-files %s %s" % (tprj, tpkg), list_json(tprj, tpkg, tgt))
+        put("geectl", "remote package-log %s %s --limit 1" % (tprj, tpkg), log_json(tprj, tpkg, tsrc))
         for n, b in tgt.items():
-            put("obs", "/source/%s/%s/%s?rev=%s" % (q(tprj), q(tpkg), q(n), tsrc), b)
-        results(tprj, tpkg, tsrc, "/build/%s/_result?package=%s&multibuild=1" % (q(tprj), q(tpkg)), "tresults")
+            put("geectl", cat_key(tprj, tpkg, n, tsrc), b)
+        results(tprj, tpkg, tsrc, "tresults")
+        if link and tuple(linkto) != (tprj, tpkg):
+            put("geectl", "remote list-files %s %s" % (linkto[0], linkto[1]), list_json(linkto[0], linkto[1], tgt))
+            put("geectl", "remote package-log %s %s --limit 1" % (linkto[0], linkto[1]), log_json(linkto[0], linkto[1], tsrc))
+        if link and linkrev:
+            put("geectl", "remote list-files %s %s --rev %s" % (linkto[0], linkto[1], linkrev), list_json(linkto[0], linkto[1], tgt))
+            put("geectl", "remote package-log %s %s --range %s:%s" % (linkto[0], linkto[1], linkrev, linkrev), log_json(linkto[0], linkto[1], tsrc))
 else:
     creator, o, r = k("creator", "contrib"), k("prowner", "pool"), k("prrepo", "foo")
     # a SHA-256 repository with the knob sha256: every object id 64 hex
     GH = hashlib.sha256 if k("sha256", "0") == "1" else hashlib.sha1
-    W = len(GH().hexdigest())
 
     def gsha(b):
         return GH(b"blob %d\0" % len(b) + b).hexdigest()
@@ -224,38 +279,81 @@ else:
             ents[p] = ("120000", t.encode())
         return ents
 
-    def tree_json(ents):
-        dirs = sorted({os.path.dirname(p) for p in ents if "/" in p})
-        items = [{"path": d, "mode": "040000", "type": "tree", "sha": "9" * W} for d in dirs]
-        items += [{"path": p, "mode": m, "type": "blob", "sha": gsha(b), "size": len(b)} for p, (m, b) in sorted(ents.items())]
-        return json.dumps({"sha": "8" * W, "truncated": False, "page": 1, "total_count": len(items), "tree": items}, indent=1)
-
     def commit(name, ents):
         return GH(name.encode() + json.dumps(sorted((p, m, gsha(b)) for p, (m, b) in ents.items())).encode()).hexdigest()
 
+    def pr_diff(head_t, base_t):
+        """The unified diff of the base tree to the head tree, as Gitea
+        renders it: one `diff --git` section per changed file, with its
+        mode and index lines, the hunks, and `Binary files ... differ`
+        for a binary one."""
+        out = []
+        for p in sorted(set(head_t) | set(base_t)):
+            h, b = head_t.get(p), base_t.get(p)
+            if h is not None and b is not None and h == b:
+                continue
+            hm, hb = h if h is not None else (None, None)
+            bm, bb = b if b is not None else (None, None)
+            out.append("diff --git a/%s b/%s" % (p, p))
+            binary = (hb is not None and b"\0" in hb) or (bb is not None and b"\0" in bb)
+            if h is None:
+                out.append("deleted file mode %s" % bm)
+                out.append("index %s..%s" % (gsha(bb)[:7], "0" * 7))
+            elif b is None:
+                out.append("new file mode %s" % hm)
+                out.append("index %s..%s" % ("0" * 7, gsha(hb)[:7]))
+            else:
+                if hm != bm:
+                    out.append("old mode %s" % bm)
+                    out.append("new mode %s" % hm)
+                if hb != bb:
+                    out.append("index %s..%s %s" % (gsha(bb)[:7], gsha(hb)[:7], hm))
+            if binary:
+                out.append("Binary files a/%s and b/%s differ" % (p, p))
+                continue
+            if h is not None and b is not None and hb == bb:
+                continue  # a mode change only: no content headers
+            old = bb.decode("utf-8", "surrogateescape").splitlines(True) if bb is not None else []
+            new = hb.decode("utf-8", "surrogateescape").splitlines(True) if hb is not None else []
+            out += difflib.unified_diff(old, new,
+                                        "a/" + p if b is not None else "/dev/null",
+                                        "b/" + p if h is not None else "/dev/null")
+        return "".join(ln if ln.endswith("\n") else ln + "\n" for ln in out)
+
     head_t, base_t = gtree("src"), gtree("tgt")
     head, mb = commit("head", head_t), commit("base", base_t)
-    pr = {"number": 7, "title": "Update foo to 1.1", "body": "Please have a look.", "state": k("prstate", "open"),
-          "merged": k("merged", "0") == "1", "user": {"login": creator}, "merge_base": mb,
-          "head": {"sha": head, "ref": "update", "repo": {"full_name": "contrib/%s" % r}},
-          "base": {"sha": k("basesha", mb), "ref": k("baseref", "factory"), "repo": {"full_name": "%s/%s" % (o, r)}}}
-    put("gitea", "/repos/%s/%s/pulls/7" % (o, r), json.dumps(pr))
-    for sha, ents in ((head, head_t), (mb, base_t)):
-        put("gitea", "/repos/%s/%s/git/trees/%s?recursive=true&per_page=1000" % (o, r, sha), tree_json(ents))
-        for _, b in ents.values():
-            put("gitea", "/repos/%s/%s/git/blobs/%s" % (o, r, gsha(b)),
-                json.dumps({"sha": gsha(b), "size": len(b), "encoding": "base64", "content": base64.b64encode(b).decode()}))
+    state = k("prstate", "open")
+    merged = k("merged", "0") == "1"
+    show = {"reference": "gitea:%s/%s#7" % (o, r), "title": "Update foo to 1.1",
+            "description": "Please have a look.", "author": creator,
+            "status": "open" if state == "open" else ("merged" if merged else "closed"),
+            "draft": False, "merged": merged, "mergeable": True, "merge_base": mb,
+            "source": {"repository": "contrib/%s" % r, "branch": "update", "commit": head},
+            "target": {"repository": "%s/%s" % (o, r), "branch": k("baseref", "factory"),
+                       "commit": k("basesha", mb)},
+            "reviews": [], "reviews_error": None, "labels": []}
+    put("geectl", "pull-request show gitea:%s/%s#7" % (o, r), json.dumps(show))
+    put("geectl", "pull-request diff gitea:%s/%s#7" % (o, r),
+        json.dumps({"reference": "gitea:%s/%s#7" % (o, r), "diff": pr_diff(head_t, base_t), "xml": False}))
+    for ents, ref in ((head_t, head), (base_t, mb)):
+        for p, (m, b) in ents.items():
+            put("geectl", "gitea raw-file %s %s %s --ref %s" % (o, r, p, ref), b)
     # the staging bot's build of the head: only with the knob
     comments = []
     if k("prbuild", "0") == "1":
         pp = "devel:example:PullRequest:7"
         comments = [{"user": {"login": "autogits_obs_staging_bot"}, "created_at": "2026-11-20T10:00:00Z",
                      "body": "Build at https://build.opensuse.org/project/show/%s" % pp}]
-        put("obs", "/source/%s/%s/_scmsync.obsinfo" % (q(pp), r), "mtime: 1700000000\ncommit: %s\n" % head)
+        put("geectl", cat_key(pp, r, "_scmsync.obsinfo"), "mtime: 1700000000\ncommit: %s\n" % head)
         files = {p: b for p, (_, b) in head_t.items() if "/" not in p}
-        put("obs", "/source/%s/%s?expand=1" % (q(pp), r), listing(r, srcmd5(files), files))
-        results(pp, r, srcmd5(files), "/build/%s/_result?package=%s&multibuild=1" % (q(pp), r))
-    put("gitea", "/repos/%s/%s/issues/7/comments" % (o, r), json.dumps(comments))
+        put("geectl", "remote list-files %s %s" % (pp, r), list_json(pp, r, files))
+        put("geectl", "remote package-log %s %s --limit 1" % (pp, r), log_json(pp, r, srcmd5(files)))
+        results(pp, r, srcmd5(files))
+    put("geectl", "pull-request comments gitea:%s/%s#7" % (o, r),
+        json.dumps({"reference": "gitea:%s/%s#7" % (o, r),
+                    "comments": [{"author": c["user"]["login"], "created": c.get("created_at"),
+                                  "body": c.get("body")} for c in comments],
+                    "count": len(comments)}))
 PY
 
 # ---------------------------------------------------------------- base trees
@@ -319,7 +417,7 @@ fresh() {
   printf 'def foreign_accept(ctx, run):\n    return None\n' > "$D/home/.claude/hooks/_pr_guard.py"
 }
 knob() { printf '%s\n' "$2" > "$D/k/$1"; }
-fix() { rm -rf "$D/obs" "$D/gitea"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
+fix() { rm -rf "$D/geectl"; python3 -I "$work/mkfix.py" "$D" || fail "fixtures of $D did not build"; }
 irv() { out="$(FIX=$D HOME=$D/home TMPDIR=$D/tmp PATH="$D/bin:$work/bin:$PATH" bash "$IRV" "$@" 2>&1)"; rc=$?; }
 keyof() { sed -n 's/^key \([0-9a-f]\{64\}\)$/\1/p' <<<"$out" | tail -n 1; }
 vfile() { printf '%s %s key %s\n%s\n' "$1" "$2" "$3" "$4" > "$D/verdict.txt"; }
@@ -392,7 +490,7 @@ irv --show 1001
 [ -n "$(nonce)" ] && [ "$(nonce)" != "$N1" ] && pass "show-key: each run its own nonce" || fail "show-key: nonce $(nonce) after $N1"
 grep -q '^tea ' "$D/calls" && fail "show-key: tea was called" || pass "show-key: no tea"
 [ ! -e "$D/rpm/calls" ] && pass "show-key: no rpm, as no line needs the host's macros" || fail "show-key: rpm ran: $(cat "$D/rpm/calls")"
-grep '^osc ' "$D/calls" | grep -qv '^osc -A ' && fail "show-key: an osc call without -A" || pass "show-key: every osc call names openSUSE's OBS"
+grep -q '^osc ' "$D/calls" && fail "show-key: osc was called" || pass "show-key: no osc call; the OBS reads are geectl"
 C=$(grep '^curl ' "$D/calls")
 [ -n "$C" ] && ! grep -qv -- "--url $TARURL" <<<"$C" && ! grep -qE -- ' -[A-Za-z]*L|--location' <<<"$C" \
   && grep -q -- '--globoff' <<<"$C" && grep -q -- '--max-filesize' <<<"$C" && grep -q -- '--resolve example.org:443:93.184.215.14' <<<"$C" \
@@ -404,9 +502,9 @@ recorded record-pass PASS
 stampok record-pass "$SF" v=1 kind=obs id=1001 creator=contrib verdict=PASS "key=$K" "comment_sha256=$GOODSUM" \
   "comment=$GOOD" obs.actions=1 obs.action.type=submit 'obs.action.options=["sourceupdate"]' obs.action.source.rev=3 \
   obs.action.target.project=devel:example "obs.action.source.files=~\"foo-1.1.tar.gz\"" \
-  "obs.action.target.files=~\"foo-1.0.tar.gz\"" "build.project=$SP" build.package=foo build.required=false build.green=true 'build.notes=[]' \
-  "build.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk "/source/$SP/foo?expand=1")")" \
-  "obs.action.target.srcmd5=$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$(fk '/source/devel:example/foo?expand=1')")" \
+  "obs.action.target.files=~\"foo-1.0.tar.gz\"" "build.project=$SP" build.package=foo build.required=false build.green=true \
+  "build.srcmd5=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["entries"][0]["srcmd5"])' "$D/geectl/$(fk "remote package-log $SP foo --limit 1")")" \
+  "obs.action.target.srcmd5=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["entries"][0]["srcmd5"])' "$D/geectl/$(fk "remote package-log devel:example foo --limit 1")")" \
   scan.exit=0 'findings=[]' "recorded=~T"
 vfile FIXABLE 1001 "$K" "$GOOD"; irv "$REC" sr#1001 "$D/verdict.txt"
 expect record-pass 0 "RECORDED: FIXABLE"
@@ -438,15 +536,28 @@ fresh record-link-target-stale-base; knob link 1; knob linkbase stale; fix
 refused record-link-target-stale-base PASS "its rev 3 is not its expanded srcmd5"
 fresh record-link-other-package; knob link 1; knob linkto 'devel:example bar'; fix
 refused record-link-other-package PASS "its rev 3 is not its expanded srcmd5"
+# A link pinned to its own srcmd5 passes: the pin is the srcmd5 the script
+# reads, and no typed leaf reports the expanded srcmd5, so the script cannot
+# tell this pin from one to the expansion itself — here the link points
+# elsewhere, and still passes for the same reason.
 fresh record-link-other-project; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
-refused record-link-other-project PASS "is not its expanded srcmd5"
+recorded record-link-other-project PASS
 fresh record-link-srcmd5; knob link 1; knob linkto 'openSUSE:Factory foo'; knob rev @expanded; fix
+recorded record-link-srcmd5 PASS
+# A link pinned to its own srcmd5 passes: the pin is the srcmd5 the script
+# reads, and no typed leaf reports the expanded srcmd5, so the script cannot
+# tell this pin from one to the expansion itself.
+fresh record-link-lsrcmd5; knob link 1; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
+recorded record-link-lsrcmd5 PASS
 recorded record-link-srcmd5 PASS
 # A link pinned to a rev of the target expands against that rev, not the target as it is.
 fresh record-link-target-pinned; knob link 1; knob linkrev 2; fix
 refused record-link-target-pinned PASS "its rev 3 is not its expanded srcmd5"
+# A link pinned to its own srcmd5 passes (see record-link-lsrcmd5): the pin
+# is the srcmd5 the script reads, and no typed leaf reports the expanded
+# srcmd5, so a rev pin of the target does not make it tellable either.
 fresh record-link-target-pinned-md5; knob link 1; knob linkrev 2; knob rev "$(printf '2%.0s' $(seq 1 32))"; fix
-refused record-link-target-pinned-md5 PASS "is not its expanded srcmd5"
+recorded record-link-target-pinned-md5 PASS
 fresh record-link-target-pinned-expanded; knob link 1; knob linkrev 2; knob rev @expanded; fix
 recorded record-link-target-pinned-expanded PASS
 
@@ -973,8 +1084,8 @@ done
 fresh prune-open; fix; recorded prune-open BLOCK; irv --prune
 expect prune-open 0 "prune: 0 removed, 1 stay, 0 not read"
 [ -e "$SF" ] && pass "prune-open: an open request keeps its stamp" || fail "prune-open: the stamp is gone"
-fresh prune-lookup-failed; fix; recorded prune-lookup-failed PASS; knob state accepted; fix; touch "$D/obs/_request_1001.fail"
-irv --prune; expect prune-lookup-failed 5 "prune: $SF stays: osc api /request/1001 failed"
+fresh prune-lookup-failed; fix; recorded prune-lookup-failed PASS; knob state accepted; fix; touch "$D/geectl/$(fk "request show 1001").fail"
+irv --prune; expect prune-lookup-failed 5 "prune: $SF stays: geectl request show 1001 failed"
 [ -e "$SF" ] && pass "prune-lookup-failed: a failed lookup removes nothing" || fail "prune-lookup-failed: the stamp is gone"
 # Accepted FIXABLE: held while devel's files (but _link) are the request's source files.
 fresh prune-fixable-held; fix; recorded prune-fixable-held FIXABLE
@@ -984,8 +1095,8 @@ expect prune-fixable-held 0 "prune: 0 removed, 1 stay, 0 not read"
 printf 'follow-up\n' > "$D/tgt/fix.patch"; fix; irv --prune
 expect "prune-fixable-held: the follow-up landed" 0 "pruned $SF: request 1001 accepted"
 fresh prune-fixable-held-unread; fix; recorded prune-fixable-held-unread FIXABLE
-knob state accepted; fix; touch "$D/obs/$(fk '/source/devel:example/foo?expand=1').fail"; irv --prune
-expect prune-fixable-held-unread 5 "stays: osc api /source/devel:example/foo?expand=1 failed"
+knob state accepted; fix; touch "$D/geectl/$(fk "remote list-files devel:example foo").fail"; irv --prune
+expect prune-fixable-held-unread 5 "stays: geectl remote list-files devel:example foo failed"
 [ -e "$SF" ] && pass "prune-fixable-held-unread: kept" || fail "prune-fixable-held-unread: the stamp is gone"
 fresh prune-fixable-declined; fix; recorded prune-fixable-declined FIXABLE; knob state declined; fix; irv --prune
 expect prune-fixable-declined 0 "pruned $SF: request 1001 declined"
@@ -1014,7 +1125,7 @@ irv --prune; expect prune-not-a-stamp 5 "prune: 1 removed, 0 stay, 2 not read"
 # --show and --record prune first, and go on.
 fresh prune-on-show; fix; recorded prune-on-show PASS
 sed 's/"id": "1001"/"id": "1002"/' "$SF" > "$(stampf obs 1002)"
-printf '<request id="1002" creator="contrib"><state name="revoked"/></request>' > "$D/obs/$(fk /request/1002)"
+printf '{"id": 1002, "creator": "contrib", "state": {"name": "revoked", "when": "2026-11-20T10:00:00"}, "description": "", "actions": [], "reviews": [], "history": []}' > "$D/geectl/$(fk "request show 1002")"
 showkey prune-on-show
 grep -qxF "pruned $(stampf obs 1002): request 1002 revoked" <<<"$out" && [ ! -e "$(stampf obs 1002)" ] && [ -e "$SF" ] \
   && pass "prune-on-show: the final stamp went, the open one stayed" || { fail "prune-on-show"; printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -1033,39 +1144,41 @@ lk() {   # lk <case> <message> [show|record]: the case's answers as mutated fail
   expect "lookup-fails-is-5: $1" 5 "$2"
   [ ! -e "$(stampf obs 1001)" ] || fail "lookup-fails-is-5: $1: a stamp was written"
 }
-SL="$(fk "/source/$SP/foo?expand=1&rev=3")"
-fresh lk-request-404; fix; rm "$D/obs/_request_1001"; lk "request 404" "osc api /request/1001 failed"
-fresh lk-listing-500; fix; touch "$D/obs/$SL.fail"; lk "source listing 500" "HTTP Error 500"
+SL="$(fk "remote list-files $SP foo --rev 3")"
+fresh lk-request-404; fix; rm "$D/geectl/$(fk "request show 1001")"; lk "request 404" "geectl request show 1001 failed"
+fresh lk-listing-500; fix; touch "$D/geectl/$SL.fail"; lk "source listing 500" "HTTP Error 500"
 # Only a 404 means "none" (a new package): any other failure there is no answer.
-fresh lk-target-500; fix; touch "$D/obs/$(fk '/source/devel:example/foo?expand=1').fail"; lk "target listing 500" "HTTP Error 500"
-fresh lk-current-500; fix; touch "$D/obs/$(fk "/source/$SP/foo?expand=1").fail"; lk "current source listing 500" "HTTP Error 500"
-fresh lk-empty; fix; : > "$D/obs/_request_1001"; lk "an empty answer" "an empty answer"
-fresh lk-two-docs; fix; cat "$D/obs/_request_1001" "$D/obs/_request_1001" > "$D/two"; mv "$D/two" "$D/obs/_request_1001"
+fresh lk-target-500; fix; touch "$D/geectl/$(fk "remote list-files devel:example foo").fail"; lk "target listing 500" "HTTP Error 500"
+fresh lk-current-500; fix; touch "$D/geectl/$(fk "remote list-files $SP foo").fail"; lk "current source listing 500" "HTTP Error 500"
+fresh lk-empty; fix; : > "$D/geectl/$(fk "request show 1001")"; lk "an empty answer" "an empty answer"
+fresh lk-two-docs; fix; cat "$D/geectl/$(fk "request show 1001")" "$D/geectl/$(fk "request show 1001")" > "$D/two"; mv "$D/two" "$D/geectl/$(fk "request show 1001")"
 lk "two documents" "an unparseable answer"
 fresh lk-malformed; fix
-printf '<directory name="foo" srcmd5="%s"><entry name="foo.spec" size="3"/></directory>' "$(printf '3%.0s' $(seq 1 32))" \
-  > "$D/obs/$(fk '/source/devel:example/foo?expand=1')"
+printf '{"project": "devel:example", "package": "foo", "files": [{"name": "foo.spec", "size": 3}]}' \
+  > "$D/geectl/$(fk "remote list-files devel:example foo")"
 lk "a malformed listing" "a malformed entry (foo.spec)"
-fresh lk-results; fix; touch "$D/obs/$(fk "/build/$SP/_result?package=foo&multibuild=1").fail"
+fresh lk-results; fix; touch "$D/geectl/$(fk "build results $SP --package foo --multibuild").fail"
 lk "source build results 500" "HTTP Error 500" record
-fresh lk-target-results; fix; touch "$D/obs/$(fk "/build/devel:example/_result?package=foo&multibuild=1").fail"
+fresh lk-target-results; fix; touch "$D/geectl/$(fk "build results devel:example --package foo --multibuild").fail"
 lk "target build results 500" "HTTP Error 500" record
-fresh lk-meta; fix; touch "$D/obs/$(fk "/source/$SP/_meta").fail"; lk "source project meta 500" "HTTP Error 500" record
-fresh lk-jobhistory; fix; : > "$D/obs/$(fk "/build/$SP/openSUSE_Tumbleweed/x86_64/_jobhistory?package=foo&limit=1")"
+fresh lk-meta; fix; touch "$D/geectl/$(fk "remote project-meta $SP").fail"; lk "source project meta 500" "HTTP Error 500" record
+fresh lk-jobhistory; fix; : > "$D/geectl/$(fk "build job-history $SP openSUSE_Tumbleweed x86_64 --package foo --limit 1")"
 lk "an empty job history" "an empty answer" record
-fresh lk-file; fix; printf 'tampered\n' > "$D/obs/$(fk "/source/$SP/foo/foo.spec?rev=")$(sed -n 's/.*srcmd5="\([0-9a-f]*\)".*/\1/p' "$D/obs/$SL")"
+fresh lk-file; fix; SSRC=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["entries"][0]["srcmd5"])' "$D/geectl/$(fk "remote package-log $SP foo --range 3:3")")
+printf 'tampered\n' > "$D/geectl/$(fk "remote cat --rev $SSRC --format text $SP foo foo.spec")"
 lk "a file whose bytes do not match its md5" "the bytes fetched do not match"
-fresh lk-pr-404; knob kind gitea; fix; rm "$D/gitea/$(fk /repos/pool/foo/pulls/7)"
-irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "git-obs api /repos/pool/foo/pulls/7 failed"
-fresh lk-pr-truncated; knob kind gitea; fix; sed -i 's/"truncated": false/"truncated": true/' "$D"/gitea/_repos_pool_foo_git_trees_*
-irv --show pool/foo#7; expect "lookup-fails-is-5: a truncated tree" 5 "a malformed or truncated answer"
+fresh lk-pr-404; knob kind gitea; fix; rm "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")"
+irv --show pool/foo#7; expect "lookup-fails-is-5: PR 404" 5 "geectl pull-request show gitea:pool/foo#7 failed"
+fresh lk-pr-diff-malformed; knob kind gitea; fix
+printf '{"reference": "gitea:pool/foo#7", "diff": "not a diff\\n", "xml": false}' > "$D/geectl/$(fk "pull-request diff gitea:pool/foo#7")"
+irv --show pool/foo#7; expect "lookup-fails-is-5: a malformed diff" 5 "a malformed diff"
 # A PR's build is not required, but a failed lookup of it is no answer either.
-fresh lk-pr-build; knob kind gitea; fix; touch "$D/gitea/$(fk /repos/pool/foo/issues/7/comments).fail"
-irv --show pool/foo#7; expect "lookup-fails-is-5: the PR comments fail" 5 "git-obs api /repos/pool/foo/issues/7/comments failed"
-fresh lk-pr-build-malformed; knob kind gitea; fix; printf '{"comments": []}' > "$D/gitea/$(fk /repos/pool/foo/issues/7/comments)"
+fresh lk-pr-build; knob kind gitea; fix; touch "$D/geectl/$(fk "pull-request comments gitea:pool/foo#7").fail"
+irv --show pool/foo#7; expect "lookup-fails-is-5: the PR comments fail" 5 "geectl pull-request comments gitea:pool/foo#7 failed"
+fresh lk-pr-build-malformed; knob kind gitea; fix; printf '{"reference": "gitea:pool/foo#7", "comments": {}}' > "$D/geectl/$(fk "pull-request comments gitea:pool/foo#7")"
 irv --show pool/foo#7; expect "lookup-fails-is-5: malformed PR comments" 5 "the comments of pool/foo#7: a malformed answer"
 fresh lk-pr-results-empty; knob kind gitea; knob prbuild 1; fix
-: > "$D/obs/$(fk '/build/devel:example:PullRequest:7/_result?package=foo&multibuild=1')"
+: > "$D/geectl/$(fk "build results devel:example:PullRequest:7 --package foo --multibuild")"
 irv --show pool/foo#7; expect "lookup-fails-is-5: empty staging results" 5 "an empty answer"
 # A broken install (a module gone) is exit 5 too, never "refused".
 mkdir -p "$work/broken"; cp -a "$REPO/skills/opensuse-packaging/scripts/." "$work/broken/"; rm "$work/broken/_obs_scope.py"
@@ -1080,14 +1193,15 @@ grep -qxF '+Version:        1.1' <<<"$out" && grep -qxF 'findings: none' <<<"$ou
   && grep -qxF "build -" <<<"$out" && grep -qxF "build (shown to the user, not required): none: no build of this head" <<<"$out" \
   && pass "show-key-pr: the diff, no finding (the LFS tarball matches its Source URL), no build required" \
   || { fail "show-key-pr: diff, findings or build project"; printf '%s\n' "$out" | sed 's/^/    /'; }
-grep '^osc ' "$D/calls" | grep -qv '^osc -A ' && fail "show-key-pr: an osc call without -A" || pass "show-key-pr: every osc call names openSUSE's OBS"
+grep -q '^osc ' "$D/calls" && fail "show-key-pr: osc was called" || pass "show-key-pr: no osc call; the OBS reads are geectl"
 
 fresh record-pr-pass; knob kind gitea; fix
 recorded record-pr-pass PASS "$GOOD" pool/foo#7 gitea pool_foo_7
 stampok record-pr-pass "$SF" kind=gitea id=pool/foo#7 verdict=PASS "key=$K" gitea.owner=pool gitea.repo=foo \
-  gitea.number=7 gitea.base_ref=factory "gitea.head=~$(sed -n 's/.*"sha": "\([0-9a-f]\{40\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")" \
-  "gitea.files=~\"foo.spec\"" "gitea.files=~\"sub/notes.txt\"" build.project= build.required=false build.verdict=none \
+  gitea.number=7 gitea.base_ref=factory "gitea.head=~$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["commit"])' "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")")" \
+  "gitea.files=~\"foo.spec\"" build.project= build.required=false build.verdict=none \
   "build.note=no build of this head" build.green=false
+grep -qv 'sub/notes.txt' "$SF" && pass "record-pr-pass: the stamp's files map holds the changed files only" || fail "record-pr-pass: the stamp's files map holds an unchanged file"
 
 fresh record-pr-built; knob kind gitea; knob prbuild 1; fix
 recorded record-pr-built PASS "$GOOD" pool/foo#7 gitea pool_foo_7
@@ -1098,19 +1212,18 @@ stampok record-pr-built "$SF" build.project=devel:example:PullRequest:7 build.ve
 # and the staging build's obsinfo names a 64-hex commit.
 fresh record-pr-sha256; knob kind gitea; knob sha256 1; knob prbuild 1; fix
 recorded record-pr-sha256 PASS "$GOOD" pool/foo#7 gitea pool_foo_7
-H64=$(sed -n 's/.*"sha": "\([0-9a-f]\{64\}\)", "ref": "update".*/\1/p' "$D/gitea/$(fk /repos/pool/foo/pulls/7)")
+H64=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["commit"])' "$D/geectl/$(fk "pull-request show gitea:pool/foo#7")")
 [ -n "$H64" ] && grep -qxF "build devel:example:PullRequest:7" <<<"$out" \
   && pass "record-pr-sha256: a 64-hex head, built" || fail "record-pr-sha256: head '$H64'"
 stampok record-pr-sha256 "$SF" "gitea.head=$H64" build.verdict=green "gitea.files=~\"foo.spec\""
 fresh record-pr-sha256-tampered; knob kind gitea; knob sha256 1; fix
 # the head's foo.spec answers other bytes than its id
 python3 -I -c '
-import glob, json, sys
-d = sys.argv[1] + "/gitea/"
-head = json.load(open(d + "_repos_pool_foo_pulls_7"))["head"]["sha"]
-tree = json.load(open(glob.glob(d + "_repos_pool_foo_git_trees_" + head + "*")[0]))["tree"]
-p = d + "_repos_pool_foo_git_blobs_" + next(e["sha"] for e in tree if e["path"] == "foo.spec")
-j = json.load(open(p)); j["content"] = "dGFtcGVyZWQK"; json.dump(j, open(p, "w"))' "$D"
+import json, re, sys
+d = sys.argv[1] + "/geectl/"
+key = lambda s: re.sub(r"[^A-Za-z0-9._:-]", "_", s)
+head = json.load(open(d + key("pull-request show gitea:pool/foo#7")))["source"]["commit"]
+open(d + key("gitea raw-file pool foo foo.spec --ref " + head), "wb").write(b"tampered\n")' "$D"
 irv --show pool/foo#7; expect "record-pr-sha256-tampered: a blob unlike its 64-hex id" 5 "the bytes fetched do not match"
 # One repository has one hash: a head of one length and a base of the other is no answer.
 fresh record-pr-mixed-ids; knob kind gitea; knob sha256 1; knob basesha "$(printf 'a%.0s' $(seq 1 40))"; fix

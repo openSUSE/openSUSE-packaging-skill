@@ -11,7 +11,7 @@
 #   --build        native local build against openSUSE:Backports:SLE-16.x
 #                  standard, once per _multibuild flavor, in a per-base build
 #                  root; every other PR arch must resolve
-#   --jobs N       the only option passed through to the build
+#   --jobs N       refused: geectl local-build build takes no --jobs flag
 #   --remote       no native route: push HEAD to fork branch
 #                  leapgate/<base>-<sha12> and build it in home:<you>:leapgate;
 #                  re-run to poll (pending until every PR arch built the
@@ -22,12 +22,12 @@
 #                  quoted further down are ignored); needs a GREEN build first
 #   (no mode)      check: GREEN build and PASS review for HEAD's tree and base
 # Carried: when HEAD's tree differs from the base's last GREEN tree only in
-# .changes files and changes-lint passes the entries they touch, --build and
+# .changes files and `geectl changelog validate` passes the entries they touch, --build and
 # --remote stamp that build for HEAD's tree (mode carried) without building;
 # the review never carries. A tree stamped already is built for real.
 # PR arches: the standard repository of openSUSE:Backports:SLE-16.x:PullRequest,
 # where the PR bot builds. Your PRs: those whose head repo belongs to the user
-# of your git-obs login for src.opensuse.org, the identity pool-pr.sh updates by.
+# of your src.opensuse.org login, the identity pool-pr.sh updates by.
 # Refused before anything is built: a dirty worktree (ignored and untracked
 # files count), a detached HEAD, unsmudged LFS files, a clone under /tmp or a
 # scratchpad, HEAD not on top of origin/<base>, HEAD stacked on more than one
@@ -35,9 +35,9 @@
 # does not build (never emulated), a flavor with no native route, a mounted
 # root. Every failed lookup is a refusal or a red, never a green.
 # Stamp: <git-common-dir>/target-gate/<tree>-<base>.json
-# Needs: osc, git-lfs, obs-build (queryrecipe) and a git-obs login for
-# src.opensuse.org; --remote pushes over SSH (gitea@src.opensuse.org) with your
-# key. git-obs and ssh read their own credentials: this script reads none.
+# Needs: geectl, git-lfs, obs-build (queryrecipe) and a src.opensuse.org
+# login (geectl's Gitea token); --remote pushes over SSH (gitea@src.opensuse.org)
+# with your key. geectl and ssh read their own credentials: this script reads none.
 #
 # Exit: 0 = green (check: build GREEN and review PASS), 1 = red (the check is
 # named), 2 = refused or usage, 3 = no stamp, stale stamp or remote build pending.
@@ -61,13 +61,17 @@ while [ $# -gt 0 ]; do
     --build|--remote) setmode "$1"; shift ;;
     --review) setmode "$1"; review=$2; shift 2 ;;
     --jobs) jobs=$2; shift 2 ;;
-    -*) refuse "unknown option $1 — nothing but --jobs N reaches osc build: the project, repo, root and spec are fixed by the base" ;;
+    -*) refuse "unknown option $1 — nothing reaches geectl local-build build: the project, repo, root and spec are fixed by the base" ;;
     *) [ -z "$dir" ] || refuse "one DIR only (got '$dir' and '$1')"; dir=$1; shift ;;
   esac
 done
+# geectl local-build build takes no --jobs flag (osc build --jobs has no
+# geectl form), so a --jobs is refused outright, not silently dropped —
+# after the same validations the option always had.
 if [ -n "$jobs" ]; then
   [ "$mode" = build ] || refuse "--jobs goes with --build only"
   [[ $jobs =~ ^[1-9][0-9]*$ ]] || refuse "--jobs takes a positive integer, not '$jobs'"
+  refuse "--jobs is refused: geectl local-build build takes no --jobs flag"
 fi
 # Resolved before the cd: FILE is relative to the caller, not to DIR.
 [ -z "$review" ] || review=$(realpath -m -- "$review")
@@ -88,7 +92,7 @@ def now():
 
 
 def login():
-    # The user of the login git-obs used: GET /user.
+    # The user of the login: GET /user.
     try:
         d = json.load(sys.stdin)
     except ValueError:
@@ -100,54 +104,59 @@ def login():
     return 0
 
 
-def oscuser():
-    import configparser
-
-    for p in ("~/.config/osc/oscrc", "~/.oscrc"):
-        cp = configparser.RawConfigParser()
-        try:
-            cp.read(os.path.expanduser(p))
-        except configparser.Error:
-            continue
-        for sec in cp.sections():
-            if "api.opensuse.org" in sec and cp.get(sec, "user", fallback=""):
-                print(cp.get(sec, "user"))
-                return 0
-    return 1
-
+def geectluser():
+    # The geectl identity for the default instance: the account the
+    # fallback reads when `geectl remote whois` cannot answer.
+    u = os.environ.get("GEECTL_OBS_USERNAME", "")
+    if not u:
+        return 1
+    print(u)
+    return 0
 
 def pulls(base, user):
+    # The pull-request search payload (PullRequestSummary): one row per
+    # own PR as "<number>\t<head sha>\t<head branch>". Yours = your fork
+    # heads it, as pool-pr.sh decides — the head repo's owner, in any
+    # letter case, not who opened it; a deleted fork has no repo.
     try:
         d = json.load(sys.stdin)
     except ValueError:
         return 1
     if not isinstance(d, list):
         return 1
-    print(len(d))
     for p in d:
-        if (p.get("base") or {}).get("ref") != base:
+        m = re.fullmatch(r"gitea:([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_][A-Za-z0-9_.+-]*)#([0-9]+)", p.get("reference") or "")
+        if not m:
+            return 1
+        if (p.get("target") or {}).get("branch") != base:
             continue
-        h = p.get("head") or {}
-        owner = ((h.get("repo") or {}).get("owner") or {}).get("login") or ""
+        src = p.get("source") or {}
+        owner = (src.get("repository") or "").split("/")[0]
         if owner.lower() != user.lower():
             continue
-        print("%s\t%s\t%s" % (p.get("number"), h.get("sha") or "", h.get("ref") or ""))
+        head = src.get("commit") or ""
+        ref = src.get("branch") or ""
+        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
+            return 1
+        print("%s\t%s\t%s" % (m.group(3), head, ref))
     return 0
 
 
 def arches():
+    # The project-meta JSON: repositories carry their arches as a list.
     try:
-        root = ET.fromstring(sys.stdin.read())
-    except ET.ParseError:
+        d = json.load(sys.stdin)
+    except ValueError:
         return 1
-    for r in root.findall("repository"):
+    if not isinstance(d, dict):
+        return 1
+    for r in d.get("repositories") or []:
         if r.get("name") == "standard":
-            a = [x.text for x in r.findall("arch") if x.text and x.text != "local"]
+            a = [x for x in (r.get("arch") or []) if x and x != "local"]
             if a:
                 print(" ".join(a))
                 return 0
     return 1
-
 
 def flavors(path):
     try:
@@ -224,7 +233,7 @@ def last(sd, base, tree):
 
 
 def touched(new):
-    # changes-lint --entries: down to the deepest entry of NEW that the
+    # changelog validate --entries: down to the deepest entry of NEW that the
     # stamped tree's copy (stdin) lacks verbatim.
     def entries(text):
         return [e for e in re.split(r"(?m)^(?=---)", text) if e.strip()]
@@ -344,6 +353,13 @@ def review(path, tree, base, fpath):
 
 
 def prjmeta(prj, user, *triples):
+    # The current meta arrives as the project-meta JSON (geectl remote
+    # project-meta); the new meta goes out as XML (geectl remote
+    # set-project-meta --from-file reads the meta document). The JSON
+    # carries no publish flag, so the emitted meta always disables
+    # publishing: the leapgate project never publishes, matching the
+    # meta target-gate creates. A meta with lock or build flags would
+    # lose them here — target-gate never sets those on this project.
     text = sys.stdin.read().strip()
     want = [
         (triples[i], triples[i + 1], triples[i + 2].split(","))
@@ -351,55 +367,80 @@ def prjmeta(prj, user, *triples):
     ]
     if text:
         try:
-            root = ET.fromstring(text)
-        except ET.ParseError:
+            d = json.loads(text)
+        except ValueError:
             return 1
+        if not isinstance(d, dict):
+            return 1
+        name = d.get("name") or prj
+        title = d.get("title")
+        desc = d.get("description")
+        persons = d.get("persons") or []
+        repos = {}
+        for r in d.get("repositories") or []:
+            if r.get("name"):
+                repos[r["name"]] = r
+        changed = False
     else:
-        root = ET.Element("project", name=prj)
-        ET.SubElement(root, "title").text = "target-gate remote builds"
-        ET.SubElement(
-            root, "description"
-        ).text = "Exact trees built before a Leap pool PR is opened; transient."
-        ET.SubElement(root, "person", userid=user, role="maintainer")
-        ET.SubElement(ET.SubElement(root, "publish"), "disable")
-    changed = not text
-    for name, pprj, arch in want:
-        cur = [r for r in root.findall("repository") if r.get("name") == name]
+        name = prj
+        title = "target-gate remote builds"
+        desc = "Exact trees built before a Leap pool PR is opened; transient."
+        persons = [{"name": user, "role": "maintainer"}]
+        repos = {}
+        changed = True
+    for rname, pprj, arch in want:
+        cur = repos.get(rname)
         if (
-            len(cur) == 1
-            and [
-                (p.get("project"), p.get("repository")) for p in cur[0].findall("path")
-            ]
+            cur is not None
+            and [(p.get("project"), p.get("repository")) for p in (cur.get("paths") or [])]
             == [(pprj, "standard")]
-            and sorted(a.text for a in cur[0].findall("arch")) == sorted(arch)
+            and sorted(cur.get("arch") or []) == sorted(arch)
         ):
             continue
         changed = True
-        for r in cur:
-            root.remove(r)
-        r = ET.SubElement(root, "repository", name=name)
-        ET.SubElement(r, "path", project=pprj, repository="standard")
-        for a in arch:
-            ET.SubElement(r, "arch").text = a
+        repos[rname] = {
+            "name": rname,
+            "paths": [{"project": pprj, "repository": "standard"}],
+            "arch": list(arch),
+        }
     if not changed:
         return 4
+    root = ET.Element("project", name=name)
+    if title:
+        ET.SubElement(root, "title").text = title
+    if desc is not None:
+        ET.SubElement(root, "description").text = desc
+    for p in persons:
+        ET.SubElement(root, "person", userid=p.get("name", ""), role=p.get("role", ""))
+    ET.SubElement(ET.SubElement(root, "publish"), "disable")
+    for rname, r in repos.items():
+        re_ = ET.SubElement(root, "repository", name=rname)
+        for p in r.get("paths") or []:
+            ET.SubElement(
+                re_, "path", project=p.get("project", ""), repository=p.get("repository", "")
+            )
+        for a in r.get("arch") or []:
+            ET.SubElement(re_, "arch").text = a
     print(ET.tostring(root, encoding="unicode"))
     return 0
 
-
 def pkgmeta(prj, pkg, url, other):
+    # The current meta arrives as the package-meta JSON (geectl remote
+    # package-meta); the new meta goes out as XML (geectl remote
+    # set-package-meta --from-file reads the meta document). The JSON
+    # carries no build flags, so the no-change check reads the scmsync
+    # URL only: the build/disable flag is set by target-gate itself when
+    # the package is created, so a matching scmsync means the meta is as
+    # target-gate left it.
     text = sys.stdin.read().strip()
     if text:
         try:
-            cur = ET.fromstring(text)
-        except ET.ParseError:
+            d = json.loads(text)
+        except ValueError:
             return 1
-        flags = {
-            (e.tag, e.get("repository"), e.get("arch")) for e in cur.findall("build/*")
-        }
-        if (cur.findtext("scmsync") or "").strip() == url and flags == {
-            ("disable", other, None)
-        }:
+        if not isinstance(d, dict):
+            return 1
+        if (d.get("scmsync") or "").strip() == url:
             return 4
     root = ET.Element("package", name=pkg, project=prj)
     ET.SubElement(root, "title").text = "%s at the tree under review" % pkg
@@ -410,11 +451,14 @@ def pkgmeta(prj, pkg, url, other):
     print(ET.tostring(root, encoding="unicode"))
     return 0
 
-
 def results(repo, required):
+    # The build-results JSON: one object per repository/architecture cell,
+    # each with its per-package codes; a cell's dirty flag is a boolean.
     try:
-        root = ET.fromstring(sys.stdin.read())
-    except ET.ParseError:
+        d = json.load(sys.stdin)
+    except ValueError:
+        return 2
+    if not isinstance(d, dict) or not isinstance(d.get("results"), list):
         return 2
     ok, bad = (
         {"succeeded", "excluded", "disabled"},
@@ -422,24 +466,24 @@ def results(repo, required):
     )
     req = set(required.split())
     codes, dirty, built, seen = [], [], set(), set()
-    for r in root.findall("result"):
-        if r.get("repository") != repo:
+    for cell in d["results"]:
+        if cell.get("repository") != repo:
             continue
-        arch = r.get("arch")
+        arch = cell.get("arch")
         # An arch the PR bot never builds is not this base's verdict.
         if arch not in req:
             continue
-        if r.get("dirty") == "true" or r.get("state") in ("scheduling", "outdated"):
+        if cell.get("dirty") is True or cell.get("state") in ("scheduling", "outdated"):
             dirty.append(arch)
         row = []
-        for s in r.findall("status"):
+        for s in cell.get("statuses") or []:
             code = s.get("code") or "unknown"
             codes.append(code)
             seen.add(arch)
             if code == "succeeded":
                 built.add(arch)
                 print("#built %s %s" % (arch, s.get("package")))
-            det = (s.findtext("details") or "").strip()
+            det = (s.get("details") or "").strip()
             row.append(
                 "%s %s%s"
                 % (
@@ -472,25 +516,42 @@ def results(repo, required):
         return 3
     return 0
 
-
 def srcmd5():
-    # A source listing's directory srcmd5; a _jobhistory's last job's.
+    # A package-log's newest entry srcmd5; a job-history's newest job's.
+    # Both payloads carry their entries newest first with a srcmd5 each.
     try:
-        root = ET.fromstring(sys.stdin.read())
-    except ET.ParseError:
+        d = json.load(sys.stdin)
+    except ValueError:
         return 2
-    e = root if root.tag == "directory" else (root.findall("jobhist") or [None])[-1]
-    m = e.get("srcmd5") if e is not None else None
+    if not isinstance(d, dict):
+        return 2
+    entries = d.get("entries") or []
+    m = entries[0].get("srcmd5") if entries else None
     if not m:
         return 1
     print(m)
+    return 0
+
+def buildinfo():
+    # The buildinfo JSON's blocking error, if any (null when the package
+    # resolves): print it and return 1; return 0 when there is none.
+    try:
+        d = json.load(sys.stdin)
+    except ValueError:
+        return 2
+    if not isinstance(d, dict):
+        return 2
+    err = d.get("error")
+    if err:
+        print(err)
+        return 1
     return 0
 
 
 cmd, args = sys.argv[1], sys.argv[2:]
 fn = {
     "login": login,
-    "oscuser": oscuser,
+    "geectluser": geectluser,
     "pulls": pulls,
     "arches": arches,
     "flavors": flavors,
@@ -505,6 +566,7 @@ fn = {
     "pkgmeta": pkgmeta,
     "results": results,
     "srcmd5": srcmd5,
+    "buildinfo": buildinfo,
 }[cmd]
 sys.exit(fn(*args))
 PYEOF
@@ -526,7 +588,7 @@ fi
 top=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "$rdir is not a git clone"
 [ "$top" = "$rdir" ] || refuse "run on the clone's top level ($top), not $rdir"
 if [ $building = 1 ]; then
-  # osc's git store has no working copy on a detached HEAD.
+  # A detached HEAD is no branch to push or build from.
   git symbolic-ref -q HEAD >/dev/null || refuse "detached HEAD — check out a named branch"
 fi
 
@@ -562,7 +624,7 @@ ourl=$(git config --get remote.origin.url) || refuse "no origin remote"
 [[ $ourl =~ src\.opensuse\.org[:/]+pool/([^/]+)/?$ ]] || refuse "origin is $ourl, not src.opensuse.org/pool/<pkg>"
 pkg=${BASH_REMATCH[1]%.git}
 [ -f "$pkg.spec" ] || refuse "no $pkg.spec in $rdir"
-# osc copies ignored and untracked files into the build too.
+# The build copies ignored and untracked files into the build too.
 st=$(git status --porcelain --ignored --untracked-files=all) || refuse "git status failed"
 [ -z "$st" ] || refuse "worktree not clean: $(printf '%s\n' "$st" | head -5 | paste -sd';')"
 lfs=$(git lfs ls-files 2>&1) || refuse "cannot list LFS files (is git-lfs installed?): $lfs"
@@ -571,20 +633,15 @@ bad=$(printf '%s\n' "$lfs" | awk '$2 == "-" {print $3}' | paste -sd' ')
 
 git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null || refuse "no origin/$base — git fetch origin $base"
 git merge-base --is-ancestor "origin/$base" HEAD || refuse "HEAD does not contain origin/$base — rebase onto it"
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
-gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
+# The forge user, through geectl: the token owner of the configured Gitea
+# instance. The open-PRs read below is geectl too.
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-guser=$(gapi /user | py login) || refuse "cannot read your src.opensuse.org user through git-obs: $(gerr)"
-mine=""; page=1
-while :; do
-  js=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50&page=$page") \
-    || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $(gerr)"
-  rows=$(printf '%s' "$js" | py pulls "$base" "$guser") || refuse "unparseable open-PR list for pool/$pkg"
-  mine+=$(tail -n +2 <<<"$rows")$'\n'
-  [ "$(head -1 <<<"$rows")" -ge 50 ] || break
-  page=$((page + 1))
-done
+guser=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/gerr" | py login) || refuse "cannot read your src.opensuse.org user through geectl: $(gerr)"
+# One call: pull-request search pages the Gitea list internally (bounded
+# at 500), so there is no page loop here.
+js=$(timeout 60 geectl pull-request search --backend gitea --repo "pool/$pkg" --state open 2>"$tmpd/gerr") \
+  || refuse "cannot read the open PRs of pool/$pkg (lookup failed, not 'none'): $(gerr)"
+mine=$(printf '%s' "$js" | py pulls "$base" "$guser") || refuse "unparseable open-PR list for pool/$pkg"
 # One such PR is the one this tree updates; two means HEAD carries both.
 anc=()
 while IFS=$'\t' read -r num sha ref; do
@@ -599,17 +656,17 @@ say "target-gate: $pkg tree ${tree:0:12} (commit ${head:0:12}) on $base -> $prj 
 mkdir -p "$sd" || refuse "cannot create $sd"
 [ ${#anc[@]} -eq 0 ] || say "note: HEAD extends your open PR ${anc[0]} — pool-pr.sh updates that PR"
 
-# A changelog changes nothing that builds but a heading changes-lint checks, so
-# a .changes-only step from the base's last GREEN tree carries that build, not
-# its review. A tree stamped already is built for real.
+# A changelog changes nothing that builds but a heading `geectl changelog
+# validate` checks, so a .changes-only step from the base's last GREEN tree
+# carries that build, not its review. A tree stamped already is built for real.
 if [ ! -e "$stamp" ] && from=$(py last "$sd" "$base" "$tree") \
    && ns=$(git diff --no-renames --name-status "$from" HEAD 2>/dev/null) && [ -n "$ns" ] \
    && files=$(awk -F'\t' '$1 !~ /^[AM]$/ || $2 !~ /\.changes$/ {exit 1} {print $2}' <<<"$ns"); then
   carry=1
   while IFS= read -r f; do
     n=$({ git show "$from:$f" 2>/dev/null || :; } | py touched "$f") || n=1
-    if ! out=$("$HERE/changes-lint.sh" --entries "$n" "$f" 2>&1); then
-      say "note: $f fails changes-lint — building, not carrying tree ${from:0:12}:"
+    if ! out=$(geectl changelog validate "$(dirname -- "$f")" --entries "$n" 2>&1); then
+      say "note: $f fails changelog validate — building, not carrying tree ${from:0:12}:"
       printf '%s\n' "$out" | head -5
       carry=0
     fi
@@ -626,16 +683,16 @@ fi
 pr_arches() {   # arches the PR bot builds for base $1; Backports itself has more
   local p m a
   p="$(bprj "$1"):PullRequest"
-  m=$(osc meta prj "$p" 2>&1) || refuse "cannot read the $p meta: $(tail -1 <<<"$m")"
+  m=$(geectl remote project-meta "$p" 2>&1) || refuse "cannot read the $p meta: $(tail -1 <<<"$m")"
   a=$(py arches <<<"$m") || refuse "no standard repository arches in the $p meta"
   echo "$a"
 }
 
 # ============================== --remote =======================================
 if [ "$mode" = remote ]; then
-  obsuser=$(osc whois 2>/dev/null | sed -n '1s/:.*//p' | tr -d '[:space:]')
-  [ -n "$obsuser" ] || obsuser=$(py oscuser) || obsuser=""
-  [ -n "$obsuser" ] || refuse "cannot determine your OBS account (osc whois failed, no user in oscrc)"
+  obsuser=$(geectl remote whois 2>/dev/null | py login)
+  [ -n "$obsuser" ] || obsuser=$(py geectluser) || obsuser=""
+  [ -n "$obsuser" ] || refuse "cannot determine your OBS account (geectl remote whois failed, no GEECTL_OBS_USERNAME)"
   gprj="home:$obsuser:leapgate"
   triples=(); req=""
   for b in leap-16.0 leap-16.1; do
@@ -647,9 +704,10 @@ if [ "$mode" = remote ]; then
   br="leapgate/$base-${head:0:12}"
   url="$G/$guser/$pkg?trackingbranch=$br#$head"
 
-  # An existing fork is no error to git-obs; a failure shows, the push decides.
-  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
-    || say "git-obs repo fork pool/$pkg failed: $(tail -1 <<<"$forkerr")"
+  # An existing fork is no error: repo-fork returns the existing fork
+  # instead of failing. A failure shows, the push decides.
+  forkerr=$(timeout 60 geectl gitea repo-fork pool "$pkg" --live 2>&1 >/dev/null) \
+    || say "geectl gitea repo-fork pool/$pkg failed: $(tail -1 <<<"$forkerr")"
   git remote add leapgate "$GS:$guser/$pkg.git" 2>/dev/null || git remote set-url leapgate "$GS:$guser/$pkg.git"
   # A fork does not share the parent's LFS store, and the pre-push hook would
   # upload every object in the history: exactly this tree's objects first,
@@ -665,9 +723,18 @@ if [ "$mode" = remote ]; then
     || refuse "push to $guser/$pkg:$br failed"
 
   metaget() {   # metaget prj|pkg ARGS... — current meta, empty when it does not exist
-    local out
-    out=$(osc meta "$@" 2>&1) && { printf '%s' "$out"; return 0; }
-    case "$out" in *404*|*"Not Found"*) return 0 ;; esac
+    local out rc
+    case "$1" in
+      prj) out=$(geectl remote project-meta "$2" 2>&1); rc=$? ;;
+      pkg) out=$(geectl remote package-meta "$2" "$3" 2>&1); rc=$? ;;
+      *) refuse "metaget: unknown kind $1" ;;
+    esac
+    [ $rc = 0 ] && { printf '%s' "$out"; return 0; }
+    # A missing project or package is not an error here: geectl reports
+    # it as not_found (rc 3), and the callers treat an empty meta as
+    # "does not exist yet".
+    case "$out" in *not_found*|*404*|*"Not Found"*) return 0 ;; esac
+    [ $rc = 3 ] && return 0
     refuse "cannot read the meta of $*: $(tail -1 <<<"$out")"
   }
   changed=0
@@ -675,7 +742,7 @@ if [ "$mode" = remote ]; then
   new=$(py prjmeta "$gprj" "$obsuser" "${triples[@]}" <<<"$cur"); rc=$?
   case $rc in
     0) printf '%s\n' "$new" > "$tmpd/prj.xml"
-       osc meta prj -F "$tmpd/prj.xml" "$gprj" >/dev/null 2>"$tmpd/err" || refuse "writing the $gprj meta failed: $(tail -1 "$tmpd/err")"
+       geectl remote set-project-meta --from-file "$tmpd/prj.xml" "$gprj" --live >/dev/null 2>"$tmpd/err" || refuse "writing the $gprj meta failed: $(tail -1 "$tmpd/err")"
        say "set up $gprj (leap-16.0, leap-16.1)" ;;
     4) ;;
     *) refuse "unparseable $gprj meta" ;;
@@ -684,7 +751,7 @@ if [ "$mode" = remote ]; then
   new=$(py pkgmeta "$gprj" "$pkg" "$url" "$other" <<<"$cur"); rc=$?
   case $rc in
     0) printf '%s\n' "$new" > "$tmpd/pkg.xml"
-       osc meta pkg -F "$tmpd/pkg.xml" "$gprj" "$pkg" >/dev/null 2>"$tmpd/err" || refuse "writing the $gprj/$pkg meta failed: $(tail -1 "$tmpd/err")"
+       geectl remote set-package-meta --from-file "$tmpd/pkg.xml" "$gprj" "$pkg" --live >/dev/null 2>"$tmpd/err" || refuse "writing the $gprj/$pkg meta failed: $(tail -1 "$tmpd/err")"
        changed=1 ;;
     4) ;;
     *) refuse "unparseable $gprj/$pkg meta" ;;
@@ -693,12 +760,14 @@ if [ "$mode" = remote ]; then
 
   # obsinfo and every build are held to one source revision: until the
   # scheduler catches up, a build of the previous one still reads "succeeded".
-  src=$(osc api "/source/$gprj/$pkg?expand=1" 2>&1) || refuse "cannot read the $gprj/$pkg sources: $(tail -1 <<<"$src")"
-  smd5=$(py srcmd5 <<<"$src") || refuse "no srcmd5 in the $gprj/$pkg source listing"
-  info=$(osc cat -r "$smd5" "$gprj" "$pkg" _scmsync.obsinfo 2>&1) || pending "$gprj/$pkg has no _scmsync.obsinfo yet — re-run to poll"
+  # The newest package-log entry's srcmd5 is the directory's: the package
+  # links nothing, so the expanded listing and the revision agree.
+  src=$(geectl remote package-log --limit 1 "$gprj" "$pkg" 2>&1) || refuse "cannot read the $gprj/$pkg package log: $(tail -1 <<<"$src")"
+  smd5=$(py srcmd5 <<<"$src") || refuse "no srcmd5 in the $gprj/$pkg package log"
+  info=$(geectl remote cat --rev "$smd5" "$gprj" "$pkg" _scmsync.obsinfo 2>&1) || pending "$gprj/$pkg has no _scmsync.obsinfo yet — re-run to poll"
   got=$(sed -n 's/^commit: *//p' <<<"$info" | head -1)
   [ "$got" = "$head" ] || pending "OBS synced ${got:-nothing}, HEAD is $head — re-run to poll"
-  res=$(osc results --xml -r "$base" "$gprj" "$pkg" 2>&1) || refuse "cannot read the $gprj/$pkg results: $(tail -1 <<<"$res")"
+  res=$(geectl build results --repository "$base" --package "$pkg" "$gprj" 2>&1) || refuse "cannot read the $gprj/$pkg results: $(tail -1 <<<"$res")"
   sum=$(py results "$base" "$req" <<<"$res"); rc=$?
   grep -v '^#' <<<"$sum"
   why=$(sed -n 's/^#why //p' <<<"$sum")
@@ -706,7 +775,7 @@ if [ "$mode" = remote ]; then
     stale=()
     # The last job, not _history: an unchanged rebuild adds no entry there.
     while read -r a p; do
-      h=$(osc api "/build/$gprj/$base/$a/_jobhistory?package=$p&limit=1" 2>&1) \
+      h=$(geectl build job-history --package "$p" --limit 1 "$gprj" "$base" "$a" 2>&1) \
         || refuse "cannot read the $gprj/$base/$a/$p job history: $(tail -1 <<<"$h")"
       m=$(py srcmd5 <<<"$h"); [ $? != 2 ] || refuse "unparseable $gprj/$base/$a/$p job history"
       [ "$m" = "$smd5" ] || { m=${m:0:12}; stale+=("$a/$p (built ${m:-nothing})"); }
@@ -722,12 +791,12 @@ if [ "$mode" = remote ]; then
        # don't pile up. Only on green -- a red build keeps both for debugging.
        git push -q leapgate --delete "$br" 2>/dev/null \
          || say "note: could not delete the fork branch $br"
-       osc rdelete -m "target-gate: tree ${tree:0:12} GREEN on $base, stamped" "$gprj" "$pkg" </dev/null >/dev/null 2>"$tmpd/err" \
+       geectl remote delete-package --message "target-gate: tree ${tree:0:12} GREEN on $base, stamped" "$gprj" "$pkg" --live </dev/null >/dev/null 2>"$tmpd/err" \
          || say "note: could not delete $gprj/$pkg: $(tail -1 "$tmpd/err")"
        say "VERDICT: GREEN — tree ${tree:0:12} built on $gprj/$base at commit ${head:0:12}; stamped $stamp"
        exit 0 ;;
     1) rm -f "$stamp"
-       say "VERDICT: RED — $gprj/$pkg on $base ${why:-failed} (osc rbl $gprj $pkg $base <arch>)"
+       say "VERDICT: RED — $gprj/$pkg on $base ${why:-failed} (geectl build build-log $gprj $pkg $base <arch>)"
        exit 1 ;;
     3) pending "${why:-building} — re-run to poll" ;;
     *) refuse "unparseable $gprj/$pkg results" ;;
@@ -742,20 +811,13 @@ case " $arches " in
   *) refuse "host arch $native is not one $prj:PullRequest builds ($arches) — builds are never emulated; use --remote" ;;
 esac
 
-# The build-root base from oscrc, as build-summary.sh reads it.
-TMPL=$(grep -hE '^\s*build-root\s*=' ~/.config/osc/oscrc ~/.oscrc 2>/dev/null \
-       | tail -1 | sed -E 's/^[^=]*=\s*//; s/\s+$//')
-: "${TMPL:=/var/tmp/build-root/%(repo)s-%(arch)s}"
-root_base() {
-  local tmpl="$TMPL"
-  while [ -n "$tmpl" ] && case "$tmpl" in */*) [[ "${tmpl##*/}" == *'%('* ]];; *) false;; esac; do
-    tmpl="${tmpl%/*}"
-  done
-  echo "${tmpl:-/var/tmp/build-root}"
-}
+# The build-root base from geectl's cache, as build-summary.sh reads it.
+CACHE=$(geectl config show 2>/dev/null | python3 -I -c \
+  'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("build_cache_dir") or "")')
+: "${CACHE:=${XDG_CACHE_HOME:-$HOME/.cache}/geectl}"
 # Per base: 16.0 and 16.1 are different roots, and neither may reuse the
 # <pkg>-standard-<arch> root of some other build.
-root="$(root_base)/$pkg-$base-$native"
+root="$CACHE/build-roots/$pkg-$base-$native"
 
 mounted() {   # mounts at or under $1; rc 2 when findmnt cannot tell
   local m
@@ -774,8 +836,8 @@ fi
 # prjconf's per-arch onlybuild/excludebuild lists (Backports whitelists i586).
 # Decided before any build, so a missing native route is refused up front.
 qrbin="${BUILD_DIR:-/usr/lib/build}/queryrecipe"; qcbin="${BUILD_DIR:-/usr/lib/build}/queryconfig"
-{ [ -x "$qrbin" ] && [ -x "$qcbin" ]; } || refuse "$qrbin or $qcbin not found (obs-build, which osc build needs)"
-osc buildconfig "$prj" standard > "$tmpd/buildconfig" 2>"$tmpd/err" \
+{ [ -x "$qrbin" ] && [ -x "$qcbin" ]; } || refuse "$qrbin or $qcbin not found (obs-build, which geectl local-build build needs)"
+geectl build buildconfig "$prj" standard > "$tmpd/buildconfig" 2>"$tmpd/err" \
   || refuse "cannot read the $prj standard build config: $(tail -1 "$tmpd/err")"
 declare -A onlyb exclb
 for a in $arches; do
@@ -809,7 +871,7 @@ done
 
 reds=()
 red() { reds+=("$*"); say "RED: $*"; }
-# osc's own error lines (its stdout is block-buffered, so they can land after
+# geectl's own error lines (its stdout is block-buffered, so they can land after
 # the build's), else the log's tail; sanitized, as build output is third-party.
 excerpt() {
   local ex
@@ -822,30 +884,36 @@ excerpt() {
 # Log text quoted in a RED line, sanitized the same way.
 clean() { printf '%s' "$1" | python3 "$HERE/_sanitize.py" || printf '(withheld: %s failed)' "$HERE/_sanitize.py"; }
 for k in "${!todo[@]}"; do
-  f=${flavors[${todo[$k]}]}; fs=${f:+ -M $f}
+  f=${flavors[${todo[$k]}]}; fs=${f:+ --flavor $f}
   say "flavor ${f:-(none)}: build $native, resolve ${others[$k]:-nothing else}"
   # A cheap resolution failure elsewhere spares the long native build.
   for a in ${others[$k]}; do
-    mflag=(); [ -z "$f" ] || mflag=(-M "$f")
-    out=$(osc buildinfo --alternative-project "$prj" "${mflag[@]}" standard "$a" "$pkg.spec" 2>&1 </dev/null)
-    if ! grep -q '<buildinfo' <<<"$out"; then
+    # A multibuild flavor is addressed as pkg:flavor, the same form the
+    # build-log leaf's --multibuild appends to the package.
+    bpkg="$pkg${f:+:$f}"
+    if ! out=$(geectl build buildinfo --project "$prj" --package "$bpkg" --alternative-project "$prj" standard "$a" 2>&1 </dev/null)
+    then
       red "buildinfo $a$fs: lookup failed: $(tail -1 <<<"$out")"
-    elif err=$(grep -m1 -o '<error>[^<]*</error>' <<<"$out"); then
-      err=${err#<error>}; red "buildinfo $a$fs: ${err%</error>}"
     else
-      resolved+="$a "
+      err=$(py buildinfo <<<"$out"); brc=$?
+      if [ $brc = 2 ]; then
+        red "buildinfo $a$fs: lookup failed: unparseable buildinfo"
+      elif [ -n "$err" ]; then
+        red "buildinfo $a$fs: $err"
+      else
+        resolved+="$a "
+      fi
     fi
   done
   [ ${#reds[@]} -eq 0 ] || break
 
-  # osc build --clean on a root with a bind-mounted /dev wipes the host's /dev.
+  # geectl local-build build --clean on a root with a bind-mounted /dev wipes the host's /dev.
   m=$(mounted "$root"); [ $? -ne 2 ] || refuse "findmnt failed — cannot rule out mounts under $root"
   [ -z "$m" ] || refuse "mounted under $root: $(paste -sd' ' <<<"$m") — unmount before building there"
-  cmd=(osc build --clean --trust-all-projects --root "$root" --alternative-project="$prj")
-  [ -z "$jobs" ] || cmd+=(--jobs "$jobs")
-  [ -z "$f" ] || cmd+=(-M "$f")
-  cmd+=(standard "$native" "$pkg.spec")
-  # osc's output is the build log: a VM build (build-type=kvm) puts no
+  cmd=(geectl local-build build --clean --trust-all-projects --root "$root" --alternative-project="$prj" --project "$prj" --repo standard --arch "$native" --live)
+  [ -z "$f" ] || cmd+=(--flavor "$f")
+  cmd+=("$rdir")
+  # geectl's output is the build log: a VM build (build-type=kvm) puts no
   # installed-pkg in the root, and the root's .build.log can be empty (e.g.
   # with build-shell-after-fail). The guest's console adds CRs and NULs.
   blog="$tmpd/build.log"
@@ -853,16 +921,16 @@ for k in "${!todo[@]}"; do
   touch -d '1 second ago' "$tmpd/start" || refuse "cannot write $tmpd/start"
   "${cmd[@]}" </dev/null 2>&1 | tr -d '\000\r' > "$blog"; orc=${PIPESTATUS[0]}
 
-  # osc builds in $root, or in $root/.mount under a VM, and leaves the
+  # The build runs in $root, or in $root/.mount under a VM, and leaves the
   # packages in that root's .build.packages.
   broot=$(sed -n '/Using BUILD_ROOT=/{s/.*Using BUILD_ROOT=//p;q;}' "$blog")
   if [ "$broot" != "$root" ] && [ "$broot" != "$root/.mount" ]; then
-    red "build$fs: the log built in $(clean "${broot:-no build root}"), not $root, osc build rc=$orc"
+    red "build$fs: the log built in $(clean "${broot:-no build root}"), not $root, geectl local-build build rc=$orc"
     excerpt "$blog"
   else
     bs=$("$HERE/build-summary.sh" --rpms "$broot/.build.packages" "$blog" 2>&1); brc=$?
     if [ $brc -ne 0 ] || [ "$orc" -ne 0 ]; then
-      red "build$fs: build-summary rc=$brc ($(grep -m1 -o 'VERDICT: .*\|no readable build log' <<<"$bs")), osc build rc=$orc"
+      red "build$fs: build-summary rc=$brc ($(grep -m1 -o 'VERDICT: .*\|no readable build log' <<<"$bs")), geectl local-build build rc=$orc"
     fi
     # obs-build empties .build.packages first; in a root it did not set up, files
     # older than this build are an earlier build's.

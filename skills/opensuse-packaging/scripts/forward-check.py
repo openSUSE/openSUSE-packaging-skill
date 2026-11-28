@@ -15,7 +15,7 @@ accepted devel request is not a forward still to file. This asks Factory:
                                                     is neither openSUSE:* nor
                                                     home: since DATE (default:
                                                     14 days ago)
-  --user U          OBS account (default: `osc whois`)
+  --user U          OBS account (default: $GEECTL_OBS_USERNAME)
   --deadline SECONDS  start no lookup after this many seconds (default 80; none
                     with --mine): the rest print as UNKNOWN and `# INCOMPLETE`
                     follows the count
@@ -32,12 +32,12 @@ Output without the count line was cut off before the end: never read it as
   IN-FACTORY                   openSUSE:Factory holds the devel package's files
   MINE-DECLINED <id> by <who>: <reason>
       your forward of the current sources was declined: fix it, then file
-      again superseding it, osc sr ... -s <id>
+      again superseding it, geectl request refile ... --supersede <id>
   DECLINED <id> by <who>: <reason>
       someone else's forward of the current sources was declined: report it
   FOREIGN-DECLINED <id> by <who>: <reason>
       an older declined request from the devel project, someone else's, which
-      your osc sr would offer to supersede: ask, never supersede it
+      your geectl request file would offer to supersede: ask, never supersede it
   NOT-LANDED <id> <state>      your devel request is not accepted yet
   DEVEL-DECLINED <id> by <who>: <reason>   your devel request was declined
   GONE                         the package is no longer in the devel project
@@ -67,6 +67,7 @@ autoforward-gate.sh reading the project git's maintainers.
 
 import argparse
 import datetime
+import json
 import os
 import re
 import signal
@@ -74,8 +75,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
@@ -96,7 +95,7 @@ DEADLINE = None
 
 
 class Lookup(Exception):
-    """An osc call failed: the verdict is UNKNOWN, never a guess. args[1]
+    """A geectl call failed: the verdict is UNKNOWN, never a guess. args[1]
     tells a 404 apart."""
 
 
@@ -115,20 +114,28 @@ def timeout(limit):
     return min(limit, max(5, left))
 
 
-def osc(*args):
+def geectl(*args, text=False):
+    """A geectl read: JSON unless text=True, when the raw text is returned.
+    A failure, a timeout or an unparseable answer is a Lookup; args[1]
+    tells a 404 apart (geectl exits 3 for a missing resource)."""
     t = timeout(TIMEOUT)
     try:
-        r = subprocess.run(["osc", *args], capture_output=True, text=True, timeout=t)
+        r = subprocess.run(["geectl", *args], capture_output=True, text=True, timeout=t)
     except subprocess.TimeoutExpired:
         if DEADLINE is not None and time.monotonic() >= DEADLINE:
             raise Skipped()
-        raise Lookup(f"osc {args[0]} timed out after {t:.0f}s", False)
+        raise Lookup(f"geectl {args[0]} timed out after {t:.0f}s", False)
     except FileNotFoundError:
-        raise Lookup("osc: command not found", False)
+        raise Lookup("geectl: command not found", False)
     if r.returncode != 0:
         err = (r.stderr or "").strip()
-        raise Lookup(f"osc {' '.join(args)}: {err[:200]}", "HTTP Error 404" in err)
-    return r.stdout
+        raise Lookup(f"geectl {' '.join(args)}: {err[:200]}", r.returncode == 3)
+    if text:
+        return r.stdout or ""
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        raise Lookup(f"geectl {' '.join(args)}: unparseable answer: {e}", False)
 
 
 def clean(text, width=None):
@@ -136,30 +143,44 @@ def clean(text, width=None):
     return s if width is None or len(s) <= width else s[: width - 1] + "…"
 
 
-def search(match):
-    """The submit requests an xpath match finds, as dicts."""
-    out = osc("api", "/search/request?match=" + urllib.parse.quote(match, safe="@/'"))
-    try:
-        root = ET.fromstring(out)
-    except ET.ParseError as e:
-        raise Lookup(f"unreadable request search: {e}", False)
-    if root.tag != "collection":
-        raise Lookup(f"request search answered <{root.tag}>, not a collection", False)
+def search(
+    *,
+    source_project=None,
+    target_project=None,
+    target_package=None,
+    creator=None,
+    states=(),
+    since=None,
+):
+    """The submit requests a `geectl request search` finds, as dicts. --since
+    matches a history entry at or after the date, so callers that need the
+    state change at or after a date filter on state.when themselves."""
+    cmd = ["request", "search", "--type", "submit"]
+    if source_project:
+        cmd += ["--source-project", source_project]
+    if target_project:
+        cmd += ["--target-project", target_project]
+    if target_package:
+        cmd += ["--target-package", target_package]
+    if creator:
+        cmd += ["--creator", creator]
+    for state in states:
+        cmd += ["--state", state]
+    if since:
+        cmd += ["--since", since]
+    payload = geectl(*cmd)
     reqs = []
-    for r in root.findall("request"):
-        st = r.find("state")
-        if st is None:
-            continue
+    for r in payload.get("requests", []):
+        st = r.get("state") or {}
         acts = []
-        for a in r.findall("action"):
-            src, tgt = a.find("source"), a.find("target")
-            if a.get("type") == "submit" and src is not None and tgt is not None:
+        for a in r.get("actions", []):
+            if a.get("type") == "submit":
                 acts.append(
                     (
-                        src.get("project") or "",
-                        src.get("rev") or "",
-                        tgt.get("project") or "",
-                        tgt.get("package") or "",
+                        a.get("source_project") or "",
+                        a.get("source_rev") or "",
+                        a.get("target_project") or "",
+                        a.get("target_package") or "",
                     )
                 )
         reqs.append(
@@ -170,43 +191,92 @@ def search(match):
                 "who": st.get("who") or "",
                 "when": st.get("when") or "",
                 "created": st.get("created") or "",
-                "comment": st.findtext("comment") or "",
+                "comment": st.get("comment") or "",
                 "actions": acts,
             }
         )
     return reqs
 
 
+def link_tag(prj, pkg):
+    """The _link element of prj/pkg as text, "" when the _link cannot be
+    read as one. A Lookup propagates: a 404 means the package is gone,
+    which the caller reads as absent."""
+    text = geectl("remote", "cat", prj, pkg, "_link", "--format", "text", text=True)
+    m = re.search(r"<link\b[^>]*>", text or "")
+    return m.group(0) if m else ""
+
+
+def link_attr(tag, name):
+    m = re.search(rf'\b{name}="([^"]*)"', tag)
+    return m.group(1) if m else ""
+
+
 def tree(prj, pkg, rev=None):
     """(srcmd5, files) of prj/pkg expanded (at revision rev), files being its
     (name, md5) pairs; None when absent. Sources are equal when their files
     are: a linked devel package's srcmd5 also covers the link, so it differs
-    from Factory's for the same files."""
-    path = f"/source/{prj}/{pkg}?expand=1" + (f"&rev={rev}" if rev else "")
+    from Factory's for the same files. The srcmd5 comes from the latest
+    package-log entry and is only read for the unpinned listing (a pinned
+    listing's caller compares files, never the srcmd5). list-files never
+    expands a link, so a listing that carries _link is resolved by hand:
+    the _link names its target (and pin), the target's listing at that
+    revision is the expanded one, and local files overlay it. A link with
+    its own _service is the exception: its service results are in neither
+    listing."""
+    cmd = ["remote", "list-files", prj, pkg]
+    if rev is not None:
+        cmd += ["--rev", str(rev)]
     try:
-        out = osc("api", path)
+        payload = geectl(*cmd)
     except Lookup as e:
         if e.args[1]:
             return None
         raise
-    try:
-        root = ET.fromstring(out)
-    except ET.ParseError as e:
-        raise Lookup(f"unreadable {path}: {e}", False)
-    files = frozenset((e.get("name"), e.get("md5")) for e in root.findall("entry"))
-    return root.get("srcmd5"), files
+    files = {(f.get("name"), f.get("md5")) for f in payload.get("files", [])}
+    tag = link_tag(prj, pkg) if any(n == "_link" for n, _ in files) else None
+    depth = 0
+    while tag is not None and depth < 5:
+        depth += 1
+        tprj, tpkg = link_attr(tag, "project"), link_attr(tag, "package")
+        trev = link_attr(tag, "rev")
+        if not tprj or not tpkg:
+            raise Lookup(f"unreadable _link in {prj}/{pkg}", False)
+        tcmd = ["remote", "list-files", tprj, tpkg]
+        if trev:
+            tcmd += ["--rev", trev]
+        try:
+            target = geectl(*tcmd)
+        except Lookup as e:
+            if e.args[1]:
+                return None
+            raise
+        tfiles = {(f.get("name"), f.get("md5")) for f in target.get("files", [])}
+        tag = link_tag(tprj, tpkg) if any(n == "_link" for n, _ in tfiles) else None
+        merged = {n: m for n, m in tfiles if n != "_link"}
+        merged.update({n: m for n, m in files if n != "_link"})
+        files = set(merged.items())
+    if tag is not None:
+        raise Lookup(f"link chain deeper than 5 in {prj}/{pkg}", False)
+    srcmd5 = None
+    if rev is None:
+        log = geectl("remote", "package-log", prj, pkg, "--limit", "1")
+        entries = log.get("entries", [])
+        if entries:
+            srcmd5 = entries[0].get("srcmd5")
+    return srcmd5, frozenset(files)
 
 
 def last_change(prj, pkg):
     """The day prj/pkg's latest revision was committed (YYYY-MM-DD)."""
-    out = osc("api", f"/source/{prj}/{pkg}/_history?limit=1")
+    payload = geectl("remote", "package-log", prj, pkg, "--limit", "1")
     try:
-        when = ET.fromstring(out).findtext("revision/time")
+        when = payload["entries"][0]["time"]
         return datetime.datetime.fromtimestamp(
             int(when), datetime.timezone.utc
         ).strftime("%Y-%m-%d")
-    except (ET.ParseError, TypeError, ValueError) as e:
-        raise Lookup(f"unreadable /source/{prj}/{pkg}/_history: {e}", False)
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        raise Lookup(f"unreadable {prj}/{pkg} package log: {e}", False)
 
 
 class Package:
@@ -257,25 +327,27 @@ class Package:
         if dprj == self.prj:
             return None
         try:
-            link = ET.fromstring(osc("api", f"/source/{dprj}/{dpkg}/_link"))
+            target = geectl("remote", "link-target", dprj, dpkg).get("target")
         except Lookup as e:
             if e.args[1]:
                 return f"openSUSE:Factory develops it in {dprj}"
             raise
-        except ET.ParseError as e:
-            raise Lookup(f"unreadable /source/{dprj}/{dpkg}/_link: {e}", False)
         if (
-            link.get("project") == self.prj
-            and (link.get("package") or dpkg) == self.pkg
+            target
+            and target.get("project") == self.prj
+            and (target.get("package") or dpkg) == self.pkg
         ):
             return None
         return f"openSUSE:Factory develops it in {dprj}"
 
-    def forwards(self, states):
+    def forwards(self, states, since=None):
         """Factory submit requests for the package from the devel project."""
         reqs = search(
-            f"action/target/@project='{FACTORY}' and action/target/@package='{self.pkg}' "
-            f"and action/@type='submit' and ({states})"
+            source_project=self.prj,
+            target_project=FACTORY,
+            target_package=self.pkg,
+            states=states,
+            since=since,
         )
         out = []
         for r in reqs:
@@ -301,9 +373,7 @@ class Package:
         self.devel = tree(self.prj, self.pkg)
         if self.devel is None:
             return "GONE", f"no longer in {self.prj}"
-        reqs = self.forwards(
-            "state/@name='new' or state/@name='review' or state/@name='declined'"
-        )
+        reqs = self.forwards(["new", "review", "declined"])
         for r in reqs:
             if r["state"] in ("new", "review"):
                 age = "current" if self.carries(r["rev"]) else "stale"
@@ -316,9 +386,9 @@ class Package:
             return "IN-FACTORY", ""
         if self.factory is not None:
             since = last_change(self.prj, self.pkg)
-            for r in self.forwards(
-                f"state/@name='accepted' and state/@when>='{since}'"
-            ):
+            for r in self.forwards(["accepted"], since=since):
+                if r["when"] < since:
+                    continue
                 if self.carries(r["rev"]):
                     who = clean(r["creator"])
                     return "FORWARDED", f"{r['id']} by {who} accepted current"
@@ -339,22 +409,21 @@ class Package:
             _, self.accepted = one(self.prj, self.pkg, self.user)
         if not self.accepted:
             return False
-        path = f"/source/{self.prj}/{self.pkg}/_history"
-        try:
-            revs = ET.fromstring(osc("api", path)).findall("revision")
-        except ET.ParseError as e:
-            raise Lookup(f"unreadable {path}: {e}", False)
-        first = (revs[0].findtext("requestid") or "").strip() if revs else ""
+        # The package log is newest-first: the first revision is the last
+        # entry.
+        payload = geectl("remote", "package-log", self.prj, self.pkg)
+        entries = payload.get("entries", [])
+        first = str(entries[-1].get("request_id") or "").strip() if entries else ""
         if not first.isdigit() or int(first) not in self.accepted:
             return False
-        try:
-            osc("api", f"/source/{FACTORY}/{self.pkg}?deleted=1")
-        except Lookup as e:
-            if e.args[1]:
-                return True
-            raise
-        self.dropped = True
-        return False
+        # No typed leaf answers whether Factory ever held the package
+        # (list-files --include-deleted is still missing): fail closed rather
+        # than call a package DUE that Factory deleted.
+        raise Lookup(
+            "cannot tell whether openSUSE:Factory ever held this package: "
+            "no typed leaf lists deleted revisions",
+            False,
+        )
 
     def role(self, verdict):
         """The verdict once autoforward-gate.sh has decided the role."""
@@ -387,7 +456,7 @@ class Package:
         notes = (
             ["NEW-IN-FACTORY, created by your request"] if self.factory is None else []
         )
-        notes += [f"supersede {mine[0]['id']} with -s"] if mine else []
+        notes += [f"supersede {mine[0]['id']} with --supersede"] if mine else []
         return "DUE", "; ".join(notes)
 
 
@@ -442,10 +511,9 @@ def mine_since(user, since):
     """{(project, package): None} for your requests accepted into a devel
     project since DATE."""
     found = {}
-    for r in search(
-        f"state/@name='accepted' and @creator='{user}' and action/@type='submit' "
-        f"and state/@when>='{since}'"
-    ):
+    for r in search(creator=user, states=["accepted"], since=since):
+        if r["when"] < since:
+            continue
         for _, _, prj, pkg in r["actions"]:
             if prj and not prj.startswith(("openSUSE:", "home:")):
                 found[(prj, pkg)] = None
@@ -456,8 +524,10 @@ def one(prj, pkg, user):
     """(your latest request to prj/pkg not accepted after it was filed, or
     None; the ids of yours to it that were accepted)."""
     reqs = search(
-        f"@creator='{user}' and action/@type='submit' and "
-        f"action/target/@project='{prj}' and action/target/@package='{pkg}'"
+        creator=user,
+        target_project=prj,
+        target_package=pkg,
+        states=["new", "review", "declined", "accepted", "revoked", "superseded"],
     )
     landed = max((r["when"] for r in reqs if r["state"] == "accepted"), default="")
     pending = [
@@ -536,11 +606,12 @@ def main():
     start = time.monotonic()
     user = a.user
     if not user:
-        try:
-            user = osc("whois").split(":", 1)[0].strip()
-        except (Lookup, Skipped) as e:
-            why = e.args[0] if e.args else "--deadline reached"
-            print(f"cannot determine account ({why}); pass --user", file=sys.stderr)
+        user = os.environ.get("GEECTL_OBS_USERNAME", "")
+        if not user:
+            print(
+                "cannot determine account (set GEECTL_OBS_USERNAME); pass --user",
+                file=sys.stderr,
+            )
             return 2
     global DEADLINE
     DEADLINE = None if deadline is None else start + deadline

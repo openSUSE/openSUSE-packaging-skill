@@ -3,8 +3,8 @@
 
   changes-range.py [DIR] [--target PRJ[/PKG] | --base DIR] [--git-base REF]
   DIR         package checkout (default .)
-  --target    osc checkout: the SR target (default: a branched checkout's link
-              origin, else the committed copy, a direct commit's target)
+  --target    geectl working copy: the SR target (default: a branched checkout's
+              link origin, else the committed copy, a direct commit's target)
   --base DIR  offline: a directory holding the target's spec and .changes; a
               missing DIR is a new package
   --git-base  git checkout: the ref holding the target's tree (default: the
@@ -45,11 +45,11 @@ new version is no upstream release, a snapshot version)
 import argparse
 import builtins
 import http.client
+import json
 import os
 import re
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 
 sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it is read
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -153,26 +153,33 @@ def read(path):
         return None
 
 
-def osc_target(d, target):
-    """(prj, pkg) the osc checkout in d is compared with, or None: the committed copy."""
+def geectl_target(d, target):
+    """(prj, pkg) the geectl working copy in d is compared with, or None:
+    the committed copy."""
+    rc, pkg, _ = run(["git", "config", "--get", "geectl.package"], cwd=d)
+    pkg = pkg.strip() if rc == 0 else ""
+    rc, prj, _ = run(["git", "config", "--get", "geectl.project"], cwd=d)
+    prj = prj.strip() if rc == 0 else ""
     if target:
-        prj, _, pkg = target.partition("/")
-        return prj, pkg or read(os.path.join(d, ".osc/_package")).strip()
-    files = read(os.path.join(d, ".osc/_files"))
-    if files is None:
-        # osc store 2.0 keeps no _files: the API has the same listing
-        prj = read(os.path.join(d, ".osc/_project")).strip()
-        pkg = read(os.path.join(d, ".osc/_package")).strip()
-        rc, files, err = run(["osc", "api", f"/source/{prj}/{pkg}?expand=1"])
-        if rc:
-            raise NoVerdict(f"osc api /source/{prj}/{pkg} failed: {err.strip()[:200]}")
+        tprj, _, tpkg = target.partition("/")
+        return tprj, tpkg or pkg or os.path.basename(d)
+    if not prj or not pkg:
+        return None
+    rc, out, err = run(["geectl", "remote", "link-target", prj, pkg])
+    if rc:
+        raise NoVerdict(
+            f"geectl remote link-target {prj} {pkg} failed: {err.strip()[:200]}"
+        )
     try:
-        li = ET.fromstring(files).find("linkinfo")
-    except ET.ParseError as e:
-        raise NoVerdict(f"cannot read the checkout's file list: {e}") from e
-    if li is not None and li.get("project"):
-        return li.get("project"), li.get("package")
-    return None
+        payload = json.loads(out)
+    except ValueError as e:
+        raise NoVerdict(
+            f"geectl remote link-target {prj} {pkg} did not parse: {e}"
+        ) from e
+    tgt = (payload or {}).get("target")
+    if not tgt or not tgt.get("project"):
+        return None
+    return tgt["project"], tgt.get("package") or pkg
 
 
 def target_files(d, names, a):
@@ -181,25 +188,54 @@ def target_files(d, names, a):
         if not os.path.isdir(a.base):
             return None, a.base
         return {n: read(os.path.join(a.base, n)) for n in names}, a.base
-    if os.path.isfile(os.path.join(d, ".osc/_package")) and not os.path.exists(
+    if os.path.isdir(os.path.join(d, ".osc")) and not os.path.exists(
         os.path.join(d, ".osc/_scm")
     ):
-        t = osc_target(d, a.target)
+        # an osc checkout: the committed copy, unless --target names another
+        if a.target is not None:
+            pkg = read(os.path.join(d, ".osc/_package"))
+            pkg = pkg.strip() if pkg else os.path.basename(d)
+            tprj, _, tpkg = a.target.partition("/")
+            prj, pkg = tprj, tpkg or pkg
+            out = {}
+            for n in names:
+                rc, text, err = run(
+                    ["geectl", "remote", "cat", "--format", "text", prj, pkg, n]
+                )
+                if rc == 3:
+                    text = None
+                elif rc:
+                    raise NoVerdict(
+                        f"geectl remote cat {prj} {pkg} {n} failed: {err.strip()[:200]}"
+                    )
+                out[n] = text
+            return out, f"{prj}/{pkg}"
+        out = {}
+        for n in names:
+            out[n] = read(os.path.join(d, ".osc/sources", n))
+            if out[n] is None:
+                out[n] = read(os.path.join(d, ".osc", n))
+        return out, "the committed copy"
+    if run(["git", "config", "--get", "geectl.package"], cwd=d)[0] == 0:
+        t = geectl_target(d, a.target)
         if t is None:
             out = {}
             for n in names:
-                out[n] = read(os.path.join(d, ".osc/sources", n))
-                if out[n] is None:
-                    out[n] = read(os.path.join(d, ".osc", n))
+                rc, text, _ = run(["git", "show", f"HEAD:./{n}"], cwd=d)
+                out[n] = text if rc == 0 else None
             return out, "the committed copy"
         prj, pkg = t
         out = {}
         for n in names:
-            rc, text, err = run(["osc", "cat", prj, pkg, n])
-            if rc and ("404" in err or "does not exist" in err):
+            rc, text, err = run(
+                ["geectl", "remote", "cat", "--format", "text", prj, pkg, n]
+            )
+            if rc == 3:
                 text = None
             elif rc:
-                raise NoVerdict(f"osc cat {prj} {pkg} {n} failed: {err.strip()[:200]}")
+                raise NoVerdict(
+                    f"geectl remote cat {prj} {pkg} {n} failed: {err.strip()[:200]}"
+                )
             out[n] = text
         return out, f"{prj}/{pkg}"
     if run(["git", "rev-parse", "--show-toplevel"], cwd=d)[0] == 0:
@@ -223,7 +259,7 @@ def target_files(d, names, a):
             rc, text, _ = run(["git", "show", f"{ref}:./{n}"], cwd=d)
             out[n] = text if rc == 0 else None
         return out, ref
-    raise NoVerdict(f"{d} is no osc or git checkout: pass --base DIR")
+    raise NoVerdict(f"{d} is no geectl working copy or git checkout: pass --base DIR")
 
 
 def upstream(d, spec_text, version):
@@ -318,8 +354,8 @@ def main():
 
 
 def check(d, a):
-    pkg = read(os.path.join(d, ".osc/_package"))
-    pkg = pkg.strip() if pkg else os.path.basename(d)
+    rc, pkg, _ = run(["git", "config", "--get", "geectl.package"], cwd=d)
+    pkg = pkg.strip() if rc == 0 and pkg.strip() else os.path.basename(d)
     specs = sorted(f for f in os.listdir(d) if f.endswith(".spec"))
     spec = (
         f"{pkg}.spec"

@@ -4,8 +4,9 @@
     "tea --login x pr merge 3",
     "tea logins --output simple e",
     "git -C dir obs pr merge 3",
-    "osc -A https://api.opensuse.org sr --nodevelproject",
-    "osc -A https://api.opensuse.org token"
+    "geectl --format json request file --target-project openSUSE:Factory",
+    "geectl --live remote create-token",
+    "geectl --format json --live --live --live --live --live --live --live --live --live --live --live --live --live --live --live --live remote create-token"
   ],
   "caught": {
     "claude": [
@@ -13,42 +14,48 @@
       false,
       false,
       false,
-      false
+      true,
+      true
     ],
     "grok": [
       false,
       false,
       false,
       false,
-      false
+      true,
+      true
     ],
     "opencode": [
       false,
       false,
       false,
       false,
-      false
+      true,
+      true
     ],
     "opencode-v2": [
       false,
       false,
       false,
       false,
-      false
+      true,
+      true
     ],
     "gemini": [
       true,
       false,
       false,
       true,
-      true
+      true,
+      false
     ],
     "kimi": [
       true,
       false,
       false,
       true,
-      true
+      true,
+      false
     ]
   }
 }

@@ -3,10 +3,10 @@
 Drafts, installed by hand, one directory per harness:
 
 - **Permission snippets** for each harness below keep credentials inside the tools, the
-  rule of the skill's `references/osc-usage.md` "Tool discipline": no agent reads an osc,
+  rule of the skill's `references/geectl-usage.md` "Tool discipline": no agent reads a geectl,
   tea or gh credential file or `.netrc`, prints a token, passes a key on a command line or
-  talks to the OBS or Gitea API past osc, tea and git-obs. They also refuse a PR merge on
-  src.opensuse.org, a Factory request with `--nodevelproject` and `sudo`.
+  talks to the OBS or Gitea API past geectl, tea and git-obs. They also refuse a PR merge on
+  src.opensuse.org, a Factory request with `--target-project openSUSE:Factory` and `sudo`.
 - **The pool PR guard**, for Claude Code and opencode (1.x and 2.x): `scripts/pr-guard.py`
   as a hook.
 - **The bugzilla hand-back guard**, for Claude Code and opencode 2.x:
@@ -37,10 +37,9 @@ or container that does not mount these files.
 
 Every snippet denies, as far as its harness can express it:
 
-- the credential files `~/.config/osc/`, `~/.oscrc`, `~/.config/tea/`,
+- the credential files `~/.config/geectl/`, `~/.config/tea/`,
   `~/.config/gh/hosts.yml`, `~/.netrc`, git's `~/.git-credentials` and
-  `~/.config/git/credentials`, osc's cookie jar
-  (`~/.local/state/osc/`) and the bugzilla MCP key (`~/.config/mcp-bugzilla/`), to the
+  `~/.config/git/credentials`, and the bugzilla MCP key (`~/.config/mcp-bugzilla/`), to the
   read tool and on a command line, where all of `~/.config/gh/` counts (not
   `~/.config/ghostty`);
 - what prints a secret:
@@ -50,14 +49,16 @@ Every snippet denies, as far as its harness can express it:
     login gitcredentials-helper`;
   - tea: `tea login helper`, its alias `git-credential`, and `tea login edit`/`e`, also
     spelled `logins`;
-  - osc: `osc config --dump-...` (plain `--dump` hides the passwords and stays allowed;
-    `--dump-` counts only on an osc command line, so `curl --dump-header` runs),
-    `osc config <apiurl> pass`/`passx`, `osc token` as a whole (it lists and creates
-    tokens with their secrets; `--delete` and `--trigger` go with it), `osc api` on
-    `/person/<login>/token`, and HTTP debugging: `-H` alone or in a short-option cluster
-    (`-qH`, `-Hq`, `-qvH`; which clusters each harness takes is under Limits),
-    `--http-d...`, `--http-f...`, and `http_debug`/`http_full_debug` as an environment
-    variable, `--setopt` or config key;
+  - geectl: `geectl remote create-token` as a whole (it prints the token's secret;
+    the maintainer runs it, an agent never does), and a `GEECTL_OBS_*` or
+    `GEECTL_GITEA_*` value on the command line (an env assignment before a
+    command, or an expansion in it): the login comes from the environment the
+    harness provides, never from argv. The Codex and Antigravity prefixes
+    cannot express a mid-command substring, so they carry no such rule.
+    There is no config dump, no HTTP debugging and no generic API form:
+    `geectl config show` prints the endpoints and credential status only,
+    never a secret value, and `--debug`/`--debug-body` print redacted bodies,
+    never headers;
   - git: `git credential fill`, and `git credential-<helper> get` or
     `git-credential-<helper> get`;
   - the desktop keyring, which holds gh's token: `secret-tool lookup` and `search`;
@@ -67,15 +68,15 @@ Every snippet denies, as far as its harness can express it:
 - handing git a credential by hand (`GIT_ASKPASS=`, `SSH_ASKPASS=`, `core.askPass`), and
   `curl` to `api.opensuse.org`, `build.opensuse.org` or `src.opensuse.org/api`;
 - merging a PR on src.opensuse.org, pool or not, with `tea`, `git-obs` or `git obs` or
-  through the API (`gh` is not matched), `osc sr`/`creq` with `--nodevelproject`, and
-  `sudo` where a command starts (the Kimi hook and the Gemini CLI rules also anywhere before
-  `chroot`): osc runs its own, build roots are entered with `osc chroot` and removed with
-  `osc wipe`.
+  through the API (`gh` is not matched), a `geectl request file` or `refile` with
+  `--target-project openSUSE:Factory`, and `sudo` where a command starts (the Kimi hook
+  and the Gemini CLI rules also anywhere before `chroot`): build roots are entered with
+  `geectl local-build chroot` and removed with `geectl local-build wipe`.
 
 The rules match the mechanism, not the word, where the two differ: work on the
 openssh-askpass and git-credential-* packages, a grep for `api-key` or `Authorization:` in
-a source tree, `osc config --dump`, `tea logins list`, and a commit or request message
-that mentions a token or a config pass still run. The Claude Code, opencode, grok and
+a source tree, `tea logins list`, and a commit or request message
+that mentions a token still run. The Claude Code, opencode, grok and
 Codex blocks are meant to match the openQA skill's rule for rule where the two overlap,
 and the opencode 2.x block the opencode 1.x one, plus denies for what only 2.x offers; the
 Gemini CLI and Antigravity snippets cover the same set in their own form. The opencode
@@ -99,33 +100,25 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
   a commit message.
 - A global option before the subcommand hides it from a rule that expects the
   subcommand next: `tea --login x pr merge 3`, `tea logins --output simple e`, `git -C
-  dir obs pr merge`, `osc -A URL sr --nodevelproject`, `osc -A URL token`. The Claude
-  Code, grok and opencode globs catch none of these, nor do the Codex and Antigravity
-  prefixes; the Gemini CLI rules and the Kimi hook catch the merge behind `--login`, the
-  request and the token call behind `-A`, and neither of the other two (checked by
-  `tests/test-harness.sh`). The Gemini CLI rules take one global option before `osc
-  token` or `osc config`, the Kimi hook up to sixteen.
-- `osc` takes an option by any unambiguous prefix, so `--nod` is `--nodevelproject`: the
-  `osc sr *--nodevelproject*` rules miss it, the Kimi hook and the Gemini CLI rule take
-  `--nod`. The Codex rules list every prefix of the HTTP-debug and `--dump-full` options;
-  Antigravity lists only the full names.
-- osc HTTP-debug clusters: the Gemini CLI rules and the Kimi hook take any short-option
-  cluster that holds `H`. The Claude Code, grok and opencode globs take a word starting
-  `-H` anywhere, and a cluster ending in `H` when osc's first word is an option (`osc
-  -qvH ls`, `osc -A URL -qvH ls`); `osc ls -qvH` passes them. The same glob also
-  refuses a message after a global option that holds a word ending in `H` (`osc -A URL
-  vc -m 'Update to OpenSSH 9.9'`). The Codex and Antigravity prefixes list `-H`, `-qH`,
-  `-vH`, `-Hq`, `-Hv`, `-qvH` and `-vqH` right after `osc`.
+  dir obs pr merge`, `geectl --format json request file --target-project openSUSE:Factory`,
+  `geectl --live remote create-token`. The Claude Code, grok and opencode globs catch only
+  the token call (`geectl *remote create-token*` floats past `--live`); the Codex and
+  Antigravity prefixes catch none of these; the Gemini CLI rules and the Kimi hook catch
+  the merge behind `--login`, the request and the token call behind a global option, and
+  neither of the other two (checked by `tests/test-harness.sh`). The Gemini CLI rules take
+  one global option before `geectl remote create-token`, the Kimi hook up to sixteen.
+- geectl takes no option by any unambiguous prefix, so `--target-proj` is not
+  `--target-project` and `--nod` is nothing: the globs match the flag exactly, and so do
+  the Codex and Antigravity prefixes and the Gemini CLI and Kimi rules.
 - Only the Kimi hook joins a backslash-continued line (`gh auth \` then `token` on the
   next line), as Bash does; the other harnesses see two words apart.
 - The API hosts are matched on `curl` only; the Kimi hook also takes `wget`; none takes
   httpie's `http` or a header given another way (a config file, httpie's `Name:value`).
-- `osc api /person/<login>/token` and `git credential-<helper> get` are beyond the Codex
-  and Antigravity prefixes, which list only the `git-credential-<helper> get` form of a
-  few helpers. `gh config get oauth_token` is refused nowhere; it prints the token when
+- `git credential-<helper> get` is beyond the Codex and Antigravity prefixes, which
+  list only the `git-credential-<helper> get` form of a few helpers. `gh config get oauth_token` is refused nowhere; it prints the token when
   gh keeps it in `hosts.yml`.
-- False positives the globs keep: the glob for a password in a URL also refuses an osc
-  call whose explicit URL argument holds a `:` and an `@` (an XPath search, say), and
+- False positives the globs keep: the glob for a password in a URL also refuses a call
+  whose explicit URL argument holds a `:` and an `@` (an XPath search, say), and
   `*-H*uthorization*` refuses `grep -H Authorization` and a command that passes through a
   `perl-HTTP-*` directory and mentions `Authorization`. The Gemini CLI and Kimi regexes
   avoid both.
@@ -145,7 +138,7 @@ These are pattern lists, and no pattern list is complete. Limits every harness s
 ### Claude Code
 
 Checked on 2.1.283 in a throw-away home: `claude doctor`, which names every malformed
-rule (tried with a planted one), reports none of the 93. Matching was measured by the
+rule (tried with a planted one), reports none of the 76. Matching was measured by the
 openQA skill on the same version, in print mode: a `Read(...)` rule stops the Read tool
 but **not** `cat` of the same file, and a `Bash(*...*)` rule stops the command. So every
 path has both.
@@ -153,10 +146,10 @@ path has both.
 - The pool PR guard's hook ships apart, in `claude/pr-guard-hook.json`: merge it only once
   the guard is pinned ("Install the guard"). `python3` exits 2 on a missing script, and
   Claude Code takes exit 2 as a refusal of every Bash, Write and Edit call.
-- Rules that start with a command (`tea pr m *`, `curl *...`, `osc sr *...`) are prefixes:
+- Rules that start with a command (`tea pr m *`, `curl *...`, `geectl request file *...`) are prefixes:
   opencode's miss the command behind `env`, `command` or `A=1`; Claude Code's were not
   measured that way.
-- A deny cannot be narrowed by an allow here, so `osc token` is refused whole, and `tea
+- A deny cannot be narrowed by an allow here, so `geectl remote create-token` is refused whole, and `tea
   pr *merge *` also refuses a PR create whose title holds the word "merge".
 - Nested sub-agents are on by default, three levels deep, so the update-build agent starts its
   own changes-review agent. `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` (settings.json `env`)
@@ -165,9 +158,9 @@ path has both.
 ### opencode 1.x
 
 Checked on 1.18.32 in a throw-away home with dummy credential files, under `env -i` with
-D-Bus disabled. `opencode debug config` loaded all 103 rules then (5 `external_directory`,
-87 `bash`, 11 `read`); the rules added since, for a quoted `~/.config/gh`, for
-`~/.local/state/osc` and for `~/.config/git/credentials`, are checked by the suite's matcher
+D-Bus disabled. `opencode debug config` loaded all 85 rules then (4 `external_directory`,
+71 `bash`, 10 `read`); the rules added since, for a quoted `~/.config/gh` and for
+`~/.config/git/credentials`, are checked by the suite's matcher
 only. `opencode debug agent build --tool read` refuses every credential path of the set from
 a git worktree, from outside git and with the home directory as the worktree, with the
 `read` rules alone as well, and reads an openssh-askpass spec; `--tool bash` refuses every
@@ -186,8 +179,7 @@ directory from a project.
 - The merge denies come after the create asks: a merge POST to a pool repository matches
   both.
 - The built-in `.env` rules only ask, and an "always" answer approves every read for the
-  session; hence the explicit denies. The oscrc read rule is `*oscrc*`, broader than the
-  openQA skill's `*.oscrc`.
+  session; hence the explicit denies.
 - A project's own `opencode.json` can re-allow what the global file denies;
   `OPENCODE_DISABLE_PROJECT_CONFIG=1` prevents that (both measured).
 - The grep tool ignores `read` rules. `external_directory` stops it outside the project,
@@ -202,8 +194,9 @@ environment with D-Bus disabled, and again on 2.0.18 for the guard plugin and th
 and `execute` entries (the code these notes rest on is the same in both). There is no
 `debug agent --tool`, so a local OpenAI-compatible stub returned scripted tool calls to
 `opencode run --standalone`, and every verdict below is the tool's own. `opencode debug
-agents` lists all 114 entries of `opencode-v2/opencode.jsonc` (5 `external_directory`, 88
-`shell`, 12 `read`, 8 `edit`, 1 `execute`) after the base policy. A second opencode service
+agents` lists all 105 entries of `opencode-v2/opencode.jsonc` (4 `external_directory`, 69
+`shell`, 10 `read`, 9 `edit`, 1 `execute`, and 12 `bugzilla_*` MCP entries: one `ask` for
+every tool, then 11 named reads allowed) after the base policy. A second opencode service
 needs its own port (`opencode service set port N` in the throw-away home); on the default
 one every command hung.
 
@@ -222,7 +215,7 @@ one every command hung.
   everything. There is no `"*"` allow in the 2.x snippet: one appended after other entries
   would undo them.
 - A `shell` pattern ending in ` *` also matches the bare command (`sudo`, `tea pr m`,
-  a bare `tea pr create` asks). Three 1.x patterns, `*.config/gh`, `osc -*H` and
+  a bare `tea pr create` asks). Two 1.x patterns, `*.config/gh` and
   `*git-credential-* get`, are therefore left out: their ` *` twins cover them.
 - The shell scanner cuts a call into simple commands: a merge after `||`, `;`, `&&` or `|`,
   in `( )`, `$( )` or backquotes is refused. All 111 refuse probes of the suite's fixtures
@@ -232,16 +225,17 @@ one every command hung.
   pool/x 1"` and `git commit -m 'tea pr merge 3'` run, `echo "gh auth token"` is
   refused. `bash -c '...'` is not unwrapped.
 - Patterns that start with a command miss it behind `env`, `command` or `A=1`: `env tea
-  pulls merge`, `command tea pr merge 3`, `A=1 osc sr --nodevelproject` and `env osc token`
-  ran. `*`-prefixed ones (`gh auth token`) hold behind `env` and `A=1`. The global-option
+  pulls merge`, `command tea pr merge 3`, `A=1 geectl request file --target-project
+  openSUSE:Factory` and `env geectl remote create-token` ran. `*`-prefixed ones
+  (`gh auth token`) hold behind `env` and `A=1`. The global-option
   forms of the shared Limits ran too.
 - `read` takes `path` (1.x: `filePath`). With the `read` entries alone, every credential
   path of the set is refused from a git worktree, outside git and with the home directory
   as the worktree. `~/`, `$HOME/` and absolute patterns now match, but only a path outside
   both the project and its git worktree: never with the home directory as the worktree. The
   `*` prefix works in all three, so the snippet keeps it. With the whole snippet,
-  `external_directory` refuses five of the paths and `read` the other four (`~/.oscrc`,
-  `~/.netrc`, `~/.git-credentials`, `~/.config/git/credentials`); `.env` is refused,
+  `external_directory` refuses four of the paths and `read` the other three
+  (`~/.netrc`, `~/.git-credentials`, `~/.config/git/credentials`); `.env` is refused,
   `.env.example` read. Without `--auto`, an external path asks first, and a
   non-interactive run rejects the ask.
 - The grep and glob tools, aimed at the tea config directory from a project, are refused by
@@ -295,7 +289,7 @@ one every command hung.
 
 ### grok
 
-Checked on 1.0.38: `grok inspect --json` loads all 94 rules with none skipped. An unknown
+Checked on 1.0.38: `grok inspect --json` loads all 71 rules with none skipped. An unknown
 rule is dropped silently (a planted `Frob(x)` counted 0), so compare the count after
 merging. Matching was not run here (it needs a model call); the openQA skill measured it:
 a deny beats every allow and ask and holds under always-approve, command globs match the
@@ -304,11 +298,11 @@ whole command and each segment, and `*` crosses spaces and `/`.
 - A leading `~/` is literal text, so home paths use `**/`, and `X/**` does not match `X`,
   so a directory is listed both ways.
 - grok also reads `~/.claude/settings.json`: with the Claude snippet merged it loads those
-  96 rules too (190), whose `Read(~/...)` rules do not match in grok. It lists the guard's
+  76 rules too (147), whose `Read(~/...)` rules do not match in grok. It lists the guard's
   PreToolUse hook as enabled once `claude/pr-guard-hook.json` is merged; whether grok
   hands the guard an event it can judge is not verified, so do not count on the guard in
   grok.
-- As in Claude Code, a deny cannot be narrowed, so `osc token` is refused whole.
+- As in Claude Code, a deny cannot be narrowed, so `geectl remote create-token` is refused whole.
 
 ### Gemini CLI
 
@@ -328,38 +322,39 @@ for all future sessions" answers; only the admin tier outranks it.
   or a credential path is refused too. File tools already refuse paths outside the
   workspace; do not start Gemini in the home directory.
 - The CLI runs the rules in-process, so a slow regex hangs it. A gap between two parts
-  inside a floating gap backtracked cubically: the first version's `osc config ... pass`
-  rule never finished on a 64 KB command. A rule of several parts is now a row of
+  inside a floating gap backtracked cubically and hung the matcher on a long command.
+  A rule of several parts is now a row of
   lookaheads tried at the start of each simple command and stopped at the next `;`, `&`
   or `|`, one lazy scan each; the slowest rule takes under 0.2 s on the suite's
   pathological input. The parts may come in any order within one simple command, so
-  `osc ls && grep -H x` runs.
+  `geectl build results && grep -H x` runs.
 - A regex cannot track quotes, so a quoted `;`, `&` or `|` ends a row's scan like a real
-  one: `osc sr -m "fix; see bug" --nodevelproject` passes (the suite checks that it
-  does), and so does a backslash-continued line.
+  one: `geectl request file --description "fix; see bug" --target-project openSUSE:Factory`
+  passes (the suite checks that it does), and so does a backslash-continued line.
 - Pool PR creation is not gated: the guard is not wired for Gemini.
 
 ### Antigravity CLI (`agy`)
 
 Written from the permissions documentation of antigravity.google, as the openQA skill's
 was. On 1.2.16, in a throw-away home, `agy --log-file F agents` logs "CLI settings
-initialized" with all 58 deny entries; it logs any string, so that shows the file is read,
+initialized" with all 42 deny entries; it logs any string, so that shows the file is read,
 not that each rule is valid. Check `/permissions`, Global, deny after merging.
 
 - Targets are absolute: replace `/home/USER` with your home directory.
 - `command()` rules match a command prefix, so the snippet lists the prefixes the set has:
-  the gh, git-obs, tea, osc and git printers, the known `git-credential-<helper> get`
-  forms, the merges and `--nodevelproject` right after the subcommand, and `sudo`.
+  the gh, git-obs, tea, geectl and git printers, the known `git-credential-<helper> get`
+  forms, the merges and `--target-project openSUSE:Factory` right after the filing
+  subcommand, and `sudo`.
   They cannot catch a path anywhere in a command, an option before the subcommand, a
-  header or a key in a URL, `osc config <apiurl> pass`, the HTTP-debug environment and
-  config forms, or a `curl` to the APIs.
+  header or a key in a URL, the HTTP-debug environment and config forms, or a `curl`
+  to the APIs.
 - The file rules are enforced by the operating system only for commands run in the
   terminal sandbox, which `enableTerminalSandbox` turns on; `allowNonWorkspaceAccess:
   false` keeps the file tools in the workspace. The sandbox was not run here (agy needs a
-  signed-in model), so it is untested whether those rules also keep osc, tea, git-obs, gh
+  signed-in model), so it is untested whether those rules also keep geectl, tea, git-obs, gh
   and the skill's gate scripts (through git-obs) from reading their credentials in agy's
-  terminal. If they do, drop the entries for `~/.config/osc`, `~/.oscrc`, `~/.config/tea`,
-  `~/.config/gh/hosts.yml` and the cookie jar.
+  terminal. If they do, drop the entries for `~/.config/geectl`, `~/.config/tea`
+  and `~/.config/gh/hosts.yml`.
 - Whether the rules survive `--dangerously-skip-permissions` is not verified: do not use
   that flag with this skill.
 
@@ -369,7 +364,7 @@ Checked on 0.154.0 in a throw-away home under `env -i` with D-Bus disabled: `cod
 execpolicy check --resolve-host-executables` decides all 76 probes as intended, gaps
 included, and exits 1 with "failed to parse policy" on a failing `match` example or a
 syntax error (both tried). `codex sandbox -P <profile> -C <dir> -- <command>` gives the
-sandbox's verdict on dummy files and a dummy osc config. The profile names match the
+sandbox's verdict on dummy files and a dummy geectl config. The profile names match the
 openQA skill's: if its snippet is merged already, add these keys to the same tables (TOML
 refuses a table twice).
 
@@ -384,29 +379,22 @@ every process.
 
 - The profile runs every command in a workspace-write sandbox with no-new-privileges:
   only the workspace and `/tmp` are writable, `/var/tmp` is not, and `sudo` refuses to
-  run (all measured). A local `osc build` therefore cannot run inside Codex, and the
+  run (all measured). A local `geectl local-build build` therefore cannot run inside Codex, and the
   skill's gate scripts, which default their temporary files to `/var/tmp`, need `TMPDIR`
   set to a writable root. A path that must stay writable goes into
   `[permissions.credentials.filesystem]` as `"<path>" = "write"` (measured).
-- osc takes a lock beside its cookie jar on every call, so the profile makes
-  `~/.local/state/osc` writable; without it every osc command failed with "Read-only file
-  system" (measured with a dummy config). The directory must exist before Codex starts,
-  since a write entry for a missing path lets nothing create it (measured): run osc once
-  outside Codex. `credentials-strict` still denies the cookie jar file itself (measured).
-  Accepting an unknown certificate writes `~/.config/osc/trusted-certs`, which needs its
-  own write entry.
-- The workspace's `.git` stays read-only under this profile, so `git commit` and every
-  osc call in a git package checkout fail (measured; osc takes a lock under `.git/obs`).
+- The workspace's `.git` stays read-only under this profile, so `git commit` in a git
+  package checkout fails (measured).
   A deny list also keeps an escalated call sandboxed, so approving it does not help. The
   commented `".git" = "write"` lifts that (measured), and with it lets the agent write
   `.git/hooks` and `.git/config`, which run outside the sandbox on your next git command.
   Weigh that before enabling it.
 - Rules are exact argv prefixes, and a `bash -lc` script is split only when it is plain
   words: `cat -n FILE`, a path spelled with `~`, `FOO=1 cat FILE`,
-  `osc -A URL sr --nodevelproject`, `osc sr -m x --nodevelproject` (the flag not right
-  after the subcommand), `osc -A URL token`, `osc config <apiurl> pass`, `tea pr --repo X
+  `geectl request file` with `--target-project` not right after the subcommand,
+  `geectl --format json remote create-token`, `tea pr --repo X
   merge 3` and `git-obs -G x pr merge` get past them. A header, a key in a URL, the
-  askpass and HTTP-debug environment forms and `curl` to the APIs cannot be expressed.
+  askpass forms and `curl` to the APIs cannot be expressed.
 - A parse error or a failing example in any rules file drops them all, `/etc/codex/rules`
   included: `codex exec` refuses to start and the TUI only warns. Check after every edit.
 - `exec_command` takes a `workdir` the rules never see: `cat config.yml` run in
@@ -420,9 +408,9 @@ every process.
   directory under its root, or more than 8192 matches, fails every command (measured with
   `**/.env` and one unreadable directory in the workspace). So the profile names literal
   paths only, and `.env` is denied at the workspace root, not in subdirectories.
-- `credentials-strict` also keeps osc, tea, git-obs, gh and the skill's gate scripts
-  (through git-obs) from reading their credentials inside Codex (osc then asks for a user
-  name), so it is opt-in per session. gh's token lives in the keyring, reached over D-Bus,
+- `credentials-strict` also keeps geectl, tea, git-obs, gh and the skill's gate scripts
+  (through git-obs) from reading their credentials inside Codex (geectl then fails closed
+  without its login), so it is opt-in per session. gh's token lives in the keyring, reached over D-Bus,
   not a file: the commented socket deny cuts it off.
 
 ### Kimi Code
@@ -432,8 +420,8 @@ PreToolUse hook. Checked on 0.42.0 in a throw-away home under `env -i`: `kimi do
 config` accepts the entry and rejects an unknown key or event name (both tried), but does
 not compile the matcher, so `tests/test-harness.sh` does, and checks it selects Bash,
 Read, Grep, Write and MCP tools. The suite feeds the hook 289 events on stdin: it refuses
-the set, including a `;` inside a quoted message, a continued line, `$(osc token)`, an
-abbreviated `--api` before `token`, an MCP search scoped to the home directory, a
+the set, including a `;` inside a quoted message, a continued line, `$(geectl remote
+create-token)`, a global option before `create-token`, an MCP search scoped to the home directory, a
 relative path resolved against an ACP session's `workDir`, the process directory or the
 Bash call's own `cwd`, a Grep over the home directory and a Write to its own config,
 refuses input that is not JSON, and lets ordinary calls and the openssh-askpass and
@@ -449,14 +437,14 @@ git-credential-* packages through.
   is cut into simple commands at `;`, `&`, `|` and newlines outside quotes, in one pass,
   after a backslash-newline is deleted, as Bash does. A rule is tried only if all its
   parts occur somewhere, and then only on the simple commands that hold its first part;
-  osc's subcommand is found by walking the words of every osc call (split at blanks,
-  backquotes, `$`, parentheses and braces) past at most sixteen global options, an
-  abbreviated `--apiurl`, `--config` or `--setopt` taking its value, not by a regex; and a
+  geectl's group and leaf are found by walking the words of every geectl call (split at
+  blanks, backquotes, `$`, parentheses and braces) past at most sixteen global options,
+  `--format` taking its value, not by a regex; and a
   text over 64 KB is refused unread. The suite times every regex part on 64 KB of
   pathological input (the slowest takes 0.02 s) and the hook on its worst cases, the
   slowest about 0.35 s, so a long command cannot outrun the timeout. Earlier
-  versions took 16 s on 63 KB of `osc sr tea pr`, 10 s or more on `-H` and a run of
-  spaces or on `git-credential-` repeated, and over 30 s on a run of osc global options.
+  versions took 16 s on 63 KB of pathological input, 10 s or more on a run of
+  spaces or on `git-credential-` repeated, and over 30 s on a run of global options.
 - Kimi runs a hook in its own process directory, which an ACP or web session need not
   share; the hook also resolves relative paths against the session's `workDir` from
   `session_index.jsonl`, skipping a line cut short by a concurrent write, and resolves
@@ -480,29 +468,32 @@ call provably only reads), pushing to a branch that heads an open pool PR or to
 src.opensuse.org over HTTPS (a token would carry it; SSH carries the login), writing a
 `target-gate.sh` stamp or into the state directory `~/.local/state/opensuse-packaging/`
 (`gate.sh`'s stamps), posting a comment, review or request message with a line that starts
-with a bot directive (`merge ok`, `@group : approve`), running an emulated `osc build`,
+with a bot directive (`merge ok`, `@group : approve`), running an emulated `geectl local-build build`,
 filing a request against the scmsync'd `openSUSE:Backports:SLE-16.x` projects, filing a
-submit request with `--nodevelproject` or `--yes`, a request filed, accepted, declined, reopened, revoked,
-superseded or wiped (or a review added) without `-m` (osc would open an editor and hang; `osc sr --diff` passes), a request through the API (`/request?cmd=create`) , a submit request to a project other
+submit request with `--target-project openSUSE:Factory`, a request filed without `--description`, or
+accepted, declined, revoked or changed state (or a review added) without `--comment` (`geectl request
+diff` passes; `request supersede` takes no message, so supersede with one through `request refile
+--supersede`, and a bare supersede has no dry run, so it needs `--live`), a request through the API, a
+submit request to a project other
 than the package's devel project in Factory's `_meta` or into an `_aggregate` or a `_link`
-of another project (`osc sr`, or `osc creq -a submit`), one from a `home:` branch whose
+of another project (`geectl request file`, or `geectl request file-change-devel`), one from a `home:` branch whose
 package links to a project other than the target (a link within the branch's own project
 passes), or one whose message
 has over 160 characters of prose (every line but a `- ` list item), a list line over 100
 characters or over 1000 in all, a work note for the user (build, sweep, gate or review
-status, the session's tools) or nothing but "Forward … to Factory" (read from `-m`, `-F`, stdin, a variable or an
+status, the session's tools) or nothing but "Forward … to Factory" (read from `--description` and `--changes-entry`, stdin, a variable or an
 `echo`/`printf`/`cat` substitution; one it cannot read is refused), opening a PR on any
 repository whose title or description breaks the same rules (`tea pulls create`,
 `git-obs pr create`; the title is the headline), or writing into a
-`*:Update` or `*:Maintenance:*` project outside `home:` (a commit, an `osc api` write or
-another direct write such as `branch`, `copypac`, `rdelete`, `repo add` or a `meta` write)
+`*:Update` or `*:Maintenance:*` project outside `home:` (a commit, or
+another direct write such as `branch copy-package`, `branch link-package`, `remote delete-package` or a meta write)
 or one it cannot place, running a `.sh` file with Python or a `.py` file with a shell, or
 fixed `sleep`s adding up to a minute or more in the call's own commands — not in the
 Monitor tool, a background call or a script the call runs (wait with `obs-wait.py` or
 `build-wait.sh`, `--no-summary` for a job other than a build; a loop's body counts once, the arms of an `if` or `case` and sleeps sent
 to the background with `&` are added up, and a shell function's body, `$((…))`,
 `time.sleep` and `watch -n` are not judged).
-A `-h`/`--help` call of `tea`, `git-obs`, `git`, `osc` or `gh` is not
+A `-h`/`--help` call of `tea`, `git-obs`, `git`, `geectl` or `gh` is not
 judged, and a refusal redacts the credentials it would echo (URL userinfo,
 `Authorization`/`Bearer` values, `token=`).
 
@@ -513,18 +504,18 @@ to opencode's prompt, so both refuse the call with the guard's reason ("How a re
 travels"): the agent reports it as waiting for your go, which you give in a Claude Code
 session. It asks before:
 
-- **a comment or review on OBS or src.opensuse.org**: `osc comment create` or `delete`, `tea
+- **a comment or review on OBS or src.opensuse.org**: `geectl request add-comment`, `tea
   comment`, `tea pulls approve`/`reject`/`review`/`reply`, `git-obs pr comment`, `git-obs pr
   review decline`, a close that carries a comment (`git-obs pr close|reopen -m`), and a
-  write through `osc api`, `tea api` or `git-obs api` to `…/comments` or `…/reviews`; a `tea
+  write through `tea api` or `git-obs api` to `…/comments` or `…/reviews`; a `tea
   comment` with no subcommand and no body, which tea still posts, also names the read
   (`tea comments list`). A comment on an OBS request you filed (a reply to its reviewers)
-  runs (`osc comment create request N`, or the API's `/comments/request/N`), and so does a
+  runs (`geectl request add-comment --body TEXT N`, or the API's `/comments/request/N`), and so does a
   `tea comment` (or a `tea api` POST to `repos/<owner>/<repo>/issues/<n>/comments`) on a
   src.opensuse.org issue or PR you opened. On a contributor's request whose every target
   package you maintain (a person entry, not a group), or a contributor's issue or PR in a
   repository you maintain (listed for it, or for its project when its own entry is empty, in
-  `<owner>/_ObsPrj`'s `_maintainership.json`), only `osc comment create -c` or a plain `tea
+  `<owner>/_ObsPrj`'s `_maintainership.json`), only `geectl request add-comment --body TEXT N` or a plain `tea
   comment` whose one text has the sha256 its incoming review's stamp recorded runs: a
   `$(cat FILE)` substitution is read now, and tea's text is one inline line or a lone
   `"$(cat FILE)"` word after the index, where bash neither splits nor globs what it reads.
@@ -538,14 +529,13 @@ session. It asks before:
   alone in the call with nothing for the shell to expand outside quotes; anything else
   asks, because tea's own remote and login choice can point elsewhere. GitHub (`gh`) is not
   judged, so reviews on your own GitHub projects run;
-- **a decline, and an accept or a forward that is not ELIGIBLE**: every `osc request`
-  (also `rq` and `review`) `decline` and `approvenew`; the `accept` and `approve` of a
-  request you filed, an `osc api` `changestate` to accepted or `cmd=approve` of one, and a
+- **a decline, and an accept or a forward that is not ELIGIBLE**: every `geectl request
+  decline`; the `accept` of a request you filed, and a
   submit to `openSUSE:Factory` from a project outside `home:`, unless the package passes the
   guard's own copy of `autoforward-gate.sh`'s test (only submit actions; no reviewer on
   package or project; you maintain the package, or it has no maintainer and you maintain the
   project; Factory develops it there or links it there). A package a group maintains is
-  someone else's. The account is `PR_GUARD_OBS_USER`, else `osc whois`;
+  someone else's. The account is `PR_GUARD_OBS_USER`, else the login geectl authenticates as;
 - **a contributor's accept or approval with a review** (`[incoming-accept]`,
   `[incoming-approve]`): an accept of a request someone else filed, or `git-obs pr review
   approve --commit SHA` of someone else's devel PR, asks only when it is one plain submit
@@ -560,23 +550,22 @@ session. It asks before:
   `_link` and what OBS adds to a package it syncs from git aside), the ask names the item
   and says its follow-up fix is not in devel yet: you may decide none is needed. A stamp
   directory, a stamp or a lookup it cannot read refuses instead;
-- **closing or forcing a request or PR someone else filed** (`[others-request]`): an `osc
-  request` `revoke`, `supersede`, `reopen` or `wipe`, an `osc sr`/`creq`/`mr` with `-s ID`,
-  an `accept` with `--force` or `--or-revoke`, the API's `newstate=revoked|superseded|new|
-  review|deleted` (or `force` on an accept; in the query or a `-d` body, `&` or `;` between
-  the parameters); a `tea pulls` or `tea issues` `close`, `reopen` or `edit` (the issues
+- **closing or forcing a request or PR someone else filed** (`[others-request]`): a `geectl
+  request` `revoke` or `supersede`, a `geectl request refile` or `refile-maintenance-incident`
+  with `--supersede ID`, a `geectl request supersede OLD_ID NEW_ID`, or an `accept` with
+  `--force`; a `tea pulls` or `tea issues` `close`, `reopen` or `edit` (the issues
   endpoint takes a PR's number too), a `git-obs pr close` or `reopen`, or a Gitea API
   write to a PR someone else opened. Each acts on their work as a decline does; your own
   run;
-- **a delete of several osc checkouts at once**: your own recursive `rm` or `find …
+- **a delete of several working copies at once**: your own recursive `rm` or `find …
   -delete` (with no name test) that removes two or more package checkouts, as a project
   checkout of several packages or a scratch directory of them; one checkout per `rm`
-  passes (`osc co PRJ PKG` is one), and so do separate `rm` commands in one call;
-- **a commit of a tree `gate.sh` did not judge**: an `osc commit` whose files (as osc
+  passes (`geectl checkout PRJ PKG` is one), and so do separate `rm` commands in one call;
+- **a commit of a tree `gate.sh` did not judge**: a `geectl commit` whose files (as geectl
   commits them, `_link` and `_service:*` aside) match no GREEN stamp of `gate.sh`, or of a
   whole project checkout. Run `gate.sh`, then commit in the next call: a call that runs
   both is judged before the gate writes its stamp, and refused;
-- **a request without a reviewed and built tree**: an `osc sr`, `submitpac` or `osc creq -a submit`
+- **a request without a reviewed and built tree**: a `geectl request file`, `file-change-devel` or `file-maintenance-incident`
   whose source files (one expanded-listing lookup) match no stamp that is GREEN and holds
   the change review's PASS (`gate.sh DIR --review FILE`) and a GREEN build of that tree
   (`gate.sh --build-log`, or `gate.sh DIR --obs-build` once OBS built the commit). A forward
@@ -593,10 +582,9 @@ session. It asks before:
 
 A contributor's review is refused, not asked, outside its agent (`[incoming-self]`):
 `incoming-review.sh --record` runs only when the event names the agent `incoming-review`,
-and that agent may not parse, build or service-run the submission (the rpm tools, `osc
-build`, `osc service`, `osc co`/`up` with the services, `osc commit`, which runs the local
-ones, `gate.sh`, `target-gate.sh` and the other scripts that do), nor accept, approve,
-comment or decline. Any shell text of that agent (its command, a script it runs, an `eval`
+and that agent may not parse, build or service-run the submission (the rpm tools, `geectl
+local-build build`, `geectl local-build service-run`, `geectl checkout`/`update` with the services, `gate.sh`, `target-gate.sh` and the
+other scripts that do), nor accept, approve, comment or decline. Any shell text of that agent (its command, a script it runs, an `eval`
 or `trap` string), as written, with its quotes dropped or brace-expanded, that names `PATH`
 as a word or a variable, `BASH_ENV`, `ENV=`, `PS4` (`bash -x` runs its substitutions), the
 `hash` builtin, a nameref (`declare -n`, `local -n`, `typeset -n`), allexport, an
@@ -607,12 +595,12 @@ match one by one. So is a command of that agent that
 sets a variable by a name it does not write out (`export "$x=…"`, `printf -v "$x"`, `read
 "$x"`, `declare "${x}=…"`, `env "$x=…"`, `mapfile`, `let`), whose command word only the
 shell knows (`$x -p …`), or that sources a file (`source`, `.`). A search for such a word
-takes its pattern from a file (`grep -f FILE`). On opencode 1.x no review of a
-contributor's submission records.
+takes its pattern from a file (`grep -f FILE`). On opencode 1.x no review of
+a contributor's submission records.
 
 A commit is refused (`[gate-sequence]`), stamped or not, when the call writes into its
 checkout before it (a redirection there, read through symlinks, `sed`, `sort -o`, `cp`,
-`osc add`, an editor, a script, an interpreter, or any of them in a loop around the
+`geectl add`, an editor, a script, an interpreter, or any of them in a loop around the
 commit, in its pipeline or while it runs in the background, but not a directory or file
 made outside it); a request is refused after a write that can change what OBS holds — a
 commit, a script, a write into a checkout — though not for its own log: the agent
@@ -623,22 +611,20 @@ as are `eval`, `trap` and `bash -c` named through a variable, and a trap's comma
 counts as running last. A call with any `&` or `coproc` in it counts every write as
 running before its commits.
 A lookup there that fails or runs past the budget asks too; the lookups go to the
-instance `osc -A` names, in one process through osc's library (one `osc api` each where
-the hook's `python3` cannot import it), and the account comes from `osc whois`, once per
+instance the call names, and the account is the login geectl authenticates as, once per
 call and in memory only. The stamp checks are a speed
 bump against committing past a red gate, not a lock: a stamp written by hand is refused,
 but one written past the guard's parsing (program code that spells the path in other
-pieces) is not caught, and program code that runs osc itself (`python3 -c`) is not asked.
+pieces) is not caught, and program code that runs geectl itself (`python3 -c`) is not asked.
 
 On the agent's own commands (not the scripts or program code they run) it also refuses
-reading a credential file — tea's, osc's, gh's, netrc, git's credential stores, osc's
-cookie jar, an MCP server's `api-key`, an SSH private key (`~/.ssh/id_*`, not its `.pub`) — other than by `ls`, `stat` or `test` or a grep for
+reading a credential file — tea's, geectl's, gh's, netrc, git's credential stores,
+an MCP server's `api-key`, an SSH private key (`~/.ssh/id_*`, not its `.pub`) — other than by `ls`, `stat` or `test` or a grep for
 one `build-*` setting; setting or running an askpass program; the tools' own secret
 printers (`gh auth` token/status/git-credential, `tea login` helper/edit, `git-obs login
-list`, git's credential `fill`/`get`, `secret-tool` lookup/search, osc's `--dump-full`,
-HTTP debugging, `token` and `config … pass`); a credential on the command line of `curl`,
+list`, git's credential `fill`/`get`, `secret-tool` lookup/search, `geectl remote create-token`); a credential on the command line of `curl`,
 `wget`, HTTPie, `tea api`, `git-obs api` or git; and `curl`, `wget` or HTTPie calls to the
-OBS or Gitea API, which `osc api` and `git-obs -G src.opensuse.org api` make with their own
+OBS or Gitea API, which geectl's typed leaves and `git-obs -G src.opensuse.org api` make with their own
 logins. This backs the snippets' deny patterns above with the guard's parsing: a path is
 resolved through the call's cwd, values, brace expansions, globs and symlinks, and a tool
 through its wrappers (`xargs -a` and GNU `parallel` inputs included), variables and
@@ -729,15 +715,15 @@ checkout's scripts unread once they match `origin/main`. Until the merge, that i
 
 The prefilter matches any path, `~`, `..`, a variable or substitution anywhere (`$X`,
 `$(…)`, backquotes, `$'…'`), `cd`, `rm`, `find`, `-delete`, `tea`, `git-obs` or `obs`, `src.opensuse.org`, `push`,
-`send-pack`, `target-gate`, `osc`, a shell or interpreter, `. FILE`, and for the credential
+`send-pack`, `target-gate`, `geectl`, a shell or interpreter, `. FILE`, and for the credential
 rules `gh`, `credential`, `secret-tool`,
-`netrc`, `oscrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each
-also read with its quotes and backslashes dropped (`o''sc`): a file a command runs is where
+`netrc`, askpass, `Authorization`, `curl`, `wget`, `http`/`https` and `xh`, each
+also read with its quotes and backslashes dropped (`g''eectl`): a file a command runs is where
 a POST hides. A command named by a variable is judged as the tool its value names; one
-only the shell knows as every guarded tool, and as osc only when the variable is named for
+only the shell knows as every guarded tool, and as geectl only when the variable is named for
 it. A call whose working directory is inside a `target-gate` directory, the state
 directory `~/.local/state/opensuse-packaging`, a directory of credential files (tea's,
-osc's, gh's, an MCP server's, osc's state), or one above them (the home directory,
+geectl's, gh's, an MCP server's), or one above them (the home directory,
 `~/.config`, `/`), is judged too. The prefilter may only skip a call the
 rules would let through: the suite checks that over every fixture event. The
 rest of the command line decides nothing.
@@ -789,8 +775,7 @@ copied, moved, linked or unpacked into `~/.local` or `~/.local/state`, or, as an
 a tree named `.local`, into `~`, counts too, and so does program text that joins `state`
 and `opensuse-packaging`, or `opensuse-packaging` and `gate` or `incoming`, in any pieces.
 It fails closed: in a call, or a script it runs, whose text names the directory by any
-piece (the leaf, `$XDG_STATE_HOME…opensuse-packaging`, `gate/obs/`; osc's state beside it
-is none), any write it cannot place is refused (`xargs`,
+piece (the leaf, `$XDG_STATE_HOME…opensuse-packaging`, `gate/obs/`), any write it cannot place is refused (`xargs`,
 `bash -c`, an interpreter, `bwrap`, `unshare`, an array or `${…}` operator, `/proc/self/cwd`,
 `/dev/fd`, a path through what the call made, a relative `cd` under `CDPATH`). Reads pass,
 copies out of it too (`cat STAMP > /var/tmp/x`, `cp STAMP /var/tmp/x`, `diff`, `test`).
@@ -846,7 +831,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   call whose input it cannot read.
 - Neither plugin hands a guard ask to opencode's own prompt, so it reaches the model as a
   refusal: on the agent's own commit or request it names a missing step to take before
-  retrying, the agent never hands the user an osc, tea or git-obs command, and one that
+  retrying, the agent never hands the user a geectl, tea or git-obs command, and one that
   persists is reported as a blocker (someone else's item: as waiting for the user's go, in
   a Claude Code session). opencode 2.2.7's plugins can raise that prompt
   (`permission.assert`), but an agent that reads the server's password from
@@ -872,8 +857,8 @@ create must be refused too, the `AI/zzz` create must run, and so must
 - After a `cd` to a variable the call did not set, or to a `$(...)`, the working
   directory is unknown (values the call set, a loop's words and globs are followed; a
   variable a loop reassigns holds all its values; `read`, `mapfile`, `printf -v` and
-  `declare -n` leave it unknown): a push, an unnamed `tea` or `git-obs` call, an
-  `osc commit`, or a script run by relative path is refused.
+  `declare -n` leave it unknown): a push, an unnamed `tea` or `git-obs` call, a
+  `geectl commit`, or a script run by relative path is refused.
 - A heredoc written into a file is not read when it is written; only the Write and
   Edit tools' content is. The file is read by a later call that runs it; the call that
   writes it cannot run it (`exec-written`).
@@ -890,7 +875,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   any depth is refused (`echo B | xargs git push fork`).
 - A script whose shebang is `env -S` and whose name has no `.sh` is read as program
   code, so its shell pushes are not parsed.
-- A `PATH` shim for `osc` or the build tools, set up in an earlier call, is used by the
+- A `PATH` shim for `geectl` or the build tools, set up in an earlier call, is used by the
   skill's scripts.
 - In a script the guard reads, a helper it calls by a computed path (`$HERE/b.sh`,
   `$(dirname "$0")/b.sh`) is not read. A local module run with `python3 -m`, or one a
@@ -955,7 +940,7 @@ create must be refused too, the `AI/zzz` create must run, and so must
   comes from a config file (`-K`, `--next`, a wgetrc) is not seen.
 - Indirection the asks do not follow: a command word only the shell knows (`$(…)`, a
   variable the call does not set, `${!name}`, an alias) asks only when its arguments start
-  a judged tool or a runner (`$T osc …`, `$(echo eval) 'osc …'`); an `eval` or `trap`
+  a judged tool or a runner (`$T geectl …`, `$(echo eval) 'geectl …'`); an `eval` or `trap`
   string read from a file asks rather than being judged; and program code that runs the
   tools itself (`python3 -c`, a compiled helper) is not asked.
 - Braces are expanded in every word of a command that may read, quoted ones too (the parser
@@ -965,18 +950,18 @@ create must be refused too, the `AI/zzz` create must run, and so must
   (`python3 -c`, a heredoc fed to Python) and Write/Edit content are not scanned for
   them, and the Read tool is left to the snippets. Nor are a credential file named by a
   variable the call does not set, one read where the guard cannot place the directory
-  (but for `oscrc` and `cookiejar`), words `xargs` reads from stdin, an API URL passed
+  (but for the geectl config), words `xargs` reads from stdin, an API URL passed
   through a shell function's arguments.
 - A script that runs its own arguments (`"$@"`) is not followed, and `"$@"` or an array
   in a script's command position is its arguments, not judged; on the call's own command
   line an unknown one is refused.
-- Request messages are measured on osc command lines only: not in program code running
-  osc, and not in PR descriptions (`tea`, `git-obs`). A message another program writes, a
+- Request messages are measured on `geectl request file` command lines only: not in program code running
+  geectl, and not in PR descriptions (`tea`, `git-obs`). A message another program writes, a
   printf width or reused format, or a brace expansion is refused as unknown.
-- The maintenance rule reads osc command lines only, not program code running osc, and
-  covers the direct writes it names, not every osc subcommand that writes: `rebuild`,
-  `restartbuild`/`abortbuild`, `service remoterun` and `meta prjconf`/`attribute`/`pattern`
-  are among those it does not judge.
+- The maintenance rule reads geectl command lines only, not program code running geectl,
+  and covers the direct writes it names. It does not judge `geectl build rebuild-package`,
+  `restart-build` or `abort-build`, and there is no geectl leaf for a service
+  remoterun or a prjconf/attribute/pattern write, so those have nothing to judge.
 
 ### Known limits of the contributor-review rules
 
@@ -1021,8 +1006,8 @@ it and no other affected stream you can submit to lags (the agent checks that; t
 does not look at streams). That one write runs without a prompt; every other bugzilla write still asks. A
 sub-agent reads bug comments that anyone can write, so the unprompted write is tied to
 something only you can create: `bug-guard.py` allows an `assign_bug` only when the assignee
-is `security-team@suse.de` and its comment cites exactly one request that `osc whois`
-created, that submits only to `openSUSE:Factory`, that factory-auto has accepted, and whose
+is `security-team@suse.de` and its comment cites exactly one request that you filed,
+that submits only to `openSUSE:Factory`, that factory-auto has accepted, and whose
 `.changes` files add a line naming the bug (`boo#`, `bsc#` or `bnc#`). It answers `ask` for
 anything else and for any lookup it cannot complete, and gives no answer for the read tools,
 which the allow rules below decide. Details: the skill's `scripts/README.md` "`bug-guard.py`".

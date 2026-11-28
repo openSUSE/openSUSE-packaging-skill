@@ -15,10 +15,9 @@
     // Absolute or ~ directory globs, checked when a tool (read, grep, glob) reaches
     // outside the project directory, and for a directory the shell scanner infers
     // from a command (cd).
-    { "action": "external_directory", "resource": "~/.config/osc/*", "effect": "deny" },
+    { "action": "external_directory", "resource": "~/.config/geectl/*", "effect": "deny" },
     { "action": "external_directory", "resource": "~/.config/tea/*", "effect": "deny" },
     { "action": "external_directory", "resource": "~/.config/gh/*", "effect": "deny" },
-    { "action": "external_directory", "resource": "~/.local/state/osc/*", "effect": "deny" },
     { "action": "external_directory", "resource": "~/.config/mcp-bugzilla/*", "effect": "deny" },
 
     // Matched against each simple command the scanner cuts out of a shell call,
@@ -53,11 +52,10 @@
     { "action": "shell", "resource": "*src.opensuse.org*/pulls/*/merge*", "effect": "deny" },
     { "action": "shell", "resource": "*repos/pool/*/pulls/*/merge*", "effect": "deny" },
 
-    // Tool discipline (references/osc-usage.md "Tool discipline"): the
-    // credentials stay inside osc/tea/git-obs, nothing prints them, and OBS
+    // Tool discipline (references/geectl-usage.md "Tool discipline"): the
+    // credentials stay inside geectl/tea/git-obs, nothing prints them, and OBS
     // and the Gitea API are reached only through them.
-    { "action": "shell", "resource": "*.config/osc*", "effect": "deny" },
-    { "action": "shell", "resource": "*oscrc*", "effect": "deny" },
+    { "action": "shell", "resource": "*.config/geectl*", "effect": "deny" },
     { "action": "shell", "resource": "*.config/tea*", "effect": "deny" },
     { "action": "shell", "resource": "*gh/hosts.yml*", "effect": "deny" },
     { "action": "shell", "resource": "*.config/gh/*", "effect": "deny" },
@@ -86,26 +84,14 @@
     { "action": "shell", "resource": "*logins git-credential*", "effect": "deny" },
     { "action": "shell", "resource": "tea login e*", "effect": "deny" },
     { "action": "shell", "resource": "tea logins e*", "effect": "deny" },
-    { "action": "shell", "resource": "osc *--dump-*", "effect": "deny" },
-    { "action": "shell", "resource": "*--http-d*", "effect": "deny" },
-    { "action": "shell", "resource": "*--http-f*", "effect": "deny" },
-    { "action": "shell", "resource": "*http_debug*", "effect": "deny" },
-    { "action": "shell", "resource": "*http_full_debug*", "effect": "deny" },
-    { "action": "shell", "resource": "*HTTP_DEBUG*", "effect": "deny" },
-    { "action": "shell", "resource": "*HTTP_FULL_DEBUG*", "effect": "deny" },
-    { "action": "shell", "resource": "osc -H*", "effect": "deny" },
-    { "action": "shell", "resource": "osc * -H*", "effect": "deny" },
-    { "action": "shell", "resource": "osc -*H *", "effect": "deny" },
-    { "action": "shell", "resource": "osc token*", "effect": "deny" },
-    { "action": "shell", "resource": "osc config * pass*", "effect": "deny" },
-    { "action": "shell", "resource": "osc *api*/person/*/token*", "effect": "deny" },
+    { "action": "shell", "resource": "geectl *remote create-token*", "effect": "deny" },
+    { "action": "shell", "resource": "*GEECTL_OBS_*", "effect": "deny" },
+    { "action": "shell", "resource": "*GEECTL_GITEA_*", "effect": "deny" },
     { "action": "shell", "resource": "*credential fill*", "effect": "deny" },
     { "action": "shell", "resource": "*secret-tool lookup*", "effect": "deny" },
     { "action": "shell", "resource": "*secret-tool search*", "effect": "deny" },
     { "action": "shell", "resource": "*git credential-* get*", "effect": "deny" },
     { "action": "shell", "resource": "*git-credential-* get *", "effect": "deny" },
-    { "action": "shell", "resource": "*osc/cookiejar*", "effect": "deny" },
-    { "action": "shell", "resource": "*.local/state/osc*", "effect": "deny" },
     { "action": "shell", "resource": "*.config/mcp-bugzilla*", "effect": "deny" },
     { "action": "shell", "resource": "*GIT_ASKPASS=*", "effect": "deny" },
     { "action": "shell", "resource": "*SSH_ASKPASS=*", "effect": "deny" },
@@ -116,15 +102,11 @@
     { "action": "shell", "resource": "curl *src.opensuse.org/api*", "effect": "deny" },
 
     // A Factory request comes from the registered devel project.
-    { "action": "shell", "resource": "osc sr *--nodevelproject*", "effect": "deny" },
-    { "action": "shell", "resource": "osc submitreq *--nodevelproject*", "effect": "deny" },
-    { "action": "shell", "resource": "osc submitrequest *--nodevelproject*", "effect": "deny" },
-    { "action": "shell", "resource": "osc submitpac *--nodevelproject*", "effect": "deny" },
-    { "action": "shell", "resource": "osc creq *--nodevelproject*", "effect": "deny" },
-    { "action": "shell", "resource": "osc createrequest *--nodevelproject*", "effect": "deny" },
+    { "action": "shell", "resource": "geectl request file *--target-project*openSUSE:Factory*", "effect": "deny" },
+    { "action": "shell", "resource": "geectl request refile *--target-project*openSUSE:Factory*", "effect": "deny" },
 
-    // An agent never runs sudo: osc runs its own, and build roots are entered with
-    // osc chroot and removed with osc wipe.
+    // An agent never runs sudo: build roots are entered with geectl local-build
+    // chroot and removed with geectl local-build wipe.
     { "action": "shell", "resource": "sudo *", "effect": "deny" },
 
     // The read tool matches the path relative to the session's directory when it lies
@@ -136,14 +118,12 @@
     { "action": "read", "resource": "*.env", "effect": "deny" },
     { "action": "read", "resource": "*.env.*", "effect": "deny" },
     { "action": "read", "resource": "*.env.example", "effect": "allow" },
-    { "action": "read", "resource": "*.config/osc/*", "effect": "deny" },
-    { "action": "read", "resource": "*oscrc*", "effect": "deny" },
+    { "action": "read", "resource": "*.config/geectl/*", "effect": "deny" },
     { "action": "read", "resource": "*.config/tea/*", "effect": "deny" },
     { "action": "read", "resource": "*.config/gh/hosts.yml", "effect": "deny" },
     { "action": "read", "resource": "*.netrc", "effect": "deny" },
     { "action": "read", "resource": "*.git-credentials", "effect": "deny" },
     { "action": "read", "resource": "*.config/git/credentials", "effect": "deny" },
-    { "action": "read", "resource": "*.local/state/osc/*", "effect": "deny" },
     { "action": "read", "resource": "*.config/mcp-bugzilla/*", "effect": "deny" },
 
     // 2.x only. The edit action covers the write, edit and patch tools, and patch never

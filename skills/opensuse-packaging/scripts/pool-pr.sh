@@ -16,8 +16,10 @@
 # else's open PR on the base (no double-filing), two of yours, and a head
 # branch that already heads a PR to another base (one head branch, one base).
 #
-# Requires: a git-obs login for src.opensuse.org and an SSH key there (git-obs
-# and ssh read their own credentials: this script reads none), git-lfs.
+# Requires: geectl for the open-PR listing, the user lookup and the fork,
+# a git-obs login for src.opensuse.org (the PR create/update: the
+# pull-request surface has no create leaf) and an SSH key there (geectl,
+# git-obs and ssh read their own credentials: this script reads none), git-lfs.
 #
 # Usage: pool-pr.sh DIR [--title T] [--body-file F] [--replace]
 #   --title      PR title (default: HEAD's commit subject)
@@ -84,34 +86,35 @@ oids=$(printf '%s\n' "$lfs" | awk 'NF {print $1}')
 
 tmpd=$(mktemp -d -p "${TMPDIR:-/var/tmp}" pool-pr.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$tmpd"' EXIT
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
-gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
+# The forge user, through geectl: the token owner of the configured Gitea
+# instance. The PR filing below stays on git-obs: pull-request submit
+# needs a fork checkout, not a pool clone. gapi reads its own login (-G:
+# the default one may be another forge's) and exits non-zero on an HTTP error.
+gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed -e '1{' -e '/^Response:$/d' -e '}'; }
 gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
-  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr) — nothing pushed" >&2; exit 6; }
+user=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/gerr" | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { echo "could not read your src.opensuse.org user through geectl: $(gerr) — nothing pushed" >&2; exit 6; }
 
-# Every page: a head-branch clash or a PR on page 2 must not read as "none".
+# The open PRs, as one list from the unified pull-request surface: geectl
+# pages the forge's list itself (bounded at 500), so one call reads them all.
+# A head-branch clash or a PR late in the list must not read as "none".
 api="/repos/pool/$pkg"
-page=1
-while :; do
-  [ "$page" -le 20 ] || { echo "open-PR list for pool/$pkg does not end — nothing pushed" >&2; exit 6; }
-  gapi "$api/pulls?state=open&limit=50&page=$page" > "$tmpd/pulls.$page" \
-    || { echo "could not list open PRs on pool/$pkg: $(gerr) — nothing pushed" >&2; exit 6; }
-  n=$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, list); print(len(d))' "$tmpd/pulls.$page" 2>/dev/null) \
-    || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate; nothing pushed" >&2; exit 6; }
-  [ "$n" = 0 ] && break
-  page=$((page + 1))
-done
+prs=$(geectl --format json pull-request search --backend gitea --repo "pool/$pkg" --state open 2>"$tmpd/perr") \
+  || { err=$(tail -1 "$tmpd/perr" 2>/dev/null); echo "could not list open PRs on pool/$pkg: ${err:-no usable answer} — nothing pushed" >&2; exit 6; }
+# The list lives in a file: a heredoc script cannot also read piped stdin.
+printf '%s' "$prs" > "$tmpd/prs.json"
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, dict) and isinstance(d.get("pull_requests"), list)' "$tmpd/prs.json" 2>/dev/null \
+  || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate; nothing pushed" >&2; exit 6; }
 
 # Prints mode, PR number, head branch, head repo, PR url, head commit, one per
 # line; exit 3 = refused.
-plan=$(python3 -I - "$user" "$base" "$base-${sha:0:12}" "$tmpd"/pulls.* <<'EOF'
+plan=$(python3 -I - "$tmpd/prs.json" "$user" "$base" "$base-${sha:0:12}" <<'EOF'
 import json
+import re
 import sys
 
-user, base, fresh = sys.argv[1].lower(), sys.argv[2], sys.argv[3]
-prs = [p for f in sys.argv[4:] for p in json.load(open(f))]
+prs = json.load(open(sys.argv[1]))["pull_requests"]
+user, base, fresh = sys.argv[2].lower(), sys.argv[3], sys.argv[4]
 
 
 def g(p, *keys):
@@ -120,43 +123,75 @@ def g(p, *keys):
     return p or ""
 
 
+def num(p):
+    # The handle: gitea:pool/<pkg>#<n>; anything else is not a list entry.
+    ref = p.get("reference") if isinstance(p, dict) else None
+    m = re.fullmatch(r"gitea:[^/]+/[^#]+#(\d+)", ref or "")
+    if not m:
+        raise ValueError("bad reference %r" % (ref,))
+    return int(m.group(1))
+
+
 def refuse(msg):
     print("REFUSING: " + msg, file=sys.stderr)
     sys.exit(3)
 
 
+def owner(p):
+    return (g(p, "source", "repository") or "/").split("/")[0]
+
+
 def mine(p):
-    return g(p, "head", "repo", "owner", "login").lower() == user
+    return owner(p).lower() == user
 
 
-on_base = [p for p in prs if g(p, "base", "ref") == base]
+def url(p):
+    ref = p.get("reference") if isinstance(p, dict) else ""
+    repo = (ref.split(":", 1)[1].rsplit("#", 1)[0] if ":" in ref else "")
+    return "https://src.opensuse.org/%s/pulls/%s" % (repo, num(p))
+
+
+for p in prs:
+    # Every entry must carry the fields the plan reads, or the list is not
+    # one this script can rule a duplicate out from.
+    if (
+        not isinstance(p, dict)
+        or not isinstance(p.get("source"), dict)
+        or not isinstance(p.get("target"), dict)
+        or not isinstance(g(p, "source", "repository"), str)
+        or not isinstance(g(p, "source", "branch"), str)
+        or not isinstance(g(p, "target", "branch"), str)
+    ):
+        raise ValueError("bad entry %r" % (p,))
+    num(p)
+on_base = [p for p in prs if g(p, "target", "branch") == base]
 own = [p for p in on_base if mine(p)]
 if len(own) > 1:
-    nums = ", ".join("#%s" % p.get("number") for p in own)
+    nums = ", ".join("#%s" % num(p) for p in own)
     refuse("open PRs of yours on %s: %s — close the extras by hand" % (base, nums))
 if own:
     pr, mode = own[0], "update"
-    head = g(pr, "head", "ref")
+    head = g(pr, "source", "branch")
 elif on_base:
     pr = on_base[0]
-    who = g(pr, "head", "repo", "owner", "login") or g(pr, "user", "login") or "?"
+    who = owner(pr) or g(pr, "author") or "?"
     refuse(
         "an open PR by %s already targets %s: %s — not double-filing"
-        % (who, base, g(pr, "html_url"))
+        % (who, base, url(pr))
     )
 else:
     pr, mode, head = {}, "new", fresh
 for q in prs:
-    if mine(q) and g(q, "head", "ref") == head and g(q, "base", "ref") != base:
+    if mine(q) and g(q, "source", "branch") == head and g(q, "target", "branch") != base:
         refuse(
             "head branch %s already heads PR #%s to %s — one head branch per base"
-            % (head, q.get("number"), g(q, "base", "ref"))
+            % (head, num(q), g(q, "target", "branch"))
         )
-for field in (mode, pr.get("number") or "", head):
+for field in (mode, num(pr) if pr else "", head):
     print(field)
-print(g(pr, "head", "repo", "full_name"))
-print(g(pr, "html_url"))
-print(g(pr, "head", "sha"))
+print(g(pr, "source", "repository"))
+print(url(pr) if pr else "")
+print(g(pr, "source", "commit"))
 EOF
 ); rc=$?
 [ "$rc" = 3 ] && exit 2
@@ -174,9 +209,10 @@ else
 fi
 
 if [ "$mode" = new ]; then
-  # An existing fork is no error to git-obs; a failure shows, the push decides.
-  forkerr=$(timeout 60 git-obs -G src.opensuse.org -q repo fork "pool/$pkg" 2>&1 >/dev/null) \
-    || echo "git-obs repo fork failed: $(tail -1 <<<"$forkerr")" >&2
+  # An existing fork is no error: repo-fork returns the existing fork
+  # instead of failing. A failure shows, the push decides.
+  forkerr=$(timeout 60 geectl gitea repo-fork pool "$pkg" --live 2>&1 >/dev/null) \
+    || echo "geectl gitea repo-fork failed: $(tail -1 <<<"$forkerr")" >&2
   hrepo="$user/$pkg"
 else
   # The PR's own head repo: pushing anywhere else leaves the PR on its old tree.
@@ -203,7 +239,7 @@ fi
 pushopt=""; [ "$mode" = update ] && pushopt="--force"
 # shellcheck disable=SC2086  # empty $pushopt must expand to no argument
 git -C "$dir" push -q --no-verify $pushopt fork "$sha:refs/heads/$head" \
-  || { echo "push to $hrepo:$head failed (does the fork exist? see the git-obs output above)" >&2; exit 6; }
+  || { echo "push to $hrepo:$head failed (does the fork exist? see the repo-fork output above)" >&2; exit 6; }
 
 [ -n "$title" ] || title=$(git -C "$dir" log -1 --format=%s "$sha")
 if [ -n "$bodyfile" ]; then body=$(cat "$bodyfile"); else body=$(git -C "$dir" log -1 --format=%b "$sha"); fi

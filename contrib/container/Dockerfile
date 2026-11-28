@@ -5,6 +5,25 @@
 FROM opensuse/tumbleweed:latest AS src
 ADD skill.tar /src/
 
+# geectl is not shipped on OBS: download the pinned release tarball and
+# verify it against the release's SHA256SUMS; no toolchain in the image.
+# Pinned to 0.2.3.
+FROM opensuse/tumbleweed:latest AS geectl
+RUN zypper -n in --no-recommends curl tar \
+    && zypper clean -a
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64) asset=geectl-0.2.3-x86_64-unknown-linux-gnu.tar.gz ;; \
+      aarch64) asset=geectl-0.2.3-aarch64-unknown-linux-gnu.tar.gz ;; \
+      *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    cd /tmp; \
+    curl -fsSL -o SHA256SUMS https://github.com/scarabeusiv/geectl/releases/download/v0.2.3/SHA256SUMS; \
+    curl -fsSL -o "$asset" "https://github.com/scarabeusiv/geectl/releases/download/v0.2.3/$asset"; \
+    grep " $asset$" SHA256SUMS | sha256sum -c -; \
+    tar -xzf "$asset" -C /usr/local/bin geectl; \
+    rm -f SHA256SUMS "$asset"
+
 FROM opensuse/tumbleweed:latest
 
 LABEL org.opencontainers.image.title="openSUSE packaging agent"
@@ -12,7 +31,7 @@ LABEL org.opencontainers.image.description="opencode with the openSUSE-packaging
 LABEL org.opencontainers.image.source="https://github.com/openSUSE/openSUSE-packaging-skill"
 
 RUN zypper -n in --no-recommends \
-        opencode osc python3-ruamel.yaml gitea-tea gh bugwarden spec-cleaner \
+        opencode python3-ruamel.yaml gitea-tea gh bugwarden spec-cleaner rpmlint \
         obs-service-source_validator obs-service-download_files obs-service-obs_scm \
         obs-scm-bridge \
         obs-service-tar obs-service-recompress obs-service-set_version \
@@ -32,6 +51,7 @@ COPY --from=src /src/skill/skills/opensuse-packaging/scripts/pr-guard.py \
 COPY --from=src /src/skill/contrib/container/CONTAINER.md /etc/opencode/
 COPY --from=src /src/skill/contrib/container/ssh_known_hosts /etc/ssh/ssh_known_hosts
 COPY --from=src /src/skill/contrib/container/ssh_config /etc/ssh/ssh_config.d/50-src-opensuse.conf
+COPY --from=geectl /usr/local/bin/geectl /usr/local/bin/geectl
 COPY opencode.json /etc/opencode/
 COPY image-check /usr/local/bin/
 
@@ -65,8 +85,9 @@ RUN set -eu; skill=/etc/opencode/skills/opensuse-packaging; \
 RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !/usr/bin/gh auth git-credential\n' >> /etc/gitconfig
 
 # The agent runs as the caller's user: nothing baked here may be writable by it.
-# osc creates trusted-certs before its first request and fails when it cannot.
-RUN mkdir -p /work /home/agent/.config/osc/trusted-certs /home/agent/.config/tea \
+# geectl keeps no state or trusted-certs directory, so nothing of its own needs
+# pre-creating here.
+RUN mkdir -p /work /home/agent/.config/tea \
         /home/agent/.config/mcp-bugzilla /home/agent/.config/opencode \
         /home/agent/.local/share/mcp-memory /home/agent/.config/gh \
         /home/agent/.config/git /home/agent/.ssh \

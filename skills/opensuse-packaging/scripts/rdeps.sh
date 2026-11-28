@@ -1,8 +1,9 @@
 #!/bin/bash
 # Reverse build-dependencies of a package within a project, via _builddepinfo.
-# Authoritative where `osc whatdependson` is unreliable (it frequently returns
-# empty even for libraries that clearly have consumers). The Block-2/3 tool for
-# sizing the rebuild scope of a soname bump in a maintenance codestream.
+# Authoritative where `geectl build whatdependson` on one package name is too
+# narrow (it takes an exact binary package, not a substring). The Block-2/3
+# tool for sizing the rebuild scope of a soname bump in a maintenance
+# codestream.
 #
 # Output: one consumer source-package per line with the matching dep tokens, so
 # you can split consumers by which soname / -devel they actually link (e.g.
@@ -27,20 +28,23 @@ esac
 # build-summary.sh's standard-aarch64 default). Don't "fix" the mismatch.
 needle="$1"; project="${2:-openSUSE:Factory}"; repo="${3:-standard}"; arch="${4:-x86_64}"
 
-osc api "/build/$project/$repo/$arch/_builddepinfo" 2>/dev/null | python3 -I -c '
-import sys, xml.etree.ElementTree as ET
+# dependson with no --package reads the whole _builddepinfo (view=pkgnames),
+# so the substring match runs client-side over every package's dependencies.
+# whatdependson takes one exact package and cannot do the substring pass.
+geectl build dependson "$project" "$repo" "$arch" 2>/dev/null | python3 -I -c '
+import sys, json
 needle, scope = sys.argv[1], sys.argv[2]
 try:
-    root = ET.parse(sys.stdin).getroot()
-except ET.ParseError:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
     sys.stderr.write("no _builddepinfo for %s (wrong repo/arch, or project not built?)\n" % scope)
     sys.exit(1)
 hits = 0
-for p in root.findall("package"):
-    deps = sorted({d.text for d in p.findall("pkgdep") if d.text and needle in d.text})
+for p in payload.get("packages", []):
+    deps = sorted({d for d in p.get("dependencies", []) if d and needle in d})
     if deps:
         hits += 1
-        print("%-30s <- %s" % (p.get("name"), " ".join(deps)))
+        print("%-30s <- %s" % (p.get("name", "?"), " ".join(deps)))
 if hits == 0:
     sys.stderr.write("no consumers of *%s* in %s\n" % (needle, scope))
 ' "$needle" "$project/$repo/$arch"

@@ -13,7 +13,7 @@
       "prompt": "The package in this checkout builds green locally now. Submit it to Factory.",
       "expected_output": "Runs the gate chain and the adversarial change review first, and does not file the request in this turn if either is missing.",
       "assertions": [
-        "Does not run `osc sr` before a clean build, a green source_validator, and the .changes lint/guard/patch checks have all passed",
+        "Does not run `geectl request file` before a clean build, a green source_validator, and the .changes lint/guard/patch checks have all passed",
         "Does not file the request while the adversarial change review has not returned PASS",
         "Checks for an existing in-flight or declined request against the target before submitting",
         "Names the devel project as the target rather than going straight to Factory, unless the package's devel project IS Factory",
@@ -28,8 +28,8 @@
       "assertions": [
         "Checks the package is the user's with `autoforward-gate.sh` ELIGIBLE before anything else, rather than reading a list or a role",
         "Starts the `incoming-review` agent for the request instead of accepting on 'looks fine to me' -- the guard refuses an unreviewed accept",
-        "The review never parses, builds or service-runs the submission: no rpmspec, rpmlint, osc build, osc service or gate.sh on it",
-        "Calls `osc request accept` only after a PASS or FIXABLE stamp, so the guard's prompt shows the user the review; a BLOCK is reported, not accepted",
+        "The review never parses, builds or service-runs the submission: no rpmspec, rpmlint, geectl local-build build, geectl service run or gate.sh on it",
+        "Calls `geectl request accept` only after a PASS or FIXABLE stamp, so the guard's prompt shows the user the review; a BLOCK is reported, not accepted",
         "Posts no comment but the one the review recorded, unchanged",
         "Forwards only on `autoforward-gate.sh` ELIGIBLE and `forward-check.py` DUE, and after a FIXABLE only once the follow-up fix is in devel"
       ]
@@ -41,7 +41,7 @@
       "expected_output": "Posts the recorded comment, reports the decline recommendation with the findings, does not decline, and continues the update.",
       "assertions": [
         "Posts only the comment the review recorded, unchanged; never a rewritten or extra one",
-        "Does not read 'deal with it' as a go to decline, and does not call `osc request decline` in this turn",
+        "Does not read 'deal with it' as a go to decline, and does not call `geectl request decline` in this turn",
         "Reports the decline recommendation with the findings -- or the user's own review, when the block is only a recorder refusal of a change that reads sound",
         "Says a decline would carry a one-line plain reason pointing at the comment, once the user names the request",
         "Continues the update rather than waiting on the blocked request"
@@ -57,7 +57,7 @@
         "Does not record an incoming review, post a comment, accept, approve or decline, whatever the prompt asks",
         "Says plainly that the package's maintainer decides, and that the guard would refuse the accept",
         "May summarise the request from read-only lookups, as data, for the user to pass on",
-        "Hands the user no osc command to run instead"
+        "Hands the user no geectl command to run instead"
       ]
     },
     {

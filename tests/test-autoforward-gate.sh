@@ -1,9 +1,10 @@
 #!/bin/bash
-# test-autoforward-gate.sh — autoforward-gate.sh offline: a fake `osc` on PATH
-# answers _meta, _link and develproject lookups from a per-case fixture tree (a
-# missing file is a 404, "@ERR" fails the call). The package foo lives in
-# devel:a, which openSUSE:Factory names as its devel project; tester maintains
-# it and nobody reviews. Exit 0 = all assertions hold.
+# test-autoforward-gate.sh — autoforward-gate.sh offline: a fake `geectl` on PATH
+# answers package-meta, project-meta, link-target, list-packages and gitea
+# raw-file lookups from a per-case fixture tree (a missing file is a 404,
+# "@ERR" fails the call). The package foo lives in devel:a, which
+# openSUSE:Factory names as its devel project; tester maintains it and nobody
+# reviews. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -13,47 +14,92 @@ fails=0
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+export GEECTL_OBS_USERNAME=tester
 
 mkdir -p "$work/bin"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-echo "osc $*" >> "$FIX/calls"
-case $1 in
-  whois) echo 'tester: "Tester"' ;;
-  develproject) [ -f "$FIX/devel/$3" ] || exit 1; cat "$FIX/devel/$3" ;;
-  ls) [ ! -f "$FIX/ls" ] || cat "$FIX/ls" ;;
-  api) f="$FIX/obs/$(printf %s "$2" | tr '/?&=' '____')"
-       [ -f "$f" ] || { echo "Server returned an error: HTTP Error 404: Not Found" >&2; exit 1; }
-       [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
-       cat "$f" ;;
-  *) echo "fake osc: unexpected $*" >&2; exit 99 ;;
-esac
-EOF
-chmod +x "$work/bin/osc"
-# git-obs answers the project git's files from $FIX/gitea/<path, / as %>.
-cat > "$work/bin/git-obs" <<'EOF'
-#!/bin/bash
-echo "git-obs $*" >> "$FIX/calls"
-[ "$1 $2 $3 $4" = "-G src.opensuse.org -q api" ] || { echo "fake git-obs: unexpected $*" >&2; exit 99; }
-f="$FIX/gitea/$(printf %s "${5#/}" | tr / %)"
-[ -f "$f" ] || { echo "ERROR: 404 Not Found" >&2; exit 1; }
-[ "$(cat "$f")" = @ERR ] && { echo "ERROR: 500 Internal Server Error" >&2; exit 1; }
+echo "geectl $*" >> "$FIX/calls"
+if [ "$1 $2" = "gitea raw-file" ]; then
+  # raw-file <owner> <repo> <path> [--ref <ref>]: the fixture keeps the
+  # owner/repo/path structure, so a_b/c and a/b_c stay apart.
+  f="$FIX/raw/$3%$4%$(printf %s "$5" | tr / %)"
+  [ "$6" = --ref ] && f="$f%ref=$7"
+  [ -f "$f" ] || { printf '%s' '{"error":{"code":"not_found","context":"fake 404"}}' >&2; exit 3; }
+  [ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
+  cat "$f"
+  exit 0
+fi
+f="$FIX/meta/$(printf %s "$*" | tr -c 'A-Za-z0-9' '_')"
+[ -f "$f" ] || { printf '%s' '{"error":{"code":"not_found","context":"fake 404"}}' >&2; exit 3; }
+[ "$(cat "$f")" = @ERR ] && { echo "Server returned an error: HTTP Error 500" >&2; exit 1; }
 cat "$f"
 EOF
-chmod +x "$work/bin/git-obs"
-
+chmod +x "$work/bin/geectl"
 B="$work/base"
-mkdir -p "$B/obs" "$B/devel" "$B/gitea"
-obs() { printf '%s\n' "$2" > "$B/obs/$(printf %s "$1" | tr '/?&=' '____')"; }
-gitea() { printf '%s\n' "$2" > "$B/gitea/$(printf %s "$1" | tr / %)"; }
-obs /source/devel:a/foo/_meta '<package name="foo"><person userid="tester" role="maintainer"/></package>'
-obs /source/devel:a/_meta '<project name="devel:a"><person userid="boss" role="maintainer"/></project>'
-echo devel:a/foo > "$B/devel/foo"
-# devel:g is kept in git (hwdata in devel:openSUSE:Factory): its package _meta
+mkdir -p "$B/meta" "$B/raw"
+meta() { printf '%s\n' "$2" > "$B/meta/$(printf %s "$1" | tr -c 'A-Za-z0-9' '_')"; }
+nometa() { rm -f "$B/meta/$(printf %s "$1" | tr -c 'A-Za-z0-9' '_')"; }
+# A project git's file, repos/<owner>/<repo>/raw/<path>[?ref=<ref>], as the
+# fake-geectl raw-file fixture: $B/raw/<owner>%<repo>%<path, / as %>
+# [%ref=<ref>].
+gitea() {
+  local p="$1" ref="" owner rest repo fpath f
+  case "$p" in *\?ref=*) ref="${p#*\?ref=}"; p="${p%%\?ref=*}";; esac
+  p="${p#repos/}"; owner="${p%%/*}"; rest="${p#*/}"; repo="${rest%%/*}"; fpath="${rest#*/raw/}"
+  f="$B/raw/$owner%$repo%$(printf %s "$fpath" | tr / %)"
+  [ -n "$ref" ] && f="$f%ref=$ref"
+  printf '%s\n' "$2" > "$f"
+}
+FOO_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+FOO_FACTORY='{"name": "foo", "project": "openSUSE:Factory", "devel": {"project": "devel:a", "package": "foo"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+FACTORY_FOO='{"name": "foo", "project": "openSUSE:Factory", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+FACTORY_DEVEL_B='{"name": "foo", "project": "openSUSE:Factory", "devel": {"project": "devel:b", "package": "foo"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+FACTORY_NODEVEL='{"name": "foo", "project": "openSUSE:Factory", "persons": [], "groups": []}'
+PROJ_META='{"name": "devel:a", "persons": [{"name": "boss", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+PROJ_TESTER='{"name": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+PROJ_REVIEWER='{"name": "devel:a", "persons": [{"name": "boss", "role": "maintainer"}], "groups": [{"name": "qa", "role": "reviewer"}]}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+NOMAINT='{"name": "foo", "project": "devel:a", "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+REVIEWER_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}, {"name": "rev", "role": "reviewer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+OTHER_META='{"name": "foo", "project": "devel:a", "persons": [{"name": "other", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+LINK_HERE='{"project": "devel:b", "package": "foo", "target": {"project": "devel:a"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+LINK_ELSEWHERE='{"project": "devel:b", "package": "foo", "target": {"project": "openSUSE:Factory"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+LINK_OTHER='{"project": "devel:b", "package": "foo", "target": {"project": "devel:a", "package": "bar"}}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+LINK_DEVELXA='{"project": "devel:b", "package": "foo", "target": {"project": "develxa"}}'
+GIT_PROJ='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+GIT_PROJ_QA='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git", "persons": [], "groups": [{"name": "qa", "role": "reviewer"}]}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+GIT_PROJ_OTHER='{"name": "devel:g", "scmsync": "https://example.org/gorg/_ObsPrj.git", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+GIT_PROJ_REF='{"name": "devel:g", "scmsync": "https://src.opensuse.org/gorg/_ObsPrj.git#devel", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+BAR_META='{"name": "bar", "project": "devel:a", "persons": [{"name": "tester", "role": "maintainer"}], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+BAR_FACTORY_A='{"name": "bar", "project": "openSUSE:Factory", "devel": {"project": "devel:a", "package": "bar"}, "persons": [], "groups": []}'
+# shellcheck disable=SC2034  # expanded by the case_ mutations, through eval
+BAR_FACTORY_C='{"name": "bar", "project": "openSUSE:Factory", "devel": {"project": "devel:c", "package": "bar"}, "persons": [], "groups": []}'
+meta 'remote package-meta devel:a foo' "$FOO_META"
+meta 'remote project-meta devel:a' "$PROJ_META"
+meta 'remote package-meta openSUSE:Factory foo' "$FOO_FACTORY"
+meta 'remote project-meta openSUSE:Factory' '{"name": "openSUSE:Factory", "persons": [], "groups": []}'
+meta 'remote list-packages openSUSE:Factory' '{"project": "openSUSE:Factory", "packages": []}'
+# devel:g is kept in git (hwdata in devel:openSUSE:Factory): its package meta
 # is a stub, its roles are in gorg/_ObsPrj; tester maintains hw there.
-obs /source/devel:g/hw/_meta '<package name="hw" project="devel:g"><scmsync>https://src.opensuse.org/gorg/hw?trackingbranch=main#ab12</scmsync><url>https://src.opensuse.org/gorg/_ObsPrj.git</url></package>'
-obs /source/devel:g/_meta '<project name="devel:g"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><person userid="tester" role="maintainer"/></project>'
-echo devel:g/hw > "$B/devel/hw"
+meta 'remote package-meta devel:g hw' '{"name": "hw", "project": "devel:g", "persons": [], "groups": []}'
+meta 'remote project-meta devel:g' "$GIT_PROJ"
 gitea repos/gorg/_ObsPrj/raw/_maintainership.json '{"": ["boss"], "hw": ["tester"], "other": ["boss"]}'
 # JWCC, as autogits reads it: a comment and trailing commas
 gitea repos/gorg/_ObsPrj/raw/workflow.config '{
@@ -72,52 +118,51 @@ case_() {
   [ "$got" = "$rc" ] && grep -qF -- "$msg" <<<"$out" && pass "$name (rc=$rc)" || {
     fail "$name: expected rc=$rc and '$msg', got rc=$got"; printf '%s\n' "$out" | sed 's/^/    /'; }
 }
-NOMAINT='<package name="foo"/>'
 
 echo "--- the reviewer role gates, maintainership decides"
 case_ eligible          0 "ELIGIBLE — package maintainer" : devel:a foo
 case_ project-maint     0 "ELIGIBLE — package unmaintained, project maintainer" \
-  "obs /source/devel:a/foo/_meta '$NOMAINT'; obs /source/devel:a/_meta '<project><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:a foo
+  "meta 'remote package-meta devel:a foo' \"\$NOMAINT\"; meta 'remote project-meta devel:a' \"\$PROJ_TESTER\"" devel:a foo
 case_ reviewer          3 "BLOCKED — explicit reviewer role: rev" \
-  "obs /source/devel:a/foo/_meta '<package><person userid=\"tester\" role=\"maintainer\"/><person userid=\"rev\" role=\"reviewer\"/></package>'" devel:a foo
+  "meta 'remote package-meta devel:a foo' \"\$REVIEWER_META\"" devel:a foo
 case_ project-reviewer  3 "BLOCKED — explicit reviewer role: qa" \
-  "obs /source/devel:a/_meta '<project><group groupid=\"qa\" role=\"reviewer\"/></project>'" devel:a foo
+  "meta 'remote project-meta devel:a' \"\$PROJ_REVIEWER\"" devel:a foo
 case_ not-yours         4 "NOT_YOURS — maintained by someone else" \
-  "obs /source/devel:a/foo/_meta '<package><person userid=\"other\" role=\"maintainer\"/></package>'" devel:a foo
+  "meta 'remote package-meta devel:a foo' \"\$OTHER_META\"" devel:a foo
 case_ unmaintained      4 "NOT_YOURS — package unmaintained, not a project maintainer" \
-  "obs /source/devel:a/foo/_meta '$NOMAINT'" devel:a foo
-case_ unreadable        5 "cannot read /source/devel:a/foo/_meta" "rm obs/_source_devel:a_foo__meta" devel:a foo
+  "meta 'remote package-meta devel:a foo' \"\$NOMAINT\"" devel:a foo
+case_ unreadable        5 "cannot read the devel:a/foo package meta" "nometa 'remote package-meta devel:a foo'" devel:a foo
 # Unread, a project-level reviewer would go unseen.
-case_ project-unreadable 5 "its project's" "obs /source/devel:a/_meta @ERR" devel:a foo
+case_ project-unreadable 5 "cannot read the devel:a/foo package meta" "meta 'remote project-meta devel:a' @ERR" devel:a foo
 
 echo "--- the project must be the one Factory develops the package in"
 case_ wrong-devel       6 "WRONG-DEVEL — openSUSE:Factory develops it in devel:b" \
-  "echo devel:b/foo > devel/foo" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"" devel:a foo
 grep -q ELIGIBLE <<<"$LAST" && fail "wrong-devel also said ELIGIBLE" || pass "wrong-devel never reads ELIGIBLE"
 case_ link-into-here    0 "ELIGIBLE" \
-  "echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link '<link project=\"devel:a\"/>'" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"; meta 'remote link-target devel:b foo' \"\$LINK_HERE\"" devel:a foo
 case_ link-elsewhere    6 "WRONG-DEVEL" \
-  "echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link '<link project=\"openSUSE:Factory\"/>'" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"; meta 'remote link-target devel:b foo' \"\$LINK_ELSEWHERE\"" devel:a foo
 case_ link-other-package 6 "WRONG-DEVEL" \
-  "echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link '<link project=\"devel:a\" package=\"bar\"/>'" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"; meta 'remote link-target devel:b foo' \"\$LINK_OTHER\"" devel:a foo
 case_ link-unreadable   5 "or its Factory devel project" \
-  "echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link @ERR" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"; meta 'remote link-target devel:b foo' @ERR" devel:a foo
 # Project names are compared as strings: "devel.a" is no pattern for "develxa".
 case_ link-literal      6 "WRONG-DEVEL" \
-  "obs /source/devel.a/foo/_meta \"\$(cat obs/_source_devel:a_foo__meta)\"; obs /source/devel.a/_meta '<project/>'; echo devel:b/foo > devel/foo; obs /source/devel:b/foo/_link '<link project=\"develxa\"/>'" devel.a foo
+  "meta 'remote package-meta devel.a foo' \"\$FOO_META\"; meta 'remote project-meta devel.a' '{\"name\": \"devel.a\", \"persons\": [], \"groups\": []}'; meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_DEVEL_B\"; meta 'remote link-target devel:b foo' \"\$LINK_DEVELXA\"" devel.a foo
 # Factory itself is never another project's devel project.
 case_ factory-itself    0 "ELIGIBLE" \
-  "obs /source/openSUSE:Factory/foo/_meta \"\$(cat obs/_source_devel:a_foo__meta)\"; obs /source/openSUSE:Factory/_meta '<project/>'" openSUSE:Factory foo
-grep -q develproject "$work/factory-itself/calls" && fail "factory-itself asked for a devel project" \
-  || pass "factory-itself asks for no devel project"
-case_ not-in-factory    0 "ELIGIBLE" "rm devel/foo" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_FOO\"" openSUSE:Factory foo
+[ "$(grep -c '^geectl remote package-meta openSUSE:Factory foo$' "$work/factory-itself/calls")" = 1 ] \
+  && pass "factory-itself asks for no devel project" || fail "factory-itself: $(grep 'package-meta openSUSE' "$work/factory-itself/calls")"
+case_ not-in-factory    0 "ELIGIBLE" "nometa 'remote package-meta openSUSE:Factory foo'" devel:a foo
 # Not in Factory by this name, but under another spelling: forwarding it files a duplicate.
 case_ not-in-factory-near 6 "WRONG-DEVEL — NOT IN openSUSE:Factory as foo, but it has Foo" \
-  "rm devel/foo; echo Foo > ls" devel:a foo
+  "nometa 'remote package-meta openSUSE:Factory foo'; meta 'remote list-packages openSUSE:Factory' '{\"project\": \"openSUSE:Factory\", \"packages\": [\"Foo\"]}'" devel:a foo
 case_ no-devel-set      0 "ELIGIBLE" \
-  "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta '<package name=\"foo\"/>'" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' \"\$FACTORY_NODEVEL\"" devel:a foo
 case_ devel-lookup-fails 5 "or its Factory devel project" \
-  "rm devel/foo; obs /source/openSUSE:Factory/foo/_meta @ERR" devel:a foo
+  "meta 'remote package-meta openSUSE:Factory foo' @ERR" devel:a foo
 
 echo "--- a project kept in git: its project git names the maintainers and reviewers"
 M=repos/gorg/_ObsPrj/raw/_maintainership.json W=repos/gorg/_ObsPrj/raw/workflow.config
@@ -132,32 +177,31 @@ case_ git-reviewer        3 "BLOCKED — explicit reviewer role: qa-bot" \
   "gitea $W '{\"Workflows\": [\"pr\"], \"Reviewers\": [\"+qa-bot\",],}'" devel:g hw
 case_ git-reviewer-object 3 "BLOCKED — explicit reviewer role: legal" \
   "gitea $W '{\"Reviewers\": {\"~legal\": {\"IgnoreSubmoduleChanges\": true}}}'" devel:g hw
-case_ git-no-workflow     0 "ELIGIBLE" "rm gitea/repos%gorg%_ObsPrj%raw%workflow.config" devel:g hw
+case_ git-no-workflow     0 "ELIGIBLE" "rm raw/gorg%_ObsPrj%workflow.config" devel:g hw
 case_ git-json-broken     5 "UNREADABLE — gorg/_ObsPrj's _maintainership.json did not parse" "gitea $M '{\"hw\": [\"tester\"'" devel:g hw
 case_ git-json-absent     5 "UNREADABLE — gorg/_ObsPrj has no _maintainership.json" \
-  "rm gitea/repos%gorg%_ObsPrj%raw%_maintainership.json" devel:g hw
+  "rm raw/gorg%_ObsPrj%_maintainership.json" devel:g hw
 case_ git-json-fails      5 "UNREADABLE — cannot read gorg/_ObsPrj/_maintainership.json" "gitea $M @ERR" devel:g hw
 case_ git-workflow-broken 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
   "gitea $W '{\"Reviewers\": \"qa-bot\"}'" devel:g hw
 case_ git-other-host      5 "UNREADABLE — devel:g is kept in https://example.org/gorg/_ObsPrj.git, whose maintainers this cannot read" \
-  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://example.org/gorg/_ObsPrj.git</scmsync></project>'" devel:g hw
+  "meta 'remote project-meta devel:g' \"\$GIT_PROJ_OTHER\"" devel:g hw
 # The roles are read at the branch or commit the <scmsync> fragment names
 # (salt/_ObsPrj#main, whose default branch is factory); a fragment that is no
 # plain ref is not read at all.
-REFMETA='<project name="devel:g"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git#devel</scmsync><person userid="tester" role="maintainer"/></project>'
 case_ git-ref             0 "ELIGIBLE — package maintainer in gorg/_ObsPrj/_maintainership.json at devel" \
-  "obs /source/devel:g/_meta '$REFMETA'; gitea $M '{\"hw\": [\"other\"]}'; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{}'" devel:g hw
-grep -qx 'git-obs -G src.opensuse.org -q api /repos/gorg/_ObsPrj/raw/_maintainership.json?ref=devel' "$work/git-ref/calls" \
-  && grep -qx 'git-obs -G src.opensuse.org -q api /repos/gorg/_ObsPrj/raw/workflow.config?ref=devel' "$work/git-ref/calls" \
-  && pass "git-ref: both files read at the ref" || fail "git-ref: $(grep git-obs "$work/git-ref/calls")"
+  "meta 'remote project-meta devel:g' \"\$GIT_PROJ_REF\"; gitea $M '{\"hw\": [\"other\"]}'; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{}'" devel:g hw
+grep -qx 'geectl gitea raw-file gorg _ObsPrj _maintainership.json --ref devel' "$work/git-ref/calls" \
+  && grep -qx 'geectl gitea raw-file gorg _ObsPrj workflow.config --ref devel' "$work/git-ref/calls" \
+  && pass "git-ref: both files read at the ref" || fail "git-ref: $(grep 'gitea raw-file' "$work/git-ref/calls")"
 case_ git-ref-reviewer    3 "BLOCKED — explicit reviewer role: qa" \
-  "obs /source/devel:g/_meta '$REFMETA'; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{\"Reviewers\": [\"qa\"]}'" devel:g hw
+  "meta 'remote project-meta devel:g' \"\$GIT_PROJ_REF\"; gitea $M?ref=devel '{\"hw\": [\"tester\"]}'; gitea $W?ref=devel '{\"Reviewers\": [\"qa\"]}'" devel:g hw
 case_ git-ref-absent      5 "UNREADABLE — gorg/_ObsPrj has no _maintainership.json at devel" \
-  "obs /source/devel:g/_meta '$REFMETA'" devel:g hw
+  "meta 'remote project-meta devel:g' \"\$GIT_PROJ_REF\"" devel:g hw
 n=0
 for r in 'a..b' '-x' 'a/b' 'a%20b'; do
   n=$((n+1)); case_ "git-ref-odd-$n" 5 "UNREADABLE — devel:g is kept in https://src.opensuse.org/gorg/_ObsPrj.git#$r, whose ref this cannot read" \
-    "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git#$r</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
+    "meta 'remote project-meta devel:g' '{\"name\": \"devel:g\", \"scmsync\": \"https://src.opensuse.org/gorg/_ObsPrj.git#$r\", \"persons\": [{\"name\": \"tester\", \"role\": \"maintainer\"}], \"groups\": []}'" devel:g hw
 done
 # What the project git names must be plain names: a newline in one split the
 # verdict line and lost the reviewers; a URL with a space fell back to the OBS
@@ -169,30 +213,11 @@ case_ git-reviewer-newline 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did 
 case_ git-reviewer-comma  5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
   "gitea $W '{\"Reviewers\": [\"qa,tester\"]}'" devel:g hw
 case_ git-url-space       5 "UNREADABLE — devel:g is kept in https://src.opensuse.org/gorg/_ObsPrj#main x, whose maintainers this cannot read" \
-  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj#main x</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
-# A CDATA section or a comment in <scmsync> leaves sed no URL: UNREADABLE, never the OBS persons.
-n=0
-for u in '<![CDATA[https://src.opensuse.org/gorg/_ObsPrj]]>' 'https://src.opensuse.org/gorg/_ObsPrj<!-- x -->'; do
-  n=$((n+1)); case_ "git-url-markup-$n" 5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone, whose maintainers this cannot read" \
-    "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>$u</scmsync><person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
-done
-# sed takes the last plain <scmsync>, one inside a comment too: a commented one after
-# the real one, alone in a project OBS keeps (or in its CDATA), a second one (the same URL
-# too), or one repeating the real URL is never read.
-EVIL="gitea repos/evil/_ObsPrj/raw/_maintainership.json '{\"hw\": [\"tester\"], \"foo\": [\"tester\"]}'"
-CMT='<!-- <scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync> -->'
-case_ git-url-commented   5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
-  "$EVIL; gitea $M '{\"hw\": [\"other\"]}'; obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync>$CMT<person userid=\"tester\" role=\"maintainer\"/></project>'" devel:g hw
-case_ obs-url-commented   5 "UNREADABLE — devel:a is kept in a <scmsync> that is not plain text or not alone" \
-  "$EVIL; obs /source/devel:a/foo/_meta '<package name=\"foo\"><person userid=\"other\" role=\"maintainer\"/></package>'; obs /source/devel:a/_meta '<project name=\"devel:a\">$CMT<person userid=\"boss\" role=\"maintainer\"/></project>'" devel:a foo
-case_ obs-url-cdata       5 "UNREADABLE — devel:a is kept in a <scmsync> that is not plain text or not alone" \
-  "$EVIL; obs /source/devel:a/foo/_meta '<package name=\"foo\"><person userid=\"other\" role=\"maintainer\"/></package>'; obs /source/devel:a/_meta '<project name=\"devel:a\"><description><![CDATA[<scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync>]]></description><person userid=\"boss\" role=\"maintainer\"/></project>'" devel:a foo
-case_ git-url-twice       5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
-  "$EVIL; gitea $M '{\"hw\": [\"other\"]}'; obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><scmsync>https://src.opensuse.org/evil/_ObsPrj</scmsync></project>'" devel:g hw
-case_ git-url-doubled     5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
-  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync></project>'" devel:g hw
-case_ git-url-repeated    5 "UNREADABLE — devel:g is kept in a <scmsync> that is not plain text or not alone" \
-  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><!-- <scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync> --></project>'" devel:g hw
+  "meta 'remote project-meta devel:g' '{\"name\": \"devel:g\", \"scmsync\": \"https://src.opensuse.org/gorg/_ObsPrj#main x\", \"persons\": [{\"name\": \"tester\", \"role\": \"maintainer\"}], \"groups\": []}'" devel:g hw
+# The scmsync field is one plain string by construction: a value that is no
+# src.opensuse.org URL at all is UNREADABLE, never the OBS persons.
+case_ git-url-not-a-url   5 "UNREADABLE — devel:g is kept in not a url, whose maintainers this cannot read" \
+  "meta 'remote project-meta devel:g' '{\"name\": \"devel:g\", \"scmsync\": \"not a url\", \"persons\": [{\"name\": \"tester\", \"role\": \"maintainer\"}], \"groups\": []}'" devel:g hw
 # Absent means none; present, Reviewers is a list or an object, and an entry a list.
 for v in false 0 '""' null; do
   case_ "git-reviewers-$v" 5 "UNREADABLE — gorg/_ObsPrj's workflow.config did not parse" \
@@ -203,17 +228,17 @@ case_ git-entry-false     5 "UNREADABLE — gorg/_ObsPrj's _maintainership.json 
 case_ git-group-entry     4 "NOT_YOURS — not a maintainer in gorg/_ObsPrj/_maintainership.json (maintainers: @team)" \
   "gitea $M '{\"\": [\"tester\"], \"hw\": [\"@team\"]}'" devel:g hw
 # An OBS reviewer role still counts.
-case_ git-obs-reviewer    3 "BLOCKED — explicit reviewer role: qa" \
-  "obs /source/devel:g/_meta '<project name=\"devel:g\"><scmsync>https://src.opensuse.org/gorg/_ObsPrj.git</scmsync><group groupid=\"qa\" role=\"reviewer\"/></project>'" devel:g hw
+case_ obs-reviewer        3 "BLOCKED — explicit reviewer role: qa" \
+  "meta 'remote project-meta devel:g' \"\$GIT_PROJ_QA\"" devel:g hw
 case_ git-batch           4 $'devel:g/other\tNOT_YOURS' \
-  "obs /source/devel:g/other/_meta '<package name=\"other\" project=\"devel:g\"/>'; echo devel:g/other > devel/other; printf 'devel:g\thw\ndevel:g\tother\n' > rows" --batch rows
-grep -qF $'devel:g/hw\tELIGIBLE' <<<"$LAST" && [ "$(grep -c 'raw/_maintainership.json$' "$work/git-batch/calls")" = 1 ] \
-  && pass "--batch reads a project git's _maintainership.json once" || fail "git-batch: $(grep git-obs "$work/git-batch/calls")"
+  "meta 'remote package-meta devel:g other' '{\"name\": \"other\", \"project\": \"devel:g\", \"persons\": [], \"groups\": []}'; printf 'devel:g\thw\ndevel:g\tother\n' > rows" --batch rows
+grep -qF $'devel:g/hw\tELIGIBLE' <<<"$LAST" && [ "$(grep -c 'gitea raw-file gorg _ObsPrj _maintainership.json$' "$work/git-batch/calls")" = 1 ] \
+  && pass "--batch reads a project git's _maintainership.json once" || fail "git-batch: $(grep 'gitea raw-file' "$work/git-batch/calls")"
 # One --batch run, project gits whose names a flat key would merge (a_b/c and
 # a/b_c), and one project git at two refs: each read for itself.
-BATCH2="obs /source/devel:p/x/_meta '<package name=\"x\"/>'; obs /source/devel:p/_meta '<project name=\"devel:p\"><scmsync>https://src.opensuse.org/a_b/c</scmsync></project>'
-obs /source/devel:q/x2/_meta '<package name=\"x2\"/>'; obs /source/devel:q/_meta '<project name=\"devel:q\"><scmsync>https://src.opensuse.org/a/b_c</scmsync></project>'
-obs /source/devel:r/x3/_meta '<package name=\"x3\"/>'; obs /source/devel:r/_meta '<project name=\"devel:r\"><scmsync>https://src.opensuse.org/a_b/c#v2</scmsync></project>'
+BATCH2="meta 'remote package-meta devel:p x' '{\"name\": \"x\", \"project\": \"devel:p\", \"persons\": [], \"groups\": []}'; meta 'remote project-meta devel:p' '{\"name\": \"devel:p\", \"scmsync\": \"https://src.opensuse.org/a_b/c\", \"persons\": [], \"groups\": []}'
+meta 'remote package-meta devel:q x2' '{\"name\": \"x2\", \"project\": \"devel:q\", \"persons\": [], \"groups\": []}'; meta 'remote project-meta devel:q' '{\"name\": \"devel:q\", \"scmsync\": \"https://src.opensuse.org/a/b_c\", \"persons\": [], \"groups\": []}'
+meta 'remote package-meta devel:r x3' '{\"name\": \"x3\", \"project\": \"devel:r\", \"persons\": [], \"groups\": []}'; meta 'remote project-meta devel:r' '{\"name\": \"devel:r\", \"scmsync\": \"https://src.opensuse.org/a_b/c#v2\", \"persons\": [], \"groups\": []}'
 gitea repos/a_b/c/raw/_maintainership.json '{\"x\": [\"tester\"], \"x2\": [\"tester\"], \"x3\": [\"tester\"]}'
 gitea repos/a/b_c/raw/_maintainership.json '{\"x2\": [\"other\"]}'; gitea repos/a/b_c/raw/workflow.config '{\"Reviewers\": [\"qa\"]}'
 gitea 'repos/a_b/c/raw/_maintainership.json?ref=v2' '{\"x3\": [\"other\"]}'
@@ -225,25 +250,25 @@ grep -qF $'devel:p/x\tELIGIBLE' <<<"$LAST" && grep -qF $'devel:r/x3\tNOT_YOURS' 
 echo "--- --batch exits with the worst row"
 # Packages Factory lacks by name: one package list for the whole --batch run.
 case_ batch-one-listing 0 $'devel:a/bar\tELIGIBLE' \
-  "obs /source/devel:a/bar/_meta '<package><person userid=\"tester\" role=\"maintainer\"/></package>'; rm devel/foo; printf 'devel:a\tfoo\ndevel:a\tbar\n' > rows" --batch rows
-[ "$(grep -c '^osc ls ' "$work/batch-one-listing/calls")" = 1 ] && pass "--batch lists the target once" \
-  || fail "--batch listed the target $(grep -c '^osc ls ' "$work/batch-one-listing/calls") times"
+  "meta 'remote package-meta devel:a bar' \"\$BAR_META\"; nometa 'remote package-meta openSUSE:Factory foo'; printf 'devel:a\tfoo\ndevel:a\tbar\n' > rows" --batch rows
+[ "$(grep -c '^geectl remote list-packages openSUSE:Factory$' "$work/batch-one-listing/calls")" = 1 ] && pass "--batch lists the target once" \
+  || fail "--batch listed the target $(grep -c '^geectl remote list-packages openSUSE:Factory$' "$work/batch-one-listing/calls") times"
 
 ROWS=$'devel:a\tfoo\ndevel:a\tbar'
-BAR="obs /source/devel:a/bar/_meta '<package><person userid=\"tester\" role=\"maintainer\"/></package>'"
+BAR="meta 'remote package-meta devel:a bar' \"\$BAR_META\""
 case_ batch-eligible    0 $'devel:a/bar\tELIGIBLE' \
-  "$BAR; echo devel:a/bar > devel/bar; printf '%s\n' \"$ROWS\" > rows" --batch rows
+  "$BAR; meta 'remote package-meta openSUSE:Factory bar' \"\$BAR_FACTORY_A\"; printf '%s\n' \"$ROWS\" > rows" --batch rows
 case_ batch-wrong       6 $'devel:a/bar\tWRONG-DEVEL' \
-  "$BAR; echo devel:c/bar > devel/bar; printf '%s\n' \"$ROWS\" > rows" --batch rows
+  "$BAR; meta 'remote package-meta openSUSE:Factory bar' \"\$BAR_FACTORY_C\"; printf '%s\n' \"$ROWS\" > rows" --batch rows
 case_ batch-wrong-over-blocked 6 "WRONG-DEVEL" \
-  "$BAR; echo devel:c/bar > devel/bar; obs /source/devel:a/foo/_meta '<package><person userid=\"rev\" role=\"reviewer\"/></package>'; printf '%s\n' \"$ROWS\" > rows" --batch rows
+  "$BAR; meta 'remote package-meta openSUSE:Factory bar' \"\$BAR_FACTORY_C\"; meta 'remote package-meta devel:a foo' \"\$REVIEWER_META\"; printf '%s\n' \"$ROWS\" > rows" --batch rows
 case_ batch-unreadable-wins 5 "UNREADABLE" \
-  "echo devel:c/foo > devel/foo; printf '%s\n' \"$ROWS\" > rows" --batch rows
+  "$BAR; meta 'remote package-meta openSUSE:Factory bar' \"\$BAR_FACTORY_C\"; meta 'remote project-meta devel:a' @ERR; printf '%s\n' \"$ROWS\" > rows" --batch rows
 case_ batch-empty       2 "no project/package rows" ": > rows" --batch rows
 # A failed project _meta read is not cached as an empty one.
 case_ batch-project-unreadable 5 $'devel:a/bar\tUNREADABLE' \
-  "$BAR; echo devel:a/bar > devel/bar; obs /source/devel:a/_meta @ERR; printf '%s\n' \"$ROWS\" > rows" --batch rows
-[ "$(grep -c '^osc api /source/devel:a/_meta$' "$work/batch-eligible/calls")" = 1 ] \
+  "$BAR; meta 'remote package-meta openSUSE:Factory bar' \"\$BAR_FACTORY_A\"; meta 'remote project-meta devel:a' @ERR; printf '%s\n' \"$ROWS\" > rows" --batch rows
+[ "$(grep -c '^geectl remote project-meta devel:a$' "$work/batch-eligible/calls")" = 1 ] \
   && pass "--batch reads each project's _meta once" || fail "--batch: devel:a/_meta not read exactly once"
 
 if [ "$fails" -eq 0 ]; then echo "ALL PASSED"; else echo "$fails FAILED"; exit 1; fi

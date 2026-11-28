@@ -57,22 +57,23 @@ case_ git-after-commit 0 "insertion-only diff OK" "$work/git/p.changes" "- Updat
 mkdir -p "$work/new"
 case_ new-file 0 "insertion-only diff OK" "$work/new/p.changes" "- initial package"
 
-# Without --author or CHANGES_AUTHOR the author is what osc vc writes, never
-# git's identity (sr#1385844 shipped the git address that way).
+# Without --author or CHANGES_AUTHOR the author is what geectl changelog
+# generate writes, never git's identity (sr#1385844 shipped the git address that way).
 mkdir -p "$work/bin" "$work/vc"
-cat > "$work/bin/osc" <<'EOF'
+cat > "$work/bin/geectl" <<'EOF'
 #!/bin/bash
-[ "$VC_MODE" = ok ] || { echo "Server returned an error: HTTP Error 401" >&2; exit 1; }
-printf -- '-------------------------------------------------------------------\nSun Oct 18 12:00:00 UTC 2026 - Vc Person <vc@suse.example>\n\n- probe\n\n' > "$4"
+[ "$1 $2" = "changelog identity" ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
+[ "$IDENTITY_MODE" = ok ] || { echo "geectl changelog identity: no identity resolves" >&2; exit 1; }
+printf '%s\n' 'Vc Person <vc@suse.example>'
 EOF
-chmod +x "$work/bin/osc"
+chmod +x "$work/bin/geectl"
 git -C "$work/vc" init -q && git -C "$work/vc" config user.name 'Git Person' && git -C "$work/vc" config user.email git@personal.example
-out="$(cd "$work/vc" && printf -- '- initial package\n' | env -u CHANGES_AUTHOR VC_MODE=ok PATH="$work/bin:$PATH" bash "$PREPEND" "$work/vc/p.changes" 2>&1)"
+out="$(cd "$work/vc" && printf -- '- initial package\n' | env -u CHANGES_AUTHOR IDENTITY_MODE=ok PATH="$work/bin:$PATH" bash "$PREPEND" "$work/vc/p.changes" 2>&1)"
 sed -n 2p "$work/vc/p.changes" | grep -q ' UTC [0-9]\{4\} - Vc Person <vc@suse.example>$' \
-  && pass "no-author: osc vc's identity, not git's" || { fail "no-author: header '$(sed -n 2p "$work/vc/p.changes")'"; printf '%s\n' "$out" | sed 's/^/    /'; }
+  && pass "no-author: geectl changelog identity, not git's" || { fail "no-author: header '$(sed -n 2p "$work/vc/p.changes")'"; printf '%s\n' "$out" | sed 's/^/    /'; }
 rm -f "$work/vc/p.changes"
-out="$(cd "$work/vc" && printf -- '- initial package\n' | env -u CHANGES_AUTHOR VC_MODE=fail PATH="$work/bin:$PATH" bash "$PREPEND" "$work/vc/p.changes" 2>&1)"; rc=$?
-[ "$rc" = 2 ] && [ ! -e "$work/vc/p.changes" ] && grep -qF "vc-identity.sh" <<<"$out" \
+out="$(cd "$work/vc" && printf -- '- initial package\n' | env -u CHANGES_AUTHOR IDENTITY_MODE=fail PATH="$work/bin:$PATH" bash "$PREPEND" "$work/vc/p.changes" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && [ ! -e "$work/vc/p.changes" ] && grep -qF "geectl changelog identity" <<<"$out" \
   && pass "no-identity: exit 2, nothing written, no git fallback" || { fail "no-identity: rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; }
 
 echo "---"; [ "$fails" = 0 ] && echo "all changes-prepend checks passed" || echo "$fails FAILED"

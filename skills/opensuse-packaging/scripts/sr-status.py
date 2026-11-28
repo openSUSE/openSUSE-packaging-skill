@@ -34,29 +34,31 @@ Usage:
     --deadline  start no per-item lookup after this many seconds (default 80):
                 the rest print as UNKNOWN, so a long queue still prints
     --no-prs    skip the src.opensuse.org PR leg (OBS-only view)
-    --user      OBS account (default: `osc whois`)
+    --user      OBS account (default: $GEECTL_OBS_USERNAME)
 
-The PR leg reads src.opensuse.org through `git-obs -G src.opensuse.org api`.
-git-obs reads its login itself (shared with tea by default); this script never
-reads it. -G picks the login named src.opensuse.org, or the only one for that
-host (`git-obs login add`), so a default login for another forge is never
-used. If that fails it warns and falls back to the OBS-only table, and the
-header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
-created, and PRs awaiting your review. `--no-prs` skips both. Every osc /
-git-obs call times out after 60s and then counts as a failed lookup (a network
+The PR leg reads src.opensuse.org through `geectl pull-request search
+--backend gitea`: PRs you created (`--creator`) and PRs awaiting your review
+(`--reviewer`). Both take the forge login from `geectl gitea whoami` — the
+token owner, which may differ from the OBS --user — and the reviewer flag
+accepts no other login: the server filters review requests for the token
+owner only. If that fails it warns and falls back to the OBS-only table, and
+the header says the PRs are UNKNOWN. Two sub-legs, both always run: PRs you
+created, and PRs awaiting your review. `--no-prs` skips both. Every geectl
+call times out after 60s and then counts as a failed lookup (a network
 failure for --pr), never as an empty answer.
 
 A new or review SR whose source changed after the revision it pins is STALE
 (outside --brief: one call per request when the source is still at that
-revision): osc sr does not follow the branch, so a fix committed after filing
-reaches nobody until it is filed again with -s. Equal files at another
+revision): geectl request refile does not follow the branch, so a fix committed after filing
+reaches nobody until it is filed again with --supersede. Equal files at another
 srcmd5 (a link, or an scmsync package's _scmsync.obsinfo) are not stale. A
-devel-project source gets forward-check.py instead of the refile, and a
-request with several actions is not checked.
+devel-project source gets forward-check.py instead of the refile, a request
+targeting openSUSE:Factory gets no refile command yet (geectl cannot file
+a request targeting it), and a request with several actions is not checked.
 
 A declined SR that a later accepted one for the same package and target
 replaced is annotated with the revoke that clears it and stays at the top:
-osc still counts a declined request, so the next `osc sr` from that source
+geectl still counts a declined request, so the next `geectl request file` from that source
 prompts over it. Only when both are among the rows fetched (--state all, or
 both ids given).
 
@@ -75,8 +77,6 @@ import re
 import os
 import datetime
 import time
-import urllib.parse
-import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -84,7 +84,7 @@ sys.pycache_prefix = "/dev/null/opensuse-packaging"  # no __pycache__ beside it 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize  # noqa: E402  # escape/Unicode-smuggling filter for third-party text
 
-# seconds per osc / git-obs call: both have hung for good, and a harness
+# seconds per geectl call: geectl has hung for good, and a harness
 # gives the whole tool call 2 minutes, so the timeout must come first
 TIMEOUT = 60
 
@@ -107,26 +107,34 @@ def run(cmd):
         return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: command not found")
 
 
-def api(path, hard=True, errors=None):
-    """osc api wrapper. hard=True: exit 2 on failure (discovery must not
-    silently become '0 shown'). hard=False: return None so the caller can emit
-    a visible FETCH FAILED row instead of a garbage one."""
-    return osc(["api", path], hard, errors)
-
-
-def osc(args, hard=True, errors=None):
-    """Run osc; a failure's text is appended to `errors` so --pr can tell a
-    network failure from a refusal or a missing object."""
-    r = run(["osc", *args])
+def geectl(args, hard=True, errors=None, text=False):
+    """Run geectl; a failure's text is appended to `errors` so --pr can tell a
+    network failure from a refusal or a missing object. hard=True: exit 2 on
+    failure (discovery must not silently become '0 shown'). hard=False:
+    return None so the caller can emit a visible FETCH FAILED row instead of
+    a garbage one. Returns the parsed JSON payload, or the raw text when
+    text=True."""
+    r = run(["geectl", *args])
     if r.returncode != 0:
-        msg = f"osc {' '.join(args)} failed (rc={r.returncode}): {r.stderr.strip()}"
+        msg = f"geectl {' '.join(args)} failed (rc={r.returncode}): {r.stderr.strip()}"
         sys.stderr.write(f"ERROR: {msg}\n")
         if errors is not None:
             errors.append(msg)
         if hard:
             sys.exit(2)
         return None
-    return r.stdout or ""
+    if text:
+        return r.stdout or ""
+    try:
+        return json.loads(r.stdout or "{}")
+    except json.JSONDecodeError as e:
+        msg = f"geectl {' '.join(args)} returned unparseable output: {e}"
+        sys.stderr.write(f"ERROR: {msg}\n")
+        if errors is not None:
+            errors.append(msg)
+        if hard:
+            sys.exit(2)
+        return None
 
 
 EMOJI = {
@@ -209,56 +217,113 @@ def clip(s, n=64):
     return (s[: n - 1] + "…") if len(s) > n else s
 
 
-def human_comment(req_id, state_el):
-    # declined: the decline reason on the state element is the salient human note
-    if state_el is not None and state_el.get("name") == "declined":
-        c = state_el.findtext("comment")
-        who = state_el.get("who", "?")
-        if c and c.strip():
+def human_comment(req_id, state):
+    # declined: the decline reason on the state is the salient human note
+    if state is not None and state.get("name") == "declined":
+        c = state.get("comment") or ""
+        who = state.get("who", "?")
+        if c.strip():
             return f'💬 {who}: "{clip(c)}"'
     # otherwise the latest non-bot comment in the thread
-    raw = api(f"/comments/request/{req_id}", hard=False)
-    if raw is None:
+    payload = geectl(["request", "list-comments", str(req_id)], hard=False)
+    if payload is None:
         return "(comment fetch failed)"
-    try:
-        root = ET.fromstring(raw or "<comments/>")
-    except ET.ParseError:
-        return "—"
-    cmts = [c for c in root.findall("comment") if not is_bot(c.get("who"))]
+    cmts = [c for c in payload.get("comments", []) if not is_bot(c.get("who"))]
     if not cmts:
         return "—"
     last = cmts[-1]
-    return f'💬 {last.get("who", "?")}: "{clip(last.text)}"'
+    return f'💬 {last.get("who", "?")}: "{clip(last.get("body"))}"'
 
 
 # ---------- Gitea (src.opensuse.org) PR leg ----------
-# Read through `git-obs api`: git-obs keeps its own login, so no token is read here.
+# Single-PR reads go through `geectl pull-request show` / `pull-request
+# comments`; the list legs in fetch_prs go through `geectl pull-request
+# search --backend gitea`, with the forge login from `geectl gitea whoami`
+# (the token owner, which may differ from the OBS --user).
 
 
-def gitea_get(path, errors=None):
-    """`git-obs api <path>` — strips the leading 'Response:' banner line and
-    parses JSON. Returns None on any failure (no src.opensuse.org login,
-    network, HTTP error, bad JSON), with its text appended to `errors`, so
-    the caller can emit a FETCH FAILED row."""
-    # -G: the default login may belong to another forge
-    r = run(["git-obs", "-G", "src.opensuse.org", "-q", "api", path])
+_GITEA_LOGIN = None  # the token owner's login, once read
+_GITEA_LOGIN_KNOWN = False  # a failed whoami is cached too: one warning
+
+
+def gitea_login(errors=None):
+    """The src.opensuse.org login from `geectl gitea whoami`, cached: the
+    creator filter and the --reviewer flag both take the token owner's
+    login, never the OBS user. None on any failure (no Gitea token,
+    network, bad JSON), with its text appended to `errors`."""
+    global _GITEA_LOGIN, _GITEA_LOGIN_KNOWN
+    if _GITEA_LOGIN_KNOWN:
+        return _GITEA_LOGIN
+    _GITEA_LOGIN_KNOWN = True
+    r = run(["geectl", "gitea", "whoami"])
     if r.returncode != 0:
-        sys.stderr.write(f"WARNING: git-obs api {path} failed: {r.stderr.strip()}\n")
+        sys.stderr.write(f"WARNING: geectl gitea whoami failed: {r.stderr.strip()}\n")
         if errors is not None:
             errors.append(r.stderr.strip())
         return None
-    out = r.stdout
-    if out.startswith("Response:"):
-        out = out.split("\n", 1)[1] if "\n" in out else ""
     try:
-        return json.loads(out)
-    except json.JSONDecodeError as e:
+        login = json.loads(r.stdout).get("login")
+    except (json.JSONDecodeError, AttributeError) as e:
         sys.stderr.write(
-            f"WARNING: git-obs api {path} returned unparsable output ({e})\n"
+            f"WARNING: geectl gitea whoami returned unparsable output ({e})\n"
         )
         if errors is not None:
             errors.append(f"unparsable output ({e})")
         return None
+    if not login:
+        sys.stderr.write("WARNING: geectl gitea whoami returned no login\n")
+        if errors is not None:
+            errors.append("no login")
+        return None
+    _GITEA_LOGIN = login
+    return login
+
+
+def pr_search(args, errors=None):
+    """`geectl pull-request search ...` — the typed list leg. Returns the
+    pull_requests list, or None on failure (text appended to `errors`)."""
+    payload = geectl(["pull-request", "search", *args], hard=False, errors=errors)
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        sys.stderr.write("ERROR: geectl pull-request search returned no object\n")
+        if errors is not None:
+            errors.append("no object")
+        return None
+    return payload.get("pull_requests", [])
+
+
+def pr_show(repo, num, errors=None):
+    """`geectl pull-request show gitea:<repo>#<num>` — the typed leaf for one
+    PR. Returns the PullRequest payload, or None on failure (text appended
+    to `errors`). Callers read head from `source` (repository, branch,
+    commit), base from `target.branch`, state from the unified `status`
+    (open/merged/closed/...), reviews from `reviews` [{reviewer, state,
+    comment, when}]. No created_at, no merged_at; merge_base is carried on the payload."""
+    return geectl(
+        ["pull-request", "show", f"gitea:{repo}#{num}"], hard=False, errors=errors
+    )
+
+
+def pr_comments(repo, num, errors=None):
+    """`geectl pull-request comments gitea:<repo>#<num>` — the typed leaf for
+    a PR's issue comments. Returns them in the issue-comments shape
+    [{user: {login}, created_at, body}] — the leaf's ReviewComment
+    [{author, created, body}] renamed — or None on failure (text appended
+    to `errors`)."""
+    payload = geectl(
+        ["pull-request", "comments", f"gitea:{repo}#{num}"], hard=False, errors=errors
+    )
+    if not isinstance(payload, dict):
+        return None
+    return [
+        {
+            "user": {"login": c.get("author")},
+            "created_at": c.get("created"),
+            "body": c.get("body"),
+        }
+        for c in payload.get("comments", [])
+    ]
 
 
 def human_line(cmts):
@@ -308,26 +373,24 @@ def failure(errors, what):
     return kind, f"PR build UNKNOWN ({word})", [f"could not read {what} ({word})"]
 
 
-def build_results(xml, pkg):
-    """(red, pending, succeeded, skipped) from `osc results --xml`, excluded
-    and disabled arches counted in skipped; None when unparsable. succeeded
-    maps each label to its <repo>/<arch>/<package> build path. A dirty
-    repository's codes are outdated, so they count as pending whatever they
-    say."""
-    try:
-        root = ET.fromstring(xml)
-    except ET.ParseError:
+def build_results(payload, pkg):
+    """(red, pending, succeeded, skipped) from a `geectl build results` JSON
+    payload, excluded and disabled arches counted in skipped; None when
+    unparsable. succeeded maps each label to its <repo>/<arch>/<package>
+    build path. A dirty repository's codes are outdated, so they count as
+    pending whatever they say."""
+    if not isinstance(payload, dict):
         return None
     red, pending, ok, skipped = [], [], {}, 0
-    for res in root.findall("result"):
+    for res in payload.get("results", []):
         where = f"{res.get('repository')}/{res.get('arch')}"
-        for s in res.findall("status"):
+        for s in res.get("statuses", []):
             p = s.get("package", "")
             if p != pkg and not p.startswith(pkg + ":"):
                 continue
             code = s.get("code", "unknown")
             label = f"{where}{p[len(pkg) :]} {code}"
-            if res.get("dirty") is not None:
+            if res.get("dirty") is True:
                 pending.append(label + " (dirty)")
             elif code in SKIP:
                 skipped += 1
@@ -344,28 +407,47 @@ def older_builds(prj, pkg, ok, errors):
     """The succeeded labels whose last build is not of the current expanded
     sources: until the scheduler catches up, a new commit's results still say
     "succeeded", not dirty. Returns (older, None), or (None, what) when `what`
-    could not be read."""
-    src = api(f"/source/{prj}/{pkg}?expand=1", hard=False, errors=errors)
-    try:
-        cur = ET.fromstring(src).get("srcmd5") if src is not None else None
-    except ET.ParseError:
-        cur = None
+    could not be read. A linked package has no typed leaf for its expanded
+    srcmd5 (its log's is the link's own), so its builds are unreadable here,
+    not current."""
+    log = geectl(
+        ["remote", "package-log", prj, pkg, "--limit", "1"], hard=False, errors=errors
+    )
+    entries = log.get("entries", []) if log else []
+    cur = entries[0].get("srcmd5") if entries else None
     if not cur:
         return None, f"the {prj}/{pkg} srcmd5"
+    origin = geectl(["remote", "link-target", prj, pkg], hard=False, errors=errors)
+    if origin and (origin.get("target") or {}).get("project"):
+        return (
+            None,
+            f"the {prj}/{pkg} expanded srcmd5 (linked package: no typed leaf reports it)",
+        )
     older = []
     for label, path in ok.items():
         what = f"the {prj}/{path} job history"
         # The last job, not _history: an unchanged rebuild adds no entry there.
         where, name = path.rsplit("/", 1)
-        url = f"/build/{prj}/{where}/_jobhistory?package={name}&limit=1"
-        hist = api(url, hard=False, errors=errors)
+        repo, arch = where.split("/")
+        hist = geectl(
+            [
+                "build",
+                "job-history",
+                prj,
+                repo,
+                arch,
+                "--package",
+                name,
+                "--limit",
+                "1",
+            ],
+            hard=False,
+            errors=errors,
+        )
         if hist is None:
             return None, what
-        try:
-            jobs = ET.fromstring(hist).findall("jobhist")
-        except ET.ParseError:
-            return None, what
-        got = jobs[-1].get("srcmd5", "") if jobs else ""
+        entries = hist.get("entries", [])
+        got = entries[0].get("srcmd5", "") if entries else ""
         if got != cur:
             built = got[:12] or "nothing recorded"
             older.append(f"{label} (built {built}, sources {cur[:12]})")
@@ -376,23 +458,18 @@ def pin_of(prj, pkg, num, errors):
     """The products PR whose branch the PR project builds, and whose branch
     it is: the bot's PR_<pkg>#<n> follows pushes, a hand-made one does not.
     Returns (detail, short, advice)."""
-    meta = api(f"/source/{prj}/_meta", hard=False, errors=errors)
-    url = ""
-    if meta:
-        try:
-            url = ET.fromstring(meta).findtext("url") or ""
-        except ET.ParseError:
-            pass
+    meta = geectl(["remote", "project-meta", prj], hard=False, errors=errors)
+    url = (meta or {}).get("url") or ""
     m = PIN_URL.search(url)
     if not m:
         return "an unknown products PR (lookup failed)", "pin unknown", "check by hand"
     name = f"{m[1]}#{m[2]}"
-    p = gitea_get(f"/repos/{m[1]}/pulls/{m[2]}", errors)
+    p = pr_show(m[1], int(m[2]), errors)
     if p is None:
         return f"{name}, branch unknown (lookup failed)", name, "check it by hand"
-    head = p.get("head") or {}
-    ref = _sanitize.sanitize(head.get("ref") or "?")
-    owner = _sanitize.sanitize((head.get("repo") or {}).get("full_name") or "?")
+    src = p.get("source") or {}
+    ref = _sanitize.sanitize(src.get("branch") or "?")
+    owner = _sanitize.sanitize(src.get("repository") or "?")
     if ref == f"PR_{pkg}#{num}" and owner == m[1]:
         return (
             f"{name}, bot branch {ref}",
@@ -418,15 +495,22 @@ def pr_build(repo, num, pr, cmts, errors):
             found = PR_PROJECT.findall(c.get("body") or "")
             prj = found[-1] if found else prj
     if not prj:
+        # The show payload carries no created date, so the date reads '?'.
         since = (pr.get("created_at") or "?")[:10]
         return (
             "pending",
             "no PR build yet",
             [f"PENDING — no staging-bot build comment (PR opened {since})"],
         )
-    head = ((pr.get("head") or {}).get("sha") or "").lower()
+    # Head is source.commit on the show payload.
+    head = ((pr.get("source") or {}).get("commit") or "").lower()
     pkg = repo.split("/")[-1]
-    info = api(f"/source/{prj}/{pkg}/_scmsync.obsinfo", hard=False, errors=errors)
+    info = geectl(
+        ["remote", "cat", prj, pkg, SCMSYNC_INFO, "--format", "text"],
+        hard=False,
+        errors=errors,
+        text=True,
+    )
     if info is None:
         v, short, why = failure(errors, f"{prj}/{pkg}/_scmsync.obsinfo")
         return v, short, [f"PR build: {prj}"] + why
@@ -446,8 +530,12 @@ def pr_build(repo, num, pr, cmts, errors):
             [f"PR build: {prj}", f"no {what}"],
         )
     lines = [f"PR build: {prj} · built {built[:12]} · PR head {head[:12]}"]
-    xml = osc(["results", "--xml", prj, pkg], hard=False, errors=errors)
-    got = build_results(xml, pkg) if xml is not None else None
+    payload = geectl(
+        ["build", "results", prj, "--package", pkg, "--multibuild"],
+        hard=False,
+        errors=errors,
+    )
+    got = build_results(payload, pkg) if payload is not None else None
     if got is None:
         v, short, why = failure(errors, f"the {prj} results")
         return v, short, lines + why
@@ -485,19 +573,19 @@ def pr_build(repo, num, pr, cmts, errors):
 def pr_mode(repo, num):
     """--pr: print one PR's build verdict and return its PR_EXIT code."""
     errors = []
-    pr = gitea_get(f"/repos/{repo}/pulls/{num}", errors)
+    pr = pr_show(repo, num, errors)
     if pr is None:
         v, _, why = failure(errors, f"{repo}#{num}")
         print(f"{repo}#{num}\nVERDICT: UNKNOWN — {why[0]}")
         return PR_EXIT[v]
-    print(f"{repo}#{num} → {(pr.get('base') or {}).get('ref', '?')}")
-    if pr.get("merged") or pr.get("merged_at"):
+    print(f"{repo}#{num} → {(pr.get('target') or {}).get('branch', '?')}")
+    if pr.get("merged"):
         print("VERDICT: MERGED")
         return PR_EXIT["merged"]
-    if pr.get("state") == "closed":
+    if pr.get("status") == "closed":
         print("VERDICT: CLOSED without a merge")
         return PR_EXIT["closed"]
-    cmts = gitea_get(f"/repos/{repo}/issues/{num}/comments", errors)
+    cmts = pr_comments(repo, num, errors)
     v, _, lines = pr_build(repo, num, pr, cmts, errors)
     for ln in lines[:-1]:
         print(ln)
@@ -512,29 +600,50 @@ PR_PAGE = 50  # the limit= the PR leg asks for: a full page may have more
 
 
 def fetch_prs(state, brief, leg):
-    """One issues/search call for the user's PRs (leg='created') or PRs
+    """One pull-request search call for the user's PRs (leg='created') or PRs
     awaiting the user's review (leg='review-requested'); per-PR detail
     (base branch, mergeable, bot-build + human comments) only in full mode.
     Returns (rows, full) — full when the page came back at PR_PAGE, so more
-    may exist — or None on failure (caller falls back)."""
-    q_state = "open" if state == "open" else "all"
-    issues = gitea_get(
-        f"/repos/issues/search?type=pulls&{leg.replace('-', '_')}=true"
-        f"&state={q_state}&limit={PR_PAGE}"
-    )
-    if issues is None:
+    may exist — or None on failure (caller falls back). The login comes from
+    `geectl gitea whoami`: the creator filter and the --reviewer flag both
+    take the token owner's login, and the reviewer flag accepts no other."""
+    login = gitea_login()
+    if login is None:
+        sys.stderr.write(
+            f"WARNING: src.opensuse.org PR leg ({leg}) skipped "
+            f"— OBS-only view. Pass --no-prs to silence.\n"
+        )
+        return None
+    if state == "open":
+        states = ["open"]
+    elif state == "declined":
+        states = ["closed"]
+    elif state == "accepted":
+        states = ["merged"]
+    else:  # all
+        states = ["open", "merged", "closed"]
+    args = ["--backend", "gitea"]
+    if leg == "created":
+        args += ["--creator", login]
+    else:
+        args += ["--reviewer", login]
+    for st in states:
+        args += ["--state", st]
+    items = pr_search(args)
+    if items is None:
         sys.stderr.write(
             f"WARNING: src.opensuse.org PR leg ({leg}) skipped "
             f"— OBS-only view. Pass --no-prs to silence.\n"
         )
         return None
     rows = []
-    for it in issues:
-        repo = (it.get("repository") or {}).get("full_name", "?")
-        num = it.get("number")
-        prinfo = it.get("pull_request") or {}
-        merged = bool(prinfo.get("merged") or prinfo.get("merged_at"))
-        st = "merged" if merged else it.get("state", "?")  # open|closed|merged
+    for it in items:
+        ref = it.get("reference") or ""
+        m = re.fullmatch(r"gitea:([\w.+-]+/[\w.+-]+)#(\d+)", ref)
+        if not m:
+            continue
+        repo, num = m.group(1), int(m.group(2))
+        st = it.get("status", "?")  # open|merged|closed
         if state == "declined" and st != "closed":
             continue
         if state == "accepted" and st != "merged":
@@ -542,19 +651,19 @@ def fetch_prs(state, brief, leg):
         target, status, comment = repo, "—", "—"
         build_bad = False
         if not brief:
-            pr = gitea_get(f"/repos/{repo}/pulls/{num}")
+            pr = pr_show(repo, num)
             if pr is None:
                 status = "(detail fetch failed)"
             else:
-                base = (pr.get("base") or {}).get("ref", "?")
+                base = (pr.get("target") or {}).get("branch", "?")
                 target = f"{repo}:{base}"
                 bits = []
-                if merged:
+                if pr.get("merged"):
                     bits.append("merged")
                 elif pr.get("mergeable") is not None:
                     bits.append("mergeable" if pr["mergeable"] else "NOT mergeable")
                 errors = []
-                got = gitea_get(f"/repos/{repo}/issues/{num}/comments", errors)
+                got = pr_comments(repo, num, errors)
                 cmts = got or []
                 bot_line = next(
                     (
@@ -584,7 +693,7 @@ def fetch_prs(state, brief, leg):
             {
                 "kind": "PR",
                 "id": f"#{num}",
-                "num": int(num or 0),
+                "num": num,
                 "pkg": repo.split("/")[-1],
                 "target": target,
                 "state": st,
@@ -594,12 +703,10 @@ def fetch_prs(state, brief, leg):
                 # unreadable PR build all sort first
                 "bad": st == "closed" or leg == "review-requested" or build_bad,
                 "repo": repo,
-                "ncomments": it.get("comments") or 0,
-                "author": (it.get("user") or {}).get("login"),
-                "created": it.get("created_at"),
+                "author": it.get("author"),
             }
         )
-    return rows, len(issues) >= PR_PAGE
+    return rows, len(items) >= PR_PAGE
 
 
 # ---------- OBS request rows ----------
@@ -608,16 +715,15 @@ SEARCH_CHUNK = 50  # ids per /search/request call, to keep the URL short
 
 
 def sr_row(req, brief):
-    """One table/brief row from a request element of a collection or search
-    result: both already carry the state, actions and reviews, so no per-item
-    call is needed for anything but the comments."""
-    st = req.find("state")
-    sname = st.get("name") if st is not None else ""
-    act = req.find("action")
-    tgt = act.find("target") if act is not None else None
-    src = act.find("source") if act is not None else None
-    reviews = req.findall("review")
-    # staging assignment is free here — the reviews are in the XML already
+    """One table/brief row from a request dict of a search result: it already
+    carries the state, actions and reviews, so no per-item call is needed
+    for anything but the comments."""
+    st = req.get("state") or {}
+    sname = st.get("name") or ""
+    acts = [a for a in req.get("actions", []) if a.get("type") == "submit"]
+    act = acts[0] if acts else {}
+    reviews = req.get("reviews", [])
+    # staging assignment is free here — the reviews are in the JSON already
     stg = ""
     for rv in reviews:
         if rv.get("state") == "new":
@@ -626,13 +732,13 @@ def sr_row(req, brief):
                 parts = by.split(":")
                 # ...Staging:adi:40 -> adi:40, ...Staging:G -> G
                 stg = parts[-1] if parts[-2] == "Staging" else ":".join(parts[-2:])
-    rid = req.get("id", "?")
+    rid = str(req.get("id", "?"))
     row = {
         "kind": "SR",
         "id": rid,
         "num": int(rid) if rid.isdigit() else 0,
-        "pkg": tgt.get("package") if tgt is not None else "?",
-        "target": tgt.get("project") if tgt is not None else "?",
+        "pkg": act.get("target_package") or "?",
+        "target": act.get("target_project") or "?",
         "state": sname,
         "chain": "—",
         "comment": "—",
@@ -641,7 +747,9 @@ def sr_row(req, brief):
     }
     if brief:
         row["src"] = (
-            f"{src.get('project')}/{src.get('package')}" if src is not None else "?"
+            f"{act.get('source_project')}/{act.get('source_package')}"
+            if act.get("source_project")
+            else "?"
         )
         row["staging"] = stg
     else:
@@ -671,22 +779,20 @@ def failed_row(rid, why, comment="—"):
 
 def fetch_ids(ids):
     """The requests behind explicit ids, SEARCH_CHUNK per search call: one
-    call per id timed out on 40 ids. Returns {id: element}; an id missing
-    from the answer is absent, a failed chunk maps its ids to None."""
+    call per id timed out on 40 ids. Returns {id: request dict}; an id
+    missing from the answer is absent, a failed chunk maps its ids to None."""
     got = {}
     for i in range(0, len(ids), SEARCH_CHUNK):
         chunk = ids[i : i + SEARCH_CHUNK]
-        match = "+or+".join(f"@id={rid}" for rid in chunk)
-        raw = api(f"/search/request?match={match}", hard=False)
-        try:
-            root = ET.fromstring(raw) if raw is not None else None
-        except ET.ParseError:
-            root = None
-        if root is None:
+        cmd = ["request", "search", "--with-history"]
+        for rid in chunk:
+            cmd += ["--request-id", rid]
+        payload = geectl(cmd, hard=False)
+        if payload is None:
             got.update({rid: None for rid in chunk})
             continue
-        for r in root.findall("request"):
-            got[r.get("id")] = r
+        for r in payload.get("requests", []):
+            got[str(r.get("id"))] = r
     return got
 
 
@@ -717,47 +823,102 @@ LOOKUP_FAILED = object()
 SCMSYNC_INFO = "_scmsync.obsinfo"
 
 
-def listing(prj, pkg, rev=None, expand=False):
-    """The <directory> of prj/pkg (expanded, at revision rev): None on a 404,
-    LOOKUP_FAILED on any other failure."""
-
-    def q(x):
-        return urllib.parse.quote(x, safe=":")
-
-    query = (["expand=1"] if expand else []) + ([f"rev={q(rev)}"] if rev else [])
-    path = f"/source/{q(prj)}/{q(pkg)}" + ("?" + "&".join(query) if query else "")
+def _raw_files(prj, pkg, rev=None):
+    """(files, link_tag) of prj/pkg at rev: files as (name, md5) pairs, and
+    the _link element's text when the listing carries one, else None. None
+    on a 404, LOOKUP_FAILED on any other failure."""
+    cmd = ["remote", "list-files", prj, pkg]
+    if rev is not None:
+        cmd += ["--rev", str(rev)]
     errors = []
-    raw = api(path, hard=False, errors=errors)
-    if raw is None:
-        return None if any("HTTP Error 404" in e for e in errors) else LOOKUP_FAILED
-    try:
-        root = ET.fromstring(raw)
-    except ET.ParseError:
-        return LOOKUP_FAILED
-    return root if root.tag == "directory" else LOOKUP_FAILED
-
-
-def files(root):
-    """A listing's (name, md5) pairs: files, not srcmd5s, decide, since a
-    link's srcmd5 also covers its base."""
-    return frozenset(
-        (e.get("name"), e.get("md5"))
-        for e in root.findall("entry")
-        if e.get("name") != SCMSYNC_INFO
+    payload = geectl(cmd, hard=False, errors=errors)
+    if payload is None:
+        return None if any("not_found" in e for e in errors) else LOOKUP_FAILED
+    entries = payload.get("files", [])
+    tag = None
+    if any(f.get("name") == "_link" for f in entries):
+        text = geectl(
+            ["remote", "cat", prj, pkg, "_link", "--format", "text"],
+            hard=False,
+            text=True,
+        )
+        if text is None:
+            return LOOKUP_FAILED
+        m = re.search(r"<link\b[^>]*>", text or "")
+        tag = m.group(0) if m else ""
+    return (
+        frozenset((f.get("name"), f.get("md5")) for f in entries),
+        tag,
     )
 
 
+def listing(prj, pkg, rev=None):
+    """The expanded files of prj/pkg (at revision rev) with its srcmd5:
+    {rev, srcmd5, files}. None on a 404, LOOKUP_FAILED on any other failure.
+    list-files never expands a link, so a link is resolved by hand: its _link
+    names the target (and pin), the target's listing at that revision is the
+    expanded one, and local files overlay it. A link with its own _service is
+    the exception: its service results are in neither listing. The
+    _scmsync.obsinfo file is left out: it changes (main -> factory) while the
+    sources stay the same commit."""
+    raw = _raw_files(prj, pkg, rev)
+    if raw is None or raw is LOOKUP_FAILED:
+        return raw
+    files, tag = raw
+    srcmd5 = None
+    if rev is None:
+        log = geectl(["remote", "package-log", prj, pkg, "--limit", "1"], hard=False)
+        if log:
+            entries = log.get("entries", [])
+            if entries:
+                srcmd5 = entries[0].get("srcmd5")
+                rev = entries[0].get("rev")
+                if rev is not None:
+                    rev = str(rev)
+    depth = 0
+    while tag is not None and depth < 5:
+        depth += 1
+
+        def attr(name, _tag=tag):
+            mm = re.search(rf'\b{name}="([^"]*)"', _tag)
+            return mm.group(1) if mm else ""
+
+        tprj, tpkg, trev = attr("project"), attr("package"), attr("rev")
+        if not tprj or not tpkg:
+            return LOOKUP_FAILED
+        traw = _raw_files(tprj, tpkg, trev or None)
+        if traw is None or traw is LOOKUP_FAILED:
+            return traw
+        tfiles, tag = traw
+        merged = {n: m for n, m in tfiles if n != "_link"}
+        merged.update({n: m for n, m in files if n != "_link"})
+        files = frozenset(merged.items())
+    if tag is not None:
+        return LOOKUP_FAILED
+    files = frozenset((n, m) for n, m in files if n != SCMSYNC_INFO)
+    return {"rev": rev, "srcmd5": srcmd5, "files": files}
+
+
 def refile(row, prj, pkg):
-    """What files the source's current state over the request: the osc sr
-    for a home: branch; for a devel project forward-check.py first, since a
-    refile would also forward other people's commits there."""
+    """What files the source's current state over the request: the geectl
+    request refile for a home: branch; for a devel project forward-check.py
+    first, since a refile would also forward other people's commits there.
+    A request targeting openSUSE:Factory has no refile path yet: geectl
+    cannot file a request targeting it. Cleanup is the refile's default,
+    so no flag names it."""
     if not prj.startswith("home:"):
         return f"run forward-check.py {prj}/{pkg} before any refile"
-    cmd = "osc sr -m MSG"
-    if re.match(r"home:[^:]+:", prj):
-        cmd += " --cleanup"
-    cmd += f" -s {row['id']} {prj} {pkg} {row['target']}"
-    return cmd + (f" {row['pkg']}" if row["pkg"] != pkg else "")
+    if row["target"] == "openSUSE:Factory":
+        return (
+            "the refile has no geectl path yet: geectl cannot file a request "
+            "targeting openSUSE:Factory — report the request as ready to "
+            "forward and stop"
+        )
+    return (
+        f"geectl request refile --source-project {prj} --source-package {pkg} "
+        f"--target-project {row['target']} --target-package {row['pkg']} "
+        f"--description MSG --changes-entry MSG --supersede {row['id']} --live"
+    )
 
 
 def staleness(row):
@@ -766,33 +927,29 @@ def staleness(row):
     pinned rev (most are revision numbers, some a link's or a service's
     expanded srcmd5) is compared with the source's current revision first:
     one call when nothing changed."""
-    acts = row["el"].findall("action")
+    acts = [a for a in row["el"].get("actions", []) if a.get("type") == "submit"]
     if len(acts) > 1:
         return f"STALE not checked ({len(acts)} actions)"
-    src = acts[0].find("source") if acts and acts[0].get("type") == "submit" else None
-    if src is None or not (
-        src.get("rev") and src.get("project") and src.get("package")
-    ):
+    act = acts[0] if acts else {}
+    rev = act.get("source_rev")
+    prj, pkg = act.get("source_project"), act.get("source_package")
+    if not (rev and prj and pkg):
         return ""
-    prj, pkg, rev = src.get("project"), src.get("package"), src.get("rev")
     head = listing(prj, pkg)
     if head is LOOKUP_FAILED:
         return "STALE UNKNOWN (source lookup failed)"
     if head is None:
         return f"source gone: {prj}/{pkg}"
     current = {head.get("rev"), head.get("srcmd5")}
-    # a link pins its expanded srcmd5, a server-side _service its result's
-    for el in head.findall("linkinfo") + head.findall("serviceinfo"):
-        current |= {el.get("xsrcmd5"), el.get("lsrcmd5")}
+    # a link pins its expanded srcmd5, a server-side _service its result's:
+    # neither is in the current set (no typed leaf reports it), so such a
+    # pin falls through to the files comparison
     if rev in current - {None}:
         return ""
-    # expanded on both sides: only an expanded listing carries a link's
-    # files and a service's _service:* results
-    head = listing(prj, pkg, expand=True)
-    pinned = listing(prj, pkg, rev, expand=True)
-    if head in (None, LOOKUP_FAILED) or pinned in (None, LOOKUP_FAILED):
+    pinned = listing(prj, pkg, rev)
+    if pinned in (None, LOOKUP_FAILED):
         return "STALE UNKNOWN (pinned revision lookup failed)"
-    if files(pinned) == files(head):
+    if pinned["files"] == head["files"]:
         return ""
     return f"STALE — source changed after the pinned revision: {refile(row, prj, pkg)}"
 
@@ -806,31 +963,44 @@ def closed_since(user, days):
     ).strftime("%Y-%m-%d")
     if DEADLINE is not None and time.monotonic() >= DEADLINE:
         return since, SKIPPED
-    match = (
-        f"@creator='{urllib.parse.quote(user, safe='')}'+and+action/@type='submit'"
-        "+and+(state/@name='accepted'+or+state/@name='revoked'"
-        f"+or+state/@name='superseded')+and+state/@when>='{since}'"
+    payload = geectl(
+        [
+            "request",
+            "search",
+            "--creator",
+            user,
+            "--type",
+            "submit",
+            "--state",
+            "accepted",
+            "--state",
+            "revoked",
+            "--state",
+            "superseded",
+            "--since",
+            since,
+        ],
+        hard=False,
     )
-    raw = api(f"/search/request?match={match}", hard=False)
-    try:
-        root = ET.fromstring(raw) if raw is not None else None
-    except ET.ParseError:
-        root = None
-    if root is None or root.tag != "collection":
+    if payload is None:
         return since, None
     out = []
-    for r in root.findall("request"):
-        st, act = r.find("state"), r.find("action")
-        tgt = act.find("target") if act is not None else None
+    for r in payload.get("requests", []):
+        st = r.get("state") or {}
+        # --since matches a history entry at or after the date, so the state
+        # change itself is filtered on state.when
+        if (st.get("when") or "") < since:
+            continue
+        act = (r.get("actions") or [{}])[0]
         out.append(
             {
-                "id": r.get("id", "?"),
-                "state": st.get("name", "") if st is not None else "",
-                "who": st.get("who", "?") if st is not None else "?",
-                "by": st.get("superseded_by", "?") if st is not None else "?",
-                "why": (st.findtext("comment") if st is not None else "") or "",
-                "target": tgt.get("project", "?") if tgt is not None else "?",
-                "pkg": tgt.get("package", "?") if tgt is not None else "?",
+                "id": str(r.get("id", "?")),
+                "state": st.get("name", ""),
+                "who": st.get("who", "?"),
+                "by": st.get("superseded_by", "?"),
+                "why": st.get("comment") or "",
+                "target": act.get("target_project", "?"),
+                "pkg": act.get("target_package", "?"),
             }
         )
     return since, sorted(out, key=lambda r: int(r["id"]) if r["id"].isdigit() else 0)
@@ -840,14 +1010,14 @@ def closed_since(user, days):
 
 
 def norm_time(s):
-    """OBS writes 2026-10-19T05:09:04 in request XML and
+    """OBS writes 2026-10-19T05:09:04 in request JSON and
     2026-10-19 05:09:04 UTC in comments; both become comparable text."""
     return (s or "").replace("T", " ").replace(" UTC", "")[:19]
 
 
 def created(row):
-    st = row["el"].find("state")
-    return norm_time(st.get("created")) if st is not None else ""
+    st = row["el"].get("state") or {}
+    return norm_time(st.get("created"))
 
 
 def later_requests(prj, pkg, after):
@@ -857,44 +1027,46 @@ def later_requests(prj, pkg, after):
     it is only the source or a reviewer, and drags the whole history along).
     Returns [(id, state, creator)], or None when the lookup failed."""
 
-    def q(x):  # quoted: a raw '+' (libsigc++2) reaches the server as a space
-        return urllib.parse.quote(x, safe=":")
-
-    match = (
-        f"action/target/@project='{q(prj)}'+and+action/target/@package='{q(pkg)}'"
-        f"+and+@id>{after}+and+(state/@name='new'+or+state/@name='review'"
-        "+or+state/@name='accepted')"
+    payload = geectl(
+        [
+            "request",
+            "search",
+            "--target-project",
+            prj,
+            "--target-package",
+            pkg,
+            "--type",
+            "submit",
+            "--state",
+            "new",
+            "--state",
+            "review",
+            "--state",
+            "accepted",
+        ],
+        hard=False,
     )
-    raw = api(f"/search/request?match={match}", hard=False)
-    try:
-        root = ET.fromstring(raw) if raw is not None else None
-    except ET.ParseError:
-        root = None
-    if root is None:
+    if payload is None:
         return None
     later = []
-    for r in root.findall("request"):
-        rid = r.get("id", "")
-        if rid.isdigit() and int(rid) > after:
-            st = r.find("state")
-            later.append(
-                (int(rid), st.get("name") if st is not None else "?", r.get("creator"))
-            )
+    for r in payload.get("requests", []):
+        rid = r.get("id", 0)
+        if isinstance(rid, int) and rid > after:
+            st = r.get("state") or {}
+            later.append((rid, st.get("name", "?"), r.get("creator")))
     return sorted(later)
 
 
 def decline_followups(row):
     """[(where, later)] for a decline: its target, and its source project when
     that is not a home: one — a Factory decline is fixed in the devel project."""
-    act = row["el"].find("action")
-    src = act.find("source") if act is not None else None
+    acts = row["el"].get("actions", [])
+    act = acts[0] if acts else {}
     places = [(row["target"], row["pkg"])]
-    if (
-        src is not None
-        and src.get("project")
-        and not src.get("project").startswith("home:")
-    ):
-        places.append((src.get("project"), src.get("package") or row["pkg"]))
+    if act.get("source_project") and not act.get("source_project").startswith("home:"):
+        places.append(
+            (act.get("source_project"), act.get("source_package") or row["pkg"])
+        )
     return [(f"{p}/{k}", later_requests(p, k, row["num"])) for p, k in places]
 
 
@@ -905,20 +1077,16 @@ def others_comments(row, user):
     req = row["el"]
     mine = [created(row)]
     mine += [
-        norm_time(h.get("when")) for h in req.iter("history") if h.get("who") == user
+        norm_time(h.get("when")) for h in req.get("history", []) if h.get("who") == user
     ]
-    raw = api(f"/comments/request/{row['id']}", hard=False)
-    try:
-        root = ET.fromstring(raw) if raw is not None else None
-    except ET.ParseError:
-        root = None
-    if root is None:
+    payload = geectl(["request", "list-comments", str(row["id"])], hard=False)
+    if payload is None:
         return None
-    cmts = root.findall("comment")
+    cmts = payload.get("comments", [])
     mine += [norm_time(c.get("when")) for c in cmts if c.get("who") == user]
     last = max(mine) if mine else ""
     return [
-        (norm_time(c.get("when")), c.get("who", "?"), c.text)
+        (norm_time(c.get("when")), c.get("who", "?"), c.get("body"))
         for c in cmts
         if c.get("who") != user
         and not is_bot(c.get("who"))
@@ -939,25 +1107,26 @@ def login(x):
 
 
 def pr_others_comments(pr):
-    """What others said on one of your PRs since your last word there (its
-    opening, or your latest comment or review), bots aside. issues/search's
-    count includes reviews, which /issues/<n>/comments does not return, so
-    when it is short the reviews are read too. Returns (when, who, text,
-    kind) oldest first — kind "comment", "change request" or "approval", with
-    ", +N inline" for review comments — or None when a fetch failed."""
+    """What others said on one of your PRs since your last word there (your
+    latest comment or review), bots aside. The search carries no comment
+    count and no created date, so the show payload's reviews are always
+    read too: a review is not an issue comment, and only the show names
+    it. (No comment can predate the PR's opening, so dropping the opening
+    date as the floor changes nothing.) Returns (when, who, text, kind)
+    oldest first — kind "comment", "change request" or "approval" — or None
+    when a fetch failed. The show payload carries no per-review inline
+    count, so reviews carry no ", +N inline" bit."""
     num = pr["id"].lstrip("#")
-    cmts = gitea_get(f"/repos/{pr['repo']}/issues/{num}/comments")
+    cmts = pr_comments(pr["repo"], int(num))
     if cmts is None:
         return None
-    reviews = []
-    if len(cmts) < (pr.get("ncomments") or 0):
-        reviews = gitea_get(f"/repos/{pr['repo']}/pulls/{num}/reviews")
-        if reviews is None:
-            return None
+    show = pr_show(pr["repo"], int(num))
+    if show is None:
+        return None
+    reviews = show.get("reviews") or []
     author = pr.get("author")
-    marks = [iso(pr.get("created"))]
-    marks += [iso(c.get("created_at")) for c in cmts if login(c) == author]
-    marks += [iso(r.get("submitted_at")) for r in reviews if login(r) == author]
+    marks = [iso(c.get("created_at")) for c in cmts if login(c) == author]
+    marks += [iso(r.get("when")) for r in reviews if r.get("reviewer") == author]
     marks = [m for m in marks if m is not None]
     last = max(marks) if marks else None
 
@@ -976,20 +1145,18 @@ def pr_others_comments(pr):
             (c.get("created_at"), who, body, "approval" if merge_ok else "comment")
         )
     for r in reviews:
-        who, state = login(r), (r.get("state") or "").upper()
-        if who == author or is_bot(who) or not newer(r.get("submitted_at")):
+        who, state = r.get("reviewer"), (r.get("state") or "").lower()
+        if who == author or is_bot(who) or not newer(r.get("when")):
             continue
-        inline = r.get("comments_count") or 0
-        if state == "APPROVED":
+        if state == "approved":
             kind = "approval"
-        elif state == "REQUEST_CHANGES":
+        elif state == "changes_requested":
             kind = "change request"
-        elif r.get("body") or inline:
+        elif r.get("comment"):
             kind = "comment"
         else:
             continue
-        kind += f", +{inline} inline" if inline else ""
-        out.append((r.get("submitted_at"), who, r.get("body") or "", kind))
+        out.append((r.get("when"), who, r.get("comment") or "", kind))
     floor = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     return sorted(out, key=lambda x: iso(x[0]) or floor)
 
@@ -1039,9 +1206,9 @@ def summary(user, rows, prs, failed_legs, no_prs, days):
     if declined:
         print(f"\ndeclined ({len(declined)}):")
         for r, follow in zip(declined, comments_for(declined, decline_followups)):
-            st = r["el"].find("state")
-            who = clip(st.get("who", "?") if st is not None else "?", 40)
-            why = clip((st.findtext("comment") if st is not None else "") or "", 120)
+            st = r["el"].get("state") or {}
+            who = clip(st.get("who", "?"), 40)
+            why = clip(st.get("comment") or "", 120)
             print(f'  SR {r["id"]} {r["pkg"]} -> {r["target"]} by {who}: "{why}"')
             if follow is SKIPPED:
                 print("    later requests UNKNOWN (not looked up: --deadline reached)")
@@ -1112,9 +1279,10 @@ def summary(user, rows, prs, failed_legs, no_prs, days):
     asked = [p for p in prs if p.get("review")]
     items = []
     if prs_ok:
-        # issues/search says how many comments a PR has: read only those, and
-        # first, as they are few and --deadline cuts the end of the queue
-        items += [("PR", p) for p in mine if p.get("ncomments")]
+        # The search carries no comment count, so every own PR's comments
+        # are read, PRs first, as they are few and --deadline cuts the end
+        # of the queue
+        items += [("PR", p) for p in mine]
     items += [("SR", r) for r in open_srs]
     found = comments_for(
         items,
@@ -1288,12 +1456,12 @@ def main():
     if a.limit is not None and a.limit < 0:
         ap.error("--limit takes 0 (no cap) or a positive number")
     limit = a.limit if a.limit is not None else (0 if a.brief or a.summary else 40)
-    w = run(["osc", "whois"])
-    user = a.user or w.stdout.split(":")[0].strip()
+    user = a.user or os.environ.get("GEECTL_OBS_USERNAME", "")
     if not user:
         sys.stderr.write(
-            f"ERROR: could not determine OBS user (osc whois rc="
-            f"{w.returncode}: {w.stderr.strip()}) — pass --user\n"
+            "ERROR: could not determine OBS user — pass --user or set "
+            "GEECTL_OBS_USERNAME (there is no typed leaf for the "
+            "authenticated user)\n"
         )
         sys.exit(2)
 
@@ -1315,20 +1483,29 @@ def main():
         # what the declines-first sort below exists to surface. Leaving it out
         # made the default view silently hide exactly the rows worth reading.
         states = {
-            "open": "new,review,declined",
-            "all": "new,review,declined,accepted,revoked,superseded",
-        }.get(a.state, a.state)
-        q = f"/request?view=collection&states={states}&roles=creator&user={user}&types=submit"
+            "open": ["new", "review", "declined"],
+            "all": ["new", "review", "declined", "accepted", "revoked", "superseded"],
+        }.get(a.state, [a.state])
+        cmd = [
+            "request",
+            "search",
+            "--creator",
+            user,
+            "--type",
+            "submit",
+            "--with-history",
+        ]
+        for st in states:
+            cmd += ["--state", st]
         if a.target:
-            q += f"&project={a.target}"
-        col = ET.fromstring(api(q) or "<collection/>")  # api() exits 2 on failure
-        reqs = col.findall("request")
+            cmd += ["--target-project", a.target]
+        payload = geectl(cmd)  # geectl() exits 2 on failure
+        reqs = payload.get("requests", [])
         if limit and len(reqs) > limit:
             # the cap only saves the comment calls: keep every decline, then the
             # newest of the rest — a silent cut of the oldest once hid a decline
             def declined(r):
-                st = r.find("state")
-                return st is not None and st.get("name") == "declined"
+                return (r.get("state") or {}).get("name") == "declined"
 
             keep = [r for r in reqs if declined(r)]
             rest = sorted(
@@ -1341,24 +1518,20 @@ def main():
             reqs = keep
         rows = [sr_row(r, brief) for r in reqs]
     if not brief:
-        # a decline's reason is in the XML already: it needs no call, and so
-        # no deadline either
+        # a decline's reason is in the request dict already: it needs no call,
+        # and so no deadline either
         def decline_note(r):
-            st = r["el"].find("state")
-            return (
-                st is not None
-                and st.get("name") == "declined"
-                and (st.findtext("comment") or "").strip()
-            )
+            st = r["el"].get("state") or {}
+            return st.get("name") == "declined" and (st.get("comment") or "").strip()
 
         for r in rows:
             if "el" in r and decline_note(r):
-                r["comment"] = human_comment(r["id"], r["el"].find("state"))
+                r["comment"] = human_comment(r["id"], r["el"].get("state"))
         detail = [r for r in rows if "el" in r and not decline_note(r)]
         for r, c in zip(
             detail,
             comments_for(
-                detail, lambda r: human_comment(r["id"], r["el"].find("state"))
+                detail, lambda r: human_comment(r["id"], r["el"].get("state"))
             ),
         ):
             r["comment"] = "(not fetched: --deadline reached)" if c is SKIPPED else c
@@ -1373,10 +1546,10 @@ def main():
                 r["bad"] = r["bad"] or s.startswith(("STALE —", "STALE UNKNOWN"))
 
     # A decline that a later accepted request for the same package and target
-    # replaced is cleanup, not done: osc still counts it, and the next `osc sr`
-    # from that source prompts over it until it is revoked. Only rows already
-    # fetched are compared (the default view holds no accepted ones), so this
-    # costs no call.
+    # replaced is cleanup, not done: geectl still counts it, and the next
+    # `geectl request file` from that source prompts over it until it is
+    # revoked. Only rows already fetched are compared (the default view holds
+    # no accepted ones), so this costs no call.
     accepted = [r for r in rows if r["state"] == "accepted" and r["pkg"] != "?"]
     for r in rows:
         if r["state"] != "declined":
@@ -1391,7 +1564,7 @@ def main():
             n = min(later)
             r["note"] = (
                 f"; later #{n} accepted — revoke: "
-                f'osc rq revoke -m "replaced by #{n}" {r["id"]}'
+                f'geectl request revoke --comment "replaced by #{n}" {r["id"]} --live'
             )
 
     failed_legs, full_legs, prs = [], [], []

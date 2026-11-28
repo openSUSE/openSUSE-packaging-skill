@@ -63,6 +63,13 @@ resolve() {
 		die "no opencode client at an absolute path: $opencode"
 	opencode=$found
 }
+# The api.opensuse.org login, read once and dropped from the environment
+# before any command runs: only `secrets` reads it, and no child of this
+# launcher (the startup realpath included) may carry the password.
+obs_user=${GEECTL_OBS_USERNAME:-}
+obs_password=${GEECTL_OBS_PASSWORD:-}
+obs_password_file=${GEECTL_OBS_PASSWORD_FILE:-}
+unset GEECTL_OBS_USERNAME GEECTL_OBS_PASSWORD GEECTL_OBS_PASSWORD_FILE
 # The launcher's own file, whatever invoked it as.
 self=$(realpath -- "${BASH_SOURCE[0]}")
 # Stops when commands or libraries are looked up in the work directory $1: by
@@ -119,7 +126,7 @@ usage: skill-container secrets --model-auth <integration> [--bugzilla-key FILE] 
        skill-container import <instance> --from DIR [--memory FILE]
        skill-container update <instance>
        skill-container idle <instance>
-secrets  copies the api.opensuse.org login of osc, the src.opensuse.org login of
+secrets  copies the api.opensuse.org login of geectl, the src.opensuse.org login of
          tea, the github.com login of gh, the Bugzilla API key and one opencode
          integration into podman secrets, and makes an SSH key for pushes to
          src.opensuse.org on its first run; --new-ssh-key replaces that key,
@@ -197,36 +204,19 @@ put(b"\xc2" * held)
 plain() {
 	LC_ALL=C sed -u -e 's/\x1b\[[0-9;]*m//g' -e 's/[\x00-\x08\x0b-\x1f\x7f]//g' | python3 -I -S -c "$c1prog"
 }
-# An osc config with the api.opensuse.org login alone. osc reads its own config,
-# so a password it keeps obfuscated or in a keyring comes out as well. -I: no
-# module comes from PYTHONPATH or the user's site directory.
-osc_login() {
-	python3 -I - <<'EOF'
-import sys
-API = "https://api.opensuse.org"
-try:
-    from osc import conf, credentials
-    from osc.OscConfigParser import OscConfigParser
-    conf.get_config()
-    host = conf.config["api_host_options"][API]
-    user = host.username
-    password = str(host.password) if host.password is not None else ""
-except Exception as e:
-    # Not the message: it may quote a line of the config.
-    sys.exit(f"skill-container: osc has no usable {API} login ({type(e).__name__})")
-if not user or not password:
-    sys.exit(f"skill-container: osc stores no password for {API}")
-cp = OscConfigParser()
-cp.add_section("general")
-cp.set("general", "apiurl", API)
-cp.add_section(API)
-cp.set(API, "user", user)
-for key in ("realname", "email"):
-    if getattr(host, key, None):
-        cp.set(API, key, getattr(host, key))
-credentials.PlaintextConfigFileCredentialsManager(cp, None).set_password(API, user, password)
-cp.write(sys.stdout)
-EOF
+# The api.opensuse.org login, from the environment: geectl reads its
+# credentials from GEECTL_OBS_USERNAME with GEECTL_OBS_PASSWORD or
+# GEECTL_OBS_PASSWORD_FILE, never from a file of its own. Prints the user
+# name, then the password, one per line.
+geectl_login() {
+	local user=$obs_user password=$obs_password
+	if [ -z "$password" ] && [ -n "$obs_password_file" ]; then
+		password=$(cat -- "$obs_password_file") ||
+			die "cannot read GEECTL_OBS_PASSWORD_FILE"
+	fi
+	[ -n "$user" ] && [ -n "$password" ] ||
+		die "geectl has no usable api.opensuse.org login: set GEECTL_OBS_USERNAME with GEECTL_OBS_PASSWORD or GEECTL_OBS_PASSWORD_FILE"
+	printf '%s\n%s\n' "$user" "$password"
 }
 # tea's config with the src.opensuse.org logins alone; git-obs reads the same file.
 tea_login() {
@@ -265,7 +255,7 @@ gh_login() {
 	printf '    git_protocol: https\n    user: %s\n    oauth_token: %s\n' "$user" "$token"
 }
 cmd_secrets() {
-	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key osc tea github model newkey='' ownkey='' keydir=''
+	local model_auth='' bugzilla_key=$conf/mcp-bugzilla/api-key tea github model newkey='' ownkey='' keydir=''
 	while (($#)); do
 		case $1 in
 		--model-auth)
@@ -295,7 +285,7 @@ cmd_secrets() {
 	[[ -z $ownkey || $ownkey == /* ]] || ownkey=$start/$ownkey
 	resolve
 	# All of them are complete before any replaces the secret of an earlier run.
-	osc=$(osc_login)
+	geectl=$(geectl_login)
 	tea=$(tea_login)
 	github=$(gh_login)
 	model=$(PATH=$userpath OPENCODE_DISABLE_PROJECT_CONFIG=1 "$opencode" auth export "$model_auth")
@@ -317,7 +307,12 @@ cmd_secrets() {
 				die "no SSH private key without a passphrase at $ownkey"
 		fi
 	fi
-	printf '%s\n' "$osc" | store osc
+	# Two env secrets, no trailing newline: the unit hands them to geectl as
+	# GEECTL_OBS_USERNAME and GEECTL_OBS_PASSWORD.
+	geectl_user=${geectl%%$'\n'*}
+	geectl_pass=${geectl#*$'\n'}
+	printf '%s' "$geectl_user" | store geectl-obs-username
+	printf '%s' "$geectl_pass" | store geectl-obs-password
 	printf '%s\n' "$tea" | store tea
 	printf '%s\n' "$github" | store github
 	printf '%s\n' "$model" | store model
@@ -327,7 +322,7 @@ cmd_secrets() {
 		rm -rf "$keydir"
 		trap - EXIT
 	fi
-	printf '%s\n' "$name-osc" "$name-tea" "$name-github" "$name-model" "$name-bugzilla" "$name-ssh"
+	printf '%s\n' "$name-geectl-obs-username" "$name-geectl-obs-password" "$name-tea" "$name-github" "$name-model" "$name-bugzilla" "$name-ssh"
 }
 # The public half is no secret; the private one goes to ssh-keygen through a pipe.
 cmd_ssh_key() {
@@ -804,7 +799,7 @@ cmd_install() {
 			;;
 		esac
 	done
-	for s in osc tea github bugzilla model ssh; do
+	for s in geectl-obs-username geectl-obs-password tea github bugzilla model ssh; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
 	cmp -s "$self" "$fixedcopy" || die "copy the launcher to $fixedcopy first, then run install again"
@@ -928,7 +923,7 @@ cmd_up() {
 	readstate
 	check_workdir
 	! running || die "$inst is already running: 'skill-container down $inst' stops it"
-	for s in osc tea github bugzilla model ssh; do
+	for s in geectl-obs-username geectl-obs-password tea github bugzilla model ssh; do
 		podman secret exists "$name-$s" || die "no secret $name-$s: run 'skill-container secrets' first"
 	done
 	mkdir -p "$userconf"

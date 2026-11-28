@@ -33,21 +33,21 @@ def judged(prj, repo, arch, leap=True, repos=None, arches=None):
     return bool(wanted) and (arch in ARCHES or bool(arches and arches.search(arch)))
 
 
-def origin(listing, pkg):
-    """(project, package) the expanded source listing of pkg links to, else
-    None."""
-    li = listing.find("linkinfo") if listing is not None else None
-    if li is None or not li.get("project"):
+def origin(link_target, pkg):
+    """(project, package) the link target of pkg, else None. link_target is a
+    `geectl remote link-target` payload ({target: {project, package} | null})."""
+    target = (link_target or {}).get("target")
+    if not target or not target.get("project"):
         return None
-    return li.get("project"), li.get("package") or pkg
+    return target["project"], target.get("package") or pkg
 
 
 def codes(results, pkg):
     """{(repo, arch, flavor suffix): code} of pkg and its multibuild flavors
-    in a parsed osc results --xml answer."""
+    in a `geectl build results` JSON payload."""
     out = {}
-    for r in results.findall("result"):
-        for s in r.findall("status"):
+    for r in (results or {}).get("results", []):
+        for s in r.get("statuses", []):
             name = s.get("package") or ""
             if name == pkg or name.startswith(pkg + ":"):
                 key = (r.get("repository"), r.get("arch"), name[len(pkg) :])

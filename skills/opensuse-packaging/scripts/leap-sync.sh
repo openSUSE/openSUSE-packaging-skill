@@ -20,9 +20,9 @@
 # create the branch first (a contributor PR cannot create a branch); this script
 # errors out in that case. See references/leap-slfo.md.
 #
-# Requires: a git-obs login for src.opensuse.org (git-obs reads its own
-# credentials: this script reads none), git-lfs, and for --remote an SSH key
-# there (target-gate.sh pushes the build branch over SSH).
+# Requires: geectl for the open-PR check and the user lookup (it reads its
+# own credentials: this script reads none), git-lfs, and for --remote an SSH
+# key there (target-gate.sh pushes the build branch over SSH).
 #
 # Usage: leap-sync.sh [--dir D] [--remote] <pkg> [leap-branch]   (branch default: leap-16.0)
 #   --dir     where the clone and the per-branch worktrees go (default: .)
@@ -54,29 +54,39 @@ pkg=${args[0]}; leap=${args[1]:-leap-16.0}
   || { echo "REFUSING: '$leap' is not a leap-16.x branch (SLFO branches: ask for the route)" >&2; exit 2; }
 dir=$(cd "$dir" 2>/dev/null && pwd -P) || { echo "--dir: no such directory" >&2; exit 2; }
 # target-gate.sh refuses to build a clone there; fail before cloning, not after.
-case "$dir/" in /tmp/*) echo "REFUSING: $dir is under /tmp — pass --dir elsewhere (e.g. under /var/tmp)" >&2; exit 2;; esac
-# The forge through git-obs, which reads its own login (-G: the default one may
-# be another forge's) and exits non-zero on an HTTP error.
+# /tmp itself may be a symlink (macOS: /private/tmp), so match its resolved
+# form too; on Linux the two are the same path.
+tmp=$(cd /tmp 2>/dev/null && pwd -P 2>/dev/null || echo /tmp)
+case "$dir/" in /tmp/*|$tmp/*) echo "REFUSING: $dir is under /tmp — pass --dir elsewhere (e.g. under /var/tmp)" >&2; exit 2;; esac
+# The forge user, through geectl: the token owner of the configured Gitea instance.
 tmpd=$(mktemp --directory -p "${TMPDIR:-/var/tmp}" leap-sync.XXXXXX) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$tmpd"' EXIT
-gapi() { timeout 60 git-obs -G src.opensuse.org -q api "$@" 2>"$tmpd/gerr" | sed '1{/^Response:$/d}'; }
-gerr() { local e; e=$(grep -v '^Response:$' "$tmpd/gerr" | tail -1); echo "${e:-no usable answer}"; }
-user=$(gapi /user | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
-  || { echo "could not read your src.opensuse.org user through git-obs: $(gerr)" >&2; exit 6; }
+user=$(timeout 60 geectl --format json gitea whoami 2>"$tmpd/werr" | python3 -I -c 'import json,sys; u=json.load(sys.stdin).get("login"); assert isinstance(u, str) and u; print(u)' 2>/dev/null) \
+  || { err=$(tail -1 "$tmpd/werr" 2>/dev/null); echo "could not read your src.opensuse.org user through geectl: ${err:-no usable answer}" >&2; exit 6; }
 
 # --- duplicate-PR guard: refuse to double-file over someone else's open PR ---
-prs=$(gapi "/repos/pool/$pkg/pulls?state=open&limit=50") \
-  || { echo "could not query open PRs for pool/$pkg: $(gerr)" >&2; exit 6; }
+# The open PRs, as one list from the unified pull-request surface: geectl
+# pages the forge's list itself (bounded at 500), so one call reads them all.
+prs=$(geectl --format json pull-request search --backend gitea --repo "pool/$pkg" --state open 2>"$tmpd/perr") \
+  || { err=$(tail -1 "$tmpd/perr" 2>/dev/null); echo "could not query open PRs for pool/$pkg: ${err:-no usable answer}" >&2; exit 6; }
 rm -rf "$tmpd"; trap - EXIT
 existing=$(printf '%s' "$prs" | python3 -I -c "
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(1)
-if not isinstance(d, list): sys.exit(1)
-on = [p for p in d if (p.get('base') or {}).get('ref') == sys.argv[1]]
-own = lambda p: ((((p.get('head') or {}).get('repo') or {}).get('owner') or {}).get('login') or '').lower() == sys.argv[2].lower()
+if not isinstance(d, dict) or not isinstance(d.get('pull_requests'), list): sys.exit(1)
+def src(p): return p.get('source') or {}
+def tgt(p): return p.get('target') or {}
+on = [p for p in d['pull_requests'] if isinstance(p, dict) and (tgt(p).get('branch') or '') == sys.argv[1]]
+own = lambda p: ((src(p).get('repository') or '/').split('/')[0] or '').lower() == sys.argv[2].lower()
 p = next((p for p in on if own(p)), None) or next(iter(on), None)
-if p: print('%s\t%s\t%s' % ('mine' if own(p) else 'other', p.get('number'), p.get('html_url') or ''))
+if p:
+    ref = p.get('reference') or ''
+    if '#' not in ref or ':' not in ref: sys.exit(1)
+    n = ref.rsplit('#', 1)[1]
+    if not n.isdigit(): sys.exit(1)
+    repo = ref.split(':', 1)[1].rsplit('#', 1)[0]
+    print('%s\t%s\t%s' % ('mine' if own(p) else 'other', n, 'https://src.opensuse.org/%s/pulls/%s' % (repo, n)))
 " "$leap" "$user" 2>/dev/null) || { echo "unparseable open-PR list for pool/$pkg — cannot rule out a duplicate" >&2; exit 6; }
 prnote=""
 case "$existing" in

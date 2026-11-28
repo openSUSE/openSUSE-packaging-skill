@@ -2,10 +2,11 @@
 # test-pool-pr.sh — proves scripts/pool-pr.sh creates or moves a pool PR only
 # behind a green target-gate.sh, and that leap-sync.sh syncs and builds but
 # never pushes. Copies of both scripts run next to a fake target-gate.sh, with
-# fake git-obs and tea and a git wrapper on PATH that record every network
-# write and stub push and git-lfs; leap-sync.sh clones a local forge through
-# url.insteadOf. HOME holds no credential file. All offline. Each negative case
-# trips exactly one branch and asserts its message. Exit 0 = all assertions hold.
+# fake geectl (the open-PR listing), fake git-obs and tea and a git wrapper on
+# PATH that record every network write and stub push and git-lfs; leap-sync.sh
+# clones a local forge through url.insteadOf. HOME holds no credential file.
+# All offline. Each negative case trips exactly one branch and asserts its
+# message. Exit 0 = all assertions hold.
 # shellcheck disable=SC2015  # `cond && pass ... || fail ...` is this suite's assertion
 # idiom: pass and fail both return 0, so exactly one verdict is ever printed.
 set -u
@@ -17,6 +18,10 @@ fail() { printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); }
 REALGIT="$(command -v git)" || { echo "FAIL: git not found"; exit 1; }
 # Not $TMPDIR: leap-sync.sh refuses a --dir under /tmp, and that is where it may point.
 work="$(mktemp -d /var/tmp/test-pool-pr.XXXXXX)"; trap 'rm -rf "$work"' EXIT
+# Canonicalize once: the scripts resolve paths (pwd -P), so every expected
+# path built from $work must be the resolved form too (/var/tmp resolves to
+# /private/var/tmp on macOS; identity on Linux).
+work="$(cd "$work" && pwd -P)"
 S="$work/scripts"; EV="$work/events"
 mkdir -p "$S" "$work/bin" "$work/home" "$work/forge/pool"
 cp "$SK/pool-pr.sh" "$SK/leap-sync.sh" "$S/"
@@ -68,17 +73,42 @@ case "$sub" in
 esac
 exec "$REALGIT" "$@"
 EOF
-# git-obs reads its own login; the fake answers as the user "tester".
+# geectl answers the open-PR listing from FAKE_PRS (the wrapped search
+# payload); the list it serves is the whole list -- it pages the forge's
+# list itself, bounded at 500, so the scripts read no second page.
+cat > "$work/bin/geectl" <<'EOF'
+#!/bin/bash
+printf 'geectl %s\n' "$*" >> "$EV"
+if [ "$1" = gitea ]; then
+  # repo-fork pool <pkg> --live: an existing fork is no error.
+  [ "$2" = repo-fork ] || { echo "fake geectl: unexpected gitea $*" >&2; exit 99; }
+  printf 'fork %s\n' "$*" >> "$EV"
+  [ -z "${FAKE_FORK_OUT:-}" ] || echo "$FAKE_FORK_OUT" >&2
+  exit "${FAKE_FORK_RC:-0}"
+fi
+[ "$1" = --format ] && [ "$2" = json ] || { echo "fake geectl: no --format json: $*" >&2; exit 99; }
+shift 2
+if [ "$1" = gitea ]; then
+  [ "$2" = whoami ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
+  [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" >&2; exit 1; }
+  printf '%s\n' "${FAKE_USER:-{\"login\": \"tester\"}}"
+  exit 0
+fi
+[ "$1 $2" = "pull-request search" ] || { echo "fake geectl: unexpected $*" >&2; exit 99; }
+shift 2
+[ "$1" = --backend ] && [ "$2" = gitea ] && [ "$3" = --repo ] && case "$4" in pool/*) ;; *) echo "fake geectl: unexpected repo $4" >&2; exit 99;; esac \
+  && [ "$5" = --state ] && [ "$6" = open ] || { echo "fake geectl: unexpected search args: $*" >&2; exit 99; }
+[ -z "${FAKE_PRS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
+cat "${FAKE_PRS:-$EMPTY}"
+EOF
+# The fake writes the PR itself: the pull-request surface has no create leaf;
+# the fork goes through geectl gitea repo-fork now, the user lookup through
+# geectl gitea whoami.
 cat > "$work/bin/git-obs" <<'EOF'
 #!/bin/bash
 # Every call names the forge: the default login may be another forge's.
 [ "$1 $2 $3" = "-G src.opensuse.org -q" ] || { echo "fake git-obs: not pinned to src.opensuse.org: $*" >&2; exit 99; }
 shift 3
-if [ "$1" = repo ]; then
-  printf 'fork %s\n' "$*" >> "$EV"
-  [ -z "${FAKE_FORK_OUT:-}" ] || echo "$FAKE_FORK_OUT" >&2
-  exit "${FAKE_FORK_RC:-0}"
-fi
 [ "$1" = api ] || { echo "fake git-obs: unexpected $1" >&2; exit 99; }
 shift; m=GET; data=""
 while [ $# -gt 1 ]; do
@@ -89,47 +119,37 @@ printf 'api %s %s %s\n' "$m" "$path" "$data" >> "$EV"
 # As git-obs does: an HTTP error is exit 1 and one ERROR line.
 [ "${FAKE_API_FAIL:-}" = "$m" ] && { echo "ERROR: 409 Conflict: b'{\"message\":\"refused\"}'" >&2; exit 1; }
 case "$m $path" in
-  "GET /user")
-    [ -z "${FAKE_NOLOGIN:-}" ] || { echo "ERROR: Could not find a matching Gitea config entry: name=src.opensuse.org" >&2; exit 1; }
-    u='{"id": 7, "login": "tester"}'; echo "${FAKE_USER:-$u}";;
-  # FAKE_PRS_ENDLESS: 30 full pages, past pool-pr.sh's cap, so a lost cap shows
-  # as a PR opened rather than a hang.
-  GET*) [ -z "${FAKE_PRS_FAIL:-}" ] || { echo "ERROR: Failed to establish a new connection" >&2; exit 1; }
-        p=${path##*page=}
-        [ -n "${FAKE_PRS_ENDLESS:-}" ] && [ "$p" -le 30 ] 2>/dev/null && { cat "$FAKE_PRS_ENDLESS"; exit 0; }
-        case "$path" in
-          *page=1|*limit=50) cat "${FAKE_PRS:-$EMPTY}";;
-          *page=2) cat "${FAKE_PRS2:-$EMPTY}";;
-          *) cat "$EMPTY";;
-        esac;;
   POST*) if [ -n "${FAKE_RESP:-}" ]; then echo "$FAKE_RESP"
          else echo '{"number": 12, "html_url": "https://src.opensuse.org/pool/foo/pulls/12"}'; fi;;
   PATCH*) n=${path##*/}; echo "{\"number\": $n, \"html_url\": \"https://src.opensuse.org/pool/foo/pulls/$n\"}";;
 esac
 EOF
-# A tripwire: the scripts fork and write through git-obs, never tea.
+# A tripwire: the scripts write PRs through git-obs, never tea.
 cat > "$work/bin/tea" <<'EOF'
 #!/bin/bash
 printf 'tea %s\n' "$*" >> "$EV"
 EOF
 chmod +x "$S"/*.sh "$work/bin"/*
 # Credential files that exist but cannot be read: nothing may need them.
-mkdir -p "$work/home-locked/.config/tea/config.yml" "$work/home-locked/.config/osc"
+mkdir -p "$work/home-locked/.config/tea/config.yml" "$work/home-locked/.config/osc" "$work/home-locked/.config/geectl"
 echo '[https://api.opensuse.org]' > "$work/home-locked/.config/osc/oscrc" && chmod 000 "$work/home-locked/.config/osc/oscrc"
-EMPTY="$work/empty.json"; echo '[]' > "$EMPTY"
+echo 'placeholder' > "$work/home-locked/.config/geectl/config.toml" && chmod 000 "$work/home-locked/.config/geectl/config.toml"
+EMPTY="$work/empty.json"; echo '{"pull_requests": [], "count": 0}' > "$EMPTY"
 export EV REALGIT EMPTY
 export PATH="$work/bin:$PATH" HOME="$work/home" GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # leap-sync.sh's src.opensuse.org URLs resolve to the local forge.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$work/forge/.insteadOf" GIT_CONFIG_VALUE_0="https://src.opensuse.org/"
 
-# prj <number> <base> <head ref> <head owner> [head full_name] [head sha] — one open PR
+# prj <number> <base> <head ref> <head owner> [head full_name] [head sha] — one
+# open PR, as the unified pull-request search lists it: the handle carries the
+# number, source the head repo/branch/sha, target the base branch.
 prj() {
-  printf '{"number": %s, "base": {"ref": "%s"}, "head": {"ref": "%s", "sha": "%s", "repo": {"owner": {"login": "%s"}, "full_name": "%s"}}, "html_url": "https://src.opensuse.org/pool/foo/pulls/%s"}' \
-    "$1" "$2" "$3" "${6:-}" "$4" "${5:-$4/foo}" "$1"
+  printf '{"reference": "gitea:pool/foo#%s", "title": "", "author": "%s", "status": "open", "source": {"repository": "%s", "branch": "%s", "commit": "%s"}, "target": {"repository": "pool/foo", "branch": "%s", "commit": null}}' \
+    "$1" "$4" "${5:-$4/foo}" "$3" "${6:-}" "$2"
 }
-# prs <file> <prj>... — write a PR list
-prs() { local f=$1 IFS=,; shift; printf '[%s]\n' "$*" > "$f"; }
+# prs <file> <prj>... — write a search payload holding the PR list
+prs() { local f=$1 IFS=,; shift; printf '{"pull_requests": [%s], "count": %s}\n' "$*" "$#" > "$f"; }
 n_of() { grep -cE -- "$1" "$EV"; }
 at() { grep -nE -- "$1" "$EV" | head -1 | cut -d: -f1; }
 
@@ -148,7 +168,7 @@ run_() {
 pp() { run_ pool-pr.sh "$@"; }
 ls_() { run_ leap-sync.sh "$@"; }
 nowrites() {  # nothing but the gate reached the network
-  [ "$(n_of '^(push|lfs-push|api|fork|tea) ')" = 0 ] && pass "$1: no network call after the gate" \
+  [ "$(n_of '^(push|lfs-push|api|fork|tea|geectl) ')" = 0 ] && pass "$1: no network call after the gate" \
     || { fail "$1: network calls recorded"; sed 's/^/    event: /' "$EV"; }
 }
 nopush() {
@@ -173,7 +193,7 @@ C="$work/c1"; mkclone "$C"
 SHA=$("$REALGIT" -C "$C" rev-parse HEAD); NEWHEAD="leap-16.0-${SHA:0:12}"
 PREV=$("$REALGIT" -C "$C" rev-parse HEAD~1); TREE=$("$REALGIT" -C "$C" rev-parse 'HEAD^{tree}')
 OID=4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393
-P="$work/prs.json"; P2="$work/prs2.json"
+P="$work/prs.json"
 
 pp help 0 "Exit:" -- --help
 pp no-dir 2 "Usage: pool-pr.sh DIR" --
@@ -200,9 +220,9 @@ C4="$work/c4"; mkclone "$C4" factory
 pp upstream-not-leap 2 "tracks 'origin/factory', not origin/leap-16.x" -- "$C4"
 pp lfs-objects-missing 2 "missing or corrupt here" FAKE_FSCK_RC=1 -- "$C"
 nowrites lfs-objects-missing
-pp no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- "$C"
+pp no-login 6 "could not read your src.opensuse.org user through geectl: ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" FAKE_NOLOGIN=1 -- "$C"
 nopush no-login
-pp login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- "$C"
+pp login-unparseable 6 "could not read your src.opensuse.org user through geectl" 'FAKE_USER={"id": 7}' -- "$C"
 nopush login-unparseable
 pp lfs-ls-files-fails 2 "git lfs ls-files failed" "FAKE_GIT_FAIL=lfs ls-files" -- "$C"
 nowrites lfs-ls-files-fails
@@ -228,8 +248,10 @@ nopush pr-list-unparseable
 prs "$P" "$(prj 3 leap-16.0 their-branch someone)"
 pp others-pr-on-base 2 "an open PR by someone already targets leap-16.0" "FAKE_PRS=$P" -- "$C"
 nopush others-pr-on-base
-prs "$P" "$(prj 3 leap-16.1 x someone)"; prs "$P2" "$(prj 9 leap-16.0 their-branch someone)"
-pp page-two-is-read 2 "an open PR by someone already targets leap-16.0" "FAKE_PRS=$P" "FAKE_PRS2=$P2" -- "$C"
+# The whole list arrives in one search call: a second PR late in the list
+# still counts, with no second page to read.
+prs "$P" "$(prj 3 leap-16.1 x someone)" "$(prj 9 leap-16.0 their-branch someone)"
+pp whole-list-is-read 2 "an open PR by someone already targets leap-16.0" "FAKE_PRS=$P" -- "$C"
 prs "$P" "$(prj 3 leap-16.0 a tester)" "$(prj 4 leap-16.0 b tester)"
 pp two-of-yours 2 "open PRs of yours on leap-16.0: #3, #4" "FAKE_PRS=$P" -- "$C"
 nopush two-of-yours
@@ -243,10 +265,7 @@ nopush new-head-taken-other-base
 # The same branch name in someone else's fork is no clash.
 prs "$P" "$(prj 4 leap-16.1 "$NEWHEAD" someone)"
 pp others-head-same-name 0 "PR opened" "FAKE_PRS=$P" -- "$C"
-prs "$P" "$(prj 3 leap-16.1 x someone)"
-pp pr-list-endless 6 "does not end" "FAKE_PRS_ENDLESS=$P" -- "$C"
-nopush pr-list-endless
-echo '[1]' > "$work/odd.json"
+echo '{"pull_requests": [1], "count": 1}' > "$work/odd.json"
 pp pr-list-odd-entry 6 "could not read the open-PR list" "FAKE_PRS=$work/odd.json" -- "$C"
 nopush pr-list-odd-entry
 
@@ -257,8 +276,8 @@ pp post-rejected 6 "PR POST rejected" 'FAKE_RESP={"message": "pull request alrea
 pp post-http-error 6 "PR POST failed: ERROR: 409 Conflict" FAKE_API_FAIL=POST -- "$C"
 pp lfs-push-fails 6 "LFS object push to tester/foo failed" "FAKE_OID=$OID" "FAKE_GIT_FAIL=lfs push" -- "$C"
 nopush lfs-push-fails
-# A fork error is shown, then the push decides; git-obs reuses an existing fork.
-pp fork-error-surfaced 0 "git-obs repo fork failed: ERROR: 403 Forbidden: fork quota exceeded" FAKE_FORK_RC=1 "FAKE_FORK_OUT=ERROR: 403 Forbidden: fork quota exceeded" -- "$C"
+# A fork error is shown, then the push decides; geectl reuses an existing fork.
+pp fork-error-surfaced 0 "geectl gitea repo-fork failed: ERROR: 403 Forbidden: fork quota exceeded" FAKE_FORK_RC=1 "FAKE_FORK_OUT=ERROR: 403 Forbidden: fork quota exceeded" -- "$C"
 pp fork-exists 0 "PR opened" "FAKE_FORK_OUT= * Fork already exists: tester/foo" -- "$C"
 ! grep -qF "fork failed" <<<"$out" && pass "fork-exists: reused silently" || fail "fork-exists: reported as a failure"
 mkdir -p "$work/scratch"
@@ -278,7 +297,7 @@ grep -q "^push .* --no-verify fork $SHA:refs/heads/$NEWHEAD\$" "$EV" && ! grep -
 grep -q "^lfs-push .*--object-id fork $OID\$" "$EV" && pass "open-new: the tree's LFS objects pushed by id" || fail "open-new: lfs push argv"
 grep -qF "\"head\": \"tester:$NEWHEAD\", \"base\": \"leap-16.0\", \"title\": \"Update to 2.0\", \"body\": \"Synced body.\"" "$EV" \
   && pass "open-new: POST names head, base, and HEAD's subject/body" || fail "open-new: POST payload $(grep POST "$EV")"
-grep -qx "fork repo fork pool/foo" "$EV" && [ "$(n_of '^tea ')" = 0 ] && pass "open-new: fork ensured through git-obs" || fail "open-new: no git-obs fork"
+grep -qx "fork gitea repo-fork pool foo --live" "$EV" && [ "$(n_of '^tea ')" = 0 ] && pass "open-new: fork ensured through geectl" || fail "open-new: no geectl fork"
 grep -qF "sr-status.py --pr pool/foo#12" <<<"$out" && pass "open-new: next step printed" || fail "open-new: no next step"
 [ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo.git" ] && [ "$(n_of '^askpass ')" = 0 ] \
   && pass "open-new: objects and ref go over SSH, no credential helper" \
@@ -299,10 +318,9 @@ pp update-own-head-repo 0 "PR updated" "FAKE_PRS=$P" -- --body-file "$work/body.
 [ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo-renamed.git" ] \
   && pass "update-own-head-repo: pushes to the PR's head repo" || fail "update-own-head-repo: fork url $("$REALGIT" -C "$C" config --get remote.fork.url)"
 grep -qF '"body": "New body."' "$EV" && pass "update-own-head-repo: --body-file replaces the body" || fail "update-own-head-repo: body not sent"
-prs "$P" "$(prj 5 leap-16.0 sync tester "" "$PREV" | sed 's/, "full_name": "[^"]*"//')"
-pp update-no-head-repo 0 "PR updated" "FAKE_PRS=$P" -- "$C"
-[ "$("$REALGIT" -C "$C" config --get remote.fork.url)" = "gitea@src.opensuse.org:tester/foo.git" ] \
-  && pass "update-no-head-repo: falls back to your fork" || fail "update-no-head-repo: fork url $("$REALGIT" -C "$C" config --get remote.fork.url)"
+# The unified summary always names the head repo as one string, so a
+# listing that omits it has no counterpart here: the plan refuses such an
+# entry as unreadable instead (pr-list-odd-entry above).
 
 # Your open PR's head is not in HEAD (say a CVE backport, then a sync): pushing
 # would drop its commits, so that takes --replace, which resets the body too.
@@ -346,10 +364,10 @@ nowrites symlinked-pool-pr
 # Static: no network write can precede the gate call.
 awk '!/^[[:space:]]*#/ {
        if (!g && /target-gate\.sh" /) g = NR
-       if (!w && (/git .*[[:space:]]push([[:space:]]|$)/ || /lfs push/ || /(^|[^[:alnum:]_-])curl[[:space:]]/ || /tea[[:space:]]+(pr|pulls|repo|api)/ || /git-obs[[:space:]]/)) w = NR
+       if (!w && (/git .*[[:space:]]push([[:space:]]|$)/ || /lfs push/ || /(^|[^[:alnum:]_-])curl[[:space:]]/ || /tea[[:space:]]+(pr|pulls|repo|api)/ || /git-obs[[:space:]]/ || /geectl[[:space:]]/)) w = NR
      } END { exit !(g && w && g < w) }' "$SK/pool-pr.sh" \
-  && pass "static: pool-pr.sh calls target-gate.sh before any push, git-obs, curl or tea" \
-  || fail "static: pool-pr.sh has a push/git-obs/curl/tea before (or without) the target-gate.sh call"
+  && pass "static: pool-pr.sh calls target-gate.sh before any push, geectl, git-obs, curl or tea" \
+  || fail "static: pool-pr.sh has a push/geectl/git-obs/curl/tea before (or without) the target-gate.sh call"
 
 # ============================ leap-sync.sh ====================================
 # mkforge <pkg> <branch=version>... — a bare pool/<pkg> with a factory branch at
@@ -437,8 +455,8 @@ ls_ dir-missing 2 "--dir: no such directory" -- --dir "$work/no-such-dir" foo
 
 # Refusals before the clone: nothing is left in --dir.
 D=$(d ls10)
-ls_ no-login 6 "could not read your src.opensuse.org user through git-obs: ERROR: Could not find a matching Gitea config entry" FAKE_NOLOGIN=1 -- --dir "$D" foo
-ls_ login-unparseable 6 "could not read your src.opensuse.org user through git-obs" 'FAKE_USER={"id": 7}' -- --dir "$D" foo
+ls_ no-login 6 "could not read your src.opensuse.org user through geectl: ERROR: no Gitea token configured (GEECTL_GITEA_TOKEN or GEECTL_GITEA_TOKEN_FILE)" FAKE_NOLOGIN=1 -- --dir "$D" foo
+ls_ login-unparseable 6 "could not read your src.opensuse.org user through geectl" 'FAKE_USER={"id": 7}' -- --dir "$D" foo
 ls_ pr-list-network 6 "could not query open PRs for pool/foo: ERROR: Failed to establish a new connection" FAKE_PRS_FAIL=1 -- --dir "$D" foo
 ls_ pr-list-unparseable 6 "cannot rule out a duplicate" "FAKE_PRS=$work/bad.json" -- --dir "$D" foo
 ls_ pool-repo-unreachable 6 "could not reach pool/nosuch" -- --dir "$D" nosuch
@@ -522,11 +540,13 @@ ls_ reused-clone-branch-dropped 0 "target build GREEN" -- --dir "$D" foo
 
 # Static: leap-sync.sh has no way left to push or write a PR. The long options
 # are grouped so the installed pr-guard.py does not read this line as a write.
+# Its one geectl call is the pull-request search, a read; any pull-request
+# mutation leaf would be a write.
 if grep -vE '^[[:space:]]*#' "$SK/leap-sync.sh" \
-     | grep -nE '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)|-X[[:space:]]*(POST|PATCH|PUT)|--(request|data)|[[:space:]]-d[[:space:]]|tea[[:space:]]+(pr|pulls|repo|api)|git-obs.*[[:space:]](repo|pr)[[:space:]]'; then
+     | grep -nE '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)|-X[[:space:]]*(POST|PATCH|PUT)|--(request|data)|[[:space:]]-d[[:space:]]|tea[[:space:]]+(pr|pulls|repo|api)|git-obs.*[[:space:]](repo|pr)[[:space:]]|geectl[[:space:]]+pull-request[[:space:]]+(approve|request-changes|comment|merge|decline|withdraw|reopen|cancel-review-request)'; then
   fail "static: leap-sync.sh still pushes or writes to the API (lines above)"
 else
-  pass "static: leap-sync.sh contains no push, POST/PATCH/PUT, git-obs write or tea call"
+  pass "static: leap-sync.sh contains no push, POST/PATCH/PUT, git-obs write, tea call or pull-request mutation"
 fi
 # Static: git-obs and ssh hold the credentials; no script reads or hands one on.
 if awk '!/^[[:space:]]*#/ && /tea\/config|askpass|Authorization|GIT_ASKPASS|token/ { print FILENAME ":" FNR ": " $0; f = 1 } END { exit !f }' \

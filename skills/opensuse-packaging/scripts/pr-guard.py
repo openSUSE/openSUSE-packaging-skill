@@ -14,20 +14,17 @@ target-gate.sh stamp or into the skill's state directory (gate.sh's stamps;
 only the pinned gate.sh writes there; in a call that names that directory,
 any write the guard cannot place), post a comment, review or request message
 with a line or list item that starts with "merge ok" or "@group : approve",
-run an emulated osc build, file a request against the
+run an emulated geectl local-build, file a request against the
 scmsync'd openSUSE:Backports:SLE-16.x projects, file a submit
-request that overrides osc's devel-project check or create one through the API,
+request that targets openSUSE:Factory directly,
 file a submit request to a project other than the package's devel project in
 Factory's _meta, or into an _aggregate or a _link of another project,
 file a submit request from a home subproject that does not have OBS delete
 its branch once accepted, or from a home branch whose package links to a
 project other than the target (a link within the branch's own project
-passes), feed an osc request or commit an answer on stdin
-(a pipe, here-string or heredoc; < /dev/null and a message read with -F -
-are fine) or answer them unread with osc's own yes option, file, accept,
-decline, reopen, revoke, supersede or wipe a request (or add a review)
-without -m (or osc sr -F; osc sr -d files nothing), where osc opens an editor
-and hangs, run a .sh file with Python or a .py file with a shell, wait in fixed sleeps of a minute or
+passes), file a request without --description (and --changes-entry), or
+commit without -m, where geectl opens an editor and hangs, run a .sh file
+with Python or a .py file with a shell, wait in fixed sleeps of a minute or
 more in all (not in the Monitor tool, a background call or a script the call
 runs), file a request
 whose message is too long (over 160 characters of prose, which
@@ -36,8 +33,9 @@ carries a work note for the user (build, sweep, gate or review status, the
 session's tools), only says it forwards, or cannot be read, open a PR with tea or
 git-obs, on any repository, whose title or description breaks the same rules
 (the title one headline), write into a *:Update or *:Maintenance:* project outside
-home: (commit, api, and osc's other writes) or one it cannot place, or osc commit
-in a scmsync checkout (its sources come from git, by pull request). It refuses
+home: (a geectl commit, or any other geectl write) or one it cannot place, or
+geectl commit in a git-backed checkout (its sources come from git, by pull
+request). It refuses
 the accept of a request someone else filed (or one it cannot read) and git-obs
 pr review approve unless incoming-review.sh recorded PASS or FIXABLE for that
 request's source and target srcmd5, or for the PR head its commit option
@@ -51,39 +49,41 @@ own command line); any accept, approval, comment, decline, close, revoke or
 supersede from the incoming-review or changes-review agent; and in the
 incoming-review agent, every call judged, whatever parses or runs a
 submission: the rpm family by name or through a link (rpmlint too), quilt
-setup, osc build (chroot, shell, wipe), an osc checkout or update that runs the
-source services, osc service but wait, osc commit (it runs the local ones),
-gate.sh, target-gate.sh and the skill's other scripts that parse a spec, run a
-service or build, and any shell text naming PATH, BASH_ENV, ENV=, PS4, the
-hash builtin, a nameref, allexport, an arithmetic context or a shell's rc file
-(brace-expanded too), setting a variable by a name
-not written out, running a command word only the shell knows or sourcing a
-file, since the guard looks names up on its own PATH; and a write, move or
+setup, geectl local-build (build, chroot, wipe), a local-build service run, precommit or
+spec-cleaner, changelog generate, gate.sh, target-gate.sh and the skill's other scripts that parse a
+spec, run a service or build, and any shell text naming PATH, BASH_ENV, ENV=, PS4, the hash builtin,
+a nameref, allexport, an arithmetic context or a shell's rc file (brace-expanded too), setting a
+variable by a name not written out, running a command word only the shell knows or sourcing a file,
+since the guard looks names up on its own PATH; and a write, move or
 delete of the installed guard (~/.claude/hooks), Claude Code's settings (a
 .claude/settings.json or settings.local.json anywhere) or the opencode plugins
 (~/.config/opencode/plugins), which the user changes by hand, a tree into
 ~/.claude or ~/.config/opencode included. A command run through fakeroot,
 strace, ltrace, unshare, flock, taskset, chrt, prlimit, systemd-run, nsenter,
 setpriv or script is judged as itself; a wrapper is one by a bare name or an
-ELF binary, and a script named like one is read. A -h/--help
-call of tea, git-obs, git or osc is not judged, and a refusal redacts the
+ELF or Mach-O binary, and a script named like one is read. A -h/--help
+call of osc, tea, git-obs, git or geectl is not judged, and a refusal redacts the
 credentials it would echo. Its rules live in _pr_guard.py beside it, read only
 once a call matches the prefilter.
 
 The agent's own commands (not the scripts or program code they run) are also
-refused when they read a credential file (tea's, osc's, gh's, netrc, git's
-credential stores, osc's cookie jar, an MCP server's api-key, the opencode
-server's service.json) other than by
+refused when they read a credential file (tea's, geectl's, osc's, gh's, netrc,
+git's credential stores, osc's cookie jar, an MCP server's api-key, the
+opencode server's service.json) other than by
 listing it, set or run an askpass program, run one of the tools' own secret
 printers (gh auth, tea login helper/edit, git-obs login list, git credential
-helpers, secret-tool, osc's full config dump, HTTP debugging and tokens),
+helpers, secret-tool, geectl remote create-token),
 put a credential on an HTTP tool's, tea api's or git-obs api's command line,
-or call the OBS or Gitea API with curl, wget or HTTPie instead of osc or
+or call the OBS or Gitea API with curl, wget or HTTPie instead of geectl or
 git-obs.
+Gitea reads through `git-obs -G src.opensuse.org -q api` stand: no typed
+geectl leaf reads a file from Gitea, so the review machinery reads raw
+files, trees and blobs, and the issue comments and PRs its review derives
+from, through those six calls.
 
 Some calls are left to the user instead (exit 0 with the hook's "ask"
 decision on stdout; a refusal anywhere in the call still wins): a comment or
-review posted with osc, tea or git-obs (a close carrying one included; a tea
+review posted with geectl, tea or git-obs (a close carrying one included; a tea
 comment with no subcommand and no body also says how to read them), or
 an API write to OBS or Gitea comments or reviews (gh, on GitHub, is not
 judged; a comment on an OBS request the user filed runs, and so does one on
@@ -92,26 +92,22 @@ when its text's sha256 is the one its incoming review recorded, and a tea
 comment on a src.opensuse.org issue or PR the user opened, or, with the same
 review, one in a repository they maintain outside pool, as the call's only
 command naming the src.opensuse.org login and a literal owner/name
-repository, its text inline or one "$(cat FILE)" word, FILE placed in the
-event's directory and never through /proc or /dev); a submit to
-openSUSE:Factory while devel still holds the files an accepted FIXABLE review
-saw and openSUSE:Factory does not; an osc request (rq, review) accept or
-approve of a request the user filed, or the API's changestate to accepted, or
-a submit to openSUSE:Factory from a devel project, unless autoforward-gate.sh would call
-the package ELIGIBLE (no reviewer, the user's package or an unowned one in a
-project they maintain, Factory's devel project; for a project kept in git, its
-project git's _maintainership.json and workflow.config Reviewers), and every
-decline and approvenew; a revoke, supersede, reopen or wipe of a request
-someone else filed (a submit superseding it too), or its accept with osc's
-force option, and a close, reopen or edit (tea's issues verbs too) of, or an
-API write to, a PR someone else opened; an osc commit of a checkout whose
-files match no GREEN
+repository); a submit to openSUSE:Factory while devel still holds the files an accepted FIXABLE
+review saw and openSUSE:Factory does not; a geectl request accept or pull-request approve of a
+request the user filed, or a geectl request change-state to accepted of one, or a submit to
+openSUSE:Factory from a devel project, unless autoforward-gate.sh would call the package ELIGIBLE
+(no reviewer, the user's package or an unowned one in a project they maintain, Factory's devel
+project; for a project kept in git, its project git's _maintainership.json and workflow.config
+Reviewers), and every decline; a revoke, supersede or reopen of a request someone else filed (a
+submit superseding it too), or its accept with geectl's force option, and a close, reopen or edit
+(tea's issues verbs too) of, or an API write to, a PR someone else opened; a geectl commit of a
+checkout whose files match no GREEN
 gate.sh run (or of a whole project checkout); a submit request whose source
 files match no GREEN gate.sh run with the change review's PASS and a GREEN
 build recorded; a review recorded with gate.sh from a call the event names no
 changes-review agent for (agent_type: the harness sets it, the model cannot), or
 gate.sh arguments it cannot read where that review option could stand; a
-recursive rm, or a find -delete with no name test, of two or more osc
+recursive rm, or a find -delete with no name test, of two or more geectl
 checkouts at once (one per rm passes). A commit after the call writes into its
 checkout, and a submit after a write that can change what OBS holds (a
 commit, a script, a write into a checkout), are refused: the agent splits the
@@ -119,7 +115,7 @@ call. A failed lookup there asks too, and so does an eval or trap string it cann
 read (a substitution, a variable the call does not set); a trap's command is
 judged as running last, and with any & or coproc in the call every write counts
 as running before a commit. A command word only the shell knows asks when its
-arguments start a judged tool or a runner; program code that runs osc itself
+arguments start a judged tool or a runner; program code that runs geectl itself
 (python3 -c) is not asked.
 
 A command line is judged one parsed command at a time, so what a command only
@@ -153,7 +149,7 @@ Environment:
                       <pkg>.xml is Factory's _meta, src/<prj>/<pkg>.xml the
                       target's source listing, api/<path, /?&= as _> any other
                       GET ("@ERR" fails it); a missing file reads as a 404
-  PR_GUARD_OBS_USER   the OBS account the asks judge (default: osc whois)
+  PR_GUARD_OBS_USER   the OBS account the asks judge (default: geectl config show)
 
 A call that matches nothing guarded is allowed without a lookup. Once one
 matches, anything the guard cannot establish -- a remote, branch or repository
@@ -183,7 +179,7 @@ import sys
 # the recorder of contributor reviews, by its name alone from PATH.
 PREFILTER = re.compile(
     r"\/|~|\.\.|\x60|\$[{A-Za-z_@*('\x22]|tea\b|git-obs|\bobs\b|src\.opensuse\.org|\bpush\b"
-    r"|\b(?:osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm|find)\b|-delete\b"
+    r"|\b(?:geectl|osc|python[0-9.]*|bash|sh|zsh|dash|ksh|node|perl|source|env|uv|eval|cd|pushd|sleep|rm|find)\b|-delete\b"
     r"|(?:^|[\s;&|(])\.\s|\bsend-pack\b|\btarget-gate\b|\bincoming-review\b"
     r"|\bgh\b|credential|secret-tool|netrc|oscrc|[Aa][Ss][Kk][Pp][Aa][Ss][Ss]"
     r"|[Aa]uthorization|\b(?:curl|wget|xhs?|https?)\b"
@@ -191,13 +187,12 @@ PREFILTER = re.compile(
 # A call run inside a directory of credential files, or in one above them, is
 # judged whatever it says: a bare `.` or a relative name reaches them from there.
 CRED_DIR = re.compile(
-    r"/\.(?:config/(?:tea|osc|gh|git|mcp-[^/]*)|local/state/(?:osc|opencode)|ssh)(?:/|$)"
+    r"/\.(?:config/(?:tea|geectl|gh|git|mcp-[^/]*)|local/state/(?:opencode)|ssh)(?:/|$)"
 )
 CRED_HOMES = (
     "/.config/tea",
-    "/.config/osc",
+    "/.config/geectl",
     "/.config/gh",
-    "/.local/state/osc",
     "/.local/state/opencode",
     "/.config/mcp-",
     "/.ssh",

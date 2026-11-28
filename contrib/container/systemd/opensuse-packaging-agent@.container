@@ -16,7 +16,8 @@ NoNewPrivileges=true
 RunInit=true
 Pull=never
 Secret=opensuse-packaging-%i-server-password,type=env,target=OPENCODE_PASSWORD
-Secret=opensuse-packaging-osc,target=/home/agent/.config/osc/oscrc,uid=%U,gid=%G,mode=0600
+Secret=opensuse-packaging-geectl-obs-username,type=env,target=GEECTL_OBS_USERNAME
+Secret=opensuse-packaging-geectl-obs-password,type=env,target=GEECTL_OBS_PASSWORD
 Secret=opensuse-packaging-tea,target=/home/agent/.config/tea/config.yml,uid=%U,gid=%G,mode=0400
 Secret=opensuse-packaging-github,target=/home/agent/.config/gh/hosts.yml,uid=%U,gid=%G,mode=0400
 Secret=opensuse-packaging-bugzilla,target=/home/agent/.config/mcp-bugzilla/api-key,uid=%U,gid=%G,mode=0400
